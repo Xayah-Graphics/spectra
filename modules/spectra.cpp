@@ -183,7 +183,7 @@ namespace xayah {
         }
         {
             const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
-            auto composite_alpha         = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+            auto composite_alpha                                  = vk::CompositeAlphaFlagBitsKHR::eOpaque;
             if (!(surface_capabilities.supportedCompositeAlpha & composite_alpha)) {
                 if (surface_capabilities.supportedCompositeAlpha & vk::CompositeAlphaFlagBitsKHR::ePreMultiplied)
                     composite_alpha = vk::CompositeAlphaFlagBitsKHR::ePreMultiplied;
@@ -219,6 +219,38 @@ namespace xayah {
         {
             this->swapchain.images = this->swapchain.handle.getImages();
             if (this->swapchain.images.empty()) throw std::runtime_error("Swapchain has no images");
+            this->swapchain.image_layouts.assign(this->swapchain.images.size(), vk::ImageLayout::eUndefined);
+        }
+        {
+            this->swapchain.image_views.reserve(this->swapchain.images.size());
+            for (const vk::Image image : this->swapchain.images) {
+                const vk::ImageViewCreateInfo image_view_create_info{
+                    {},
+                    image,
+                    vk::ImageViewType::e2D,
+                    this->swapchain.format,
+                    {},
+                    {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                };
+                this->swapchain.image_views.emplace_back(this->context.device, image_view_create_info);
+            }
+            if (this->swapchain.image_views.size() != this->swapchain.images.size()) throw std::runtime_error("Failed to create all swapchain image views");
+        }
+        {
+            constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
+            constexpr vk::FenceCreateInfo fence_create_info{vk::FenceCreateFlagBits::eSignaled};
+            const vk::CommandBufferAllocateInfo command_buffer_allocate_info{*this->context.command_pool, vk::CommandBufferLevel::ePrimary, this->sync.frame_count};
+            this->sync.command_buffers = vk::raii::CommandBuffers{this->context.device, command_buffer_allocate_info};
+            if (this->sync.command_buffers.size() != this->sync.frame_count) throw std::runtime_error("Failed to allocate per-frame command buffers");
+
+            this->sync.image_available_semaphores.reserve(this->sync.frame_count);
+            this->sync.in_flight_fences.reserve(this->sync.frame_count);
+            for (std::uint32_t frame_index = 0; frame_index < this->sync.frame_count; ++frame_index) {
+                this->sync.image_available_semaphores.emplace_back(this->context.device, semaphore_create_info);
+                this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
+            }
+            this->sync.render_finished_semaphores.reserve(this->swapchain.images.size());
+            for (std::uint32_t image_index = 0; image_index < this->swapchain.images.size(); ++image_index) this->sync.render_finished_semaphores.emplace_back(this->context.device, semaphore_create_info);
         }
 
         {
@@ -316,8 +348,18 @@ namespace xayah {
             std::println("  extent       {} x {}", this->swapchain.extent.width, this->swapchain.extent.height);
             std::println("  image count  {}", this->swapchain.image_count);
             std::println("  images       {}", this->swapchain.images.size());
+            std::println("  image views  {}", this->swapchain.image_views.size());
+            std::println("  layouts      {}", this->swapchain.image_layouts.size());
             std::println("  present mode {}", vk::to_string(this->swapchain.present_mode));
             std::println("  usage        {}", vk::to_string(this->swapchain.usage));
+
+            std::println("\n{}{}Frame Sync{}", bold, magenta, reset);
+            std::println("  frames in flight {}", this->sync.frame_count);
+            std::println("  current frame    {}", this->sync.frame_index);
+            std::println("  command buffers  {}", this->sync.command_buffers.size());
+            std::println("  image available  {}", this->sync.image_available_semaphores.size());
+            std::println("  render finished  {}", this->sync.render_finished_semaphores.size());
+            std::println("  in-flight fences {}", this->sync.in_flight_fences.size());
 
             std::println("\n{}{}Memory{}", bold, magenta, reset);
             for (std::uint32_t index = 0; index < memory.memoryHeapCount; ++index) std::println("  heap #{:<2} {:>10.1f} MiB  {}", index, static_cast<double>(memory.memoryHeaps[index].size) / 1024.0 / 1024.0, vk::to_string(memory.memoryHeaps[index].flags));
@@ -334,15 +376,72 @@ namespace xayah {
         throw;
     }
 
+    void Spectra::run() {
+        while (!glfwWindowShouldClose(this->surface.window.get())) {
+            glfwPollEvents();
+
+            const std::uint32_t frame_index = this->sync.frame_index;
+            if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
+            this->context.device.resetFences(*this->sync.in_flight_fences[frame_index]);
+
+            const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame_index], nullptr);
+            if (acquired_image.result != vk::Result::eSuccess) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
+            const std::uint32_t image_index = acquired_image.value;
+
+            const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame_index];
+            command_buffer.reset();
+            constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+            command_buffer.begin(command_buffer_begin_info);
+            {
+                const vk::ImageMemoryBarrier2 image_memory_barrier{
+                    vk::PipelineStageFlagBits2::eAllCommands,
+                    {},
+                    vk::PipelineStageFlagBits2::eAllCommands,
+                    {},
+                    this->swapchain.image_layouts[image_index],
+                    vk::ImageLayout::ePresentSrcKHR,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    this->swapchain.images[image_index],
+                    {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                };
+                const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, 1, &image_memory_barrier};
+                command_buffer.pipelineBarrier2(dependency_info);
+            }
+            this->swapchain.image_layouts[image_index] = vk::ImageLayout::ePresentSrcKHR;
+            command_buffer.end();
+
+            const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+            const vk::CommandBufferSubmitInfo command_buffer_submit_info{*command_buffer};
+            const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+            const vk::SubmitInfo2 submit_info{{}, 1, &wait_semaphore_info, 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
+            this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame_index]);
+
+            const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[image_index];
+            const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
+            const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &image_index};
+            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result != vk::Result::eSuccess) throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+
+            this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
+        }
+
+        this->context.device.waitIdle();
+    }
+
     Spectra::~Spectra() noexcept {
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
         }
 
+        this->sync.command_buffers.clear();
+        this->sync.in_flight_fences.clear();
+        this->sync.render_finished_semaphores.clear();
+        this->sync.image_available_semaphores.clear();
         this->context.command_pool = nullptr;
         this->swapchain.image_views.clear();
         this->swapchain.handle = nullptr;
+        this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
         this->context.graphics_queue  = nullptr;
         this->context.device          = nullptr;
