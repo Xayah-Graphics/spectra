@@ -9,6 +9,13 @@ module;
 module spectra;
 import std;
 
+namespace {
+    VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
+        if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
+        return VK_FALSE;
+    }
+} // namespace
+
 namespace xayah {
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name) {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
@@ -47,6 +54,15 @@ namespace xayah {
                 required_extensions.data(),
             };
             this->context.instance = vk::raii::Instance{this->context.context, instance_create_info};
+        }
+        {
+            constexpr vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_create_info{
+                {},
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
+                &debug_callback,
+            };
+            this->context.debug_messenger = this->context.instance.createDebugUtilsMessengerEXT(debug_messenger_create_info);
         }
 
         std::print("Hello Spectra");
