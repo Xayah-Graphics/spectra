@@ -6,7 +6,7 @@ export module spectra;
 import std;
 
 namespace xayah {
-    export class Spectra final {
+    export class Spectra {
     public:
         explicit Spectra(const std::string_view& app_name, const std::string_view& engine_name, std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
@@ -16,6 +16,10 @@ namespace xayah {
         Spectra(Spectra&& other) noexcept            = delete;
         Spectra& operator=(const Spectra& other)     = delete;
         Spectra& operator=(Spectra&& other) noexcept = delete;
+
+    protected:
+        void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
+        void recreate_swapchain();
 
     private:
         struct {
