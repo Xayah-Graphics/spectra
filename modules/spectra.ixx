@@ -52,6 +52,12 @@ namespace xayah {
             std::vector<vk::Image> images{};
             std::vector<vk::ImageLayout> image_layouts{};
             std::vector<vk::raii::ImageView> image_views{};
+            vk::raii::Image depth_image{nullptr};
+            vk::raii::DeviceMemory depth_memory{nullptr};
+            vk::raii::ImageView depth_view{nullptr};
+            vk::Format depth_format{};
+            vk::ImageAspectFlags depth_aspect{};
+            vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
         } swapchain;
 
         struct {

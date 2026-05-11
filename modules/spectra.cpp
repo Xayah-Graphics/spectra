@@ -111,15 +111,21 @@ namespace xayah {
             if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain and graphics-present queue support");
         }
         {
-            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
+            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
+            if (!supported_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) throw std::runtime_error("Device does not support shaderDrawParameters");
+            if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy) throw std::runtime_error("Device does not support samplerAnisotropy");
+            if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid) throw std::runtime_error("Device does not support fillModeNonSolid");
             if (!supported_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("Device does not support timelineSemaphore");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
 
-            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}};
-            enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2  = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering  = VK_TRUE;
+            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}, {}};
+            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy  = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid   = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore    = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2     = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering     = VK_TRUE;
 
             constexpr std::array queue_priorities{1.0f};
             const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
@@ -177,7 +183,7 @@ namespace xayah {
             const auto properties_chain                                    = this->context.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
             const vk::PhysicalDeviceProperties& properties                 = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
             const vk::PhysicalDeviceDriverProperties& driver               = properties_chain.get<vk::PhysicalDeviceDriverProperties>();
-            const auto features                                            = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
+            const auto features                                            = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
             const vk::PhysicalDeviceMemoryProperties memory                = this->context.physical_device.getMemoryProperties();
             const vk::SurfaceCapabilitiesKHR surface_capabilities          = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
             const std::vector<vk::SurfaceFormatKHR> surface_formats        = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
@@ -220,11 +226,13 @@ namespace xayah {
             }
 
             std::println("\n{}{}Enabled Device Features{}", bold, magenta, reset);
+            std::println("  {}[ENABLED]{} samplerAnisotropy", green, reset);
+            std::println("  {}[ENABLED]{} fillModeNonSolid", green, reset);
+            std::println("  {}[ENABLED]{} shaderDrawParameters", green, reset);
             std::println("  {}[ENABLED]{} timelineSemaphore", green, reset);
             std::println("  {}[ENABLED]{} synchronization2", green, reset);
             std::println("  {}[ENABLED]{} dynamicRendering", green, reset);
-            std::println("  {}[support]{} samplerAnisotropy: {}", dim, reset, static_cast<bool>(features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy));
-            std::println("  {}[support]{} fillModeNonSolid: {}", dim, reset, static_cast<bool>(features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid));
+            std::println("  {}[support]{} robustBufferAccess: {}", dim, reset, static_cast<bool>(features.get<vk::PhysicalDeviceFeatures2>().features.robustBufferAccess));
 
             std::println("\n{}{}Queue Families{} {}", bold, magenta, reset, queue_families.size());
             for (std::uint32_t index = 0; index < queue_families.size(); ++index) {
@@ -255,6 +263,9 @@ namespace xayah {
             std::println("  layouts      {}", this->swapchain.image_layouts.size());
             std::println("  present mode {}", vk::to_string(this->swapchain.present_mode));
             std::println("  usage        {}", vk::to_string(this->swapchain.usage));
+            std::println("  depth format {}", vk::to_string(this->swapchain.depth_format));
+            std::println("  depth aspect {}", vk::to_string(this->swapchain.depth_aspect));
+            std::println("  depth layout {}", vk::to_string(this->swapchain.depth_layout));
 
             std::println("\n{}{}Frame Sync{}", bold, magenta, reset);
             std::println("  frames in flight {}", this->sync.frame_count);
@@ -393,6 +404,64 @@ namespace xayah {
             if (this->swapchain.image_views.size() != this->swapchain.images.size()) throw std::runtime_error("Failed to create all swapchain image views");
         }
         {
+            bool selected = false;
+            constexpr std::array depth_formats{vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint};
+            for (const vk::Format format : depth_formats) {
+                if (static_cast<bool>(this->context.physical_device.getFormatProperties(format).optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)) {
+                    this->swapchain.depth_format = format;
+                    selected                     = true;
+                    break;
+                }
+            }
+            if (!selected) throw std::runtime_error("No supported Vulkan depth format");
+            this->swapchain.depth_aspect = this->swapchain.depth_format == vk::Format::eD32SfloatS8Uint || this->swapchain.depth_format == vk::Format::eD24UnormS8Uint ? vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil : vk::ImageAspectFlagBits::eDepth;
+            this->swapchain.depth_layout = vk::ImageLayout::eUndefined;
+
+            const vk::ImageCreateInfo depth_image_create_info{
+                {},
+                vk::ImageType::e2D,
+                this->swapchain.depth_format,
+                vk::Extent3D{this->swapchain.extent.width, this->swapchain.extent.height, 1},
+                1,
+                1,
+                vk::SampleCountFlagBits::e1,
+                vk::ImageTiling::eOptimal,
+                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eTransientAttachment,
+                vk::SharingMode::eExclusive,
+                0,
+                nullptr,
+                vk::ImageLayout::eUndefined,
+            };
+            this->swapchain.depth_image = vk::raii::Image{this->context.device, depth_image_create_info};
+
+            const vk::MemoryRequirements depth_memory_requirements = this->swapchain.depth_image.getMemoryRequirements();
+            const vk::PhysicalDeviceMemoryProperties memory        = this->context.physical_device.getMemoryProperties();
+            std::uint32_t memory_type_index                        = std::numeric_limits<std::uint32_t>::max();
+            for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
+                if ((depth_memory_requirements.memoryTypeBits & (1u << index)) != 0 && (memory.memoryTypes[index].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal) == vk::MemoryPropertyFlagBits::eDeviceLocal) {
+                    memory_type_index = index;
+                    break;
+                }
+            }
+            if (memory_type_index == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("No suitable Vulkan memory type for depth image");
+            const vk::MemoryAllocateInfo depth_memory_allocate_info{
+                depth_memory_requirements.size,
+                memory_type_index,
+            };
+            this->swapchain.depth_memory = vk::raii::DeviceMemory{this->context.device, depth_memory_allocate_info};
+            this->swapchain.depth_image.bindMemory(*this->swapchain.depth_memory, 0);
+
+            const vk::ImageViewCreateInfo depth_view_create_info{
+                {},
+                *this->swapchain.depth_image,
+                vk::ImageViewType::e2D,
+                this->swapchain.depth_format,
+                {},
+                {this->swapchain.depth_aspect, 0, 1, 0, 1},
+            };
+            this->swapchain.depth_view = vk::raii::ImageView{this->context.device, depth_view_create_info};
+        }
+        {
             constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
             this->sync.render_finished_semaphores.clear();
             this->sync.render_finished_semaphores.reserve(this->swapchain.images.size());
@@ -415,6 +484,12 @@ namespace xayah {
         this->context.device.waitIdle();
 
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
+        this->swapchain.depth_view           = nullptr;
+        this->swapchain.depth_image          = nullptr;
+        this->swapchain.depth_memory         = nullptr;
+        this->swapchain.depth_format         = {};
+        this->swapchain.depth_aspect         = {};
+        this->swapchain.depth_layout         = vk::ImageLayout::eUndefined;
         this->swapchain.image_views.clear();
         this->sync.render_finished_semaphores.clear();
         this->sync.image_in_flight_frame.clear();
@@ -432,11 +507,11 @@ namespace xayah {
                 continue;
             }
 
+            bool recreate_after_present     = false;
             const std::uint32_t frame_index = this->sync.frame_index;
             if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
 
-            std::uint32_t image_index   = 0;
-            bool recreate_after_present = false;
+            std::uint32_t image_index = 0;
             try {
                 const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame_index], nullptr);
                 if (acquired_image.result != vk::Result::eSuccess && acquired_image.result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
@@ -451,7 +526,6 @@ namespace xayah {
                 if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
             }
             this->sync.image_in_flight_frame.at(image_index) = frame_index;
-
             this->context.device.resetFences(*this->sync.in_flight_fences[frame_index]);
 
             const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame_index];
@@ -459,12 +533,74 @@ namespace xayah {
             constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
             command_buffer.begin(command_buffer_begin_info);
             {
+                const vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+                const vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+                const std::array attachment_barriers{
+                    vk::ImageMemoryBarrier2{
+                        vk::PipelineStageFlagBits2::eAllCommands,
+                        {},
+                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                        vk::AccessFlagBits2::eColorAttachmentWrite,
+                        this->swapchain.image_layouts[image_index],
+                        vk::ImageLayout::eColorAttachmentOptimal,
+                        VK_QUEUE_FAMILY_IGNORED,
+                        VK_QUEUE_FAMILY_IGNORED,
+                        this->swapchain.images[image_index],
+                        {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                    },
+                    vk::ImageMemoryBarrier2{
+                        depth_stages,
+                        depth_access,
+                        depth_stages,
+                        depth_access,
+                        this->swapchain.depth_layout,
+                        vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                        VK_QUEUE_FAMILY_IGNORED,
+                        VK_QUEUE_FAMILY_IGNORED,
+                        *this->swapchain.depth_image,
+                        {this->swapchain.depth_aspect, 0, 1, 0, 1},
+                    },
+                };
+                const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(attachment_barriers.size()), attachment_barriers.data()};
+                command_buffer.pipelineBarrier2(dependency_info);
+            }
+            this->swapchain.image_layouts[image_index] = vk::ImageLayout::eColorAttachmentOptimal;
+            this->swapchain.depth_layout               = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+            {
+                const vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
+                const vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
+                const vk::RenderingAttachmentInfo color_attachment{
+                    *this->swapchain.image_views[image_index],
+                    vk::ImageLayout::eColorAttachmentOptimal,
+                    vk::ResolveModeFlagBits::eNone,
+                    {},
+                    vk::ImageLayout::eUndefined,
+                    vk::AttachmentLoadOp::eClear,
+                    vk::AttachmentStoreOp::eStore,
+                    color_clear_value,
+                };
+                const vk::RenderingAttachmentInfo depth_attachment{
+                    *this->swapchain.depth_view,
+                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                    vk::ResolveModeFlagBits::eNone,
+                    {},
+                    vk::ImageLayout::eUndefined,
+                    vk::AttachmentLoadOp::eClear,
+                    vk::AttachmentStoreOp::eDontCare,
+                    depth_clear_value,
+                };
+                const vk::RenderingAttachmentInfo* stencil_attachment = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? &depth_attachment : nullptr;
+                const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, &depth_attachment, stencil_attachment};
+                command_buffer.beginRendering(rendering_info);
+                command_buffer.endRendering();
+            }
+            {
                 const vk::ImageMemoryBarrier2 image_memory_barrier{
+                    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                    vk::AccessFlagBits2::eColorAttachmentWrite,
                     vk::PipelineStageFlagBits2::eAllCommands,
                     {},
-                    vk::PipelineStageFlagBits2::eAllCommands,
-                    {},
-                    this->swapchain.image_layouts[image_index],
+                    vk::ImageLayout::eColorAttachmentOptimal,
                     vk::ImageLayout::ePresentSrcKHR,
                     VK_QUEUE_FAMILY_IGNORED,
                     VK_QUEUE_FAMILY_IGNORED,
@@ -524,7 +660,10 @@ namespace xayah {
         this->sync.image_in_flight_frame.clear();
         this->sync.render_finished_semaphores.clear();
         this->sync.image_available_semaphores.clear();
-        this->context.command_pool = nullptr;
+        this->context.command_pool   = nullptr;
+        this->swapchain.depth_view   = nullptr;
+        this->swapchain.depth_image  = nullptr;
+        this->swapchain.depth_memory = nullptr;
         this->swapchain.image_views.clear();
         this->swapchain.handle = nullptr;
         this->swapchain.image_layouts.clear();
