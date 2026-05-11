@@ -74,6 +74,8 @@ namespace xayah {
             glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
             this->surface.window = std::shared_ptr<GLFWwindow>{glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), std::string{app_name}.c_str(), nullptr, nullptr), [](GLFWwindow* window) { glfwDestroyWindow(window); }};
             if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
+            glfwSetWindowUserPointer(this->surface.window.get(), this);
+            glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
         }
         {
             VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -161,7 +163,6 @@ namespace xayah {
             constexpr std::string_view dim{"\x1b[2m"};
             constexpr std::string_view cyan{"\x1b[36m"};
             constexpr std::string_view green{"\x1b[32m"};
-            constexpr std::string_view yellow{"\x1b[33m"};
             constexpr std::string_view magenta{"\x1b[35m"};
             constexpr std::string_view blue{"\x1b[34m"};
 
@@ -410,14 +411,27 @@ namespace xayah {
     void Spectra::run() {
         while (!glfwWindowShouldClose(this->surface.window.get())) {
             glfwPollEvents();
+            if (this->surface.resize_requested) {
+                this->recreate_swapchain();
+                continue;
+            }
 
             const std::uint32_t frame_index = this->sync.frame_index;
             if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
-            this->context.device.resetFences(*this->sync.in_flight_fences[frame_index]);
 
-            const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame_index], nullptr);
-            if (acquired_image.result != vk::Result::eSuccess) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
-            const std::uint32_t image_index = acquired_image.value;
+            std::uint32_t image_index   = 0;
+            bool recreate_after_present = false;
+            try {
+                const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame_index], nullptr);
+                if (acquired_image.result != vk::Result::eSuccess && acquired_image.result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
+                recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
+                image_index            = acquired_image.value;
+            } catch (const vk::OutOfDateKHRError&) {
+                this->recreate_swapchain();
+                continue;
+            }
+
+            this->context.device.resetFences(*this->sync.in_flight_fences[frame_index]);
 
             const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame_index];
             command_buffer.reset();
@@ -451,7 +465,14 @@ namespace xayah {
             const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[image_index];
             const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
             const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &image_index};
-            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result != vk::Result::eSuccess) throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+            try {
+                const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info);
+                if (present_result == vk::Result::eSuboptimalKHR) recreate_after_present = true;
+                else if (present_result != vk::Result::eSuccess) throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+            } catch (const vk::OutOfDateKHRError&) {
+                recreate_after_present = true;
+            }
+            if (recreate_after_present) this->recreate_swapchain();
 
             this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
         }
