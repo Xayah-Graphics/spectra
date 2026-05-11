@@ -32,6 +32,7 @@ namespace xayah {
             vk::raii::SurfaceKHR surface{nullptr};
             vk::Extent2D extent{};
             bool resize_requested{false};
+            bool glfw_initialized{false};
         } surface;
     };
 } // namespace xayah
