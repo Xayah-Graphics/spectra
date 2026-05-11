@@ -139,6 +139,87 @@ namespace xayah {
             const vk::CommandPoolCreateInfo command_pool_create_info{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, this->context.graphics_queue_index};
             this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
         }
+        {
+            const vk::SurfaceCapabilitiesKHR surface_capabilities   = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
+            const std::vector<vk::SurfaceFormatKHR> surface_formats = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
+            const std::vector<vk::PresentModeKHR> present_modes     = this->context.physical_device.getSurfacePresentModesKHR(this->surface.surface);
+            if (surface_formats.empty()) throw std::runtime_error("Surface has no formats");
+            if (present_modes.empty()) throw std::runtime_error("Surface has no present modes");
+
+            this->swapchain.format      = surface_formats.front().format;
+            this->swapchain.color_space = surface_formats.front().colorSpace;
+            for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
+                if (surface_format.format == vk::Format::eB8G8R8A8Srgb && surface_format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+                    this->swapchain.format      = surface_format.format;
+                    this->swapchain.color_space = surface_format.colorSpace;
+                    break;
+                }
+                if (surface_format.format == vk::Format::eB8G8R8A8Unorm && surface_format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+                    this->swapchain.format      = surface_format.format;
+                    this->swapchain.color_space = surface_format.colorSpace;
+                }
+            }
+
+            this->swapchain.present_mode = vk::PresentModeKHR::eFifo;
+            for (const vk::PresentModeKHR present_mode : present_modes) {
+                if (present_mode == vk::PresentModeKHR::eMailbox) {
+                    this->swapchain.present_mode = present_mode;
+                    break;
+                }
+                if (present_mode == vk::PresentModeKHR::eImmediate) this->swapchain.present_mode = present_mode;
+            }
+
+            this->swapchain.extent = surface_capabilities.currentExtent.width == std::numeric_limits<std::uint32_t>::max() ? vk::Extent2D{std::clamp(this->surface.extent.width, surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width), std::clamp(this->surface.extent.height, surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height)} : surface_capabilities.currentExtent;
+            if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot create swapchain with zero extent");
+
+            this->swapchain.image_count = surface_capabilities.minImageCount + 1;
+            if (this->swapchain.image_count < 2) this->swapchain.image_count = 2;
+            if (surface_capabilities.maxImageCount != 0 && this->swapchain.image_count > surface_capabilities.maxImageCount) this->swapchain.image_count = surface_capabilities.maxImageCount;
+
+            if ((surface_capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eColorAttachment) != vk::ImageUsageFlagBits::eColorAttachment) throw std::runtime_error("Swapchain must support color attachment usage");
+            this->swapchain.usage = vk::ImageUsageFlagBits::eColorAttachment;
+            if ((surface_capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferDst) == vk::ImageUsageFlagBits::eTransferDst) this->swapchain.usage |= vk::ImageUsageFlagBits::eTransferDst;
+            if ((surface_capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc) == vk::ImageUsageFlagBits::eTransferSrc) this->swapchain.usage |= vk::ImageUsageFlagBits::eTransferSrc;
+        }
+        {
+            const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
+            auto composite_alpha         = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+            if (!(surface_capabilities.supportedCompositeAlpha & composite_alpha)) {
+                if (surface_capabilities.supportedCompositeAlpha & vk::CompositeAlphaFlagBitsKHR::ePreMultiplied)
+                    composite_alpha = vk::CompositeAlphaFlagBitsKHR::ePreMultiplied;
+                else if (surface_capabilities.supportedCompositeAlpha & vk::CompositeAlphaFlagBitsKHR::ePostMultiplied)
+                    composite_alpha = vk::CompositeAlphaFlagBitsKHR::ePostMultiplied;
+                else if (surface_capabilities.supportedCompositeAlpha & vk::CompositeAlphaFlagBitsKHR::eInherit)
+                    composite_alpha = vk::CompositeAlphaFlagBitsKHR::eInherit;
+                else
+                    throw std::runtime_error("Surface has no supported composite alpha mode");
+            }
+
+            const vk::SurfaceTransformFlagBitsKHR pre_transform = surface_capabilities.supportedTransforms & vk::SurfaceTransformFlagBitsKHR::eIdentity ? vk::SurfaceTransformFlagBitsKHR::eIdentity : surface_capabilities.currentTransform;
+            const vk::SwapchainCreateInfoKHR swapchain_create_info{
+                {},
+                *this->surface.surface,
+                this->swapchain.image_count,
+                this->swapchain.format,
+                this->swapchain.color_space,
+                this->swapchain.extent,
+                1,
+                this->swapchain.usage,
+                vk::SharingMode::eExclusive,
+                0,
+                nullptr,
+                pre_transform,
+                composite_alpha,
+                this->swapchain.present_mode,
+                VK_TRUE,
+                nullptr,
+            };
+            this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
+        }
+        {
+            this->swapchain.images = this->swapchain.handle.getImages();
+            if (this->swapchain.images.empty()) throw std::runtime_error("Swapchain has no images");
+        }
 
         {
             constexpr std::string_view reset{"\x1b[0m"};
@@ -230,6 +311,14 @@ namespace xayah {
             std::println("  present modes {}", present_modes.size());
             for (const vk::PresentModeKHR present_mode : present_modes) std::println("    {}", vk::to_string(present_mode));
 
+            std::println("\n{}{}Swapchain Plan{}", bold, magenta, reset);
+            std::println("  format       {} / {}", vk::to_string(this->swapchain.format), vk::to_string(this->swapchain.color_space));
+            std::println("  extent       {} x {}", this->swapchain.extent.width, this->swapchain.extent.height);
+            std::println("  image count  {}", this->swapchain.image_count);
+            std::println("  images       {}", this->swapchain.images.size());
+            std::println("  present mode {}", vk::to_string(this->swapchain.present_mode));
+            std::println("  usage        {}", vk::to_string(this->swapchain.usage));
+
             std::println("\n{}{}Memory{}", bold, magenta, reset);
             for (std::uint32_t index = 0; index < memory.memoryHeapCount; ++index) std::println("  heap #{:<2} {:>10.1f} MiB  {}", index, static_cast<double>(memory.memoryHeaps[index].size) / 1024.0 / 1024.0, vk::to_string(memory.memoryHeaps[index].flags));
 
@@ -251,7 +340,10 @@ namespace xayah {
         } catch (...) {
         }
 
-        this->context.command_pool    = nullptr;
+        this->context.command_pool = nullptr;
+        this->swapchain.image_views.clear();
+        this->swapchain.handle = nullptr;
+        this->swapchain.images.clear();
         this->context.graphics_queue  = nullptr;
         this->context.device          = nullptr;
         this->surface.surface         = nullptr;

@@ -34,5 +34,17 @@ namespace xayah {
             bool resize_requested{false};
             bool glfw_initialized{false};
         } surface;
+
+        struct {
+            vk::raii::SwapchainKHR handle{nullptr};
+            vk::Format format{};
+            vk::ColorSpaceKHR color_space{};
+            vk::Extent2D extent{};
+            std::uint32_t image_count{0};
+            vk::PresentModeKHR present_mode{};
+            vk::ImageUsageFlags usage{};
+            std::vector<vk::Image> images{};
+            std::vector<vk::raii::ImageView> image_views{};
+        } swapchain;
     };
 } // namespace xayah
