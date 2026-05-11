@@ -22,7 +22,7 @@ namespace xayah {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
 
-        constexpr std::array enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
+        constexpr std::array<const char *, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
         constexpr std::array enabled_device_extensions{vk::KHRSwapchainExtensionName};
         std::vector<const char*> enabled_instance_extensions{};
 
@@ -405,8 +405,7 @@ namespace xayah {
         }
         {
             bool selected = false;
-            constexpr std::array depth_formats{vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint};
-            for (const vk::Format format : depth_formats) {
+            for (constexpr std::array depth_formats{vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}; const vk::Format format : depth_formats) {
                 if (static_cast<bool>(this->context.physical_device.getFormatProperties(format).optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)) {
                     this->swapchain.depth_format = format;
                     selected                     = true;
@@ -533,8 +532,8 @@ namespace xayah {
             constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
             command_buffer.begin(command_buffer_begin_info);
             {
-                const vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-                const vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+                constexpr vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+                constexpr vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
                 const std::array attachment_barriers{
                     vk::ImageMemoryBarrier2{
                         vk::PipelineStageFlagBits2::eAllCommands,
@@ -567,8 +566,8 @@ namespace xayah {
             this->swapchain.image_layouts[image_index] = vk::ImageLayout::eColorAttachmentOptimal;
             this->swapchain.depth_layout               = vk::ImageLayout::eDepthStencilAttachmentOptimal;
             {
-                const vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
-                const vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
+                constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
+                constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
                 const vk::RenderingAttachmentInfo color_attachment{
                     *this->swapchain.image_views[image_index],
                     vk::ImageLayout::eColorAttachmentOptimal,
