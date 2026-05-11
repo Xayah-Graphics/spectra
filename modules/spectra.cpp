@@ -1,6 +1,7 @@
 module;
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
+#define NOMINMAX
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -17,7 +18,7 @@ namespace {
 } // namespace
 
 namespace xayah {
-    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name) {
+    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
 
         {
@@ -63,6 +64,13 @@ namespace xayah {
                 &debug_callback,
             };
             this->context.debug_messenger = this->context.instance.createDebugUtilsMessengerEXT(debug_messenger_create_info);
+        }
+        {
+            if (window_width == 0 || window_height == 0 || window_width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || window_height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Invalid GLFW window resolution");
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+            glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+            this->surface.window = std::shared_ptr<GLFWwindow>{glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), std::string{app_name}.c_str(), nullptr, nullptr), [](GLFWwindow* window) { glfwDestroyWindow(window); }};
+            if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
         }
 
         std::print("Hello Spectra");
