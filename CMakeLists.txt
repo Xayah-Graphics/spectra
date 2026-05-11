@@ -35,11 +35,13 @@ target_sources(
         vendor/imgui/imgui_widgets.cpp
         vendor/imgui/backends/imgui_impl_glfw.cpp
         vendor/imgui/backends/imgui_impl_vulkan.cpp
+        vendor/ImNodeFlow/ImNodeFlow.cpp
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/spectra.ixx
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
+target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 
