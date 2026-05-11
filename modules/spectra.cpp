@@ -72,6 +72,18 @@ namespace xayah {
             this->surface.window = std::shared_ptr<GLFWwindow>{glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), std::string{app_name}.c_str(), nullptr, nullptr), [](GLFWwindow* window) { glfwDestroyWindow(window); }};
             if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
         }
+        {
+            VkSurfaceKHR surface = VK_NULL_HANDLE;
+            if (glfwCreateWindowSurface(*this->context.instance, this->surface.window.get(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan surface");
+            this->surface.surface = vk::raii::SurfaceKHR{this->context.instance, surface};
+        }
+        {
+            int width  = 0;
+            int height = 0;
+            glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
+            if (width <= 0 || height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size");
+            this->surface.extent = vk::Extent2D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
+        }
 
         std::print("Hello Spectra");
     }
