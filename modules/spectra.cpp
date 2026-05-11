@@ -84,6 +84,55 @@ namespace xayah {
             if (width <= 0 || height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size");
             this->surface.extent = vk::Extent2D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
         }
+        {
+            bool selected = false;
+            for (const vk::raii::PhysicalDevice& physical_device : this->context.instance.enumeratePhysicalDevices()) {
+                if (physical_device.getProperties().apiVersion < VK_API_VERSION_1_4) continue;
+
+                const std::vector<vk::ExtensionProperties> available_extensions = physical_device.enumerateDeviceExtensionProperties();
+                if (const auto found = std::ranges::find(available_extensions, std::string_view{vk::KHRSwapchainExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) continue;
+
+                const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
+                for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
+                    if (!static_cast<bool>(queue_families[queue_family_index].queueFlags & vk::QueueFlagBits::eGraphics)) continue;
+                    if (!physical_device.getSurfaceSupportKHR(queue_family_index, this->surface.surface)) continue;
+                    this->context.physical_device      = physical_device;
+                    this->context.graphics_queue_index = queue_family_index;
+                    selected                           = true;
+                    break;
+                }
+                if (selected) break;
+            }
+            if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain and graphics-present queue support");
+        }
+        {
+            constexpr std::array required_extensions{vk::KHRSwapchainExtensionName};
+            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
+            if (!supported_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("Device does not support timelineSemaphore");
+            if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
+            if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
+
+            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}};
+            enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2  = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering  = VK_TRUE;
+
+            constexpr std::array queue_priorities{1.0f};
+            const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
+            const vk::DeviceCreateInfo device_create_info{
+                {},
+                1,
+                &queue_create_info,
+                0,
+                nullptr,
+                static_cast<std::uint32_t>(required_extensions.size()),
+                required_extensions.data(),
+                nullptr,
+                &enabled_features.get<vk::PhysicalDeviceFeatures2>(),
+            };
+            this->context.device         = vk::raii::Device{this->context.physical_device, device_create_info};
+            this->context.graphics_queue = vk::raii::Queue{this->context.device, this->context.graphics_queue_index, 0};
+        }
 
         std::print("Hello Spectra");
     }
