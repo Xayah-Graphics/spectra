@@ -262,6 +262,7 @@ namespace xayah {
             std::println("  command buffers  {}", this->sync.command_buffers.size());
             std::println("  image available  {}", this->sync.image_available_semaphores.size());
             std::println("  render finished  {}", this->sync.render_finished_semaphores.size());
+            std::println("  image in flight  {}", this->sync.image_in_flight_frame.size());
             std::println("  in-flight fences {}", this->sync.in_flight_fences.size());
 
             std::println("\n{}{}Memory{}", bold, magenta, reset);
@@ -287,17 +288,30 @@ namespace xayah {
             if (surface_formats.empty()) throw std::runtime_error("Surface has no formats");
             if (present_modes.empty()) throw std::runtime_error("Surface has no present modes");
 
-            this->swapchain.format      = surface_formats.front().format;
-            this->swapchain.color_space = surface_formats.front().colorSpace;
-            for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
-                if (surface_format.format == vk::Format::eB8G8R8A8Srgb && surface_format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
-                    this->swapchain.format      = surface_format.format;
-                    this->swapchain.color_space = surface_format.colorSpace;
-                    break;
-                }
-                if (surface_format.format == vk::Format::eB8G8R8A8Unorm && surface_format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
-                    this->swapchain.format      = surface_format.format;
-                    this->swapchain.color_space = surface_format.colorSpace;
+            if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined) {
+                this->swapchain.format      = vk::Format::eB8G8R8A8Srgb;
+                this->swapchain.color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
+            } else {
+                this->swapchain.format      = surface_formats.front().format;
+                this->swapchain.color_space = surface_formats.front().colorSpace;
+
+                bool selected = false;
+                constexpr std::array preferred_surface_formats{
+                    vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear},
+                    vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear},
+                    vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+                    vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+                };
+                for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_surface_formats) {
+                    for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
+                        if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace) {
+                            this->swapchain.format      = surface_format.format;
+                            this->swapchain.color_space = surface_format.colorSpace;
+                            selected                    = true;
+                            break;
+                        }
+                    }
+                    if (selected) break;
                 }
             }
 
@@ -383,6 +397,7 @@ namespace xayah {
             this->sync.render_finished_semaphores.clear();
             this->sync.render_finished_semaphores.reserve(this->swapchain.images.size());
             for (std::uint32_t image_index = 0; image_index < this->swapchain.images.size(); ++image_index) this->sync.render_finished_semaphores.emplace_back(this->context.device, semaphore_create_info);
+            this->sync.image_in_flight_frame.assign(this->swapchain.images.size(), std::numeric_limits<std::uint32_t>::max());
         }
     }
 
@@ -402,6 +417,7 @@ namespace xayah {
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
         this->swapchain.image_views.clear();
         this->sync.render_finished_semaphores.clear();
+        this->sync.image_in_flight_frame.clear();
         this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
@@ -430,6 +446,11 @@ namespace xayah {
                 this->recreate_swapchain();
                 continue;
             }
+
+            if (const std::uint32_t previous_frame_index = this->sync.image_in_flight_frame.at(image_index); previous_frame_index != std::numeric_limits<std::uint32_t>::max()) {
+                if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
+            }
+            this->sync.image_in_flight_frame.at(image_index) = frame_index;
 
             this->context.device.resetFences(*this->sync.in_flight_fences[frame_index]);
 
@@ -466,11 +487,23 @@ namespace xayah {
             const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
             const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &image_index};
             try {
-                const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info);
-                if (present_result == vk::Result::eSuboptimalKHR) recreate_after_present = true;
-                else if (present_result != vk::Result::eSuccess) throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+                if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
+                    recreate_after_present = true;
+                else if (present_result == vk::Result::eErrorSurfaceLostKHR)
+                    recreate_after_present = true;
+                else if (present_result != vk::Result::eSuccess)
+                    throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
             } catch (const vk::OutOfDateKHRError&) {
                 recreate_after_present = true;
+            } catch (const vk::SystemError& error) {
+                if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
+                    recreate_after_present = true;
+                else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
+                    recreate_after_present = true;
+                else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
+                    recreate_after_present = true;
+                else
+                    throw;
             }
             if (recreate_after_present) this->recreate_swapchain();
 
@@ -488,6 +521,7 @@ namespace xayah {
 
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
+        this->sync.image_in_flight_frame.clear();
         this->sync.render_finished_semaphores.clear();
         this->sync.image_available_semaphores.clear();
         this->context.command_pool = nullptr;

@@ -60,6 +60,7 @@ namespace xayah {
             vk::raii::CommandBuffers command_buffers{nullptr};
             std::vector<vk::raii::Semaphore> image_available_semaphores{};
             std::vector<vk::raii::Semaphore> render_finished_semaphores{};
+            std::vector<std::uint32_t> image_in_flight_frame{};
             std::vector<vk::raii::Fence> in_flight_fences{};
         } sync;
     };
