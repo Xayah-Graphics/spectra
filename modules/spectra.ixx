@@ -9,7 +9,7 @@ namespace xayah {
     export class Spectra final {
     public:
         explicit Spectra(const std::string_view& app_name, const std::string_view& engine_name, std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
-        ~Spectra() noexcept                          = default;
+        ~Spectra() noexcept;
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
         Spectra& operator=(const Spectra& other)     = delete;

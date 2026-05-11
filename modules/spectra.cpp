@@ -133,7 +133,28 @@ namespace xayah {
             this->context.device         = vk::raii::Device{this->context.physical_device, device_create_info};
             this->context.graphics_queue = vk::raii::Queue{this->context.device, this->context.graphics_queue_index, 0};
         }
+        {
+            const vk::CommandPoolCreateInfo command_pool_create_info{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, this->context.graphics_queue_index};
+            this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
+        }
 
         std::print("Hello Spectra");
+    }
+
+    Spectra::~Spectra() noexcept {
+        try {
+            if (*this->context.device) this->context.device.waitIdle();
+        } catch (...) {
+        }
+
+        this->context.command_pool    = nullptr;
+        this->context.graphics_queue  = nullptr;
+        this->context.device          = nullptr;
+        this->surface.surface         = nullptr;
+        this->surface.window          = nullptr;
+        this->context.physical_device = nullptr;
+        this->context.debug_messenger = nullptr;
+        this->context.instance        = nullptr;
+        glfwTerminate();
     }
 } // namespace xayah
