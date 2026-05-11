@@ -18,7 +18,7 @@ namespace {
 } // namespace
 
 namespace xayah {
-    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) {
+    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
 
         {
@@ -139,6 +139,9 @@ namespace xayah {
         }
 
         std::print("Hello Spectra");
+    } catch (...) {
+        glfwTerminate();
+        throw;
     }
 
     Spectra::~Spectra() noexcept {
