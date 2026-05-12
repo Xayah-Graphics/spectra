@@ -85,6 +85,7 @@ namespace xayah {
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
             std::uint32_t vertex_count{170};
+            bool visible{true};
         } viewport;
 
         struct {
@@ -102,7 +103,7 @@ namespace xayah {
             int frame_max{240};
             int current_frame{0};
             int first_frame{0};
-            float height{160.0f};
+            float height{64.0f};
         } timeline;
 
         struct {

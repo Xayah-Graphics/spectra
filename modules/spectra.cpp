@@ -572,30 +572,34 @@ namespace xayah {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
 
-        ImGuiIO& io = ImGui::GetIO();
+        ImGuiIO& io                 = ImGui::GetIO();
         const ImVec2 mouse_position = io.MousePos;
-        const float timeline_top = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
-        const bool in_viewport = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top;
-        const bool right_mouse = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-        const bool middle_mouse = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-        const bool left_mouse = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        const bool shift = io.KeyShift;
-        const bool alt = io.KeyAlt;
+        const float timeline_top    = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
+        const bool in_viewport      = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top;
+        const bool right_mouse      = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        const bool middle_mouse     = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        const bool left_mouse       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        const bool shift            = io.KeyShift;
+        const bool alt              = io.KeyAlt;
+
+        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.visible = !this->viewport.visible;
+        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
+        if (!this->viewport.visible) return;
 
         CameraInput input{};
         input.delta_seconds = io.DeltaTime;
         input.mouse_delta_x = in_viewport ? io.MouseDelta.x : 0.0f;
         input.mouse_delta_y = in_viewport ? io.MouseDelta.y : 0.0f;
-        input.mouse_wheel = in_viewport ? io.MouseWheel : 0.0f;
-        input.orbit = in_viewport && ((right_mouse && !shift) || (alt && left_mouse));
-        input.pan = in_viewport && (middle_mouse || (right_mouse && shift));
-        input.fly = in_viewport && right_mouse && !shift;
-        input.move_forward = ImGui::IsKeyDown(ImGuiKey_W);
+        input.mouse_wheel   = in_viewport ? io.MouseWheel : 0.0f;
+        input.orbit         = in_viewport && ((right_mouse && !shift) || (alt && left_mouse));
+        input.pan           = in_viewport && (middle_mouse || (right_mouse && shift));
+        input.fly           = in_viewport && right_mouse && !shift;
+        input.move_forward  = ImGui::IsKeyDown(ImGuiKey_W);
         input.move_backward = ImGui::IsKeyDown(ImGuiKey_S);
-        input.move_left = ImGui::IsKeyDown(ImGuiKey_A);
-        input.move_right = ImGui::IsKeyDown(ImGuiKey_D);
-        input.move_up = ImGui::IsKeyDown(ImGuiKey_E);
-        input.move_down = ImGui::IsKeyDown(ImGuiKey_Q);
+        input.move_left     = ImGui::IsKeyDown(ImGuiKey_A);
+        input.move_right    = ImGui::IsKeyDown(ImGuiKey_D);
+        input.move_up       = ImGui::IsKeyDown(ImGuiKey_E);
+        input.move_down     = ImGui::IsKeyDown(ImGuiKey_Q);
         this->viewport.camera.update(input);
     }
 
@@ -614,7 +618,7 @@ namespace xayah {
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.28f, 0.55f, 0.90f, 0.55f});
         ImGui::Begin("Spectra Stats", nullptr, window_flags);
         {
-            const ImVec2 window_pos = ImGui::GetWindowPos();
+            const ImVec2 window_pos  = ImGui::GetWindowPos();
             const ImVec2 window_size = ImGui::GetWindowSize();
             ImGui::GetWindowDrawList()->AddRectFilled(window_pos, ImVec2{window_pos.x + 4.0f, window_pos.y + window_size.y}, IM_COL32(76, 158, 255, 210), 8.0f, ImDrawFlags_RoundCornersLeft);
         }
@@ -623,7 +627,7 @@ namespace xayah {
         const ImVec4 value_color{0.92f, 0.96f, 1.0f, 1.0f};
         const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
         const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
-        const float fps = ImGui::GetIO().Framerate;
+        const float fps        = ImGui::GetIO().Framerate;
         const ImVec4 fps_color = fps >= 55.0f ? ImVec4{0.46f, 0.90f, 0.62f, 1.0f} : ImVec4{0.95f, 0.68f, 0.36f, 1.0f};
 
         ImGui::TextColored(accent_color, "Spectra");
@@ -720,21 +724,22 @@ namespace xayah {
         TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max};
         constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
         ImGui::Begin("Spectra Timeline", nullptr, window_flags);
-        ImGui::Text("Frame %d / %d", this->timeline.current_frame, this->timeline.frame_max);
         ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
         ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
     }
 
     void Spectra::render_viewport(const vk::raii::CommandBuffer& command_buffer) {
+        if (!this->viewport.visible) return;
         if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline) throw std::runtime_error("Viewport pipeline is not initialized");
         if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
 
         const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(this->swapchain.extent.height), 0.0f, 1.0f};
         const vk::Rect2D scissor{{0, 0}, this->swapchain.extent};
-        const float aspect = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(this->swapchain.extent.height);
+        const float aspect                          = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(this->swapchain.extent.height);
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline);
@@ -833,7 +838,7 @@ namespace xayah {
         if (!*this->context.device) throw std::runtime_error("Cannot create viewport pipeline without a Vulkan device");
         if (this->swapchain.format == vk::Format::eUndefined || this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create viewport pipeline without swapchain formats");
 
-        const std::vector<std::uint32_t> vertex_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.vert.spv");
+        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.vert.spv");
         const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.frag.spv");
         const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
         const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
@@ -877,7 +882,7 @@ namespace xayah {
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
 
-        const vk::Format color_format = this->swapchain.format;
+        const vk::Format color_format   = this->swapchain.format;
         const vk::Format stencil_format = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? this->swapchain.depth_format : vk::Format::eUndefined;
         vk::PipelineRenderingCreateInfo rendering_create_info{};
         rendering_create_info.colorAttachmentCount    = 1;
@@ -900,11 +905,11 @@ namespace xayah {
         pipeline_create_info.layout              = *this->viewport.pipeline_layout;
         pipeline_create_info.renderPass          = nullptr;
         pipeline_create_info.subpass             = 0;
-        this->viewport.pipeline = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+        this->viewport.pipeline                  = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
     }
 
     void Spectra::destroy_viewport_pipeline() noexcept {
-        this->viewport.pipeline = nullptr;
+        this->viewport.pipeline        = nullptr;
         this->viewport.pipeline_layout = nullptr;
     }
 

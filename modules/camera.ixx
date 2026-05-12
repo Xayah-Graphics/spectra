@@ -20,6 +20,13 @@ namespace xayah {
 
     export class Camera {
     public:
+        void reset_home() {
+            this->target   = {0.0f, 0.0f, 0.0f};
+            this->yaw      = 0.7853982f;
+            this->pitch    = -0.5235988f;
+            this->distance = 8.0f;
+        }
+
         void update(const CameraInput& input) {
             constexpr float rotation_speed = 0.005f;
             constexpr float pan_speed      = 0.0015f;
@@ -84,20 +91,44 @@ namespace xayah {
             const std::array<float, 3> up      = cross(forward, right);
 
             return {
-                right[0], up[0], -forward[0], 0.0f,
-                right[1], up[1], -forward[1], 0.0f,
-                right[2], up[2], -forward[2], 0.0f,
-                -dot(right, eye), -dot(up, eye), dot(forward, eye), 1.0f,
+                right[0],
+                up[0],
+                -forward[0],
+                0.0f,
+                right[1],
+                up[1],
+                -forward[1],
+                0.0f,
+                right[2],
+                up[2],
+                -forward[2],
+                0.0f,
+                -dot(right, eye),
+                -dot(up, eye),
+                dot(forward, eye),
+                1.0f,
             };
         }
 
         [[nodiscard]] std::array<float, 16> projection(const float aspect) const {
             const float focal = 1.0f / std::tan(this->fov_y * 0.5f);
             return {
-                focal / aspect, 0.0f, 0.0f, 0.0f,
-                0.0f, -focal, 0.0f, 0.0f,
-                0.0f, 0.0f, this->far_z / (this->near_z - this->far_z), -1.0f,
-                0.0f, 0.0f, (this->far_z * this->near_z) / (this->near_z - this->far_z), 0.0f,
+                focal / aspect,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                -focal,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                this->far_z / (this->near_z - this->far_z),
+                -1.0f,
+                0.0f,
+                0.0f,
+                (this->far_z * this->near_z) / (this->near_z - this->far_z),
+                0.0f,
             };
         }
 
