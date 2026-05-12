@@ -2,7 +2,7 @@ import spectra;
 import std;
 
 int main() {
-    xayah::Spectra spectra("Spectra", "Spectra Engine");
+    xayah::Spectra spectra;
     spectra.run();
     return 0;
 }

@@ -545,14 +545,71 @@ namespace xayah {
     }
 
     void Spectra::draw_imgui() {
-        ImGui::SetNextWindowSize(ImVec2{320.0f, 140.0f}, ImGuiCond_FirstUseEver);
-        ImGui::Begin("Spectra");
-        ImGui::Text("Vulkan 1.4 RAII");
-        ImGui::Text("Framebuffer: %u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
-        ImGui::Text("Swapchain images: %u", static_cast<std::uint32_t>(this->swapchain.images.size()));
-        ImGui::Text("Frame index: %u / %u", this->sync.frame_index, this->sync.frame_count);
-        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::SetNextWindowPos(ImVec2{viewport->WorkPos.x + 12.0f, viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.02f);
+        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.045f, 0.055f, 0.62f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.28f, 0.55f, 0.90f, 0.55f});
+        ImGui::Begin("Spectra Stats", nullptr, window_flags);
+        {
+            const ImVec2 window_pos = ImGui::GetWindowPos();
+            const ImVec2 window_size = ImGui::GetWindowSize();
+            ImGui::GetWindowDrawList()->AddRectFilled(window_pos, ImVec2{window_pos.x + 4.0f, window_pos.y + window_size.y}, IM_COL32(76, 158, 255, 210), 8.0f, ImDrawFlags_RoundCornersLeft);
+        }
+
+        const ImVec4 label_color{0.58f, 0.66f, 0.75f, 1.0f};
+        const ImVec4 value_color{0.92f, 0.96f, 1.0f, 1.0f};
+        const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
+        const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
+        const float fps = ImGui::GetIO().Framerate;
+        const ImVec4 fps_color = fps >= 55.0f ? ImVec4{0.46f, 0.90f, 0.62f, 1.0f} : ImVec4{0.95f, 0.68f, 0.36f, 1.0f};
+
+        ImGui::TextColored(accent_color, "Spectra");
+        ImGui::SameLine();
+        ImGui::TextColored(muted_color, "Vulkan 1.4 RAII");
+        ImGui::Separator();
+        if (ImGui::BeginTable("Stats", 2, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Framebuffer");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Swapchain");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%u images", static_cast<std::uint32_t>(this->swapchain.images.size()));
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Frame slot");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%u / %u", this->sync.frame_index, this->sync.frame_count);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Timeline");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%d / %d", this->timeline.current_frame, this->timeline.frame_max);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "FPS");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(fps_color, "%.1f", fps);
+            ImGui::EndTable();
+        }
         ImGui::End();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
         this->draw_timeline();
     }
 
@@ -603,7 +660,7 @@ namespace xayah {
         ImGui::SetNextWindowViewport(viewport->ID);
         ImGui::SetNextWindowPos(ImVec2{viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - timeline_height}, ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2{viewport->WorkSize.x, timeline_height}, ImGuiCond_Always);
-        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
 
         TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max};
         constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
