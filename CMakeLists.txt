@@ -26,13 +26,22 @@ add_subdirectory(vendor/glfw)
 # ============================================================================
 set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 set(SPECTRA_VIEWPORT_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/viewport_grid.slang)
-set(SPECTRA_SHADER_OUTPUTS ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.vert.spv ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.frag.spv)
+set(SPECTRA_VOLUME_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/volume.slang)
+set(
+        SPECTRA_SHADER_OUTPUTS
+        ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.frag.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/volume.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/volume.frag.spv
+)
 add_custom_command(
         OUTPUT ${SPECTRA_SHADER_OUTPUTS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_SHADER_OUTPUT_DIR}
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VIEWPORT_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VIEWPORT_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.frag.spv
-        DEPENDS ${SPECTRA_VIEWPORT_SHADER}
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VOLUME_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/volume.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VOLUME_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/volume.frag.spv
+        DEPENDS ${SPECTRA_VIEWPORT_SHADER} ${SPECTRA_VOLUME_SHADER}
         VERBATIM
 )
 add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})
@@ -64,6 +73,7 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/camera.ixx
+        modules/scene.ixx
         modules/spectra.ixx
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)

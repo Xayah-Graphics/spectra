@@ -67,6 +67,10 @@ namespace xayah {
             return multiply(projection(aspect), view());
         }
 
+        [[nodiscard]] std::array<float, 3> position() const {
+            return subtract(this->target, multiply(this->forward(), this->distance));
+        }
+
     private:
         std::array<float, 3> target{0.0f, 0.0f, 0.0f};
         float yaw{0.7853982f};

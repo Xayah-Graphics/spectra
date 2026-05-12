@@ -13,6 +13,7 @@ module;
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import camera;
+import scene;
 import std;
 
 #if !defined(SPECTRA_SHADER_DIR)
@@ -54,6 +55,54 @@ namespace {
         file.read(reinterpret_cast<char*>(code.data()), byte_count);
         if (!file) throw std::runtime_error(std::string{"Failed to read SPIR-V shader: "} + path.string());
         return code;
+    }
+
+    struct VolumeShaderParameters {
+        std::array<float, 16> view_projection{};
+        std::array<float, 4> camera_step{};
+        std::array<float, 4> origin_opacity{};
+        std::array<float, 4> spacing_value_min{};
+        std::array<std::uint32_t, 4> resolution_kind{};
+        std::array<std::uint32_t, 4> mode_options{};
+        std::array<float, 4> slice_value_max{};
+    };
+
+    std::uint32_t memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
+        const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
+        for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            const bool supported = (memory_type_bits & (1u << index)) != 0;
+            const bool matching  = (memory_properties.memoryTypes[index].propertyFlags & required_properties) == required_properties;
+            if (supported && matching) return index;
+        }
+        throw std::runtime_error("No matching memory type for buffer");
+    }
+
+    void ensure_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& memory, vk::DeviceSize& buffer_size, const vk::DeviceSize requested_size, const vk::BufferUsageFlags usage, const vk::MemoryPropertyFlags required_properties) {
+        if (requested_size == 0) throw std::runtime_error("Cannot create zero-size buffer");
+        if (*buffer && *memory && buffer_size == requested_size) return;
+
+        vk::raii::Buffer next_buffer{nullptr};
+        vk::raii::DeviceMemory next_memory{nullptr};
+        const vk::BufferCreateInfo buffer_create_info{{}, requested_size, usage, vk::SharingMode::eExclusive};
+        next_buffer = vk::raii::Buffer{device, buffer_create_info};
+
+        const vk::MemoryRequirements memory_requirements = next_buffer.getMemoryRequirements();
+        const std::uint32_t type_index                   = memory_type_index(physical_device, memory_requirements.memoryTypeBits, required_properties);
+        const vk::MemoryAllocateInfo allocate_info{memory_requirements.size, type_index};
+        next_memory = vk::raii::DeviceMemory{device, allocate_info};
+        next_buffer.bindMemory(*next_memory, 0);
+
+        buffer      = std::move(next_buffer);
+        memory      = std::move(next_memory);
+        buffer_size = requested_size;
+    }
+
+    void write_buffer(const vk::raii::DeviceMemory& memory, const vk::DeviceSize buffer_size, const void* data, const vk::DeviceSize write_size) {
+        if (!*memory) throw std::runtime_error("Cannot write unallocated buffer");
+        if (write_size > buffer_size) throw std::runtime_error("Buffer write exceeds allocation size");
+        void* mapped = memory.mapMemory(0, write_size);
+        std::memcpy(mapped, data, static_cast<std::size_t>(write_size));
+        memory.unmapMemory();
     }
 } // namespace
 
@@ -439,6 +488,7 @@ namespace xayah {
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
         }
+        this->destroy_volume_renderer();
         this->destroy_viewport_pipeline();
         this->imgui.descriptor_pool = nullptr;
         this->imgui.color_format    = vk::Format::eUndefined;
@@ -469,15 +519,29 @@ namespace xayah {
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::run() {
-        while (!glfwWindowShouldClose(this->surface.window.get())) {
-            FrameState frame{};
-            if (!this->begin_frame(frame)) continue;
-            this->record_frame(frame);
-            this->end_frame(frame);
-        }
+    void Spectra::render(Scene& scene) {
+        scene.validate();
+        scene.initialize_volume_selection();
 
-        this->context.device.waitIdle();
+        this->create_volume_renderer();
+        try {
+            while (!glfwWindowShouldClose(this->surface.window.get())) {
+                FrameState frame{};
+                if (!this->begin_frame(frame)) continue;
+                this->record_frame(frame, scene);
+                this->end_frame(frame);
+            }
+
+            this->context.device.waitIdle();
+            this->destroy_volume_renderer();
+        } catch (...) {
+            try {
+                if (*this->context.device) this->context.device.waitIdle();
+            } catch (...) {
+            }
+            this->destroy_volume_renderer();
+            throw;
+        }
     }
 
     bool Spectra::begin_frame(FrameState& frame) {
@@ -510,79 +574,20 @@ namespace xayah {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        this->update_camera();
-        return true;
-    }
-
-    void Spectra::record_frame(const FrameState& frame) {
-        const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
-        command_buffer.reset();
-        constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-        command_buffer.begin(command_buffer_begin_info);
-        this->begin_rendering(command_buffer, frame.image_index);
-        this->render_viewport(command_buffer);
-        this->end_rendering(command_buffer, frame.image_index);
-        this->draw_imgui();
-        this->render_imgui(command_buffer, frame.image_index);
-        transition_image_layout(command_buffer, this->swapchain.images[frame.image_index], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eAllCommands, {});
-        this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::ePresentSrcKHR;
-        command_buffer.end();
-    }
-
-    void Spectra::end_frame(FrameState& frame) {
-        if (this->imgui.viewports) {
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-        }
-
-        const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
-        const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
-        const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[frame.image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
-        const vk::SubmitInfo2 submit_info{{}, 1, &wait_semaphore_info, 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
-        this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame.frame_index]);
-
-        const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
-        const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
-        const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
-        try {
-            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
-                frame.recreate_after_present = true;
-            else if (present_result == vk::Result::eErrorSurfaceLostKHR)
-                frame.recreate_after_present = true;
-            else if (present_result != vk::Result::eSuccess)
-                throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
-        } catch (const vk::OutOfDateKHRError&) {
-            frame.recreate_after_present = true;
-        } catch (const vk::SystemError& error) {
-            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
-                frame.recreate_after_present = true;
-            else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
-                frame.recreate_after_present = true;
-            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
-                frame.recreate_after_present = true;
-            else
-                throw;
-        }
-        if (frame.recreate_after_present) this->recreate_swapchain();
-
-        this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
-    }
-
-    void Spectra::update_camera() {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
 
         ImGuiIO& io                 = ImGui::GetIO();
         const ImVec2 mouse_position = io.MousePos;
         const float timeline_top    = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
-        const bool in_viewport      = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top;
+        const bool in_viewport      = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse;
         const bool right_mouse      = ImGui::IsMouseDown(ImGuiMouseButton_Right);
         const bool middle_mouse     = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
         const bool left_mouse       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
         const bool shift            = io.KeyShift;
         const bool alt              = io.KeyAlt;
 
-        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.visible = !this->viewport.visible;
+        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.grid_visible = !this->viewport.grid_visible;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
 
         CameraInput input{};
@@ -600,22 +605,197 @@ namespace xayah {
         input.move_up       = ImGui::IsKeyDown(ImGuiKey_E);
         input.move_down     = ImGui::IsKeyDown(ImGuiKey_Q);
         this->viewport.camera.update(input);
+        return true;
     }
 
-    void Spectra::draw_imgui() {
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+    void Spectra::record_frame(const FrameState& frame, Scene& scene) {
+        const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
+        command_buffer.reset();
+        constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+        command_buffer.begin(command_buffer_begin_info);
 
-        ImGui::SetNextWindowViewport(viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{viewport->WorkPos.x + 12.0f, viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
+        {
+            constexpr vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+            constexpr vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+            const std::array attachment_barriers{
+                vk::ImageMemoryBarrier2{
+                    vk::PipelineStageFlagBits2::eAllCommands,
+                    {},
+                    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                    vk::AccessFlagBits2::eColorAttachmentWrite,
+                    this->swapchain.image_layouts[frame.image_index],
+                    vk::ImageLayout::eColorAttachmentOptimal,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    this->swapchain.images[frame.image_index],
+                    {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                },
+                vk::ImageMemoryBarrier2{
+                    depth_stages,
+                    depth_access,
+                    depth_stages,
+                    depth_access,
+                    this->swapchain.depth_layout,
+                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    *this->swapchain.depth_image,
+                    {this->swapchain.depth_aspect, 0, 1, 0, 1},
+                },
+            };
+            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(attachment_barriers.size()), attachment_barriers.data()};
+            command_buffer.pipelineBarrier2(dependency_info);
+        }
+        this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::eColorAttachmentOptimal;
+        this->swapchain.depth_layout                     = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+        constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
+        constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
+        const vk::RenderingAttachmentInfo color_attachment{
+            *this->swapchain.image_views[frame.image_index],
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            vk::ImageLayout::eUndefined,
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eStore,
+            color_clear_value,
+        };
+        const vk::RenderingAttachmentInfo depth_attachment{
+            *this->swapchain.depth_view,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            vk::ImageLayout::eUndefined,
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eDontCare,
+            depth_clear_value,
+        };
+        const vk::RenderingAttachmentInfo* stencil_attachment = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? &depth_attachment : nullptr;
+        const vk::RenderingInfo scene_rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, &depth_attachment, stencil_attachment};
+        command_buffer.beginRendering(scene_rendering_info);
+
+        if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
+
+        const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(this->swapchain.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->swapchain.extent};
+        const float aspect                          = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(this->swapchain.extent.height);
+        const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
+
+        if (this->viewport.grid_visible) {
+            if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline) throw std::runtime_error("Viewport pipeline is not initialized");
+
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline);
+            command_buffer.setViewport(0, vulkan_viewport);
+            command_buffer.setScissor(0, scissor);
+            command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const float>{view_projection});
+            command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
+        }
+
+        if (!*this->volume_renderer.pipeline_layout || !*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Volume renderer is not initialized");
+        if (frame.frame_index >= this->sync.frame_count) throw std::runtime_error("Volume frame index is outside frame resource range");
+        if (frame.frame_index >= this->volume_renderer.frame_resources.size()) throw std::runtime_error("Volume frame index is outside renderer resource range");
+
+        const VolumeRenderSettings& render_settings = scene.volume_render_settings;
+        if (render_settings.opacity < 0.0f || render_settings.opacity > 1.0f) throw std::runtime_error("Volume opacity must be in [0, 1]");
+        if (render_settings.raymarch_step <= 0.0f) throw std::runtime_error("Volume raymarch step must be positive");
+        if (render_settings.value_min >= render_settings.value_max) throw std::runtime_error("Volume value range is invalid");
+        if (render_settings.slice_position < 0.0f || render_settings.slice_position > 1.0f) throw std::runtime_error("Volume slice position must be in [0, 1]");
+
+        const Volume& volume                       = scene.selected_volume();
+        VolumeDrawResources& resources             = this->volume_renderer.frame_resources.at(frame.frame_index);
+        const std::array<float, 3> camera_position = this->viewport.camera.position();
+        constexpr vk::BufferUsageFlags storage_buffer_usage{vk::BufferUsageFlagBits::eStorageBuffer};
+        constexpr vk::MemoryPropertyFlags upload_memory_properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+
+        if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
+            const CenteredScalarGrid& grid = scene.selected_centered_scalar_grid(volume);
+            const std::array spacing{
+                volume.size[0] / static_cast<float>(grid.resolution[0]),
+                volume.size[1] / static_cast<float>(grid.resolution[1]),
+                volume.size[2] / static_cast<float>(grid.resolution[2]),
+            };
+
+            VolumeShaderParameters parameters{};
+            parameters.view_projection   = view_projection;
+            parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
+            parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+            parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
+            parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::centered_scalar)};
+            parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
+            parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
+
+            ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+            ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
+            write_buffer(resources.x_data_memory, resources.x_data_size, grid.values.data(), grid.values.size() * sizeof(float));
+            write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+        } else {
+            const StaggeredVectorGrid& grid = scene.selected_staggered_vector_grid(volume);
+            const std::array spacing{
+                volume.size[0] / static_cast<float>(grid.resolution[0]),
+                volume.size[1] / static_cast<float>(grid.resolution[1]),
+                volume.size[2] / static_cast<float>(grid.resolution[2]),
+            };
+
+            VolumeShaderParameters parameters{};
+            parameters.view_projection   = view_projection;
+            parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
+            parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+            parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
+            parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::staggered_vector)};
+            parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
+            parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
+
+            ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.x_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+            ensure_buffer(this->context.physical_device, this->context.device, resources.y_data_buffer, resources.y_data_memory, resources.y_data_size, grid.y_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+            ensure_buffer(this->context.physical_device, this->context.device, resources.z_data_buffer, resources.z_data_memory, resources.z_data_size, grid.z_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+            ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
+            write_buffer(resources.x_data_memory, resources.x_data_size, grid.x_values.data(), grid.x_values.size() * sizeof(float));
+            write_buffer(resources.y_data_memory, resources.y_data_size, grid.y_values.data(), grid.y_values.size() * sizeof(float));
+            write_buffer(resources.z_data_memory, resources.z_data_size, grid.z_values.data(), grid.z_values.size() * sizeof(float));
+            write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+        }
+
+        const vk::raii::Buffer& y_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.y_data_buffer;
+        const vk::raii::Buffer& z_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.z_data_buffer;
+        const vk::DeviceSize y_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.y_data_size;
+        const vk::DeviceSize z_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.z_data_size;
+        const std::array buffer_infos{
+            vk::DescriptorBufferInfo{*resources.x_data_buffer, 0, resources.x_data_size},
+            vk::DescriptorBufferInfo{*y_data_buffer, 0, y_data_size},
+            vk::DescriptorBufferInfo{*z_data_buffer, 0, z_data_size},
+            vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
+        };
+        const vk::DescriptorSet descriptor_set = *this->volume_renderer.descriptor_sets[frame.frame_index];
+        const std::array writes{
+            vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
+            vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
+            vk::WriteDescriptorSet{descriptor_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[2]},
+            vk::WriteDescriptorSet{descriptor_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[3]},
+        };
+        this->context.device.updateDescriptorSets(writes, {});
+
+        const std::uint32_t volume_vertex_count = render_settings.display_mode == VolumeDisplayMode::direct ? 36u : 6u;
+        command_buffer.setViewport(0, vulkan_viewport);
+        command_buffer.setScissor(0, scissor);
+        command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
+        command_buffer.draw(volume_vertex_count, 1, 0, 0);
+        command_buffer.endRendering();
+
+        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.02f);
-        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
+        constexpr ImGuiWindowFlags stats_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.045f, 0.055f, 0.62f});
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.28f, 0.55f, 0.90f, 0.55f});
-        ImGui::Begin("Spectra Stats", nullptr, window_flags);
+        ImGui::Begin("Spectra Stats", nullptr, stats_window_flags);
         {
             const ImVec2 window_pos  = ImGui::GetWindowPos();
             const ImVec2 window_size = ImGui::GetWindowSize();
@@ -668,10 +848,124 @@ namespace xayah {
         ImGui::End();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
-        this->draw_timeline();
-    }
 
-    void Spectra::draw_timeline() {
+        const float volume_window_width = 320.0f;
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - volume_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2{volume_window_width, 0.0f}, ImGuiCond_FirstUseEver);
+        constexpr ImGuiWindowFlags volume_window_flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.05f, 0.055f, 0.06f, 0.84f});
+        ImGui::Begin("Volume", nullptr, volume_window_flags);
+
+        VolumeRenderSettings& settings = scene.volume_render_settings;
+        const Volume* active_volume    = &scene.selected_volume();
+        if (ImGui::BeginCombo("Volume", settings.volume_name.c_str())) {
+            for (const Volume& volume : scene.volumes) {
+                const bool selected = volume.name == settings.volume_name;
+                if (ImGui::Selectable(volume.name.c_str(), selected)) {
+                    settings.volume_name = volume.name;
+                    scene.select_first_volume_grid(volume);
+                    active_volume = &volume;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        const char* grid_kind_label  = settings.grid_kind == VolumeGridKind::centered_scalar ? "Scalar" : "Vector";
+        const std::string grid_label = settings.grid_name + " (" + grid_kind_label + ")";
+        if (ImGui::BeginCombo("Grid", grid_label.c_str())) {
+            for (const CenteredScalarGrid& grid : active_volume->centered_scalar_grids) {
+                const bool selected     = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
+                const std::string label = grid.name + " (Scalar)";
+                if (ImGui::Selectable(label.c_str(), selected)) {
+                    settings.grid_kind = VolumeGridKind::centered_scalar;
+                    settings.grid_name = grid.name;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            for (const StaggeredVectorGrid& grid : active_volume->staggered_vector_grids) {
+                const bool selected     = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
+                const std::string label = grid.name + " (Vector)";
+                if (ImGui::Selectable(label.c_str(), selected)) {
+                    settings.grid_kind = VolumeGridKind::staggered_vector;
+                    settings.grid_name = grid.name;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        const char* mode_label = settings.display_mode == VolumeDisplayMode::direct ? "Direct" : "Slice";
+        if (ImGui::BeginCombo("Mode", mode_label)) {
+            const bool direct_selected = settings.display_mode == VolumeDisplayMode::direct;
+            if (ImGui::Selectable("Direct", direct_selected)) settings.display_mode = VolumeDisplayMode::direct;
+            if (direct_selected) ImGui::SetItemDefaultFocus();
+
+            const bool slice_selected = settings.display_mode == VolumeDisplayMode::slice;
+            if (ImGui::Selectable("Slice", slice_selected)) settings.display_mode = VolumeDisplayMode::slice;
+            if (slice_selected) ImGui::SetItemDefaultFocus();
+            ImGui::EndCombo();
+        }
+
+        const char* color_map_label = "Viridis";
+        if (settings.color_map == VolumeColorMap::grayscale) color_map_label = "Grayscale";
+        if (settings.color_map == VolumeColorMap::turbo) color_map_label = "Turbo";
+        if (settings.color_map == VolumeColorMap::heat) color_map_label = "Heat";
+        if (ImGui::BeginCombo("Color Map", color_map_label)) {
+            const bool grayscale_selected = settings.color_map == VolumeColorMap::grayscale;
+            if (ImGui::Selectable("Grayscale", grayscale_selected)) settings.color_map = VolumeColorMap::grayscale;
+            if (grayscale_selected) ImGui::SetItemDefaultFocus();
+
+            const bool viridis_selected = settings.color_map == VolumeColorMap::viridis;
+            if (ImGui::Selectable("Viridis", viridis_selected)) settings.color_map = VolumeColorMap::viridis;
+            if (viridis_selected) ImGui::SetItemDefaultFocus();
+
+            const bool turbo_selected = settings.color_map == VolumeColorMap::turbo;
+            if (ImGui::Selectable("Turbo", turbo_selected)) settings.color_map = VolumeColorMap::turbo;
+            if (turbo_selected) ImGui::SetItemDefaultFocus();
+
+            const bool heat_selected = settings.color_map == VolumeColorMap::heat;
+            if (ImGui::Selectable("Heat", heat_selected)) settings.color_map = VolumeColorMap::heat;
+            if (heat_selected) ImGui::SetItemDefaultFocus();
+            ImGui::EndCombo();
+        }
+
+        if (settings.display_mode == VolumeDisplayMode::slice) {
+            const char* axis_label = "Y";
+            if (settings.slice_axis == VolumeSliceAxis::x) axis_label = "X";
+            if (settings.slice_axis == VolumeSliceAxis::z) axis_label = "Z";
+            if (ImGui::BeginCombo("Axis", axis_label)) {
+                const bool x_selected = settings.slice_axis == VolumeSliceAxis::x;
+                if (ImGui::Selectable("X", x_selected)) settings.slice_axis = VolumeSliceAxis::x;
+                if (x_selected) ImGui::SetItemDefaultFocus();
+
+                const bool y_selected = settings.slice_axis == VolumeSliceAxis::y;
+                if (ImGui::Selectable("Y", y_selected)) settings.slice_axis = VolumeSliceAxis::y;
+                if (y_selected) ImGui::SetItemDefaultFocus();
+
+                const bool z_selected = settings.slice_axis == VolumeSliceAxis::z;
+                if (ImGui::Selectable("Z", z_selected)) settings.slice_axis = VolumeSliceAxis::z;
+                if (z_selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
+            }
+            ImGui::SliderFloat("Slice", &settings.slice_position, 0.0f, 1.0f, "%.3f");
+        }
+
+        std::array<float, 2> value_range{settings.value_min, settings.value_max};
+        if (ImGui::InputFloat2("Value Range", value_range.data())) {
+            settings.value_min = value_range[0];
+            settings.value_max = value_range[1];
+        }
+        ImGui::SliderFloat("Opacity", &settings.opacity, 0.0f, 1.0f, "%.3f");
+        ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
+
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+
         if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
         this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
@@ -710,48 +1004,27 @@ namespace xayah {
             }
         };
 
-        const float timeline_height   = this->timeline.height;
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (viewport->WorkSize.x <= 320.0f || viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for fixed timeline");
+        const float timeline_height = this->timeline.height;
+        if (main_viewport->WorkSize.x <= 320.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for fixed timeline");
 
-        ImGui::SetNextWindowViewport(viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - timeline_height}, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2{viewport->WorkSize.x, timeline_height}, ImGuiCond_Always);
-        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x, main_viewport->WorkPos.y + main_viewport->WorkSize.y - timeline_height}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, timeline_height}, ImGuiCond_Always);
+        constexpr ImGuiWindowFlags timeline_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
 
         TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max};
         constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
-        ImGui::Begin("Spectra Timeline", nullptr, window_flags);
+        ImGui::Begin("Spectra Timeline", nullptr, timeline_window_flags);
         ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
         ImGui::End();
         ImGui::PopStyleVar(2);
-    }
 
-    void Spectra::render_viewport(const vk::raii::CommandBuffer& command_buffer) {
-        if (!this->viewport.visible) return;
-        if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline) throw std::runtime_error("Viewport pipeline is not initialized");
-        if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
-
-        const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(this->swapchain.extent.height), 0.0f, 1.0f};
-        const vk::Rect2D scissor{{0, 0}, this->swapchain.extent};
-        const float aspect                          = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(this->swapchain.extent.height);
-        const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
-
-        command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline);
-        command_buffer.setViewport(0, vulkan_viewport);
-        command_buffer.setScissor(0, scissor);
-        command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const float>{view_projection});
-        command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
-    }
-
-    void Spectra::render_imgui(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
         ImGui::Render();
-        const vk::RenderingAttachmentInfo color_attachment{
-            *this->swapchain.image_views[image_index],
+        const vk::RenderingAttachmentInfo imgui_color_attachment{
+            *this->swapchain.image_views[frame.image_index],
             vk::ImageLayout::eColorAttachmentOptimal,
             vk::ResolveModeFlagBits::eNone,
             {},
@@ -760,77 +1033,53 @@ namespace xayah {
             vk::AttachmentStoreOp::eStore,
             {},
         };
-        const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, nullptr, nullptr};
-        command_buffer.beginRendering(rendering_info);
+        const vk::RenderingInfo imgui_rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &imgui_color_attachment, nullptr, nullptr};
+        command_buffer.beginRendering(imgui_rendering_info);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *command_buffer);
         command_buffer.endRendering();
+
+        transition_image_layout(command_buffer, this->swapchain.images[frame.image_index], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eAllCommands, {});
+        this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::ePresentSrcKHR;
+        command_buffer.end();
     }
 
-    void Spectra::begin_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
-        {
-            constexpr vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-            constexpr vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-            const std::array attachment_barriers{
-                vk::ImageMemoryBarrier2{
-                    vk::PipelineStageFlagBits2::eAllCommands,
-                    {},
-                    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                    vk::AccessFlagBits2::eColorAttachmentWrite,
-                    this->swapchain.image_layouts[image_index],
-                    vk::ImageLayout::eColorAttachmentOptimal,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    this->swapchain.images[image_index],
-                    {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                },
-                vk::ImageMemoryBarrier2{
-                    depth_stages,
-                    depth_access,
-                    depth_stages,
-                    depth_access,
-                    this->swapchain.depth_layout,
-                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    *this->swapchain.depth_image,
-                    {this->swapchain.depth_aspect, 0, 1, 0, 1},
-                },
-            };
-            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(attachment_barriers.size()), attachment_barriers.data()};
-            command_buffer.pipelineBarrier2(dependency_info);
+    void Spectra::end_frame(FrameState& frame) {
+        if (this->imgui.viewports) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
         }
-        this->swapchain.image_layouts[image_index] = vk::ImageLayout::eColorAttachmentOptimal;
-        this->swapchain.depth_layout               = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
-        constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
-        constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
-        const vk::RenderingAttachmentInfo color_attachment{
-            *this->swapchain.image_views[image_index],
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::ResolveModeFlagBits::eNone,
-            {},
-            vk::ImageLayout::eUndefined,
-            vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eStore,
-            color_clear_value,
-        };
-        const vk::RenderingAttachmentInfo depth_attachment{
-            *this->swapchain.depth_view,
-            vk::ImageLayout::eDepthStencilAttachmentOptimal,
-            vk::ResolveModeFlagBits::eNone,
-            {},
-            vk::ImageLayout::eUndefined,
-            vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eDontCare,
-            depth_clear_value,
-        };
-        const vk::RenderingAttachmentInfo* stencil_attachment = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? &depth_attachment : nullptr;
-        const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, &depth_attachment, stencil_attachment};
-        command_buffer.beginRendering(rendering_info);
-    }
+        const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+        const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
+        const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[frame.image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+        const vk::SubmitInfo2 submit_info{{}, 1, &wait_semaphore_info, 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
+        this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame.frame_index]);
 
-    void Spectra::end_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t) {
-        command_buffer.endRendering();
+        const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
+        const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
+        const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
+        try {
+            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
+                frame.recreate_after_present = true;
+            else if (present_result == vk::Result::eErrorSurfaceLostKHR)
+                frame.recreate_after_present = true;
+            else if (present_result != vk::Result::eSuccess)
+                throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+        } catch (const vk::OutOfDateKHRError&) {
+            frame.recreate_after_present = true;
+        } catch (const vk::SystemError& error) {
+            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
+                frame.recreate_after_present = true;
+            else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
+                frame.recreate_after_present = true;
+            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
+                frame.recreate_after_present = true;
+            else
+                throw;
+        }
+        if (frame.recreate_after_present) this->recreate_swapchain();
+
+        this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
 
     void Spectra::create_viewport_pipeline() {
@@ -910,6 +1159,122 @@ namespace xayah {
     void Spectra::destroy_viewport_pipeline() noexcept {
         this->viewport.pipeline        = nullptr;
         this->viewport.pipeline_layout = nullptr;
+    }
+
+    void Spectra::create_volume_renderer() {
+        if (*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() != 0 || !this->volume_renderer.frame_resources.empty()) throw std::runtime_error("Volume renderer is already initialized");
+        if (!*this->context.physical_device) throw std::runtime_error("Cannot create volume renderer without a physical device");
+        if (!*this->context.device) throw std::runtime_error("Cannot create volume renderer without a Vulkan device");
+        if (this->swapchain.format == vk::Format::eUndefined) throw std::runtime_error("Cannot create volume renderer without a color format");
+        if (this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create volume renderer without a depth format");
+        if (this->sync.frame_count == 0) throw std::runtime_error("Cannot create volume renderer without frames in flight");
+
+        this->volume_renderer.frame_resources.resize(this->sync.frame_count);
+
+        const std::uint32_t descriptor_set_count = this->sync.frame_count;
+        if (descriptor_set_count > std::numeric_limits<std::uint32_t>::max() / 4) throw std::runtime_error("Volume descriptor pool size is too large");
+
+        constexpr std::array bindings{
+            vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{2, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+        };
+        const vk::DescriptorSetLayoutCreateInfo descriptor_layout_create_info{{}, static_cast<std::uint32_t>(bindings.size()), bindings.data()};
+        this->volume_renderer.descriptor_layout = vk::raii::DescriptorSetLayout{this->context.device, descriptor_layout_create_info};
+
+        const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eStorageBuffer, descriptor_set_count * 4};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, descriptor_set_count, 1, &pool_size};
+        this->volume_renderer.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+
+        std::vector<vk::DescriptorSetLayout> layouts(descriptor_set_count, *this->volume_renderer.descriptor_layout);
+        const vk::DescriptorSetAllocateInfo allocate_info{*this->volume_renderer.descriptor_pool, descriptor_set_count, layouts.data()};
+        this->volume_renderer.descriptor_sets = vk::raii::DescriptorSets{this->context.device, allocate_info};
+        if (this->volume_renderer.descriptor_sets.size() != descriptor_set_count) throw std::runtime_error("Failed to allocate volume descriptor sets");
+
+        const vk::DescriptorSetLayout descriptor_layout = *this->volume_renderer.descriptor_layout;
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_layout};
+        this->volume_renderer.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
+
+        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "volume.vert.spv");
+        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "volume.frag.spv");
+        const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
+        const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
+        const vk::raii::ShaderModule vertex_shader{this->context.device, vertex_module_create_info};
+        const vk::raii::ShaderModule fragment_shader{this->context.device, fragment_module_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+
+        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
+        constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        vk::PipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount  = 1;
+
+        constexpr vk::PipelineRasterizationStateCreateInfo rasterization_state{
+            {},
+            VK_FALSE,
+            VK_FALSE,
+            vk::PolygonMode::eFill,
+            vk::CullModeFlagBits::eNone,
+            vk::FrontFace::eCounterClockwise,
+            VK_FALSE,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+        };
+        constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
+        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+
+        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+        color_blend_attachment.blendEnable         = VK_TRUE;
+        color_blend_attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+        color_blend_attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        color_blend_attachment.colorBlendOp        = vk::BlendOp::eAdd;
+        color_blend_attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        color_blend_attachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        color_blend_attachment.alphaBlendOp        = vk::BlendOp::eAdd;
+        color_blend_attachment.colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+
+        const vk::Format color_format   = this->swapchain.format;
+        const vk::Format stencil_format = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? this->swapchain.depth_format : vk::Format::eUndefined;
+        vk::PipelineRenderingCreateInfo rendering_create_info{};
+        rendering_create_info.colorAttachmentCount    = 1;
+        rendering_create_info.pColorAttachmentFormats = &color_format;
+        rendering_create_info.depthAttachmentFormat   = this->swapchain.depth_format;
+        rendering_create_info.stencilAttachmentFormat = stencil_format;
+
+        vk::GraphicsPipelineCreateInfo pipeline_create_info{};
+        pipeline_create_info.pNext               = &rendering_create_info;
+        pipeline_create_info.stageCount          = static_cast<std::uint32_t>(shader_stages.size());
+        pipeline_create_info.pStages             = shader_stages.data();
+        pipeline_create_info.pVertexInputState   = &vertex_input_state;
+        pipeline_create_info.pInputAssemblyState = &input_assembly_state;
+        pipeline_create_info.pViewportState      = &viewport_state;
+        pipeline_create_info.pRasterizationState = &rasterization_state;
+        pipeline_create_info.pMultisampleState   = &multisample_state;
+        pipeline_create_info.pDepthStencilState  = &depth_stencil_state;
+        pipeline_create_info.pColorBlendState    = &color_blend_state;
+        pipeline_create_info.pDynamicState       = &dynamic_state;
+        pipeline_create_info.layout              = *this->volume_renderer.pipeline_layout;
+        pipeline_create_info.renderPass          = nullptr;
+        pipeline_create_info.subpass             = 0;
+        this->volume_renderer.pipeline           = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+    }
+
+    void Spectra::destroy_volume_renderer() noexcept {
+        this->volume_renderer.pipeline          = nullptr;
+        this->volume_renderer.pipeline_layout   = nullptr;
+        this->volume_renderer.descriptor_sets   = nullptr;
+        this->volume_renderer.descriptor_pool   = nullptr;
+        this->volume_renderer.descriptor_layout = nullptr;
+        this->volume_renderer.frame_resources.clear();
     }
 
     void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
@@ -1103,6 +1468,8 @@ namespace xayah {
 
         this->context.device.waitIdle();
 
+        const bool recreate_volume_renderer = static_cast<bool>(*this->volume_renderer.pipeline);
+        this->destroy_volume_renderer();
         this->destroy_viewport_pipeline();
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
         this->swapchain.depth_view           = nullptr;
@@ -1118,6 +1485,7 @@ namespace xayah {
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
+        if (recreate_volume_renderer) this->create_volume_renderer();
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");

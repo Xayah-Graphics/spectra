@@ -3,6 +3,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 export module spectra;
+export import scene;
 import camera;
 import std;
 
@@ -11,7 +12,7 @@ namespace xayah {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
-        void run();
+        void render(Scene& scene);
 
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
@@ -26,19 +27,14 @@ namespace xayah {
         };
 
         bool begin_frame(FrameState& frame);
-        void record_frame(const FrameState& frame);
+        void record_frame(const FrameState& frame, Scene& scene);
         void end_frame(FrameState& frame);
 
     private:
-        void update_camera();
-        void draw_imgui();
-        void draw_timeline();
-        void render_viewport(const vk::raii::CommandBuffer& command_buffer);
-        void render_imgui(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
-        void begin_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
-        void end_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
+        void create_volume_renderer();
+        void destroy_volume_renderer() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
@@ -85,8 +81,32 @@ namespace xayah {
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
             std::uint32_t vertex_count{170};
-            bool visible{true};
+            bool grid_visible{true};
         } viewport;
+
+        struct VolumeDrawResources {
+            vk::raii::Buffer x_data_buffer{nullptr};
+            vk::raii::DeviceMemory x_data_memory{nullptr};
+            vk::DeviceSize x_data_size{0};
+            vk::raii::Buffer y_data_buffer{nullptr};
+            vk::raii::DeviceMemory y_data_memory{nullptr};
+            vk::DeviceSize y_data_size{0};
+            vk::raii::Buffer z_data_buffer{nullptr};
+            vk::raii::DeviceMemory z_data_memory{nullptr};
+            vk::DeviceSize z_data_size{0};
+            vk::raii::Buffer parameters_buffer{nullptr};
+            vk::raii::DeviceMemory parameters_memory{nullptr};
+            vk::DeviceSize parameters_size{0};
+        };
+
+        struct {
+            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::vector<VolumeDrawResources> frame_resources{};
+        } volume_renderer{};
 
         struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
