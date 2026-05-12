@@ -26,15 +26,17 @@ namespace xayah {
 
         bool begin_frame(FrameState& frame);
         void record_frame(const FrameState& frame);
-        void draw_imgui() const;
+        void end_frame(FrameState& frame);
+
+    private:
+        void draw_imgui();
+        void draw_timeline();
         void render_imgui(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void begin_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void end_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
-        void end_frame(FrameState& frame);
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
-    private:
         struct {
             vk::raii::Context context;
             vk::raii::Instance instance{nullptr};
@@ -82,6 +84,13 @@ namespace xayah {
             bool viewports{false};
             bool initialized{false};
         } imgui;
+
+        struct {
+            int frame_min{0};
+            int frame_max{240};
+            int current_frame{0};
+            int first_frame{0};
+        } timeline;
 
         struct {
             std::uint32_t frame_count{2};
