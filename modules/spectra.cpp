@@ -584,7 +584,6 @@ namespace xayah {
 
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.visible = !this->viewport.visible;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
-        if (!this->viewport.visible) return;
 
         CameraInput input{};
         input.delta_seconds = io.DeltaTime;
