@@ -16,14 +16,6 @@ namespace xayah {
         std::vector<float> z_values{};
     };
 
-    export struct Volume {
-        std::string name{};
-        std::array<float, 3> origin{-1.0f, -1.0f, -1.0f};
-        std::array<float, 3> size{2.0f, 2.0f, 2.0f};
-        std::vector<CenteredScalarGrid> centered_scalar_grids{};
-        std::vector<StaggeredVectorGrid> staggered_vector_grids{};
-    };
-
     export enum class VolumeGridKind : std::uint32_t {
         centered_scalar  = 0,
         staggered_vector = 1,
@@ -48,7 +40,6 @@ namespace xayah {
     };
 
     export struct VolumeRenderSettings {
-        std::string volume_name{};
         std::string grid_name{};
         VolumeGridKind grid_kind{VolumeGridKind::centered_scalar};
         VolumeDisplayMode display_mode{VolumeDisplayMode::direct};
@@ -61,14 +52,35 @@ namespace xayah {
         float raymarch_step{0.025f};
     };
 
+    export struct Volume {
+        std::string name{};
+        std::array<float, 3> origin{-1.0f, -1.0f, -1.0f};
+        std::array<float, 3> size{2.0f, 2.0f, 2.0f};
+        std::vector<CenteredScalarGrid> centered_scalar_grids{};
+        std::vector<StaggeredVectorGrid> staggered_vector_grids{};
+        VolumeRenderSettings render_settings{};
+    };
+
+    export enum class SceneObjectKind : std::uint32_t {
+        volume = 0,
+    };
+
+    export struct SceneObjectSelection {
+        SceneObjectKind kind{SceneObjectKind::volume};
+        std::string name{};
+    };
+
     export class Scene {
     public:
         std::vector<Volume> volumes{};
-        VolumeRenderSettings volume_render_settings{};
+        SceneObjectSelection selected_object{};
 
         void validate() const;
-        void initialize_volume_selection();
-        void select_first_volume_grid(const Volume& volume);
+        void initialize_selection();
+        void select_volume(const Volume& volume);
+        void initialize_volume_render_settings(Volume& volume);
+        void select_first_volume_grid(Volume& volume);
+        [[nodiscard]] Volume& selected_volume();
         [[nodiscard]] const Volume& selected_volume() const;
         [[nodiscard]] const CenteredScalarGrid& selected_centered_scalar_grid(const Volume& volume) const;
         [[nodiscard]] const StaggeredVectorGrid& selected_staggered_vector_grid(const Volume& volume) const;
@@ -107,51 +119,79 @@ namespace xayah {
         }
     }
 
-    void Scene::initialize_volume_selection() {
-        if (this->volume_render_settings.volume_name.empty()) {
-            this->volume_render_settings.volume_name = this->volumes.front().name;
-            this->select_first_volume_grid(this->volumes.front());
+    void Scene::initialize_selection() {
+        for (Volume& volume : this->volumes) {
+            this->initialize_volume_render_settings(volume);
+        }
+
+        if (this->selected_object.name.empty()) {
+            this->select_volume(this->volumes.front());
             return;
         }
 
-        const Volume& volume = this->selected_volume();
-        if (this->volume_render_settings.grid_name.empty()) this->select_first_volume_grid(volume);
-        else if (this->volume_render_settings.grid_kind == VolumeGridKind::centered_scalar) static_cast<void>(this->selected_centered_scalar_grid(volume));
-        else static_cast<void>(this->selected_staggered_vector_grid(volume));
+        if (this->selected_object.kind == SceneObjectKind::volume) {
+            static_cast<void>(this->selected_volume());
+            return;
+        }
+
+        throw std::runtime_error("Unsupported selected scene object kind");
     }
 
-    void Scene::select_first_volume_grid(const Volume& volume) {
+    void Scene::select_volume(const Volume& volume) {
+        this->selected_object.kind = SceneObjectKind::volume;
+        this->selected_object.name = volume.name;
+    }
+
+    void Scene::initialize_volume_render_settings(Volume& volume) {
+        if (volume.render_settings.grid_name.empty())
+            this->select_first_volume_grid(volume);
+        else if (volume.render_settings.grid_kind == VolumeGridKind::centered_scalar)
+            static_cast<void>(this->selected_centered_scalar_grid(volume));
+        else
+            static_cast<void>(this->selected_staggered_vector_grid(volume));
+    }
+
+    void Scene::select_first_volume_grid(Volume& volume) {
         if (!volume.centered_scalar_grids.empty()) {
-            this->volume_render_settings.grid_kind = VolumeGridKind::centered_scalar;
-            this->volume_render_settings.grid_name = volume.centered_scalar_grids.front().name;
+            volume.render_settings.grid_kind = VolumeGridKind::centered_scalar;
+            volume.render_settings.grid_name = volume.centered_scalar_grids.front().name;
             return;
         }
         if (!volume.staggered_vector_grids.empty()) {
-            this->volume_render_settings.grid_kind = VolumeGridKind::staggered_vector;
-            this->volume_render_settings.grid_name = volume.staggered_vector_grids.front().name;
+            volume.render_settings.grid_kind = VolumeGridKind::staggered_vector;
+            volume.render_settings.grid_name = volume.staggered_vector_grids.front().name;
             return;
         }
         throw std::runtime_error(std::string{"Volume has no selectable grids: "} + volume.name);
     }
 
-    const Volume& Scene::selected_volume() const {
-        for (const Volume& volume : this->volumes) {
-            if (volume.name == this->volume_render_settings.volume_name) return volume;
+    Volume& Scene::selected_volume() {
+        if (this->selected_object.kind != SceneObjectKind::volume) throw std::runtime_error("Selected scene object is not a volume");
+        for (Volume& volume : this->volumes) {
+            if (volume.name == this->selected_object.name) return volume;
         }
-        throw std::runtime_error(std::string{"Selected volume does not exist: "} + this->volume_render_settings.volume_name);
+        throw std::runtime_error(std::string{"Selected volume does not exist: "} + this->selected_object.name);
+    }
+
+    const Volume& Scene::selected_volume() const {
+        if (this->selected_object.kind != SceneObjectKind::volume) throw std::runtime_error("Selected scene object is not a volume");
+        for (const Volume& volume : this->volumes) {
+            if (volume.name == this->selected_object.name) return volume;
+        }
+        throw std::runtime_error(std::string{"Selected volume does not exist: "} + this->selected_object.name);
     }
 
     const CenteredScalarGrid& Scene::selected_centered_scalar_grid(const Volume& volume) const {
         for (const CenteredScalarGrid& grid : volume.centered_scalar_grids) {
-            if (grid.name == this->volume_render_settings.grid_name) return grid;
+            if (grid.name == volume.render_settings.grid_name) return grid;
         }
-        throw std::runtime_error(std::string{"Selected centered scalar grid does not exist: "} + this->volume_render_settings.grid_name);
+        throw std::runtime_error(std::string{"Selected centered scalar grid does not exist: "} + volume.render_settings.grid_name);
     }
 
     const StaggeredVectorGrid& Scene::selected_staggered_vector_grid(const Volume& volume) const {
         for (const StaggeredVectorGrid& grid : volume.staggered_vector_grids) {
-            if (grid.name == this->volume_render_settings.grid_name) return grid;
+            if (grid.name == volume.render_settings.grid_name) return grid;
         }
-        throw std::runtime_error(std::string{"Selected staggered vector grid does not exist: "} + this->volume_render_settings.grid_name);
+        throw std::runtime_error(std::string{"Selected staggered vector grid does not exist: "} + volume.render_settings.grid_name);
     }
-}
+} // namespace xayah

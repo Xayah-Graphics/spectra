@@ -521,15 +521,15 @@ namespace xayah {
 
     void Spectra::render(Scene& scene) {
         scene.validate();
-        scene.initialize_volume_selection();
+        scene.initialize_selection();
 
-        this->create_volume_renderer();
+        this->create_volume_renderer(scene);
         try {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
                 FrameState frame{};
-                if (!this->begin_frame(frame)) continue;
+                if (!this->begin_frame(frame, scene)) continue;
                 this->record_frame(frame, scene);
-                this->end_frame(frame);
+                this->end_frame(frame, scene);
             }
 
             this->context.device.waitIdle();
@@ -544,10 +544,10 @@ namespace xayah {
         }
     }
 
-    bool Spectra::begin_frame(FrameState& frame) {
+    bool Spectra::begin_frame(FrameState& frame, const Scene& scene) {
         glfwPollEvents();
         if (this->surface.resize_requested) {
-            this->recreate_swapchain();
+            this->recreate_swapchain(scene);
             return false;
         }
 
@@ -561,7 +561,7 @@ namespace xayah {
             frame.recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
             frame.image_index            = acquired_image.value;
         } catch (const vk::OutOfDateKHRError&) {
-            this->recreate_swapchain();
+            this->recreate_swapchain(scene);
             return false;
         }
 
@@ -692,95 +692,102 @@ namespace xayah {
             command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
         }
 
+        const std::size_t scene_volume_count = scene.volumes.size();
         if (!*this->volume_renderer.pipeline_layout || !*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Volume renderer is not initialized");
         if (frame.frame_index >= this->sync.frame_count) throw std::runtime_error("Volume frame index is outside frame resource range");
-        if (frame.frame_index >= this->volume_renderer.frame_resources.size()) throw std::runtime_error("Volume frame index is outside renderer resource range");
+        if (scene_volume_count == 0) throw std::runtime_error("Cannot render a scene without volumes");
+        if (this->volume_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume renderer resources do not match scene volume count");
+        if (this->volume_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume descriptor sets do not match scene volume count");
 
-        const VolumeRenderSettings& render_settings = scene.volume_render_settings;
-        if (render_settings.opacity < 0.0f || render_settings.opacity > 1.0f) throw std::runtime_error("Volume opacity must be in [0, 1]");
-        if (render_settings.raymarch_step <= 0.0f) throw std::runtime_error("Volume raymarch step must be positive");
-        if (render_settings.value_min >= render_settings.value_max) throw std::runtime_error("Volume value range is invalid");
-        if (render_settings.slice_position < 0.0f || render_settings.slice_position > 1.0f) throw std::runtime_error("Volume slice position must be in [0, 1]");
-
-        const Volume& volume                       = scene.selected_volume();
-        VolumeDrawResources& resources             = this->volume_renderer.frame_resources.at(frame.frame_index);
         const std::array<float, 3> camera_position = this->viewport.camera.position();
         constexpr vk::BufferUsageFlags storage_buffer_usage{vk::BufferUsageFlagBits::eStorageBuffer};
         constexpr vk::MemoryPropertyFlags upload_memory_properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
 
-        if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
-            const CenteredScalarGrid& grid = scene.selected_centered_scalar_grid(volume);
-            const std::array spacing{
-                volume.size[0] / static_cast<float>(grid.resolution[0]),
-                volume.size[1] / static_cast<float>(grid.resolution[1]),
-                volume.size[2] / static_cast<float>(grid.resolution[2]),
-            };
-
-            VolumeShaderParameters parameters{};
-            parameters.view_projection   = view_projection;
-            parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
-            parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
-            parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
-            parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::centered_scalar)};
-            parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
-            parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
-
-            ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-            ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
-            write_buffer(resources.x_data_memory, resources.x_data_size, grid.values.data(), grid.values.size() * sizeof(float));
-            write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
-        } else {
-            const StaggeredVectorGrid& grid = scene.selected_staggered_vector_grid(volume);
-            const std::array spacing{
-                volume.size[0] / static_cast<float>(grid.resolution[0]),
-                volume.size[1] / static_cast<float>(grid.resolution[1]),
-                volume.size[2] / static_cast<float>(grid.resolution[2]),
-            };
-
-            VolumeShaderParameters parameters{};
-            parameters.view_projection   = view_projection;
-            parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
-            parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
-            parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
-            parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::staggered_vector)};
-            parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
-            parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
-
-            ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.x_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-            ensure_buffer(this->context.physical_device, this->context.device, resources.y_data_buffer, resources.y_data_memory, resources.y_data_size, grid.y_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-            ensure_buffer(this->context.physical_device, this->context.device, resources.z_data_buffer, resources.z_data_memory, resources.z_data_size, grid.z_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-            ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
-            write_buffer(resources.x_data_memory, resources.x_data_size, grid.x_values.data(), grid.x_values.size() * sizeof(float));
-            write_buffer(resources.y_data_memory, resources.y_data_size, grid.y_values.data(), grid.y_values.size() * sizeof(float));
-            write_buffer(resources.z_data_memory, resources.z_data_size, grid.z_values.data(), grid.z_values.size() * sizeof(float));
-            write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
-        }
-
-        const vk::raii::Buffer& y_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.y_data_buffer;
-        const vk::raii::Buffer& z_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.z_data_buffer;
-        const vk::DeviceSize y_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.y_data_size;
-        const vk::DeviceSize z_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.z_data_size;
-        const std::array buffer_infos{
-            vk::DescriptorBufferInfo{*resources.x_data_buffer, 0, resources.x_data_size},
-            vk::DescriptorBufferInfo{*y_data_buffer, 0, y_data_size},
-            vk::DescriptorBufferInfo{*z_data_buffer, 0, z_data_size},
-            vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
-        };
-        const vk::DescriptorSet descriptor_set = *this->volume_renderer.descriptor_sets[frame.frame_index];
-        const std::array writes{
-            vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
-            vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
-            vk::WriteDescriptorSet{descriptor_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[2]},
-            vk::WriteDescriptorSet{descriptor_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[3]},
-        };
-        this->context.device.updateDescriptorSets(writes, {});
-
-        const std::uint32_t volume_vertex_count = render_settings.display_mode == VolumeDisplayMode::direct ? 36u : 6u;
         command_buffer.setViewport(0, vulkan_viewport);
         command_buffer.setScissor(0, scissor);
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
-        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
-        command_buffer.draw(volume_vertex_count, 1, 0, 0);
+        for (std::size_t volume_index = 0; volume_index < scene_volume_count; ++volume_index) {
+            const Volume& volume                         = scene.volumes[volume_index];
+            const VolumeRenderSettings& render_settings = volume.render_settings;
+            if (render_settings.opacity < 0.0f || render_settings.opacity > 1.0f) throw std::runtime_error(std::string{"Volume opacity must be in [0, 1]: "} + volume.name);
+            if (render_settings.raymarch_step <= 0.0f) throw std::runtime_error(std::string{"Volume raymarch step must be positive: "} + volume.name);
+            if (render_settings.value_min >= render_settings.value_max) throw std::runtime_error(std::string{"Volume value range is invalid: "} + volume.name);
+            if (render_settings.slice_position < 0.0f || render_settings.slice_position > 1.0f) throw std::runtime_error(std::string{"Volume slice position must be in [0, 1]: "} + volume.name);
+
+            const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_volume_count + volume_index;
+            VolumeDrawResources& resources   = this->volume_renderer.frame_resources.at(resource_index);
+
+            if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
+                const CenteredScalarGrid& grid = scene.selected_centered_scalar_grid(volume);
+                const std::array spacing{
+                    volume.size[0] / static_cast<float>(grid.resolution[0]),
+                    volume.size[1] / static_cast<float>(grid.resolution[1]),
+                    volume.size[2] / static_cast<float>(grid.resolution[2]),
+                };
+
+                VolumeShaderParameters parameters{};
+                parameters.view_projection   = view_projection;
+                parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
+                parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+                parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
+                parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::centered_scalar)};
+                parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
+                parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
+
+                ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
+                write_buffer(resources.x_data_memory, resources.x_data_size, grid.values.data(), grid.values.size() * sizeof(float));
+                write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+            } else {
+                const StaggeredVectorGrid& grid = scene.selected_staggered_vector_grid(volume);
+                const std::array spacing{
+                    volume.size[0] / static_cast<float>(grid.resolution[0]),
+                    volume.size[1] / static_cast<float>(grid.resolution[1]),
+                    volume.size[2] / static_cast<float>(grid.resolution[2]),
+                };
+
+                VolumeShaderParameters parameters{};
+                parameters.view_projection   = view_projection;
+                parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
+                parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+                parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
+                parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::staggered_vector)};
+                parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
+                parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
+
+                ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.x_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.y_data_buffer, resources.y_data_memory, resources.y_data_size, grid.y_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.z_data_buffer, resources.z_data_memory, resources.z_data_size, grid.z_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
+                write_buffer(resources.x_data_memory, resources.x_data_size, grid.x_values.data(), grid.x_values.size() * sizeof(float));
+                write_buffer(resources.y_data_memory, resources.y_data_size, grid.y_values.data(), grid.y_values.size() * sizeof(float));
+                write_buffer(resources.z_data_memory, resources.z_data_size, grid.z_values.data(), grid.z_values.size() * sizeof(float));
+                write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+            }
+
+            const vk::raii::Buffer& y_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.y_data_buffer;
+            const vk::raii::Buffer& z_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.z_data_buffer;
+            const vk::DeviceSize y_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.y_data_size;
+            const vk::DeviceSize z_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.z_data_size;
+            const std::array buffer_infos{
+                vk::DescriptorBufferInfo{*resources.x_data_buffer, 0, resources.x_data_size},
+                vk::DescriptorBufferInfo{*y_data_buffer, 0, y_data_size},
+                vk::DescriptorBufferInfo{*z_data_buffer, 0, z_data_size},
+                vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
+            };
+            const vk::DescriptorSet descriptor_set = *this->volume_renderer.descriptor_sets[resource_index];
+            const std::array writes{
+                vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
+                vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
+                vk::WriteDescriptorSet{descriptor_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[2]},
+                vk::WriteDescriptorSet{descriptor_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[3]},
+            };
+            this->context.device.updateDescriptorSets(writes, {});
+
+            const std::uint32_t volume_vertex_count = render_settings.display_mode == VolumeDisplayMode::direct ? 36u : 6u;
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
+            command_buffer.draw(volume_vertex_count, 1, 0, 0);
+        }
         command_buffer.endRendering();
 
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
@@ -789,7 +796,7 @@ namespace xayah {
         ImGui::SetNextWindowViewport(main_viewport->ID);
         ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.02f);
-        constexpr ImGuiWindowFlags stats_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
+        constexpr ImGuiWindowFlags stats_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
@@ -845,39 +852,118 @@ namespace xayah {
             ImGui::TextColored(fps_color, "%.1f", fps);
             ImGui::EndTable();
         }
+
+        const std::size_t volume_count = scene.volumes.size();
+        const std::size_t object_count = volume_count;
+        ImGui::Separator();
+        ImGui::TextColored(accent_color, "Scene");
+        ImGui::SameLine();
+        ImGui::TextColored(muted_color, "%zu total / %zu volume%s", object_count, volume_count, volume_count == 1 ? "" : "s");
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{0.18f, 0.42f, 0.72f, 0.24f});
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.22f, 0.50f, 0.86f, 0.34f});
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4{0.28f, 0.58f, 0.96f, 0.44f});
+        for (const Volume& volume : scene.volumes) {
+            const bool selected       = scene.selected_object.kind == SceneObjectKind::volume && scene.selected_object.name == volume.name;
+            const std::size_t scalars = volume.centered_scalar_grids.size();
+            const std::size_t vectors = volume.staggered_vector_grids.size();
+            const std::string label   = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector";
+            ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
+            if (ImGui::Selectable(label.c_str(), selected)) scene.select_volume(volume);
+            ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleColor(3);
         ImGui::End();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
 
-        const float volume_window_width = 320.0f;
+        const float inspector_window_width      = 360.0f;
+        const float inspector_window_max_height = main_viewport->WorkSize.y - this->timeline.height - 24.0f;
+        if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
         ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - volume_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2{volume_window_width, 0.0f}, ImGuiCond_FirstUseEver);
-        constexpr ImGuiWindowFlags volume_window_flags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - inspector_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
+        ImGui::SetNextWindowSizeConstraints(ImVec2{inspector_window_width, 0.0f}, ImVec2{inspector_window_width, inspector_window_max_height});
+        ImGui::SetNextWindowBgAlpha(0.18f);
+        constexpr ImGuiWindowFlags inspector_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.05f, 0.055f, 0.06f, 0.84f});
-        ImGui::Begin("Volume", nullptr, volume_window_flags);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0f, 14.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.040f, 0.048f, 0.48f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35f, 0.62f, 0.95f, 0.42f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.08f, 0.095f, 0.11f, 0.42f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
+        ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
+        if (scene.selected_object.kind != SceneObjectKind::volume) throw std::runtime_error("Object inspector only supports volume objects");
 
-        VolumeRenderSettings& settings = scene.volume_render_settings;
-        const Volume* active_volume    = &scene.selected_volume();
-        if (ImGui::BeginCombo("Volume", settings.volume_name.c_str())) {
-            for (const Volume& volume : scene.volumes) {
-                const bool selected = volume.name == settings.volume_name;
-                if (ImGui::Selectable(volume.name.c_str(), selected)) {
-                    settings.volume_name = volume.name;
-                    scene.select_first_volume_grid(volume);
-                    active_volume = &volume;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
+        Volume& active_volume          = scene.selected_volume();
+        VolumeRenderSettings& settings = active_volume.render_settings;
+
+        ImGui::TextColored(accent_color, "Object Inspector");
+        ImGui::SameLine();
+        ImGui::TextColored(muted_color, "Volume");
+        ImGui::Separator();
+
+        if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Name");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%s", active_volume.name.c_str());
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Origin");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.origin[0], active_volume.origin[1], active_volume.origin[2]);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Size");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.size[0], active_volume.size[1], active_volume.size[2]);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Grids");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, "%zu scalar / %zu vector", active_volume.centered_scalar_grids.size(), active_volume.staggered_vector_grids.size());
+            ImGui::EndTable();
         }
 
+        ImGui::Separator();
+        ImGui::TextColored(accent_color, "Grids");
+        if (ImGui::BeginTable("InspectorGridList", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Kind");
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupColumn("Resolution");
+            ImGui::TableHeadersRow();
+            for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Scalar");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%s", grid.name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
+            }
+            for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Vector");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%s", grid.name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::Separator();
+        ImGui::TextColored(accent_color, "Render");
         const char* grid_kind_label  = settings.grid_kind == VolumeGridKind::centered_scalar ? "Scalar" : "Vector";
         const std::string grid_label = settings.grid_name + " (" + grid_kind_label + ")";
         if (ImGui::BeginCombo("Grid", grid_label.c_str())) {
-            for (const CenteredScalarGrid& grid : active_volume->centered_scalar_grids) {
+            for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
                 const bool selected     = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
                 const std::string label = grid.name + " (Scalar)";
                 if (ImGui::Selectable(label.c_str(), selected)) {
@@ -886,7 +972,7 @@ namespace xayah {
                 }
                 if (selected) ImGui::SetItemDefaultFocus();
             }
-            for (const StaggeredVectorGrid& grid : active_volume->staggered_vector_grids) {
+            for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
                 const bool selected     = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
                 const std::string label = grid.name + " (Vector)";
                 if (ImGui::Selectable(label.c_str(), selected)) {
@@ -910,7 +996,7 @@ namespace xayah {
             ImGui::EndCombo();
         }
 
-        const char* color_map_label = "Viridis";
+        auto color_map_label = "Viridis";
         if (settings.color_map == VolumeColorMap::grayscale) color_map_label = "Grayscale";
         if (settings.color_map == VolumeColorMap::turbo) color_map_label = "Turbo";
         if (settings.color_map == VolumeColorMap::heat) color_map_label = "Heat";
@@ -934,7 +1020,7 @@ namespace xayah {
         }
 
         if (settings.display_mode == VolumeDisplayMode::slice) {
-            const char* axis_label = "Y";
+            auto axis_label = "Y";
             if (settings.slice_axis == VolumeSliceAxis::x) axis_label = "X";
             if (settings.slice_axis == VolumeSliceAxis::z) axis_label = "Z";
             if (ImGui::BeginCombo("Axis", axis_label)) {
@@ -954,7 +1040,7 @@ namespace xayah {
             ImGui::SliderFloat("Slice", &settings.slice_position, 0.0f, 1.0f, "%.3f");
         }
 
-        std::array<float, 2> value_range{settings.value_min, settings.value_max};
+        std::array value_range{settings.value_min, settings.value_max};
         if (ImGui::InputFloat2("Value Range", value_range.data())) {
             settings.value_min = value_range[0];
             settings.value_max = value_range[1];
@@ -963,8 +1049,8 @@ namespace xayah {
         ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
 
         ImGui::End();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(5);
+        ImGui::PopStyleVar(2);
 
         if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
@@ -1043,7 +1129,7 @@ namespace xayah {
         command_buffer.end();
     }
 
-    void Spectra::end_frame(FrameState& frame) {
+    void Spectra::end_frame(FrameState& frame, const Scene& scene) {
         if (this->imgui.viewports) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
@@ -1077,7 +1163,7 @@ namespace xayah {
             else
                 throw;
         }
-        if (frame.recreate_after_present) this->recreate_swapchain();
+        if (frame.recreate_after_present) this->recreate_swapchain(scene);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
@@ -1161,17 +1247,18 @@ namespace xayah {
         this->viewport.pipeline_layout = nullptr;
     }
 
-    void Spectra::create_volume_renderer() {
+    void Spectra::create_volume_renderer(const Scene& scene) {
         if (*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() != 0 || !this->volume_renderer.frame_resources.empty()) throw std::runtime_error("Volume renderer is already initialized");
         if (!*this->context.physical_device) throw std::runtime_error("Cannot create volume renderer without a physical device");
         if (!*this->context.device) throw std::runtime_error("Cannot create volume renderer without a Vulkan device");
         if (this->swapchain.format == vk::Format::eUndefined) throw std::runtime_error("Cannot create volume renderer without a color format");
         if (this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create volume renderer without a depth format");
         if (this->sync.frame_count == 0) throw std::runtime_error("Cannot create volume renderer without frames in flight");
+        if (scene.volumes.empty()) throw std::runtime_error("Cannot create volume renderer for a scene without volumes");
+        if (scene.volumes.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / this->sync.frame_count)) throw std::runtime_error("Scene has too many volumes for frame resources");
 
-        this->volume_renderer.frame_resources.resize(this->sync.frame_count);
-
-        const std::uint32_t descriptor_set_count = this->sync.frame_count;
+        const std::uint32_t descriptor_set_count = static_cast<std::uint32_t>(scene.volumes.size() * this->sync.frame_count);
+        this->volume_renderer.frame_resources.resize(descriptor_set_count);
         if (descriptor_set_count > std::numeric_limits<std::uint32_t>::max() / 4) throw std::runtime_error("Volume descriptor pool size is too large");
 
         constexpr std::array bindings{
@@ -1187,7 +1274,7 @@ namespace xayah {
         const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, descriptor_set_count, 1, &pool_size};
         this->volume_renderer.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
 
-        std::vector<vk::DescriptorSetLayout> layouts(descriptor_set_count, *this->volume_renderer.descriptor_layout);
+        std::vector layouts(descriptor_set_count, *this->volume_renderer.descriptor_layout);
         const vk::DescriptorSetAllocateInfo allocate_info{*this->volume_renderer.descriptor_pool, descriptor_set_count, layouts.data()};
         this->volume_renderer.descriptor_sets = vk::raii::DescriptorSets{this->context.device, allocate_info};
         if (this->volume_renderer.descriptor_sets.size() != descriptor_set_count) throw std::runtime_error("Failed to allocate volume descriptor sets");
@@ -1455,7 +1542,7 @@ namespace xayah {
         }
     }
 
-    void Spectra::recreate_swapchain() {
+    void Spectra::recreate_swapchain(const Scene& scene) {
         {
             int width  = 0;
             int height = 0;
@@ -1485,7 +1572,7 @@ namespace xayah {
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
-        if (recreate_volume_renderer) this->create_volume_renderer();
+        if (recreate_volume_renderer) this->create_volume_renderer(scene);
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");
