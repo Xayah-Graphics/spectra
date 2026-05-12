@@ -61,6 +61,27 @@ namespace xayah {
         VolumeRenderSettings render_settings{};
     };
 
+    export enum class ScenePlaybackMode : std::uint32_t {
+        live  = 0,
+        baked = 1,
+    };
+
+    export struct BakedVolumeFrame {
+        std::string volume_name{};
+        std::vector<CenteredScalarGrid> centered_scalar_grids{};
+        std::vector<StaggeredVectorGrid> staggered_vector_grids{};
+    };
+
+    export struct BakedSceneFrame {
+        int frame_index{0};
+        std::vector<BakedVolumeFrame> volumes{};
+    };
+
+    export struct SceneBake {
+        ScenePlaybackMode mode{ScenePlaybackMode::live};
+        std::vector<BakedSceneFrame> frames{};
+    };
+
     export enum class SceneObjectKind : std::uint32_t {
         volume = 0,
     };
@@ -74,12 +95,17 @@ namespace xayah {
     public:
         std::vector<Volume> volumes{};
         SceneObjectSelection selected_object{};
+        SceneBake bake{};
 
         void validate() const;
+        void validate_bake() const;
         void initialize_selection();
         void select_volume(const Volume& volume);
+        void apply_playback_frame(int frame_index);
         void initialize_volume_render_settings(Volume& volume);
         void select_first_volume_grid(Volume& volume);
+        [[nodiscard]] int baked_frame_min() const;
+        [[nodiscard]] int baked_frame_max() const;
         [[nodiscard]] Volume& selected_volume();
         [[nodiscard]] const Volume& selected_volume() const;
         [[nodiscard]] const CenteredScalarGrid& selected_centered_scalar_grid(const Volume& volume) const;
@@ -119,6 +145,82 @@ namespace xayah {
         }
     }
 
+    void Scene::validate_bake() const {
+        if (this->bake.mode == ScenePlaybackMode::live) return;
+        if (this->bake.frames.empty()) throw std::runtime_error("Baked playback has no frames");
+
+        std::set<int> frame_indices{};
+        int frame_min = this->bake.frames.front().frame_index;
+        int frame_max = this->bake.frames.front().frame_index;
+        for (const BakedSceneFrame& frame : this->bake.frames) {
+            if (!frame_indices.insert(frame.frame_index).second) throw std::runtime_error(std::string{"Duplicate baked frame index: "} + std::to_string(frame.frame_index));
+            if (frame.frame_index < frame_min) frame_min = frame.frame_index;
+            if (frame.frame_index > frame_max) frame_max = frame.frame_index;
+            if (frame.volumes.size() != this->volumes.size()) throw std::runtime_error(std::string{"Baked frame volume count does not match scene volume count: "} + std::to_string(frame.frame_index));
+
+            std::set<std::string> baked_volume_names{};
+            for (const BakedVolumeFrame& baked_volume : frame.volumes) {
+                if (baked_volume.volume_name.empty()) throw std::runtime_error("Baked volume name must not be empty");
+                if (!baked_volume_names.insert(baked_volume.volume_name).second) throw std::runtime_error(std::string{"Duplicate baked volume in frame: "} + baked_volume.volume_name);
+            }
+
+            for (const Volume& volume : this->volumes) {
+                const BakedVolumeFrame* baked_volume = nullptr;
+                for (const BakedVolumeFrame& candidate : frame.volumes) {
+                    if (candidate.volume_name == volume.name) {
+                        baked_volume = &candidate;
+                        break;
+                    }
+                }
+                if (baked_volume == nullptr) throw std::runtime_error(std::string{"Baked frame is missing volume: "} + volume.name);
+                if (baked_volume->centered_scalar_grids.size() != volume.centered_scalar_grids.size()) throw std::runtime_error(std::string{"Baked centered scalar grid count does not match volume: "} + volume.name);
+                if (baked_volume->staggered_vector_grids.size() != volume.staggered_vector_grids.size()) throw std::runtime_error(std::string{"Baked staggered vector grid count does not match volume: "} + volume.name);
+
+                std::set<std::string> baked_grid_names{};
+                for (const CenteredScalarGrid& baked_grid : baked_volume->centered_scalar_grids) {
+                    if (baked_grid.name.empty()) throw std::runtime_error(std::string{"Baked centered scalar grid name must not be empty in volume: "} + volume.name);
+                    if (!baked_grid_names.insert(baked_grid.name).second) throw std::runtime_error(std::string{"Duplicate baked grid in volume "} + volume.name + ": " + baked_grid.name);
+                }
+                for (const StaggeredVectorGrid& baked_grid : baked_volume->staggered_vector_grids) {
+                    if (baked_grid.name.empty()) throw std::runtime_error(std::string{"Baked staggered vector grid name must not be empty in volume: "} + volume.name);
+                    if (!baked_grid_names.insert(baked_grid.name).second) throw std::runtime_error(std::string{"Duplicate baked grid in volume "} + volume.name + ": " + baked_grid.name);
+                }
+
+                for (const CenteredScalarGrid& grid : volume.centered_scalar_grids) {
+                    const CenteredScalarGrid* baked_grid = nullptr;
+                    for (const CenteredScalarGrid& candidate : baked_volume->centered_scalar_grids) {
+                        if (candidate.name == grid.name) {
+                            baked_grid = &candidate;
+                            break;
+                        }
+                    }
+                    if (baked_grid == nullptr) throw std::runtime_error(std::string{"Baked frame is missing centered scalar grid: "} + grid.name);
+                    if (baked_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Baked centered scalar grid resolution does not match live grid: "} + grid.name);
+                    if (baked_grid->values.size() != grid.values.size()) throw std::runtime_error(std::string{"Baked centered scalar grid value count does not match live grid: "} + grid.name);
+                }
+
+                for (const StaggeredVectorGrid& grid : volume.staggered_vector_grids) {
+                    const StaggeredVectorGrid* baked_grid = nullptr;
+                    for (const StaggeredVectorGrid& candidate : baked_volume->staggered_vector_grids) {
+                        if (candidate.name == grid.name) {
+                            baked_grid = &candidate;
+                            break;
+                        }
+                    }
+                    if (baked_grid == nullptr) throw std::runtime_error(std::string{"Baked frame is missing staggered vector grid: "} + grid.name);
+                    if (baked_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Baked staggered vector grid resolution does not match live grid: "} + grid.name);
+                    if (baked_grid->x_values.size() != grid.x_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid x-face value count does not match live grid: "} + grid.name);
+                    if (baked_grid->y_values.size() != grid.y_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid y-face value count does not match live grid: "} + grid.name);
+                    if (baked_grid->z_values.size() != grid.z_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid z-face value count does not match live grid: "} + grid.name);
+                }
+            }
+        }
+
+        for (int frame_index = frame_min; frame_index <= frame_max; ++frame_index) {
+            if (!frame_indices.contains(frame_index)) throw std::runtime_error(std::string{"Baked playback is missing frame: "} + std::to_string(frame_index));
+        }
+    }
+
     void Scene::initialize_selection() {
         for (Volume& volume : this->volumes) {
             this->initialize_volume_render_settings(volume);
@@ -142,6 +244,62 @@ namespace xayah {
         this->selected_object.name = volume.name;
     }
 
+    void Scene::apply_playback_frame(int frame_index) {
+        if (this->bake.mode == ScenePlaybackMode::live) return;
+
+        const BakedSceneFrame* baked_frame = nullptr;
+        for (const BakedSceneFrame& frame : this->bake.frames) {
+            if (frame.frame_index == frame_index) {
+                baked_frame = &frame;
+                break;
+            }
+        }
+        if (baked_frame == nullptr) throw std::runtime_error(std::string{"Baked frame does not exist: "} + std::to_string(frame_index));
+
+        for (const BakedVolumeFrame& baked_volume : baked_frame->volumes) {
+            Volume* volume = nullptr;
+            for (Volume& candidate : this->volumes) {
+                if (candidate.name == baked_volume.volume_name) {
+                    volume = &candidate;
+                    break;
+                }
+            }
+            if (volume == nullptr) throw std::runtime_error(std::string{"Baked frame references missing volume: "} + baked_volume.volume_name);
+
+            for (CenteredScalarGrid& grid : volume->centered_scalar_grids) {
+                const CenteredScalarGrid* baked_grid = nullptr;
+                for (const CenteredScalarGrid& candidate : baked_volume.centered_scalar_grids) {
+                    if (candidate.name == grid.name) {
+                        baked_grid = &candidate;
+                        break;
+                    }
+                }
+                if (baked_grid == nullptr) throw std::runtime_error(std::string{"Baked frame is missing centered scalar grid: "} + grid.name);
+                if (baked_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Baked centered scalar grid resolution does not match live grid: "} + grid.name);
+                if (baked_grid->values.size() != grid.values.size()) throw std::runtime_error(std::string{"Baked centered scalar grid value count does not match live grid: "} + grid.name);
+                grid.values = baked_grid->values;
+            }
+
+            for (StaggeredVectorGrid& grid : volume->staggered_vector_grids) {
+                const StaggeredVectorGrid* baked_grid = nullptr;
+                for (const StaggeredVectorGrid& candidate : baked_volume.staggered_vector_grids) {
+                    if (candidate.name == grid.name) {
+                        baked_grid = &candidate;
+                        break;
+                    }
+                }
+                if (baked_grid == nullptr) throw std::runtime_error(std::string{"Baked frame is missing staggered vector grid: "} + grid.name);
+                if (baked_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Baked staggered vector grid resolution does not match live grid: "} + grid.name);
+                if (baked_grid->x_values.size() != grid.x_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid x-face value count does not match live grid: "} + grid.name);
+                if (baked_grid->y_values.size() != grid.y_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid y-face value count does not match live grid: "} + grid.name);
+                if (baked_grid->z_values.size() != grid.z_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid z-face value count does not match live grid: "} + grid.name);
+                grid.x_values = baked_grid->x_values;
+                grid.y_values = baked_grid->y_values;
+                grid.z_values = baked_grid->z_values;
+            }
+        }
+    }
+
     void Scene::initialize_volume_render_settings(Volume& volume) {
         if (volume.render_settings.grid_name.empty())
             this->select_first_volume_grid(volume);
@@ -163,6 +321,24 @@ namespace xayah {
             return;
         }
         throw std::runtime_error(std::string{"Volume has no selectable grids: "} + volume.name);
+    }
+
+    int Scene::baked_frame_min() const {
+        if (this->bake.frames.empty()) throw std::runtime_error("Baked playback has no frames");
+        int frame_min = this->bake.frames.front().frame_index;
+        for (const BakedSceneFrame& frame : this->bake.frames) {
+            if (frame.frame_index < frame_min) frame_min = frame.frame_index;
+        }
+        return frame_min;
+    }
+
+    int Scene::baked_frame_max() const {
+        if (this->bake.frames.empty()) throw std::runtime_error("Baked playback has no frames");
+        int frame_max = this->bake.frames.front().frame_index;
+        for (const BakedSceneFrame& frame : this->bake.frames) {
+            if (frame.frame_index > frame_max) frame_max = frame.frame_index;
+        }
+        return frame_max;
     }
 
     Volume& Scene::selected_volume() {

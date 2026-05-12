@@ -130,6 +130,46 @@ int main() {
     xayah::Scene scene;
     scene.volumes.emplace_back(std::move(volume));
     scene.volumes.emplace_back(std::move(sphere_volume));
+    scene.bake.mode = xayah::ScenePlaybackMode::baked;
+
+    for (int frame_index = 0; frame_index < 3; ++frame_index) {
+        xayah::BakedSceneFrame baked_frame;
+        baked_frame.frame_index = frame_index;
+
+        for (const xayah::Volume& live_volume : scene.volumes) {
+            xayah::BakedVolumeFrame baked_volume;
+            baked_volume.volume_name              = live_volume.name;
+            baked_volume.centered_scalar_grids    = live_volume.centered_scalar_grids;
+            baked_volume.staggered_vector_grids   = live_volume.staggered_vector_grids;
+            const float frame_t                   = static_cast<float>(frame_index);
+            const float plume_density_scale       = 0.65f + frame_t * 0.25f;
+            const float sphere_density_scale      = 1.20f - frame_t * 0.25f;
+            const float staggered_velocity_scale  = 0.85f + frame_t * 0.20f;
+
+            for (xayah::CenteredScalarGrid& grid : baked_volume.centered_scalar_grids) {
+                const float scale = live_volume.name == "offset_sphere" ? sphere_density_scale : plume_density_scale;
+                for (float& value : grid.values) {
+                    value = std::clamp(value * scale, 0.0f, 1.0f);
+                }
+            }
+
+            for (xayah::StaggeredVectorGrid& grid : baked_volume.staggered_vector_grids) {
+                for (float& value : grid.x_values) {
+                    value *= staggered_velocity_scale;
+                }
+                for (float& value : grid.y_values) {
+                    value *= staggered_velocity_scale;
+                }
+                for (float& value : grid.z_values) {
+                    value *= staggered_velocity_scale;
+                }
+            }
+
+            baked_frame.volumes.emplace_back(std::move(baked_volume));
+        }
+
+        scene.bake.frames.emplace_back(std::move(baked_frame));
+    }
 
     xayah::Spectra spectra;
     spectra.render(scene);

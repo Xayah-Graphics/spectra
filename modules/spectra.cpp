@@ -522,6 +522,13 @@ namespace xayah {
     void Spectra::render(Scene& scene) {
         scene.validate();
         scene.initialize_selection();
+        scene.validate_bake();
+        if (scene.bake.mode == ScenePlaybackMode::baked) {
+            this->timeline.frame_min     = scene.baked_frame_min();
+            this->timeline.frame_max     = scene.baked_frame_max();
+            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+            this->timeline.first_frame   = this->timeline.frame_min;
+        }
 
         this->create_volume_renderer(scene);
         try {
@@ -609,6 +616,11 @@ namespace xayah {
     }
 
     void Spectra::record_frame(const FrameState& frame, Scene& scene) {
+        if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
+        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+        this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
+        scene.apply_playback_frame(this->timeline.current_frame);
+
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
         command_buffer.reset();
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
@@ -844,6 +856,20 @@ namespace xayah {
             ImGui::TextColored(label_color, "Timeline");
             ImGui::TableNextColumn();
             ImGui::TextColored(value_color, "%d / %d", this->timeline.current_frame, this->timeline.frame_max);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(label_color, "Playback");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked" : "Live");
+
+            if (scene.bake.mode == ScenePlaybackMode::baked) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Bake frames");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%zu", scene.bake.frames.size());
+            }
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
