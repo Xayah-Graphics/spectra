@@ -18,6 +18,17 @@ namespace xayah {
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
     protected:
+        struct FrameState {
+            std::uint32_t frame_index{0};
+            std::uint32_t image_index{0};
+            bool recreate_after_present{false};
+        };
+
+        bool begin_frame(FrameState& frame);
+        void record_frame(const FrameState& frame);
+        void begin_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
+        void end_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
+        void end_frame(FrameState& frame);
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 

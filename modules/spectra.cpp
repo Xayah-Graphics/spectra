@@ -22,7 +22,7 @@ namespace xayah {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
 
-        constexpr std::array<const char *, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
+        constexpr std::array<const char*, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
         constexpr std::array enabled_device_extensions{vk::KHRSwapchainExtensionName};
         std::vector<const char*> enabled_instance_extensions{};
 
@@ -498,151 +498,169 @@ namespace xayah {
         this->surface.resize_requested = false;
     }
 
-    void Spectra::run() {
-        while (!glfwWindowShouldClose(this->surface.window.get())) {
-            glfwPollEvents();
-            if (this->surface.resize_requested) {
-                this->recreate_swapchain();
-                continue;
-            }
+    bool Spectra::begin_frame(FrameState& frame) {
+        glfwPollEvents();
+        if (this->surface.resize_requested) {
+            this->recreate_swapchain();
+            return false;
+        }
 
-            bool recreate_after_present     = false;
-            const std::uint32_t frame_index = this->sync.frame_index;
-            if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
+        frame.recreate_after_present = false;
+        frame.frame_index            = this->sync.frame_index;
+        if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
 
-            std::uint32_t image_index = 0;
-            try {
-                const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame_index], nullptr);
-                if (acquired_image.result != vk::Result::eSuccess && acquired_image.result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
-                recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
-                image_index            = acquired_image.value;
-            } catch (const vk::OutOfDateKHRError&) {
-                this->recreate_swapchain();
-                continue;
-            }
+        try {
+            const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame.frame_index], nullptr);
+            if (acquired_image.result != vk::Result::eSuccess && acquired_image.result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
+            frame.recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
+            frame.image_index            = acquired_image.value;
+        } catch (const vk::OutOfDateKHRError&) {
+            this->recreate_swapchain();
+            return false;
+        }
 
-            if (const std::uint32_t previous_frame_index = this->sync.image_in_flight_frame.at(image_index); previous_frame_index != std::numeric_limits<std::uint32_t>::max()) {
-                if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
-            }
-            this->sync.image_in_flight_frame.at(image_index) = frame_index;
-            this->context.device.resetFences(*this->sync.in_flight_fences[frame_index]);
+        if (const std::uint32_t previous_frame_index = this->sync.image_in_flight_frame.at(frame.image_index); previous_frame_index != std::numeric_limits<std::uint32_t>::max()) {
+            if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
+        }
+        this->sync.image_in_flight_frame.at(frame.image_index) = frame.frame_index;
+        this->context.device.resetFences(*this->sync.in_flight_fences[frame.frame_index]);
+        return true;
+    }
 
-            const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame_index];
-            command_buffer.reset();
-            constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-            command_buffer.begin(command_buffer_begin_info);
-            {
-                constexpr vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-                constexpr vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-                const std::array attachment_barriers{
-                    vk::ImageMemoryBarrier2{
-                        vk::PipelineStageFlagBits2::eAllCommands,
-                        {},
-                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                        vk::AccessFlagBits2::eColorAttachmentWrite,
-                        this->swapchain.image_layouts[image_index],
-                        vk::ImageLayout::eColorAttachmentOptimal,
-                        VK_QUEUE_FAMILY_IGNORED,
-                        VK_QUEUE_FAMILY_IGNORED,
-                        this->swapchain.images[image_index],
-                        {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                    },
-                    vk::ImageMemoryBarrier2{
-                        depth_stages,
-                        depth_access,
-                        depth_stages,
-                        depth_access,
-                        this->swapchain.depth_layout,
-                        vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                        VK_QUEUE_FAMILY_IGNORED,
-                        VK_QUEUE_FAMILY_IGNORED,
-                        *this->swapchain.depth_image,
-                        {this->swapchain.depth_aspect, 0, 1, 0, 1},
-                    },
-                };
-                const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(attachment_barriers.size()), attachment_barriers.data()};
-                command_buffer.pipelineBarrier2(dependency_info);
-            }
-            this->swapchain.image_layouts[image_index] = vk::ImageLayout::eColorAttachmentOptimal;
-            this->swapchain.depth_layout               = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-            {
-                constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
-                constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
-                const vk::RenderingAttachmentInfo color_attachment{
-                    *this->swapchain.image_views[image_index],
-                    vk::ImageLayout::eColorAttachmentOptimal,
-                    vk::ResolveModeFlagBits::eNone,
-                    {},
-                    vk::ImageLayout::eUndefined,
-                    vk::AttachmentLoadOp::eClear,
-                    vk::AttachmentStoreOp::eStore,
-                    color_clear_value,
-                };
-                const vk::RenderingAttachmentInfo depth_attachment{
-                    *this->swapchain.depth_view,
-                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                    vk::ResolveModeFlagBits::eNone,
-                    {},
-                    vk::ImageLayout::eUndefined,
-                    vk::AttachmentLoadOp::eClear,
-                    vk::AttachmentStoreOp::eDontCare,
-                    depth_clear_value,
-                };
-                const vk::RenderingAttachmentInfo* stencil_attachment = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? &depth_attachment : nullptr;
-                const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, &depth_attachment, stencil_attachment};
-                command_buffer.beginRendering(rendering_info);
-                command_buffer.endRendering();
-            }
-            {
-                const vk::ImageMemoryBarrier2 image_memory_barrier{
-                    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                    vk::AccessFlagBits2::eColorAttachmentWrite,
+    void Spectra::record_frame(const FrameState& frame) {
+        const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
+        command_buffer.reset();
+        constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+        command_buffer.begin(command_buffer_begin_info);
+        this->begin_rendering(command_buffer, frame.image_index);
+        this->end_rendering(command_buffer, frame.image_index);
+        command_buffer.end();
+    }
+
+    void Spectra::begin_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
+        {
+            constexpr vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+            constexpr vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+            const std::array attachment_barriers{
+                vk::ImageMemoryBarrier2{
                     vk::PipelineStageFlagBits2::eAllCommands,
                     {},
+                    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                    vk::AccessFlagBits2::eColorAttachmentWrite,
+                    this->swapchain.image_layouts[image_index],
                     vk::ImageLayout::eColorAttachmentOptimal,
-                    vk::ImageLayout::ePresentSrcKHR,
                     VK_QUEUE_FAMILY_IGNORED,
                     VK_QUEUE_FAMILY_IGNORED,
                     this->swapchain.images[image_index],
                     {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                };
-                const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, 1, &image_memory_barrier};
-                command_buffer.pipelineBarrier2(dependency_info);
-            }
-            this->swapchain.image_layouts[image_index] = vk::ImageLayout::ePresentSrcKHR;
-            command_buffer.end();
+                },
+                vk::ImageMemoryBarrier2{
+                    depth_stages,
+                    depth_access,
+                    depth_stages,
+                    depth_access,
+                    this->swapchain.depth_layout,
+                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    VK_QUEUE_FAMILY_IGNORED,
+                    *this->swapchain.depth_image,
+                    {this->swapchain.depth_aspect, 0, 1, 0, 1},
+                },
+            };
+            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(attachment_barriers.size()), attachment_barriers.data()};
+            command_buffer.pipelineBarrier2(dependency_info);
+        }
+        this->swapchain.image_layouts[image_index] = vk::ImageLayout::eColorAttachmentOptimal;
+        this->swapchain.depth_layout               = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
-            const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
-            const vk::CommandBufferSubmitInfo command_buffer_submit_info{*command_buffer};
-            const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
-            const vk::SubmitInfo2 submit_info{{}, 1, &wait_semaphore_info, 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
-            this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame_index]);
+        constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
+        constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
+        const vk::RenderingAttachmentInfo color_attachment{
+            *this->swapchain.image_views[image_index],
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            vk::ImageLayout::eUndefined,
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eStore,
+            color_clear_value,
+        };
+        const vk::RenderingAttachmentInfo depth_attachment{
+            *this->swapchain.depth_view,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            vk::ImageLayout::eUndefined,
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eDontCare,
+            depth_clear_value,
+        };
+        const vk::RenderingAttachmentInfo* stencil_attachment = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? &depth_attachment : nullptr;
+        const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, &depth_attachment, stencil_attachment};
+        command_buffer.beginRendering(rendering_info);
+    }
 
-            const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[image_index];
-            const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
-            const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &image_index};
-            try {
-                if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
-                    recreate_after_present = true;
-                else if (present_result == vk::Result::eErrorSurfaceLostKHR)
-                    recreate_after_present = true;
-                else if (present_result != vk::Result::eSuccess)
-                    throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
-            } catch (const vk::OutOfDateKHRError&) {
-                recreate_after_present = true;
-            } catch (const vk::SystemError& error) {
-                if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
-                    recreate_after_present = true;
-                else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
-                    recreate_after_present = true;
-                else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
-                    recreate_after_present = true;
-                else
-                    throw;
-            }
-            if (recreate_after_present) this->recreate_swapchain();
+    void Spectra::end_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
+        command_buffer.endRendering();
+        {
+            const vk::ImageMemoryBarrier2 image_memory_barrier{
+                vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                vk::AccessFlagBits2::eColorAttachmentWrite,
+                vk::PipelineStageFlagBits2::eAllCommands,
+                {},
+                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::ImageLayout::ePresentSrcKHR,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                this->swapchain.images[image_index],
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            };
+            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, 1, &image_memory_barrier};
+            command_buffer.pipelineBarrier2(dependency_info);
+        }
+        this->swapchain.image_layouts[image_index] = vk::ImageLayout::ePresentSrcKHR;
+    }
 
-            this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
+    void Spectra::end_frame(FrameState& frame) {
+        const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+        const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
+        const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[frame.image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+        const vk::SubmitInfo2 submit_info{{}, 1, &wait_semaphore_info, 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
+        this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame.frame_index]);
+
+        const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
+        const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
+        const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
+        try {
+            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
+                frame.recreate_after_present = true;
+            else if (present_result == vk::Result::eErrorSurfaceLostKHR)
+                frame.recreate_after_present = true;
+            else if (present_result != vk::Result::eSuccess)
+                throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+        } catch (const vk::OutOfDateKHRError&) {
+            frame.recreate_after_present = true;
+        } catch (const vk::SystemError& error) {
+            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
+                frame.recreate_after_present = true;
+            else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
+                frame.recreate_after_present = true;
+            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
+                frame.recreate_after_present = true;
+            else
+                throw;
+        }
+        if (frame.recreate_after_present) this->recreate_swapchain();
+
+        this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
+    }
+
+    void Spectra::run() {
+        while (!glfwWindowShouldClose(this->surface.window.get())) {
+            FrameState frame{};
+            if (!this->begin_frame(frame)) continue;
+            this->record_frame(frame);
+            this->end_frame(frame);
         }
 
         this->context.device.waitIdle();
