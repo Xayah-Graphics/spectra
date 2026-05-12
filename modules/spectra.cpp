@@ -12,7 +12,12 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
+import camera;
 import std;
+
+#if !defined(SPECTRA_SHADER_DIR)
+#error "SPECTRA_SHADER_DIR must be defined by CMake"
+#endif
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -35,6 +40,20 @@ namespace {
     VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
         if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
         return VK_FALSE;
+    }
+
+    std::vector<std::uint32_t> read_spirv(const std::filesystem::path& path) {
+        std::ifstream file{path, std::ios::binary | std::ios::ate};
+        if (!file) throw std::runtime_error(std::string{"Failed to open SPIR-V shader: "} + path.string());
+
+        const std::streamoff byte_count = file.tellg();
+        if (byte_count <= 0 || byte_count % static_cast<std::streamoff>(sizeof(std::uint32_t)) != 0) throw std::runtime_error(std::string{"Invalid SPIR-V shader size: "} + path.string());
+
+        std::vector<std::uint32_t> code(static_cast<std::size_t>(byte_count) / sizeof(std::uint32_t));
+        file.seekg(0, std::ios::beg);
+        file.read(reinterpret_cast<char*>(code.data()), byte_count);
+        if (!file) throw std::runtime_error(std::string{"Failed to read SPIR-V shader: "} + path.string());
+        return code;
     }
 } // namespace
 
@@ -169,6 +188,7 @@ namespace xayah {
             this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
         }
         this->create_swapchain();
+        this->create_viewport_pipeline();
         {
             constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
             constexpr vk::FenceCreateInfo fence_create_info{vk::FenceCreateFlagBits::eSignaled};
@@ -393,6 +413,7 @@ namespace xayah {
             std::println("{}{}{}\n", dim, std::string(96, '='), reset);
         }
     } catch (...) {
+        this->destroy_viewport_pipeline();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -418,6 +439,7 @@ namespace xayah {
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
         }
+        this->destroy_viewport_pipeline();
         this->imgui.descriptor_pool = nullptr;
         this->imgui.color_format    = vk::Format::eUndefined;
         this->imgui.min_image_count = 2;
@@ -488,6 +510,7 @@ namespace xayah {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        this->update_camera();
         return true;
     }
 
@@ -497,6 +520,7 @@ namespace xayah {
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
         this->begin_rendering(command_buffer, frame.image_index);
+        this->render_viewport(command_buffer);
         this->end_rendering(command_buffer, frame.image_index);
         this->draw_imgui();
         this->render_imgui(command_buffer, frame.image_index);
@@ -544,6 +568,37 @@ namespace xayah {
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
 
+    void Spectra::update_camera() {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+
+        ImGuiIO& io = ImGui::GetIO();
+        const ImVec2 mouse_position = io.MousePos;
+        const float timeline_top = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
+        const bool in_viewport = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top;
+        const bool right_mouse = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        const bool middle_mouse = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        const bool left_mouse = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        const bool shift = io.KeyShift;
+        const bool alt = io.KeyAlt;
+
+        CameraInput input{};
+        input.delta_seconds = io.DeltaTime;
+        input.mouse_delta_x = in_viewport ? io.MouseDelta.x : 0.0f;
+        input.mouse_delta_y = in_viewport ? io.MouseDelta.y : 0.0f;
+        input.mouse_wheel = in_viewport ? io.MouseWheel : 0.0f;
+        input.orbit = in_viewport && ((right_mouse && !shift) || (alt && left_mouse));
+        input.pan = in_viewport && (middle_mouse || (right_mouse && shift));
+        input.fly = in_viewport && right_mouse && !shift;
+        input.move_forward = ImGui::IsKeyDown(ImGuiKey_W);
+        input.move_backward = ImGui::IsKeyDown(ImGuiKey_S);
+        input.move_left = ImGui::IsKeyDown(ImGuiKey_A);
+        input.move_right = ImGui::IsKeyDown(ImGuiKey_D);
+        input.move_up = ImGui::IsKeyDown(ImGuiKey_E);
+        input.move_down = ImGui::IsKeyDown(ImGuiKey_Q);
+        this->viewport.camera.update(input);
+    }
+
     void Spectra::draw_imgui() {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
@@ -551,7 +606,7 @@ namespace xayah {
         ImGui::SetNextWindowViewport(viewport->ID);
         ImGui::SetNextWindowPos(ImVec2{viewport->WorkPos.x + 12.0f, viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.02f);
-        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+        constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
@@ -652,8 +707,8 @@ namespace xayah {
             }
         };
 
-        constexpr float timeline_height = 160.0f;
-        const ImGuiViewport* viewport   = ImGui::GetMainViewport();
+        const float timeline_height   = this->timeline.height;
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (viewport->WorkSize.x <= 320.0f || viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for fixed timeline");
 
@@ -671,6 +726,22 @@ namespace xayah {
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
         ImGui::End();
         ImGui::PopStyleVar();
+    }
+
+    void Spectra::render_viewport(const vk::raii::CommandBuffer& command_buffer) {
+        if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline) throw std::runtime_error("Viewport pipeline is not initialized");
+        if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
+
+        const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(this->swapchain.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->swapchain.extent};
+        const float aspect = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(this->swapchain.extent.height);
+        const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
+
+        command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline);
+        command_buffer.setViewport(0, vulkan_viewport);
+        command_buffer.setScissor(0, scissor);
+        command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const float>{view_projection});
+        command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
     }
 
     void Spectra::render_imgui(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
@@ -756,6 +827,85 @@ namespace xayah {
 
     void Spectra::end_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t) {
         command_buffer.endRendering();
+    }
+
+    void Spectra::create_viewport_pipeline() {
+        if (!*this->context.device) throw std::runtime_error("Cannot create viewport pipeline without a Vulkan device");
+        if (this->swapchain.format == vk::Format::eUndefined || this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create viewport pipeline without swapchain formats");
+
+        const std::vector<std::uint32_t> vertex_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.vert.spv");
+        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.frag.spv");
+        const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
+        const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
+        const vk::raii::ShaderModule vertex_shader{this->context.device, vertex_module_create_info};
+        const vk::raii::ShaderModule fragment_shader{this->context.device, fragment_module_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+
+        constexpr vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex, 0, sizeof(float) * 16};
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 0, nullptr, 1, &push_constant_range};
+        this->viewport.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
+
+        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
+        constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eLineList, VK_FALSE};
+        vk::PipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount  = 1;
+
+        constexpr vk::PipelineRasterizationStateCreateInfo rasterization_state{
+            {},
+            VK_FALSE,
+            VK_FALSE,
+            vk::PolygonMode::eFill,
+            vk::CullModeFlagBits::eNone,
+            vk::FrontFace::eCounterClockwise,
+            VK_FALSE,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+        };
+        constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
+        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+
+        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+        color_blend_attachment.blendEnable    = VK_FALSE;
+        color_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+
+        const vk::Format color_format = this->swapchain.format;
+        const vk::Format stencil_format = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? this->swapchain.depth_format : vk::Format::eUndefined;
+        vk::PipelineRenderingCreateInfo rendering_create_info{};
+        rendering_create_info.colorAttachmentCount    = 1;
+        rendering_create_info.pColorAttachmentFormats = &color_format;
+        rendering_create_info.depthAttachmentFormat   = this->swapchain.depth_format;
+        rendering_create_info.stencilAttachmentFormat = stencil_format;
+
+        vk::GraphicsPipelineCreateInfo pipeline_create_info{};
+        pipeline_create_info.pNext               = &rendering_create_info;
+        pipeline_create_info.stageCount          = static_cast<std::uint32_t>(shader_stages.size());
+        pipeline_create_info.pStages             = shader_stages.data();
+        pipeline_create_info.pVertexInputState   = &vertex_input_state;
+        pipeline_create_info.pInputAssemblyState = &input_assembly_state;
+        pipeline_create_info.pViewportState      = &viewport_state;
+        pipeline_create_info.pRasterizationState = &rasterization_state;
+        pipeline_create_info.pMultisampleState   = &multisample_state;
+        pipeline_create_info.pDepthStencilState  = &depth_stencil_state;
+        pipeline_create_info.pColorBlendState    = &color_blend_state;
+        pipeline_create_info.pDynamicState       = &dynamic_state;
+        pipeline_create_info.layout              = *this->viewport.pipeline_layout;
+        pipeline_create_info.renderPass          = nullptr;
+        pipeline_create_info.subpass             = 0;
+        this->viewport.pipeline = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+    }
+
+    void Spectra::destroy_viewport_pipeline() noexcept {
+        this->viewport.pipeline = nullptr;
+        this->viewport.pipeline_layout = nullptr;
     }
 
     void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
@@ -949,6 +1099,7 @@ namespace xayah {
 
         this->context.device.waitIdle();
 
+        this->destroy_viewport_pipeline();
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
         this->swapchain.depth_view           = nullptr;
         this->swapchain.depth_image          = nullptr;
@@ -962,6 +1113,7 @@ namespace xayah {
         this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
+        this->create_viewport_pipeline();
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");

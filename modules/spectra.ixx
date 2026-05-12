@@ -3,6 +3,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 export module spectra;
+import camera;
 import std;
 
 namespace xayah {
@@ -29,11 +30,15 @@ namespace xayah {
         void end_frame(FrameState& frame);
 
     private:
+        void update_camera();
         void draw_imgui();
         void draw_timeline();
+        void render_viewport(const vk::raii::CommandBuffer& command_buffer);
         void render_imgui(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void begin_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void end_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
+        void create_viewport_pipeline();
+        void destroy_viewport_pipeline() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
@@ -76,6 +81,13 @@ namespace xayah {
         } swapchain;
 
         struct {
+            Camera camera{};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::uint32_t vertex_count{170};
+        } viewport;
+
+        struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
             vk::Format color_format{vk::Format::eUndefined};
             std::uint32_t min_image_count{2};
@@ -90,6 +102,7 @@ namespace xayah {
             int frame_max{240};
             int current_frame{0};
             int first_frame{0};
+            float height{160.0f};
         } timeline;
 
         struct {
