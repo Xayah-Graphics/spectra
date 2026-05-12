@@ -26,6 +26,8 @@ namespace xayah {
 
         bool begin_frame(FrameState& frame);
         void record_frame(const FrameState& frame);
+        void draw_imgui() const;
+        void render_imgui(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void begin_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void end_rendering(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index);
         void end_frame(FrameState& frame);
@@ -70,6 +72,16 @@ namespace xayah {
             vk::ImageAspectFlags depth_aspect{};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
         } swapchain;
+
+        struct {
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::Format color_format{vk::Format::eUndefined};
+            std::uint32_t min_image_count{2};
+            std::uint32_t image_count{2};
+            bool docking{true};
+            bool viewports{false};
+            bool initialized{false};
+        } imgui;
 
         struct {
             std::uint32_t frame_count{2};

@@ -5,12 +5,32 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import std;
 
 namespace {
+    void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
+        const vk::ImageMemoryBarrier2 image_memory_barrier{
+            src_stage,
+            src_access,
+            dst_stage,
+            dst_access,
+            old_layout,
+            new_layout,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            image,
+            {aspect, 0, 1, 0, 1},
+        };
+        const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, 1, &image_memory_barrier};
+        command_buffer.pipelineBarrier2(dependency_info);
+    }
+
     VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
         if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
         return VK_FALSE;
@@ -162,6 +182,91 @@ namespace xayah {
                 this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
             }
         }
+        {
+            if (this->imgui.initialized) throw std::runtime_error("ImGui is already initialized");
+            if (this->surface.window.get() == nullptr) throw std::runtime_error("Cannot initialize ImGui without a GLFW window");
+            if (this->swapchain.images.empty()) throw std::runtime_error("Cannot initialize ImGui without swapchain images");
+
+            bool context_created            = false;
+            bool glfw_backend_initialized   = false;
+            bool vulkan_backend_initialized = false;
+            try {
+                constexpr std::array descriptor_pool_sizes{
+                    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eUniformTexelBuffer, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageTexelBuffer, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, 1000},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, 1000},
+                };
+                const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{
+                    vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+                    1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
+                    static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
+                    descriptor_pool_sizes.data(),
+                };
+                this->imgui.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+                this->imgui.color_format    = this->swapchain.format;
+                this->imgui.min_image_count = std::max(2u, this->sync.frame_count);
+                this->imgui.image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
+                if (this->imgui.image_count < this->imgui.min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
+
+                IMGUI_CHECKVERSION();
+                ImGui::CreateContext();
+                context_created = true;
+
+                ImGuiIO& io = ImGui::GetIO();
+                if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+                if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+                ImGui::StyleColorsDark();
+                if (this->imgui.viewports) {
+                    ImGuiStyle& style                 = ImGui::GetStyle();
+                    style.WindowRounding              = 0.0f;
+                    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+                }
+
+                if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
+                glfw_backend_initialized = true;
+
+                VkFormat color_attachment_format = static_cast<VkFormat>(this->imgui.color_format);
+                VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
+                pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+                pipeline_rendering_create_info.colorAttachmentCount    = 1;
+                pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
+
+                ImGui_ImplVulkan_InitInfo init_info{};
+                init_info.ApiVersion                  = VK_API_VERSION_1_4;
+                init_info.Instance                    = static_cast<VkInstance>(*this->context.instance);
+                init_info.PhysicalDevice              = static_cast<VkPhysicalDevice>(*this->context.physical_device);
+                init_info.Device                      = static_cast<VkDevice>(*this->context.device);
+                init_info.QueueFamily                 = this->context.graphics_queue_index;
+                init_info.Queue                       = static_cast<VkQueue>(*this->context.graphics_queue);
+                init_info.DescriptorPool              = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
+                init_info.MinImageCount               = this->imgui.min_image_count;
+                init_info.ImageCount                  = this->imgui.image_count;
+                init_info.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
+                init_info.UseDynamicRendering         = true;
+                init_info.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
+                if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
+                vulkan_backend_initialized = true;
+                this->imgui.initialized    = true;
+            } catch (...) {
+                if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
+                if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
+                if (context_created) ImGui::DestroyContext();
+                this->imgui.descriptor_pool = nullptr;
+                this->imgui.color_format    = vk::Format::eUndefined;
+                this->imgui.min_image_count = 2;
+                this->imgui.image_count     = 2;
+                this->imgui.initialized     = false;
+                throw;
+            }
+        }
 
         {
             constexpr std::string_view reset{"\x1b[0m"};
@@ -287,6 +392,16 @@ namespace xayah {
             std::println("{}{}{}\n", dim, std::string(96, '='), reset);
         }
     } catch (...) {
+        if (this->imgui.initialized) {
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+            this->imgui.descriptor_pool = nullptr;
+            this->imgui.color_format    = vk::Format::eUndefined;
+            this->imgui.min_image_count = 2;
+            this->imgui.image_count     = 2;
+            this->imgui.initialized     = false;
+        }
         if (this->surface.glfw_initialized) glfwTerminate();
         throw;
     }
@@ -495,6 +610,103 @@ namespace xayah {
         this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
+        {
+            const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
+            if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");
+            if (this->imgui.color_format != this->swapchain.format || this->imgui.image_count != image_count) {
+                const bool docking   = this->imgui.docking;
+                const bool viewports = this->imgui.viewports;
+                ImGui_ImplVulkan_Shutdown();
+                ImGui_ImplGlfw_Shutdown();
+                ImGui::DestroyContext();
+                this->imgui.descriptor_pool = nullptr;
+                this->imgui.color_format    = this->swapchain.format;
+                this->imgui.min_image_count = std::max(2u, this->sync.frame_count);
+                this->imgui.image_count     = image_count;
+                this->imgui.docking         = docking;
+                this->imgui.viewports       = viewports;
+                this->imgui.initialized     = false;
+                if (this->imgui.image_count < this->imgui.min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
+
+                bool context_created            = false;
+                bool glfw_backend_initialized   = false;
+                bool vulkan_backend_initialized = false;
+                try {
+                    constexpr std::array descriptor_pool_sizes{
+                        vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eUniformTexelBuffer, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageTexelBuffer, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, 1000},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, 1000},
+                    };
+                    const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{
+                        vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+                        1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
+                        static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
+                        descriptor_pool_sizes.data(),
+                    };
+                    this->imgui.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+
+                    IMGUI_CHECKVERSION();
+                    ImGui::CreateContext();
+                    context_created = true;
+
+                    ImGuiIO& io = ImGui::GetIO();
+                    if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+                    if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+                    ImGui::StyleColorsDark();
+                    if (this->imgui.viewports) {
+                        ImGuiStyle& style                 = ImGui::GetStyle();
+                        style.WindowRounding              = 0.0f;
+                        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+                    }
+
+                    if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
+                    glfw_backend_initialized = true;
+
+                    VkFormat color_attachment_format = static_cast<VkFormat>(this->imgui.color_format);
+                    VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
+                    pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+                    pipeline_rendering_create_info.colorAttachmentCount    = 1;
+                    pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
+
+                    ImGui_ImplVulkan_InitInfo init_info{};
+                    init_info.ApiVersion                  = VK_API_VERSION_1_4;
+                    init_info.Instance                    = static_cast<VkInstance>(*this->context.instance);
+                    init_info.PhysicalDevice              = static_cast<VkPhysicalDevice>(*this->context.physical_device);
+                    init_info.Device                      = static_cast<VkDevice>(*this->context.device);
+                    init_info.QueueFamily                 = this->context.graphics_queue_index;
+                    init_info.Queue                       = static_cast<VkQueue>(*this->context.graphics_queue);
+                    init_info.DescriptorPool              = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
+                    init_info.MinImageCount               = this->imgui.min_image_count;
+                    init_info.ImageCount                  = this->imgui.image_count;
+                    init_info.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
+                    init_info.UseDynamicRendering         = true;
+                    init_info.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
+                    if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
+                    vulkan_backend_initialized = true;
+                    this->imgui.initialized    = true;
+                } catch (...) {
+                    if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
+                    if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
+                    if (context_created) ImGui::DestroyContext();
+                    this->imgui.descriptor_pool = nullptr;
+                    this->imgui.color_format    = vk::Format::eUndefined;
+                    this->imgui.min_image_count = 2;
+                    this->imgui.image_count     = 2;
+                    this->imgui.docking         = docking;
+                    this->imgui.viewports       = viewports;
+                    this->imgui.initialized     = false;
+                    throw;
+                }
+            }
+        }
         this->surface.resize_requested = false;
     }
 
@@ -524,6 +736,10 @@ namespace xayah {
         }
         this->sync.image_in_flight_frame.at(frame.image_index) = frame.frame_index;
         this->context.device.resetFences(*this->sync.in_flight_fences[frame.frame_index]);
+        if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized");
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
         return true;
     }
 
@@ -534,7 +750,39 @@ namespace xayah {
         command_buffer.begin(command_buffer_begin_info);
         this->begin_rendering(command_buffer, frame.image_index);
         this->end_rendering(command_buffer, frame.image_index);
+        this->draw_imgui();
+        this->render_imgui(command_buffer, frame.image_index);
+        transition_image_layout(command_buffer, this->swapchain.images[frame.image_index], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eAllCommands, {});
+        this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::ePresentSrcKHR;
         command_buffer.end();
+    }
+
+    void Spectra::draw_imgui() const {
+        ImGui::Begin("Spectra");
+        ImGui::Text("Vulkan 1.4 RAII");
+        ImGui::Text("Framebuffer: %u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
+        ImGui::Text("Swapchain images: %u", static_cast<std::uint32_t>(this->swapchain.images.size()));
+        ImGui::Text("Frame index: %u / %u", this->sync.frame_index, this->sync.frame_count);
+        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        ImGui::End();
+    }
+
+    void Spectra::render_imgui(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
+        ImGui::Render();
+        const vk::RenderingAttachmentInfo color_attachment{
+            *this->swapchain.image_views[image_index],
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            vk::ImageLayout::eUndefined,
+            vk::AttachmentLoadOp::eLoad,
+            vk::AttachmentStoreOp::eStore,
+            {},
+        };
+        const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, nullptr, nullptr};
+        command_buffer.beginRendering(rendering_info);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *command_buffer);
+        command_buffer.endRendering();
     }
 
     void Spectra::begin_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
@@ -600,28 +848,16 @@ namespace xayah {
         command_buffer.beginRendering(rendering_info);
     }
 
-    void Spectra::end_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t image_index) {
+    void Spectra::end_rendering(const vk::raii::CommandBuffer& command_buffer, const std::uint32_t) {
         command_buffer.endRendering();
-        {
-            const vk::ImageMemoryBarrier2 image_memory_barrier{
-                vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                vk::AccessFlagBits2::eColorAttachmentWrite,
-                vk::PipelineStageFlagBits2::eAllCommands,
-                {},
-                vk::ImageLayout::eColorAttachmentOptimal,
-                vk::ImageLayout::ePresentSrcKHR,
-                VK_QUEUE_FAMILY_IGNORED,
-                VK_QUEUE_FAMILY_IGNORED,
-                this->swapchain.images[image_index],
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, 1, &image_memory_barrier};
-            command_buffer.pipelineBarrier2(dependency_info);
-        }
-        this->swapchain.image_layouts[image_index] = vk::ImageLayout::ePresentSrcKHR;
     }
 
     void Spectra::end_frame(FrameState& frame) {
+        if (this->imgui.viewports) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
+
         const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
         const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
         const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[frame.image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
@@ -672,6 +908,16 @@ namespace xayah {
         } catch (...) {
         }
 
+        if (this->imgui.initialized) {
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+        }
+        this->imgui.descriptor_pool = nullptr;
+        this->imgui.color_format    = vk::Format::eUndefined;
+        this->imgui.min_image_count = 2;
+        this->imgui.image_count     = 2;
+        this->imgui.initialized     = false;
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
         this->sync.image_in_flight_frame.clear();
