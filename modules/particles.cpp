@@ -312,7 +312,7 @@ namespace xayah {
     void Particles::apply_snapshot(const ParticlesSnapshot& snapshot) {
         if (snapshot.object_id != this->id) throw std::runtime_error(std::string{"Particles snapshot id does not match object: "} + this->name);
         for (const Particle& particle : snapshot.particles) {
-            if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Baked particle radius must be positive: "} + this->name);
+            if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Snapshot particle radius must be positive: "} + this->name);
         }
         this->particles = snapshot.particles;
     }

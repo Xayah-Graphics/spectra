@@ -1,5 +1,4 @@
 #include "pyro.h"
-
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -1614,7 +1613,7 @@ namespace xayah::pyro_cuda {
 
     void launch_advect_centered_scalar(const cudaStream_t stream, const dim3 grid, const dim3 block, float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const std::uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const std::uint32_t advection_mode, const std::uint32_t* scalar_boundary_types, const float* scalar_boundary_values, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure) {
         const SmokeSimulationScalarBoundaryConfig scalar_boundary = make_scalar_boundary(scalar_boundary_types, scalar_boundary_values);
-        const SmokeSimulationFlowBoundaryConfig flow_boundary      = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
+        const SmokeSimulationFlowBoundaryConfig flow_boundary     = make_flow_boundary(flow_boundary_types, flow_boundary_velocity, flow_boundary_pressure);
         advect_scalar_kernel<<<grid, block, 0, stream>>>(destination, source, velocity_x, velocity_y, velocity_z, occupancy, nx, ny, nz, h, dt, advection_mode, scalar_boundary, flow_boundary);
         check_cuda(cudaGetLastError(), "advect_scalar_kernel");
     }

@@ -476,39 +476,39 @@ namespace xayah {
 
     void Volume::apply_snapshot(const VolumeSnapshot& snapshot) {
         if (snapshot.object_id != this->id) throw std::runtime_error(std::string{"Volume snapshot id does not match object: "} + this->name);
-        if (snapshot.centered_scalar_grids.size() != this->centered_scalar_grids.size()) throw std::runtime_error(std::string{"Baked centered scalar grid count does not match volume: "} + this->name);
-        if (snapshot.staggered_vector_grids.size() != this->staggered_vector_grids.size()) throw std::runtime_error(std::string{"Baked staggered vector grid count does not match volume: "} + this->name);
+        if (snapshot.centered_scalar_grids.size() != this->centered_scalar_grids.size()) throw std::runtime_error(std::string{"Snapshot centered scalar grid count does not match volume: "} + this->name);
+        if (snapshot.staggered_vector_grids.size() != this->staggered_vector_grids.size()) throw std::runtime_error(std::string{"Snapshot staggered vector grid count does not match volume: "} + this->name);
 
         for (CenteredScalarGrid& grid : this->centered_scalar_grids) {
-            const CenteredScalarGrid* baked_grid = nullptr;
+            const CenteredScalarGrid* snapshot_grid = nullptr;
             for (const CenteredScalarGrid& candidate : snapshot.centered_scalar_grids) {
                 if (candidate.name == grid.name) {
-                    baked_grid = &candidate;
+                    snapshot_grid = &candidate;
                     break;
                 }
             }
-            if (baked_grid == nullptr) throw std::runtime_error(std::string{"Baked frame is missing centered scalar grid: "} + grid.name);
-            if (baked_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Baked centered scalar grid resolution does not match live grid: "} + grid.name);
-            if (baked_grid->values.size() != grid.values.size()) throw std::runtime_error(std::string{"Baked centered scalar grid value count does not match live grid: "} + grid.name);
-            grid.values = baked_grid->values;
+            if (snapshot_grid == nullptr) throw std::runtime_error(std::string{"Snapshot is missing centered scalar grid: "} + grid.name);
+            if (snapshot_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Snapshot centered scalar grid resolution does not match live grid: "} + grid.name);
+            if (snapshot_grid->values.size() != grid.values.size()) throw std::runtime_error(std::string{"Snapshot centered scalar grid value count does not match live grid: "} + grid.name);
+            grid.values = snapshot_grid->values;
         }
 
         for (StaggeredVectorGrid& grid : this->staggered_vector_grids) {
-            const StaggeredVectorGrid* baked_grid = nullptr;
+            const StaggeredVectorGrid* snapshot_grid = nullptr;
             for (const StaggeredVectorGrid& candidate : snapshot.staggered_vector_grids) {
                 if (candidate.name == grid.name) {
-                    baked_grid = &candidate;
+                    snapshot_grid = &candidate;
                     break;
                 }
             }
-            if (baked_grid == nullptr) throw std::runtime_error(std::string{"Baked frame is missing staggered vector grid: "} + grid.name);
-            if (baked_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Baked staggered vector grid resolution does not match live grid: "} + grid.name);
-            if (baked_grid->x_values.size() != grid.x_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid x-face value count does not match live grid: "} + grid.name);
-            if (baked_grid->y_values.size() != grid.y_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid y-face value count does not match live grid: "} + grid.name);
-            if (baked_grid->z_values.size() != grid.z_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid z-face value count does not match live grid: "} + grid.name);
-            grid.x_values = baked_grid->x_values;
-            grid.y_values = baked_grid->y_values;
-            grid.z_values = baked_grid->z_values;
+            if (snapshot_grid == nullptr) throw std::runtime_error(std::string{"Snapshot is missing staggered vector grid: "} + grid.name);
+            if (snapshot_grid->resolution != grid.resolution) throw std::runtime_error(std::string{"Snapshot staggered vector grid resolution does not match live grid: "} + grid.name);
+            if (snapshot_grid->x_values.size() != grid.x_values.size()) throw std::runtime_error(std::string{"Snapshot staggered vector grid x-face value count does not match live grid: "} + grid.name);
+            if (snapshot_grid->y_values.size() != grid.y_values.size()) throw std::runtime_error(std::string{"Snapshot staggered vector grid y-face value count does not match live grid: "} + grid.name);
+            if (snapshot_grid->z_values.size() != grid.z_values.size()) throw std::runtime_error(std::string{"Snapshot staggered vector grid z-face value count does not match live grid: "} + grid.name);
+            grid.x_values = snapshot_grid->x_values;
+            grid.y_values = snapshot_grid->y_values;
+            grid.z_values = snapshot_grid->z_values;
         }
     }
 } // namespace xayah

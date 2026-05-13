@@ -495,15 +495,12 @@ namespace xayah {
     }
 
     void Spectra::render(Scene& scene) {
+        this->render(scene, {});
+    }
+
+    void Spectra::render(Scene& scene, const std::function<SpectraFrameUpdateResult(Scene&, const SpectraFrameUpdateContext&)>& update) {
         scene.initialize_selection();
         scene.validate();
-        scene.validate_bake();
-        if (scene.bake.mode == ScenePlaybackMode::baked) {
-            this->timeline.frame_min     = scene.baked_frame_min();
-            this->timeline.frame_max     = scene.baked_frame_max();
-            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-            this->timeline.first_frame   = this->timeline.frame_min;
-        }
 
         const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
         scene.create_render_resources(render_create_context);
@@ -511,6 +508,10 @@ namespace xayah {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
                 FrameState frame{};
                 if (!this->begin_frame(frame, scene)) continue;
+                if (update) {
+                    const SpectraFrameUpdateContext update_context{ImGui::GetIO().DeltaTime, this->input.space_pressed, this->input.shift_down, this->timeline.current_frame};
+                    this->apply_update_result(update(scene, update_context));
+                }
                 this->record_frame(frame, scene);
                 this->end_frame(frame, scene);
             }
@@ -563,7 +564,7 @@ namespace xayah {
 
         ImGuiIO& io                       = ImGui::GetIO();
         const ImVec2 mouse_position       = io.MousePos;
-        const float timeline_top          = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
+        const float timeline_top          = viewport->WorkPos.y + viewport->WorkSize.y - this->active_timeline_height();
         const bool transform_gizmo_active = this->gizmo.using_gizmo || ImGuizmo::IsUsingAny();
         const bool in_viewport            = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse && !transform_gizmo_active;
         const bool right_mouse            = ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -572,6 +573,8 @@ namespace xayah {
         const bool shift                  = io.KeyShift;
         const bool alt                    = io.KeyAlt;
 
+        this->input.space_pressed = !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
+        this->input.shift_down    = shift;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.grid_visible = !this->viewport.grid_visible;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
 
@@ -594,10 +597,12 @@ namespace xayah {
     }
 
     void Spectra::record_frame(const FrameState& frame, Scene& scene) {
-        if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
-        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-        this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
-        scene.apply_playback_frame(this->timeline.current_frame);
+        if (this->timeline.visible) {
+            if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
+            if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
+            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+            this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
+        }
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
         command_buffer.reset();
@@ -668,9 +673,10 @@ namespace xayah {
         if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (main_viewport->WorkSize.x <= 0.0f || main_viewport->WorkSize.y <= this->timeline.height) throw std::runtime_error("Viewport is too small for 3D scene");
+        const float timeline_height = this->active_timeline_height();
+        if (main_viewport->WorkSize.x <= 0.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for 3D scene");
 
-        const float viewport_height_ratio         = (main_viewport->WorkSize.y - this->timeline.height) / main_viewport->WorkSize.y;
+        const float viewport_height_ratio         = (main_viewport->WorkSize.y - timeline_height) / main_viewport->WorkSize.y;
         const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(std::lround(static_cast<float>(this->swapchain.extent.height) * viewport_height_ratio));
         if (scene_viewport_height == 0 || scene_viewport_height > this->swapchain.extent.height) throw std::runtime_error("Invalid 3D viewport height");
 
@@ -703,62 +709,65 @@ namespace xayah {
         this->draw_stats_panel(scene);
         this->draw_object_inspector(scene);
 
-        if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
-        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-        this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
+        if (this->timeline.visible) {
+            if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
+            if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
+            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+            this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
 
-        class TimelineSequence final : public ImSequencer::SequenceInterface {
-        public:
-            int frame_min{0};
-            int frame_max{0};
-            int row_start_frame{0};
-            int row_end_frame{0};
+            class TimelineSequence final : public ImSequencer::SequenceInterface {
+            public:
+                int frame_min{0};
+                int frame_max{0};
+                int available_frame_max{0};
+                int row_start_frame{0};
+                int row_end_frame{0};
 
-            TimelineSequence(const int frame_min, const int frame_max) : frame_min{frame_min}, frame_max{frame_max}, row_start_frame{frame_min}, row_end_frame{frame_max} {}
+                TimelineSequence(const int frame_min, const int frame_max, const int available_frame_max) : frame_min{frame_min}, frame_max{frame_max}, available_frame_max{available_frame_max}, row_start_frame{frame_min}, row_end_frame{available_frame_max} {}
 
-            int GetFrameMin() const override {
-                return this->frame_min;
-            }
+                int GetFrameMin() const override {
+                    return this->frame_min;
+                }
 
-            int GetFrameMax() const override {
-                return this->frame_max;
-            }
+                int GetFrameMax() const override {
+                    return this->frame_max;
+                }
 
-            int GetItemCount() const override {
-                return 1;
-            }
+                int GetItemCount() const override {
+                    return 1;
+                }
 
-            const char* GetItemLabel(const int index) const override {
-                if (index != 0) throw std::runtime_error("Timeline row index out of range");
-                return "Frame";
-            }
+                const char* GetItemLabel(const int index) const override {
+                    if (index != 0) throw std::runtime_error("Timeline row index out of range");
+                    return "Frame";
+                }
 
-            void Get(const int index, int** start, int** end, int* type, unsigned int* color) override {
-                if (index != 0) throw std::runtime_error("Timeline row index out of range");
-                if (start != nullptr) *start = &this->row_start_frame;
-                if (end != nullptr) *end = &this->row_end_frame;
-                if (type != nullptr) *type = 0;
-                if (color != nullptr) *color = 0x4E79A7;
-            }
-        };
+                void Get(const int index, int** start, int** end, int* type, unsigned int* color) override {
+                    if (index != 0) throw std::runtime_error("Timeline row index out of range");
+                    if (start != nullptr) *start = &this->row_start_frame;
+                    if (end != nullptr) *end = &this->row_end_frame;
+                    if (type != nullptr) *type = 0;
+                    if (color != nullptr) *color = 0x4E79A7;
+                }
+            };
 
-        const float timeline_height = this->timeline.height;
-        if (main_viewport->WorkSize.x <= 320.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for fixed timeline");
+            if (main_viewport->WorkSize.x <= 320.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for fixed timeline");
 
-        ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x, main_viewport->WorkPos.y + main_viewport->WorkSize.y - timeline_height}, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, timeline_height}, ImGuiCond_Always);
-        constexpr ImGuiWindowFlags timeline_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
+            ImGui::SetNextWindowViewport(main_viewport->ID);
+            ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x, main_viewport->WorkPos.y + main_viewport->WorkSize.y - timeline_height}, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, timeline_height}, ImGuiCond_Always);
+            constexpr ImGuiWindowFlags timeline_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
 
-        TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max};
-        constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
-        ImGui::Begin("Spectra Timeline", nullptr, timeline_window_flags);
-        ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
-        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-        ImGui::End();
-        ImGui::PopStyleVar(2);
+            TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max, this->timeline.available_frame_max};
+            constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
+            ImGui::Begin("Spectra Timeline", nullptr, timeline_window_flags);
+            ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
+            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+        }
 
         ImGui::Render();
         const vk::RenderingAttachmentInfo imgui_color_attachment{
@@ -835,20 +844,29 @@ namespace xayah {
             ImGui::TableNextColumn();
             ImGui::TextColored(label_color, "Timeline");
             ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%d / %d", this->timeline.current_frame, this->timeline.frame_max);
+            if (this->timeline.visible)
+                ImGui::TextColored(value_color, "%d / %d ready / %d total", this->timeline.current_frame, this->timeline.available_frame_max, this->timeline.frame_max);
+            else
+                ImGui::TextColored(value_color, "Hidden");
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Playback");
+            ImGui::TextColored(label_color, "Mode");
             ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked" : "Live");
+            ImGui::TextColored(value_color, "%s", this->session.mode_label.c_str());
 
-            if (scene.bake.mode == ScenePlaybackMode::baked) {
+            if (this->session.show_record_stats) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Bake frames");
+                ImGui::TextColored(label_color, "Record frames");
                 ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%zu", scene.bake.frames.size());
+                ImGui::TextColored(value_color, "%d sim / %d disk", this->session.simulated_frames, this->session.written_frames);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Record cache");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%.1f / %.1f MB", static_cast<double>(this->session.cache_bytes) / (1024.0 * 1024.0), static_cast<double>(this->session.max_cache_bytes) / (1024.0 * 1024.0));
             }
 
             ImGui::TableNextRow();
@@ -881,7 +899,7 @@ namespace xayah {
         const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
         const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
         const float inspector_window_width      = 360.0f;
-        const float inspector_window_max_height = main_viewport->WorkSize.y - this->timeline.height - 24.0f;
+        const float inspector_window_max_height = main_viewport->WorkSize.y - this->active_timeline_height() - 24.0f;
         if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
 
         ImGui::SetNextWindowViewport(main_viewport->ID);
@@ -933,7 +951,7 @@ namespace xayah {
 
         ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float gizmo_height = main_viewport->WorkSize.y - this->timeline.height;
+        const float gizmo_height = main_viewport->WorkSize.y - this->active_timeline_height();
         if (main_viewport->WorkSize.x <= 0.0f || gizmo_height <= 0.0f) throw std::runtime_error("Viewport is too small for transform gizmo");
 
         constexpr ImGuiWindowFlags gizmo_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
@@ -1060,6 +1078,36 @@ namespace xayah {
         if (frame.recreate_after_present) this->recreate_swapchain(scene);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
+    }
+
+    void Spectra::apply_update_result(const SpectraFrameUpdateResult& result) {
+        if (result.timeline_frame_min > result.timeline_frame_max) throw std::runtime_error("Timeline frame range is invalid");
+        if (result.timeline_available_frame_max < result.timeline_frame_min || result.timeline_available_frame_max > result.timeline_frame_max) throw std::runtime_error("Timeline available frame range is invalid");
+
+        const int previous_frame_max       = this->timeline.frame_max;
+        const bool follow_latest           = this->timeline.visible && this->timeline.current_frame >= previous_frame_max;
+        this->timeline.visible             = result.timeline_visible;
+        this->timeline.frame_min           = result.timeline_frame_min;
+        this->timeline.frame_max           = result.timeline_frame_max;
+        this->timeline.available_frame_max = result.timeline_available_frame_max;
+        this->timeline.first_frame         = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
+        if (result.timeline_current_frame.has_value())
+            this->timeline.current_frame = std::clamp(*result.timeline_current_frame, this->timeline.frame_min, this->timeline.frame_max);
+        else if (follow_latest)
+            this->timeline.current_frame = this->timeline.frame_max;
+        else
+            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+
+        this->session.mode_label        = result.mode_label;
+        this->session.show_record_stats = result.show_record_stats;
+        this->session.simulated_frames  = result.simulated_frames;
+        this->session.written_frames    = result.written_frames;
+        this->session.cache_bytes       = result.cache_bytes;
+        this->session.max_cache_bytes   = result.max_cache_bytes;
+    }
+
+    float Spectra::active_timeline_height() const {
+        return this->timeline.visible ? this->timeline.height : 0.0f;
     }
 
     void Spectra::create_viewport_pipeline() {

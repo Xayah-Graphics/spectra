@@ -321,10 +321,10 @@ namespace xayah {
 
     void Mesh::apply_snapshot(const MeshSnapshot& snapshot) {
         if (snapshot.object_id != this->id) throw std::runtime_error(std::string{"Mesh snapshot id does not match object: "} + this->name);
-        if (snapshot.vertices.size() != this->vertices.size()) throw std::runtime_error(std::string{"Baked mesh vertex count does not match live mesh: "} + this->name);
+        if (snapshot.vertices.size() != this->vertices.size()) throw std::runtime_error(std::string{"Snapshot mesh vertex count does not match live mesh: "} + this->name);
         for (const MeshVertex& vertex : snapshot.vertices) {
             const float normal_length_squared = vertex.normal[0] * vertex.normal[0] + vertex.normal[1] * vertex.normal[1] + vertex.normal[2] * vertex.normal[2];
-            if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Baked mesh vertex normal must not be zero: "} + this->name);
+            if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Snapshot mesh vertex normal must not be zero: "} + this->name);
         }
         this->vertices = snapshot.vertices;
     }

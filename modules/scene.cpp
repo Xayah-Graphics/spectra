@@ -22,17 +22,6 @@ namespace {
         return std::visit([](const auto& value) -> std::uint64_t { return value.object_id; }, snapshot);
     }
 
-    xayah::SceneObjectKind snapshot_kind(const std::variant<xayah::VolumeSnapshot, xayah::MeshSnapshot, xayah::ParticlesSnapshot>& snapshot) {
-        return std::visit(
-            [](const auto& value) -> xayah::SceneObjectKind {
-                if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, xayah::VolumeSnapshot>) return xayah::SceneObjectKind::volume;
-                if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, xayah::MeshSnapshot>) return xayah::SceneObjectKind::mesh;
-                if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, xayah::ParticlesSnapshot>) return xayah::SceneObjectKind::particles;
-                throw std::runtime_error("Unsupported scene object snapshot kind");
-            },
-            snapshot);
-    }
-
     const char* kind_label(const xayah::SceneObjectKind kind) {
         if (kind == xayah::SceneObjectKind::volume) return "Volume";
         if (kind == xayah::SceneObjectKind::mesh) return "Mesh";
@@ -256,34 +245,6 @@ namespace xayah {
         if (this->selection.object_id != 0) static_cast<void>(this->object_ref(this->selection.object_id));
     }
 
-    void Scene::validate_bake() const {
-        if (this->bake.mode == ScenePlaybackMode::live) return;
-        if (this->bake.frames.empty()) throw std::runtime_error("Baked playback has no frames");
-
-        std::set<int> frame_indices{};
-        int frame_min = this->bake.frames.front().frame_index;
-        int frame_max = this->bake.frames.front().frame_index;
-        for (const BakedSceneFrame& frame : this->bake.frames) {
-            if (!frame_indices.insert(frame.frame_index).second) throw std::runtime_error(std::string{"Duplicate baked frame index: "} + std::to_string(frame.frame_index));
-            if (frame.frame_index < frame_min) frame_min = frame.frame_index;
-            if (frame.frame_index > frame_max) frame_max = frame.frame_index;
-            if (frame.objects.size() != this->objects.size()) throw std::runtime_error(std::string{"Baked frame object count does not match scene object count: "} + std::to_string(frame.frame_index));
-
-            std::set<std::uint64_t> baked_object_ids{};
-            for (const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& snapshot : frame.objects) {
-                const std::uint64_t object_id = snapshot_id(snapshot);
-                if (object_id == 0) throw std::runtime_error("Baked object id must not be zero");
-                if (!baked_object_ids.insert(object_id).second) throw std::runtime_error(std::string{"Duplicate baked object id in frame: "} + std::to_string(object_id));
-                const SceneObjectRef reference = this->object_ref(object_id);
-                if (reference.kind != snapshot_kind(snapshot)) throw std::runtime_error(std::string{"Baked object kind does not match scene object: "} + std::to_string(object_id));
-            }
-        }
-
-        for (int frame_index = frame_min; frame_index <= frame_max; ++frame_index) {
-            if (!frame_indices.contains(frame_index)) throw std::runtime_error(std::string{"Baked playback is missing frame: "} + std::to_string(frame_index));
-        }
-    }
-
     void Scene::initialize_selection() {
         for (std::variant<Volume, Mesh, Particles>& object : this->objects) {
             std::visit(
@@ -295,26 +256,8 @@ namespace xayah {
         if (this->selection.object_id != 0) static_cast<void>(this->selected_object_ref());
     }
 
-    int Scene::baked_frame_min() const {
-        if (this->bake.frames.empty()) throw std::runtime_error("Baked playback has no frames");
-        int frame_min = this->bake.frames.front().frame_index;
-        for (const BakedSceneFrame& frame : this->bake.frames) {
-            if (frame.frame_index < frame_min) frame_min = frame.frame_index;
-        }
-        return frame_min;
-    }
-
-    int Scene::baked_frame_max() const {
-        if (this->bake.frames.empty()) throw std::runtime_error("Baked playback has no frames");
-        int frame_max = this->bake.frames.front().frame_index;
-        for (const BakedSceneFrame& frame : this->bake.frames) {
-            if (frame.frame_index > frame_max) frame_max = frame.frame_index;
-        }
-        return frame_max;
-    }
-
-    BakedSceneFrame Scene::make_baked_frame(const int frame_index) const {
-        BakedSceneFrame frame{};
+    SceneFrameSnapshot Scene::make_snapshot(const int frame_index) const {
+        SceneFrameSnapshot frame{};
         frame.frame_index = frame_index;
         frame.objects.reserve(this->objects.size());
         for (const std::variant<Volume, Mesh, Particles>& object : this->objects) {
@@ -323,32 +266,30 @@ namespace xayah {
         return frame;
     }
 
-    void Scene::apply_playback_frame(const int frame_index) {
-        if (this->bake.mode == ScenePlaybackMode::live) return;
+    void Scene::apply_snapshot(const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& snapshot) {
+        const SceneObjectRef reference = this->object_ref(snapshot_id(snapshot));
+        std::visit(
+            [&](auto& object, const auto& object_snapshot) {
+                if constexpr (std::is_same_v<std::remove_cvref_t<decltype(object)>, Volume> && std::is_same_v<std::remove_cvref_t<decltype(object_snapshot)>, VolumeSnapshot>)
+                    object.apply_snapshot(object_snapshot);
+                else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(object)>, Mesh> && std::is_same_v<std::remove_cvref_t<decltype(object_snapshot)>, MeshSnapshot>)
+                    object.apply_snapshot(object_snapshot);
+                else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(object)>, Particles> && std::is_same_v<std::remove_cvref_t<decltype(object_snapshot)>, ParticlesSnapshot>)
+                    object.apply_snapshot(object_snapshot);
+                else
+                    throw std::runtime_error(std::string{"Scene snapshot object type does not match scene object id: "} + std::to_string(snapshot_id(snapshot)));
+            },
+            this->objects.at(reference.index), snapshot);
+    }
 
-        const BakedSceneFrame* baked_frame = nullptr;
-        for (const BakedSceneFrame& frame : this->bake.frames) {
-            if (frame.frame_index == frame_index) {
-                baked_frame = &frame;
-                break;
-            }
-        }
-        if (baked_frame == nullptr) throw std::runtime_error(std::string{"Baked frame does not exist: "} + std::to_string(frame_index));
-
-        for (const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& snapshot : baked_frame->objects) {
-            const SceneObjectRef reference = this->object_ref(snapshot_id(snapshot));
-            std::visit(
-                [&](auto& object, const auto& baked_object) {
-                    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(object)>, Volume> && std::is_same_v<std::remove_cvref_t<decltype(baked_object)>, VolumeSnapshot>)
-                        object.apply_snapshot(baked_object);
-                    else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(object)>, Mesh> && std::is_same_v<std::remove_cvref_t<decltype(baked_object)>, MeshSnapshot>)
-                        object.apply_snapshot(baked_object);
-                    else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(object)>, Particles> && std::is_same_v<std::remove_cvref_t<decltype(baked_object)>, ParticlesSnapshot>)
-                        object.apply_snapshot(baked_object);
-                    else
-                        throw std::runtime_error(std::string{"Baked object type does not match scene object id: "} + std::to_string(snapshot_id(snapshot)));
-                },
-                this->objects.at(reference.index), snapshot);
+    void Scene::apply_snapshot(const SceneFrameSnapshot& snapshot) {
+        if (snapshot.objects.size() != this->objects.size()) throw std::runtime_error(std::string{"Scene snapshot object count does not match scene object count: "} + std::to_string(snapshot.frame_index));
+        std::set<std::uint64_t> object_ids{};
+        for (const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& object_snapshot : snapshot.objects) {
+            const std::uint64_t object_id = snapshot_id(object_snapshot);
+            if (object_id == 0) throw std::runtime_error("Scene snapshot object id must not be zero");
+            if (!object_ids.insert(object_id).second) throw std::runtime_error(std::string{"Duplicate scene snapshot object id: "} + std::to_string(object_id));
+            this->apply_snapshot(object_snapshot);
         }
     }
 

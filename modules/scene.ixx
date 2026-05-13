@@ -8,19 +8,9 @@ export import particles;
 import std;
 
 namespace xayah {
-    export enum class ScenePlaybackMode : std::uint32_t {
-        live  = 0,
-        baked = 1,
-    };
-
-    export struct BakedSceneFrame {
+    export struct SceneFrameSnapshot {
         int frame_index{0};
         std::vector<std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>> objects{};
-    };
-
-    export struct SceneBake {
-        ScenePlaybackMode mode{ScenePlaybackMode::live};
-        std::vector<BakedSceneFrame> frames{};
     };
 
     export struct SceneSelection {
@@ -58,7 +48,6 @@ namespace xayah {
         Scene& operator=(Scene&& other) noexcept = delete;
 
         SceneSelection selection{};
-        SceneBake bake{};
 
         void add(Volume&& object);
         void add(Mesh&& object);
@@ -78,12 +67,10 @@ namespace xayah {
         [[nodiscard]] const Transform& selected_transform() const;
         [[nodiscard]] const char* selected_kind_label() const;
         void validate() const;
-        void validate_bake() const;
         void initialize_selection();
-        [[nodiscard]] int baked_frame_min() const;
-        [[nodiscard]] int baked_frame_max() const;
-        [[nodiscard]] BakedSceneFrame make_baked_frame(int frame_index) const;
-        void apply_playback_frame(int frame_index);
+        [[nodiscard]] SceneFrameSnapshot make_snapshot(int frame_index) const;
+        void apply_snapshot(const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& snapshot);
+        void apply_snapshot(const SceneFrameSnapshot& snapshot);
         void create_render_resources(const SceneRenderCreateContext& context);
         void destroy_render_resources() noexcept;
         void recreate_render_resources(const SceneRenderCreateContext& context);

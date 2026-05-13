@@ -91,12 +91,6 @@ namespace xayah {
         std::vector<float> velocity_z{};
     };
 
-    export struct PyroBake {
-        std::array<std::uint32_t, 3> resolution{0, 0, 0};
-        std::array<float, 3> size{0.0f, 0.0f, 0.0f};
-        std::vector<PyroFrame> frames{};
-    };
-
     export class PyroSolver {
     public:
         explicit PyroSolver(const PyroConfig& config = {});
@@ -111,7 +105,6 @@ namespace xayah {
         void set_plume_source(const PyroPlumeSource& source);
         void step();
         [[nodiscard]] PyroFrame read_frame(int frame_index);
-        [[nodiscard]] PyroBake bake(int frame_count);
 
     private:
         struct {

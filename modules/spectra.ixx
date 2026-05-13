@@ -8,11 +8,33 @@ import camera;
 import std;
 
 namespace xayah {
+    export struct SpectraFrameUpdateContext {
+        float delta_seconds{0.0f};
+        bool space_pressed{false};
+        bool shift_down{false};
+        int timeline_current_frame{0};
+    };
+
+    export struct SpectraFrameUpdateResult {
+        bool timeline_visible{false};
+        int timeline_frame_min{0};
+        int timeline_frame_max{0};
+        int timeline_available_frame_max{0};
+        std::optional<int> timeline_current_frame{};
+        std::string mode_label{"Idle"};
+        bool show_record_stats{false};
+        int simulated_frames{0};
+        int written_frames{0};
+        std::uint64_t cache_bytes{0};
+        std::uint64_t max_cache_bytes{0};
+    };
+
     export class Spectra {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
         void render(Scene& scene);
+        void render(Scene& scene, const std::function<SpectraFrameUpdateResult(Scene&, const SpectraFrameUpdateContext&)>& update);
 
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
@@ -35,6 +57,8 @@ namespace xayah {
         void destroy_viewport_pipeline() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain(Scene& scene);
+        void apply_update_result(const SpectraFrameUpdateResult& result);
+        [[nodiscard]] float active_timeline_height() const;
         void draw_stats_panel(Scene& scene);
         void draw_object_inspector(Scene& scene);
         void draw_transform_gizmo(Scene& scene);
@@ -114,11 +138,27 @@ namespace xayah {
 
         struct {
             int frame_min{0};
-            int frame_max{240};
+            int frame_max{0};
+            int available_frame_max{0};
             int current_frame{0};
             int first_frame{0};
             float height{64.0f};
+            bool visible{false};
         } timeline;
+
+        struct {
+            bool space_pressed{false};
+            bool shift_down{false};
+        } input;
+
+        struct {
+            std::string mode_label{"Idle"};
+            bool show_record_stats{false};
+            int simulated_frames{0};
+            int written_frames{0};
+            std::uint64_t cache_bytes{0};
+            std::uint64_t max_cache_bytes{0};
+        } session;
 
         struct {
             std::uint32_t frame_count{2};

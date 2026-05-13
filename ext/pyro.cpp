@@ -1,8 +1,9 @@
 module;
+#include "pyro.h"
+
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <cusparse.h>
-#include "pyro.h"
 
 module pyro;
 import std;
@@ -11,11 +12,11 @@ namespace {
     constexpr std::uint32_t flow_boundary_periodic = 3u;
 
     void write_flow_face(const std::size_t index, const xayah::PyroFlowBoundaryFace& face, std::array<std::uint32_t, 6>& types, std::array<float, 18>& velocity, std::array<float, 6>& pressure) {
-        types[index]                  = static_cast<std::uint32_t>(face.type);
-        velocity[index * 3u + 0u]     = face.velocity_x;
-        velocity[index * 3u + 1u]     = face.velocity_y;
-        velocity[index * 3u + 2u]     = face.velocity_z;
-        pressure[index]               = face.pressure;
+        types[index]              = static_cast<std::uint32_t>(face.type);
+        velocity[index * 3u + 0u] = face.velocity_x;
+        velocity[index * 3u + 1u] = face.velocity_y;
+        velocity[index * 3u + 2u] = face.velocity_z;
+        pressure[index]           = face.pressure;
     }
 
     void write_scalar_face(const std::size_t index, const xayah::PyroScalarBoundaryFace& face, std::array<std::uint32_t, 6>& types, std::array<float, 6>& values) {
@@ -213,7 +214,7 @@ namespace xayah {
                     const float dz          = (pz - center[2]) / radius[2];
                     const float r2          = dx * dx + dy * dy + dz * dz;
                     if (r2 > 1.0f) continue;
-                    const float plume = std::exp(-source.falloff * r2);
+                    const float plume                    = std::exp(-source.falloff * r2);
                     this->host.density_source[index]     = source.density * plume;
                     this->host.temperature_source[index] = source.temperature * plume;
                 }
@@ -271,9 +272,9 @@ namespace xayah {
 
     PyroFrame PyroSolver::read_frame(const int frame_index) {
         PyroFrame frame{};
-        frame.frame_index  = frame_index;
-        frame.resolution   = this->host.resolution;
-        frame.cell_size    = this->host.cell_size;
+        frame.frame_index = frame_index;
+        frame.resolution  = this->host.resolution;
+        frame.cell_size   = this->host.cell_size;
         frame.density.resize(static_cast<std::size_t>(this->host.cell_count));
         frame.temperature.resize(static_cast<std::size_t>(this->host.cell_count));
         frame.velocity_x.resize(static_cast<std::size_t>(this->host.velocity_count[0]));
@@ -288,58 +289,19 @@ namespace xayah {
         return frame;
     }
 
-    PyroBake PyroSolver::bake(const int frame_count) {
-        if (frame_count <= 0) throw std::runtime_error("Pyro bake frame_count must be positive");
-        this->reset();
-        PyroBake bake{};
-        bake.resolution = this->host.resolution;
-        bake.size       = {
-            static_cast<float>(this->host.resolution[0]) * this->host.cell_size,
-            static_cast<float>(this->host.resolution[1]) * this->host.cell_size,
-            static_cast<float>(this->host.resolution[2]) * this->host.cell_size,
-        };
-        bake.frames.reserve(static_cast<std::size_t>(frame_count));
-        for (int frame_index = 0; frame_index < frame_count; ++frame_index) {
-            this->step();
-            bake.frames.emplace_back(this->read_frame(frame_index));
-        }
-        return bake;
-    }
-
     void PyroSolver::create_device() {
         if (this->host.stream != nullptr) throw std::runtime_error("Pyro device is already initialized");
         try {
-            this->host.block = dim3(8u, 8u, 4u);
-            this->host.cells = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.z));
-            this->host.velocity_cells[0] = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nx + 1), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.z));
-            this->host.velocity_cells[1] = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.ny + 1), this->host.block.y),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.z));
-            this->host.velocity_cells[2] = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nz + 1), this->host.block.z));
-            this->host.sync_block = dim3(this->host.block.x, this->host.block.y, 1u);
-            this->host.sync_velocity_grid[0] = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.y),
-                1u);
-            this->host.sync_velocity_grid[1] = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.y),
-                1u);
-            this->host.sync_velocity_grid[2] = dim3(
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x),
-                ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y),
-                1u);
-            this->host.linear_grid = ceil_div_u32(this->host.cell_count, 256u);
+            this->host.block                 = dim3(8u, 8u, 4u);
+            this->host.cells                 = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y), ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.z));
+            this->host.velocity_cells[0]     = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.nx + 1), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y), ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.z));
+            this->host.velocity_cells[1]     = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.ny + 1), this->host.block.y), ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.z));
+            this->host.velocity_cells[2]     = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y), ceil_div_u32(static_cast<std::uint64_t>(this->host.nz + 1), this->host.block.z));
+            this->host.sync_block            = dim3(this->host.block.x, this->host.block.y, 1u);
+            this->host.sync_velocity_grid[0] = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.y), 1u);
+            this->host.sync_velocity_grid[1] = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.nz), this->host.block.y), 1u);
+            this->host.sync_velocity_grid[2] = dim3(ceil_div_u32(static_cast<std::uint64_t>(this->host.nx), this->host.block.x), ceil_div_u32(static_cast<std::uint64_t>(this->host.ny), this->host.block.y), 1u);
+            this->host.linear_grid           = ceil_div_u32(this->host.cell_count, 256u);
             for (std::uint32_t axis = 0; axis < 3u; ++axis) {
                 this->host.velocity_linear_grid[axis] = ceil_div_u32(this->host.velocity_count[axis], 256u);
             }
@@ -475,10 +437,10 @@ namespace xayah {
 
         for (int row = 0; row < cells; ++row) {
             host_row_offsets[static_cast<std::size_t>(row)] = static_cast<int>(host_column_indices.size());
-            const int x = row % this->host.nx;
-            const int yz = row / this->host.nx;
-            const int y = yz % this->host.ny;
-            const int z = yz / this->host.ny;
+            const int x                                     = row % this->host.nx;
+            const int yz                                    = row / this->host.nx;
+            const int y                                     = yz % this->host.ny;
+            const int z                                     = yz / this->host.ny;
             std::array<int, 7> row_columns{};
             int row_entry_count = 0;
             add_pressure_neighbor(row_columns, row_entry_count, x - 1, y, z, periodic_x, this->host.nx, this->host.ny, this->host.nz);
@@ -503,7 +465,7 @@ namespace xayah {
         }
 
         host_row_offsets[static_cast<std::size_t>(cells)] = static_cast<int>(host_column_indices.size());
-        const int pressure_nnz = static_cast<int>(host_column_indices.size());
+        const int pressure_nnz                            = static_cast<int>(host_column_indices.size());
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&this->device.pressure_anchor), sizeof(int)), "cudaMalloc pressure_anchor");
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&this->device.pressure_row_offsets), static_cast<std::size_t>(cells + 1) * sizeof(int)), "cudaMalloc pressure_row_offsets");
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&this->device.pressure_column_indices), static_cast<std::size_t>(pressure_nnz) * sizeof(int)), "cudaMalloc pressure_column_indices");
