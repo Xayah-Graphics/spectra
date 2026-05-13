@@ -35,6 +35,8 @@ namespace xayah {
         void destroy_viewport_pipeline() noexcept;
         void create_mesh_renderer(const Scene& scene);
         void destroy_mesh_renderer() noexcept;
+        void create_particles_renderer(const Scene& scene);
+        void destroy_particles_renderer() noexcept;
         void create_volume_renderer(const Scene& scene);
         void destroy_volume_renderer() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
@@ -107,6 +109,24 @@ namespace xayah {
             vk::raii::Pipeline wireframe_pipeline{nullptr};
             std::vector<MeshDrawResources> frame_resources{};
         } mesh_renderer{};
+
+        struct ParticleDrawResources {
+            vk::raii::Buffer particle_buffer{nullptr};
+            vk::raii::DeviceMemory particle_memory{nullptr};
+            vk::DeviceSize particle_size{0};
+            vk::raii::Buffer parameters_buffer{nullptr};
+            vk::raii::DeviceMemory parameters_memory{nullptr};
+            vk::DeviceSize parameters_size{0};
+        };
+
+        struct {
+            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::vector<ParticleDrawResources> frame_resources{};
+        } particles_renderer{};
 
         struct VolumeDrawResources {
             vk::raii::Buffer x_data_buffer{nullptr};

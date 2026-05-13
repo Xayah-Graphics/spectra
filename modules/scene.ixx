@@ -87,6 +87,24 @@ namespace xayah {
         MeshRenderSettings render_settings{};
     };
 
+    export struct Particle {
+        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
+        float radius{0.03f};
+        std::array<float, 3> color{0.35f, 0.70f, 1.0f};
+    };
+
+    export struct ParticleRenderSettings {
+        float radius_scale{1.0f};
+    };
+
+    export struct Particles {
+        std::uint64_t id{0};
+        std::string name{};
+        bool visible{true};
+        std::vector<Particle> particles{};
+        ParticleRenderSettings render_settings{};
+    };
+
     export enum class ScenePlaybackMode : std::uint32_t {
         live  = 0,
         baked = 1,
@@ -103,10 +121,16 @@ namespace xayah {
         std::vector<MeshVertex> vertices{};
     };
 
+    export struct BakedParticlesFrame {
+        std::uint64_t particles_id{0};
+        std::vector<Particle> particles{};
+    };
+
     export struct BakedSceneFrame {
         int frame_index{0};
         std::vector<BakedVolumeFrame> volumes{};
         std::vector<BakedMeshFrame> meshes{};
+        std::vector<BakedParticlesFrame> particles{};
     };
 
     export struct SceneBake {
@@ -115,8 +139,9 @@ namespace xayah {
     };
 
     export enum class SceneObjectKind : std::uint32_t {
-        volume = 0,
-        mesh   = 1,
+        volume    = 0,
+        mesh      = 1,
+        particles = 2,
     };
 
     export struct SceneSelection {
@@ -132,6 +157,7 @@ namespace xayah {
     public:
         std::vector<Volume> volumes{};
         std::vector<Mesh> meshes{};
+        std::vector<Particles> particles{};
         SceneSelection selection{};
         SceneBake bake{};
 
@@ -151,7 +177,7 @@ namespace xayah {
     };
 
     void Scene::validate() const {
-        if (this->volumes.empty() && this->meshes.empty()) throw std::runtime_error("Scene has no objects to render");
+        if (this->volumes.empty() && this->meshes.empty() && this->particles.empty()) throw std::runtime_error("Scene has no objects to render");
 
         std::set<std::uint64_t> object_ids{};
         std::set<std::string> volume_names{};
@@ -206,6 +232,20 @@ namespace xayah {
             }
         }
 
+        std::set<std::string> particles_names{};
+        for (const Particles& particles : this->particles) {
+            if (particles.id == 0) throw std::runtime_error(std::string{"Particles id must not be zero: "} + particles.name);
+            if (!object_ids.insert(particles.id).second) throw std::runtime_error(std::string{"Duplicate scene object id: "} + std::to_string(particles.id));
+            if (particles.name.empty()) throw std::runtime_error("Particles name must not be empty");
+            if (!particles_names.insert(particles.name).second) throw std::runtime_error(std::string{"Duplicate particles name: "} + particles.name);
+            if (particles.particles.empty()) throw std::runtime_error(std::string{"Particles object has no particles: "} + particles.name);
+            if (particles.render_settings.radius_scale <= 0.0f) throw std::runtime_error(std::string{"Particles radius scale must be positive: "} + particles.name);
+
+            for (const Particle& particle : particles.particles) {
+                if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Particle radius must be positive: "} + particles.name);
+            }
+        }
+
         if (this->selection.object_id != 0) static_cast<void>(this->object_ref(this->selection.object_id));
     }
 
@@ -222,6 +262,7 @@ namespace xayah {
             if (frame.frame_index > frame_max) frame_max = frame.frame_index;
             if (frame.volumes.size() != this->volumes.size()) throw std::runtime_error(std::string{"Baked frame volume count does not match scene volume count: "} + std::to_string(frame.frame_index));
             if (frame.meshes.size() != this->meshes.size()) throw std::runtime_error(std::string{"Baked frame mesh count does not match scene mesh count: "} + std::to_string(frame.frame_index));
+            if (frame.particles.size() != this->particles.size()) throw std::runtime_error(std::string{"Baked frame particles count does not match scene particles count: "} + std::to_string(frame.frame_index));
 
             std::set<std::uint64_t> baked_volume_ids{};
             for (const BakedVolumeFrame& baked_volume : frame.volumes) {
@@ -300,6 +341,27 @@ namespace xayah {
                 for (const MeshVertex& vertex : baked_mesh->vertices) {
                     const float normal_length_squared = vertex.normal[0] * vertex.normal[0] + vertex.normal[1] * vertex.normal[1] + vertex.normal[2] * vertex.normal[2];
                     if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Baked mesh vertex normal must not be zero: "} + mesh.name);
+                }
+            }
+
+            std::set<std::uint64_t> baked_particles_ids{};
+            for (const BakedParticlesFrame& baked_particles : frame.particles) {
+                if (baked_particles.particles_id == 0) throw std::runtime_error("Baked particles id must not be zero");
+                if (!baked_particles_ids.insert(baked_particles.particles_id).second) throw std::runtime_error(std::string{"Duplicate baked particles id in frame: "} + std::to_string(baked_particles.particles_id));
+            }
+
+            for (const Particles& particles : this->particles) {
+                const BakedParticlesFrame* baked_particles = nullptr;
+                for (const BakedParticlesFrame& candidate : frame.particles) {
+                    if (candidate.particles_id == particles.id) {
+                        baked_particles = &candidate;
+                        break;
+                    }
+                }
+                if (baked_particles == nullptr) throw std::runtime_error(std::string{"Baked frame is missing particles: "} + particles.name);
+
+                for (const Particle& particle : baked_particles->particles) {
+                    if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Baked particle radius must be positive: "} + particles.name);
                 }
             }
         }
@@ -391,6 +453,18 @@ namespace xayah {
             if (baked_mesh->vertices.size() != mesh.vertices.size()) throw std::runtime_error(std::string{"Baked mesh vertex count does not match live mesh: "} + mesh.name);
             mesh.vertices = baked_mesh->vertices;
         }
+
+        for (Particles& particles : this->particles) {
+            const BakedParticlesFrame* baked_particles = nullptr;
+            for (const BakedParticlesFrame& candidate : baked_frame->particles) {
+                if (candidate.particles_id == particles.id) {
+                    baked_particles = &candidate;
+                    break;
+                }
+            }
+            if (baked_particles == nullptr) throw std::runtime_error(std::string{"Baked frame is missing particles: "} + particles.name);
+            particles.particles = baked_particles->particles;
+        }
     }
 
     void Scene::initialize_volume_render_settings(Volume& volume) {
@@ -441,6 +515,9 @@ namespace xayah {
         }
         for (std::size_t index = 0; index < this->meshes.size(); ++index) {
             if (this->meshes[index].id == object_id) return SceneObjectRef{SceneObjectKind::mesh, index};
+        }
+        for (std::size_t index = 0; index < this->particles.size(); ++index) {
+            if (this->particles[index].id == object_id) return SceneObjectRef{SceneObjectKind::particles, index};
         }
         throw std::runtime_error(std::string{"Scene object id does not exist: "} + std::to_string(object_id));
     }

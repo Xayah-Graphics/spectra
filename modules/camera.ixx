@@ -71,6 +71,14 @@ namespace xayah {
             return subtract(this->target, multiply(this->forward(), this->distance));
         }
 
+        [[nodiscard]] std::array<float, 3> right() const {
+            return normalize(cross(std::array<float, 3>{0.0f, 1.0f, 0.0f}, this->forward()));
+        }
+
+        [[nodiscard]] std::array<float, 3> up() const {
+            return normalize(cross(this->forward(), this->right()));
+        }
+
     private:
         std::array<float, 3> target{0.0f, 0.0f, 0.0f};
         float yaw{0.7853982f};

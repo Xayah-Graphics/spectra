@@ -78,6 +78,17 @@ namespace {
         std::array<float, 4> light_direction{};
     };
 
+    struct ParticleShaderParticle {
+        std::array<float, 4> position_radius{};
+        std::array<float, 4> color{};
+    };
+
+    struct ParticleShaderParameters {
+        std::array<float, 16> view_projection{};
+        std::array<float, 4> camera_right_radius_scale{};
+        std::array<float, 4> camera_up_unused{};
+    };
+
     std::uint32_t memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
         const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
@@ -474,6 +485,7 @@ namespace xayah {
         }
     } catch (...) {
         this->destroy_mesh_renderer();
+        this->destroy_particles_renderer();
         this->destroy_volume_renderer();
         this->destroy_viewport_pipeline();
         if (this->imgui.initialized) {
@@ -502,6 +514,7 @@ namespace xayah {
             ImGui::DestroyContext();
         }
         this->destroy_volume_renderer();
+        this->destroy_particles_renderer();
         this->destroy_mesh_renderer();
         this->destroy_viewport_pipeline();
         this->imgui.descriptor_pool = nullptr;
@@ -545,6 +558,7 @@ namespace xayah {
         }
 
         if (!scene.meshes.empty()) this->create_mesh_renderer(scene);
+        if (!scene.particles.empty()) this->create_particles_renderer(scene);
         if (!scene.volumes.empty()) this->create_volume_renderer(scene);
         try {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
@@ -556,6 +570,7 @@ namespace xayah {
 
             this->context.device.waitIdle();
             this->destroy_volume_renderer();
+            this->destroy_particles_renderer();
             this->destroy_mesh_renderer();
         } catch (...) {
             try {
@@ -563,6 +578,7 @@ namespace xayah {
             } catch (...) {
             }
             this->destroy_volume_renderer();
+            this->destroy_particles_renderer();
             this->destroy_mesh_renderer();
             throw;
         }
@@ -722,14 +738,17 @@ namespace xayah {
         }
 
         const std::array<float, 3> camera_position = this->viewport.camera.position();
+        const std::array<float, 3> camera_right    = this->viewport.camera.right();
+        const std::array<float, 3> camera_up       = this->viewport.camera.up();
         constexpr vk::BufferUsageFlags storage_buffer_usage{vk::BufferUsageFlagBits::eStorageBuffer};
         constexpr vk::MemoryPropertyFlags upload_memory_properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
 
         command_buffer.setViewport(0, vulkan_viewport);
         command_buffer.setScissor(0, scissor);
 
-        const std::size_t scene_mesh_count   = scene.meshes.size();
-        const std::size_t scene_volume_count = scene.volumes.size();
+        const std::size_t scene_mesh_count      = scene.meshes.size();
+        const std::size_t scene_particles_count = scene.particles.size();
+        const std::size_t scene_volume_count    = scene.volumes.size();
         if (frame.frame_index >= this->sync.frame_count) throw std::runtime_error("Frame index is outside frame resource range");
 
         if (scene_mesh_count != 0) {
@@ -804,6 +823,59 @@ namespace xayah {
 
                 command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
                 command_buffer.draw(static_cast<std::uint32_t>(draw_index_count), 1, 0, 0);
+            }
+        }
+
+        if (scene_particles_count != 0) {
+            if (!*this->particles_renderer.pipeline_layout || !*this->particles_renderer.pipeline || this->particles_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Particles renderer is not initialized");
+            if (this->particles_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_particles_count) throw std::runtime_error("Particles renderer resources do not match scene particles count");
+            if (this->particles_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_particles_count) throw std::runtime_error("Particles descriptor sets do not match scene particles count");
+
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->particles_renderer.pipeline);
+            for (std::size_t particles_index = 0; particles_index < scene_particles_count; ++particles_index) {
+                const Particles& particles = scene.particles[particles_index];
+                if (!particles.visible || particles.particles.empty()) continue;
+                if (particles.render_settings.radius_scale <= 0.0f) throw std::runtime_error(std::string{"Particles radius scale must be positive: "} + particles.name);
+                if (particles.particles.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 6)) throw std::runtime_error(std::string{"Particles object has too many particles for draw: "} + particles.name);
+
+                const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_particles_count + particles_index;
+                ParticleDrawResources& resources = this->particles_renderer.frame_resources.at(resource_index);
+
+                std::vector<ParticleShaderParticle> shader_particles{};
+                shader_particles.reserve(particles.particles.size());
+                for (const Particle& particle : particles.particles) {
+                    if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Particle radius must be positive: "} + particles.name);
+                    shader_particles.emplace_back(
+                        ParticleShaderParticle{
+                            {particle.position[0], particle.position[1], particle.position[2], particle.radius},
+                            {particle.color[0], particle.color[1], particle.color[2], 1.0f},
+                        }
+                    );
+                }
+
+                ParticleShaderParameters parameters{};
+                parameters.view_projection           = view_projection;
+                parameters.camera_right_radius_scale = {camera_right[0], camera_right[1], camera_right[2], particles.render_settings.radius_scale};
+                parameters.camera_up_unused          = {camera_up[0], camera_up[1], camera_up[2], 0.0f};
+
+                ensure_buffer(this->context.physical_device, this->context.device, resources.particle_buffer, resources.particle_memory, resources.particle_size, shader_particles.size() * sizeof(ParticleShaderParticle), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(ParticleShaderParameters), storage_buffer_usage, upload_memory_properties);
+                write_buffer(resources.particle_memory, resources.particle_size, shader_particles.data(), shader_particles.size() * sizeof(ParticleShaderParticle));
+                write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(ParticleShaderParameters));
+
+                const std::array buffer_infos{
+                    vk::DescriptorBufferInfo{*resources.particle_buffer, 0, resources.particle_size},
+                    vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
+                };
+                const vk::DescriptorSet descriptor_set = *this->particles_renderer.descriptor_sets[resource_index];
+                const std::array writes{
+                    vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
+                    vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
+                };
+                this->context.device.updateDescriptorSets(writes, {});
+
+                command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->particles_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
+                command_buffer.draw(static_cast<std::uint32_t>(particles.particles.size() * 6), 1, 0, 0);
             }
         }
 
@@ -976,13 +1048,14 @@ namespace xayah {
             ImGui::EndTable();
         }
 
-        const std::size_t volume_count = scene.volumes.size();
-        const std::size_t mesh_count   = scene.meshes.size();
-        const std::size_t object_count = volume_count + mesh_count;
+        const std::size_t volume_count    = scene.volumes.size();
+        const std::size_t mesh_count      = scene.meshes.size();
+        const std::size_t particles_count = scene.particles.size();
+        const std::size_t object_count    = volume_count + mesh_count + particles_count;
         ImGui::Separator();
         ImGui::TextColored(accent_color, "Scene");
         ImGui::SameLine();
-        ImGui::TextColored(muted_color, "%zu total / %zu volume%s / %zu mesh%s", object_count, volume_count, volume_count == 1 ? "" : "s", mesh_count, mesh_count == 1 ? "" : "es");
+        ImGui::TextColored(muted_color, "%zu total / %zu volume%s / %zu mesh%s / %zu particle set%s", object_count, volume_count, volume_count == 1 ? "" : "s", mesh_count, mesh_count == 1 ? "" : "es", particles_count, particles_count == 1 ? "" : "s");
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{0.18f, 0.42f, 0.72f, 0.24f});
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.22f, 0.50f, 0.86f, 0.34f});
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4{0.28f, 0.58f, 0.96f, 0.44f});
@@ -1061,6 +1134,27 @@ namespace xayah {
                     mesh.render_settings.display_mode = mesh.render_settings.display_mode == MeshDisplayMode::surface ? MeshDisplayMode::wireframe : MeshDisplayMode::surface;
                 ImGui::PopStyleColor(5);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.render_settings.display_mode == MeshDisplayMode::surface ? "Surface mesh rendering" : "Wireframe mesh rendering");
+            }
+            for (Particles& particles : scene.particles) {
+                const bool selected = scene.selection.object_id == particles.id;
+                const std::string id = std::to_string(particles.id);
+                const std::string label = std::string{"Particles  "} + particles.name + "  " + std::to_string(particles.particles.size()) + " particles##SceneParticlesSelect:" + id;
+                const std::string visible_label = std::string{particles.visible ? "V" : "H"} + "##SceneParticlesVisible:" + id;
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : particles.visible ? value_color : muted_color);
+                if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(particles.id);
+                ImGui::PopStyleColor();
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_Border, particles.visible ? ImVec4{0.24f, 0.82f, 0.55f, 0.78f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
+                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
+                if (ImGui::Button(visible_label.c_str(), ImVec2{26.0f, 22.0f})) particles.visible = !particles.visible;
+                ImGui::PopStyleColor(5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(particles.visible ? "Hide particles" : "Show particles");
             }
             ImGui::EndTable();
         }
@@ -1321,6 +1415,103 @@ namespace xayah {
                 ImGui::TextColored(label_color, "Normal");
                 ImGui::TableNextColumn();
                 ImGui::TextColored(value_color, "float3");
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Color");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "float3");
+                ImGui::EndTable();
+            }
+        } else if (active_object.kind == SceneObjectKind::particles) {
+            Particles& active_particles = scene.particles.at(active_object.index);
+            ParticleRenderSettings& settings = active_particles.render_settings;
+
+            std::array<float, 3> bounds_min{};
+            std::array<float, 3> bounds_max{};
+            float radius_min = 0.0f;
+            float radius_max = 0.0f;
+            if (!active_particles.particles.empty()) {
+                bounds_min = active_particles.particles.front().position;
+                bounds_max = active_particles.particles.front().position;
+                radius_min = active_particles.particles.front().radius;
+                radius_max = active_particles.particles.front().radius;
+                for (const Particle& particle : active_particles.particles) {
+                    for (std::size_t axis = 0; axis < 3; ++axis) {
+                        if (particle.position[axis] < bounds_min[axis]) bounds_min[axis] = particle.position[axis];
+                        if (particle.position[axis] > bounds_max[axis]) bounds_max[axis] = particle.position[axis];
+                    }
+                    if (particle.radius < radius_min) radius_min = particle.radius;
+                    if (particle.radius > radius_max) radius_max = particle.radius;
+                }
+            }
+
+            ImGui::TextColored(accent_color, "Object Inspector");
+            ImGui::SameLine();
+            ImGui::TextColored(muted_color, "Particles");
+            ImGui::Separator();
+
+            if (ImGui::BeginTable("InspectorParticlesIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Name");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%s", active_particles.name.c_str());
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Particles");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%zu", active_particles.particles.size());
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Bounds min");
+                ImGui::TableNextColumn();
+                if (active_particles.particles.empty()) ImGui::TextColored(muted_color, "n/a");
+                else ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Bounds max");
+                ImGui::TableNextColumn();
+                if (active_particles.particles.empty()) ImGui::TextColored(muted_color, "n/a");
+                else ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Radius");
+                ImGui::TableNextColumn();
+                if (active_particles.particles.empty()) ImGui::TextColored(muted_color, "n/a");
+                else ImGui::TextColored(value_color, "%.3f - %.3f", radius_min, radius_max);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Playback");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked particles" : "Live particles");
+                ImGui::EndTable();
+            }
+
+            ImGui::Separator();
+            ImGui::TextColored(accent_color, "Render");
+            ImGui::TextColored(value_color, "Billboard");
+            ImGui::InputFloat("Radius Scale", &settings.radius_scale, 0.05f, 0.2f, "%.3f");
+
+            ImGui::Separator();
+            ImGui::TextColored(accent_color, "Particle Format");
+            if (ImGui::BeginTable("InspectorParticleFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Position");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "float3");
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Radius");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "float");
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -1646,6 +1837,115 @@ namespace xayah {
         this->mesh_renderer.frame_resources.clear();
     }
 
+    void Spectra::create_particles_renderer(const Scene& scene) {
+        if (*this->particles_renderer.pipeline || this->particles_renderer.descriptor_sets.size() != 0 || !this->particles_renderer.frame_resources.empty()) throw std::runtime_error("Particles renderer is already initialized");
+        if (!*this->context.physical_device) throw std::runtime_error("Cannot create particles renderer without a physical device");
+        if (!*this->context.device) throw std::runtime_error("Cannot create particles renderer without a Vulkan device");
+        if (this->swapchain.format == vk::Format::eUndefined) throw std::runtime_error("Cannot create particles renderer without a color format");
+        if (this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create particles renderer without a depth format");
+        if (this->sync.frame_count == 0) throw std::runtime_error("Cannot create particles renderer without frames in flight");
+        if (scene.particles.empty()) throw std::runtime_error("Cannot create particles renderer for a scene without particles");
+        if (scene.particles.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / this->sync.frame_count)) throw std::runtime_error("Scene has too many particles objects for frame resources");
+
+        const std::uint32_t descriptor_set_count = static_cast<std::uint32_t>(scene.particles.size() * this->sync.frame_count);
+        this->particles_renderer.frame_resources.resize(descriptor_set_count);
+        if (descriptor_set_count > std::numeric_limits<std::uint32_t>::max() / 2) throw std::runtime_error("Particles descriptor pool size is too large");
+
+        constexpr std::array bindings{
+            vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+        };
+        const vk::DescriptorSetLayoutCreateInfo descriptor_layout_create_info{{}, static_cast<std::uint32_t>(bindings.size()), bindings.data()};
+        this->particles_renderer.descriptor_layout = vk::raii::DescriptorSetLayout{this->context.device, descriptor_layout_create_info};
+
+        const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eStorageBuffer, descriptor_set_count * 2};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, descriptor_set_count, 1, &pool_size};
+        this->particles_renderer.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+
+        std::vector layouts(descriptor_set_count, *this->particles_renderer.descriptor_layout);
+        const vk::DescriptorSetAllocateInfo allocate_info{*this->particles_renderer.descriptor_pool, descriptor_set_count, layouts.data()};
+        this->particles_renderer.descriptor_sets = vk::raii::DescriptorSets{this->context.device, allocate_info};
+        if (this->particles_renderer.descriptor_sets.size() != descriptor_set_count) throw std::runtime_error("Failed to allocate particles descriptor sets");
+
+        const vk::DescriptorSetLayout descriptor_layout = *this->particles_renderer.descriptor_layout;
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_layout};
+        this->particles_renderer.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
+
+        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "particles.vert.spv");
+        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "particles.frag.spv");
+        const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
+        const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
+        const vk::raii::ShaderModule vertex_shader{this->context.device, vertex_module_create_info};
+        const vk::raii::ShaderModule fragment_shader{this->context.device, fragment_module_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+
+        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
+        constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        vk::PipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount  = 1;
+
+        constexpr vk::PipelineRasterizationStateCreateInfo rasterization_state{
+            {},
+            VK_FALSE,
+            VK_FALSE,
+            vk::PolygonMode::eFill,
+            vk::CullModeFlagBits::eNone,
+            vk::FrontFace::eCounterClockwise,
+            VK_FALSE,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+        };
+        constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
+        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+
+        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+        color_blend_attachment.blendEnable    = VK_FALSE;
+        color_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+
+        const vk::Format color_format   = this->swapchain.format;
+        const vk::Format stencil_format = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? this->swapchain.depth_format : vk::Format::eUndefined;
+        vk::PipelineRenderingCreateInfo rendering_create_info{};
+        rendering_create_info.colorAttachmentCount    = 1;
+        rendering_create_info.pColorAttachmentFormats = &color_format;
+        rendering_create_info.depthAttachmentFormat   = this->swapchain.depth_format;
+        rendering_create_info.stencilAttachmentFormat = stencil_format;
+
+        vk::GraphicsPipelineCreateInfo pipeline_create_info{};
+        pipeline_create_info.pNext               = &rendering_create_info;
+        pipeline_create_info.stageCount          = static_cast<std::uint32_t>(shader_stages.size());
+        pipeline_create_info.pStages             = shader_stages.data();
+        pipeline_create_info.pVertexInputState   = &vertex_input_state;
+        pipeline_create_info.pInputAssemblyState = &input_assembly_state;
+        pipeline_create_info.pViewportState      = &viewport_state;
+        pipeline_create_info.pRasterizationState = &rasterization_state;
+        pipeline_create_info.pMultisampleState   = &multisample_state;
+        pipeline_create_info.pDepthStencilState  = &depth_stencil_state;
+        pipeline_create_info.pColorBlendState    = &color_blend_state;
+        pipeline_create_info.pDynamicState       = &dynamic_state;
+        pipeline_create_info.layout              = *this->particles_renderer.pipeline_layout;
+        pipeline_create_info.renderPass          = nullptr;
+        pipeline_create_info.subpass             = 0;
+        this->particles_renderer.pipeline        = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+    }
+
+    void Spectra::destroy_particles_renderer() noexcept {
+        this->particles_renderer.pipeline          = nullptr;
+        this->particles_renderer.pipeline_layout   = nullptr;
+        this->particles_renderer.descriptor_sets   = nullptr;
+        this->particles_renderer.descriptor_pool   = nullptr;
+        this->particles_renderer.descriptor_layout = nullptr;
+        this->particles_renderer.frame_resources.clear();
+    }
+
     void Spectra::create_volume_renderer(const Scene& scene) {
         if (*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() != 0 || !this->volume_renderer.frame_resources.empty()) throw std::runtime_error("Volume renderer is already initialized");
         if (!*this->context.physical_device) throw std::runtime_error("Cannot create volume renderer without a physical device");
@@ -1954,9 +2254,11 @@ namespace xayah {
 
         this->context.device.waitIdle();
 
-        const bool recreate_mesh_renderer   = static_cast<bool>(*this->mesh_renderer.surface_pipeline);
-        const bool recreate_volume_renderer = static_cast<bool>(*this->volume_renderer.pipeline);
+        const bool recreate_mesh_renderer      = static_cast<bool>(*this->mesh_renderer.surface_pipeline);
+        const bool recreate_particles_renderer = static_cast<bool>(*this->particles_renderer.pipeline);
+        const bool recreate_volume_renderer    = static_cast<bool>(*this->volume_renderer.pipeline);
         this->destroy_mesh_renderer();
+        this->destroy_particles_renderer();
         this->destroy_volume_renderer();
         this->destroy_viewport_pipeline();
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
@@ -1974,6 +2276,7 @@ namespace xayah {
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
         if (recreate_mesh_renderer) this->create_mesh_renderer(scene);
+        if (recreate_particles_renderer) this->create_particles_renderer(scene);
         if (recreate_volume_renderer) this->create_volume_renderer(scene);
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());

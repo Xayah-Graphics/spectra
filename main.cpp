@@ -167,10 +167,33 @@ int main() {
         }
     }
 
+    xayah::Particles water_particles;
+    water_particles.id = 4;
+    water_particles.name = "water_particles";
+    water_particles.render_settings.radius_scale = 1.0f;
+    constexpr std::uint32_t particle_ring_count = 96;
+    constexpr float particle_pi = 3.14159265358979323846f;
+
+    for (std::uint32_t index = 0; index < particle_ring_count; ++index) {
+        const float t = static_cast<float>(index) / static_cast<float>(particle_ring_count);
+        const float angle = t * particle_pi * 2.0f;
+        const float radial = 0.85f + 0.18f * std::sin(t * particle_pi * 10.0f);
+        xayah::Particle particle;
+        particle.position = {
+            std::cos(angle) * radial,
+            -0.35f + 0.28f * std::sin(t * particle_pi * 6.0f),
+            std::sin(angle) * radial,
+        };
+        particle.radius = 0.035f + 0.012f * (0.5f + 0.5f * std::sin(t * particle_pi * 14.0f));
+        particle.color = {0.28f, 0.62f + 0.24f * t, 0.98f};
+        water_particles.particles.emplace_back(particle);
+    }
+
     xayah::Scene scene;
     scene.volumes.emplace_back(std::move(volume));
     scene.volumes.emplace_back(std::move(sphere_volume));
     scene.meshes.emplace_back(std::move(cloth_mesh));
+    scene.particles.emplace_back(std::move(water_particles));
     scene.bake.mode = xayah::ScenePlaybackMode::baked;
 
     for (int frame_index = 0; frame_index < 3; ++frame_index) {
@@ -221,6 +244,23 @@ int main() {
             }
 
             baked_frame.meshes.emplace_back(std::move(baked_mesh));
+        }
+
+        for (const xayah::Particles& live_particles : scene.particles) {
+            xayah::BakedParticlesFrame baked_particles;
+            baked_particles.particles_id = live_particles.id;
+            baked_particles.particles = live_particles.particles;
+            const float frame_t = static_cast<float>(frame_index);
+
+            for (std::size_t index = 0; index < baked_particles.particles.size(); ++index) {
+                xayah::Particle& particle = baked_particles.particles[index];
+                const float t = static_cast<float>(index) / static_cast<float>(baked_particles.particles.size());
+                particle.position[0] += std::sin(frame_t * 0.8f + t * particle_pi * 2.0f) * 0.12f;
+                particle.position[1] += frame_t * 0.10f + std::cos(frame_t * 0.6f + t * particle_pi * 8.0f) * 0.05f;
+                particle.position[2] += std::cos(frame_t * 0.8f + t * particle_pi * 2.0f) * 0.12f;
+            }
+
+            baked_frame.particles.emplace_back(std::move(baked_particles));
         }
 
         scene.bake.frames.emplace_back(std::move(baked_frame));
