@@ -292,6 +292,33 @@ bool intersect_box(float3 ray_origin, float3 ray_direction, float3 box_min, floa
     return t_far >= max(t_near, 0.0);
 }
 
+float max3(float3 value) {
+    return max(max(value.x, value.y), value.z);
+}
+
+float smoke_density(float raw_value, GridParameters parameters) {
+    return normalized_value(max(raw_value, 0.0), parameters);
+}
+
+float smoke_alpha(float density, float step_size, float opacity) {
+    const float extinction = density * 8.5 * opacity;
+    return 1.0 - exp(-extinction * step_size);
+}
+
+float3 smoke_color(float3 sample_position, float density, float3 ray_direction, GridParameters parameters) {
+    const float3 light_direction = normalize(float3(-0.35, 0.78, -0.50));
+    const float probe_distance = max3(parameters.spacing_value_min.xyz) * 2.5;
+    const float light_density = smoke_density(sample_grid_value(sample_position + light_direction * probe_distance, parameters), parameters);
+    const float light_visibility = exp(-light_density * 2.4);
+    const float3 view_direction = -ray_direction;
+    const float forward_scatter = pow(saturate(dot(view_direction, -light_direction) * 0.5 + 0.5), 2.0);
+    const float edge_light = saturate((1.0 - density) * 0.55 + light_visibility * 0.65);
+    const float lighting = 0.20 + 0.72 * edge_light + 0.18 * forward_scatter;
+    const float3 thin_smoke = float3(0.72, 0.74, 0.75);
+    const float3 dense_smoke = float3(0.28, 0.29, 0.30);
+    return lerp(thin_smoke, dense_smoke, saturate(density * 0.85)) * lighting;
+}
+
 [shader("vertex")]
 VertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     const GridParameters parameters = parameters_buffer[0];
@@ -328,19 +355,20 @@ float4 fragment_main(VertexOutput input) : SV_Target0 {
     float t_far = 0.0;
     if (!intersect_box(camera_position, ray_direction, box_min, box_max, t_near, t_far)) return float4(0.0, 0.0, 0.0, 0.0);
 
-    float t = max(t_near, 0.0);
+    const float step_size = parameters.camera_local_step.w;
+    float t = max(t_near, 0.0) + step_size * 0.5;
     float accumulated_alpha = 0.0;
     float3 accumulated_color = float3(0.0, 0.0, 0.0);
-    const float step_size = parameters.camera_local_step.w;
 
     for (uint step = 0; step < 384 && t <= t_far && accumulated_alpha < 0.98; ++step) {
         const float3 sample_position = camera_position + ray_direction * t;
-        const float value = normalized_value(sample_grid_value(sample_position, parameters), parameters);
-        const float alpha = (1.0 - exp(-value * step_size * 4.0)) * parameters.local_min_opacity.w;
-        accumulated_color += (1.0 - accumulated_alpha) * alpha * color_map(value, parameters.mode_options.z);
+        const float density = smoke_density(sample_grid_value(sample_position, parameters), parameters);
+        const float alpha = smoke_alpha(density, step_size, parameters.local_min_opacity.w);
+        accumulated_color += (1.0 - accumulated_alpha) * alpha * smoke_color(sample_position, density, ray_direction, parameters);
         accumulated_alpha += (1.0 - accumulated_alpha) * alpha;
         t += step_size;
     }
 
-    return float4(accumulated_color, accumulated_alpha);
+    const float3 color = accumulated_alpha > 0.0001 ? accumulated_color / accumulated_alpha : float3(0.0, 0.0, 0.0);
+    return float4(color, accumulated_alpha);
 }

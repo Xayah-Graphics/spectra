@@ -78,6 +78,7 @@ target_sources(
         modules/mesh.cpp
         modules/particles.cpp
         modules/scene.cpp
+        modules/scene_frame.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -100,6 +101,7 @@ target_sources(
         modules/mesh.ixx
         modules/particles.ixx
         modules/scene.ixx
+        modules/scene_frame.ixx
         modules/spectra.ixx
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)

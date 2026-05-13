@@ -70,7 +70,7 @@ namespace xayah {
             VK_FALSE,
             VK_FALSE,
             vk::PolygonMode::eFill,
-            vk::CullModeFlagBits::eNone,
+            vk::CullModeFlagBits::eBack,
             vk::FrontFace::eCounterClockwise,
             VK_FALSE,
             0.0f,
@@ -79,7 +79,7 @@ namespace xayah {
             1.0f,
         };
         constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
-        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
 
         vk::PipelineColorBlendAttachmentState color_blend_attachment{};
         color_blend_attachment.blendEnable         = VK_TRUE;

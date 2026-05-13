@@ -245,7 +245,7 @@ namespace xayah {
         if (this->selection.object_id != 0) static_cast<void>(this->object_ref(this->selection.object_id));
     }
 
-    void Scene::initialize_selection() {
+    void Scene::initialize_objects() {
         for (std::variant<Volume, Mesh, Particles>& object : this->objects) {
             std::visit(
                 [](auto& value) {
@@ -283,7 +283,6 @@ namespace xayah {
     }
 
     void Scene::apply_snapshot(const SceneFrameSnapshot& snapshot) {
-        if (snapshot.objects.size() != this->objects.size()) throw std::runtime_error(std::string{"Scene snapshot object count does not match scene object count: "} + std::to_string(snapshot.frame_index));
         std::set<std::uint64_t> object_ids{};
         for (const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& object_snapshot : snapshot.objects) {
             const std::uint64_t object_id = snapshot_id(object_snapshot);

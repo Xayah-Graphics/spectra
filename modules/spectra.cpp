@@ -5,16 +5,16 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 #include <ImGuizmo.h>
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import camera;
-import scene;
+import scene_frame;
 import std;
 
 #if !defined(SPECTRA_SHADER_DIR)
@@ -454,6 +454,7 @@ namespace xayah {
     }
 
     Spectra::~Spectra() noexcept {
+        this->recorder.stop_noexcept();
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
@@ -495,11 +496,11 @@ namespace xayah {
     }
 
     void Spectra::render(Scene& scene) {
-        this->render(scene, {});
+        this->render_loop(scene, {});
     }
 
-    void Spectra::render(Scene& scene, const std::function<SpectraFrameUpdateResult(Scene&, const SpectraFrameUpdateContext&)>& update) {
-        scene.initialize_selection();
+    void Spectra::render_loop(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer) {
+        scene.initialize_objects();
         scene.validate();
 
         const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
@@ -508,23 +509,121 @@ namespace xayah {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
                 FrameState frame{};
                 if (!this->begin_frame(frame, scene)) continue;
-                if (update) {
-                    const SpectraFrameUpdateContext update_context{ImGui::GetIO().DeltaTime, this->input.space_pressed, this->input.shift_down, this->timeline.current_frame};
-                    this->apply_update_result(update(scene, update_context));
-                }
+                if (frame_producer) this->update_scene_frame_session(scene, frame_producer, ImGui::GetIO().DeltaTime);
                 this->record_frame(frame, scene);
                 this->end_frame(frame, scene);
             }
 
+            this->recorder.stop();
             this->context.device.waitIdle();
             scene.destroy_render_resources();
         } catch (...) {
+            this->recorder.stop_noexcept();
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
             scene.destroy_render_resources();
             throw;
+        }
+    }
+
+    void Spectra::update_scene_frame_session(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer, const float delta_seconds) {
+        if (this->input.space_pressed && this->session.mode == SceneFrameSessionMode::preview_running) {
+            this->timeline.visible          = false;
+            this->session.mode_label        = "Preview Stopped";
+            this->session.mode              = SceneFrameSessionMode::idle;
+            this->session.show_record_stats = false;
+        } else if (this->input.space_pressed && this->session.mode == SceneFrameSessionMode::record_running) {
+            this->recorder.request_stop();
+            this->session.mode_label = "Record Stopping";
+            this->session.mode       = SceneFrameSessionMode::record_stopping;
+        } else if (this->input.space_pressed && this->session.mode != SceneFrameSessionMode::record_stopping) {
+            this->recorder.stop();
+            this->recorder.reset();
+            this->applied_record_frame = -1;
+            if (this->input.shift_down) {
+                const SceneFrameRecordConfig record_config{};
+                this->recorder.start(record_config, frame_producer);
+                this->session.mode_label           = "Record";
+                this->session.mode                 = SceneFrameSessionMode::record_running;
+                this->session.show_record_stats    = true;
+                this->session.next_frame_index     = 0;
+                this->session.simulated_frames     = 0;
+                this->session.written_frames       = 0;
+                this->session.cache_bytes          = 0;
+                this->session.max_cache_bytes      = record_config.max_host_cache_bytes;
+                this->timeline.visible             = true;
+                this->timeline.frame_min           = 0;
+                this->timeline.frame_max           = 0;
+                this->timeline.available_frame_max = 0;
+                this->timeline.current_frame       = 0;
+                this->timeline.first_frame         = 0;
+            } else {
+                this->timeline.visible          = false;
+                this->session.mode_label        = "Preview";
+                this->session.mode              = SceneFrameSessionMode::preview_running;
+                this->session.show_record_stats = false;
+                this->session.next_frame_index  = 0;
+                this->session.simulated_frames  = 0;
+                this->session.written_frames    = 0;
+                this->session.cache_bytes       = 0;
+                this->session.max_cache_bytes   = 0;
+            }
+        }
+
+        if (this->session.mode == SceneFrameSessionMode::preview_running) {
+            const SceneFrameRequest request{this->session.next_frame_index, delta_seconds, this->session.next_frame_index == 0};
+            SceneFrameSnapshot snapshot = frame_producer(request);
+            if (snapshot.frame_index != request.frame_index) throw std::runtime_error("Scene frame producer returned an unexpected frame index");
+            scene.apply_snapshot(snapshot);
+            ++this->session.next_frame_index;
+            this->session.simulated_frames = this->session.next_frame_index;
+            this->session.mode_label       = "Preview";
+            this->timeline.visible         = false;
+            return;
+        }
+
+        if (this->session.mode != SceneFrameSessionMode::record_running && this->session.mode != SceneFrameSessionMode::record_stopping && this->session.mode != SceneFrameSessionMode::playback) {
+            this->timeline.visible          = false;
+            this->session.show_record_stats = false;
+            return;
+        }
+
+        if (this->recorder.finish_if_ready() && (this->session.mode == SceneFrameSessionMode::record_running || this->session.mode == SceneFrameSessionMode::record_stopping)) {
+            this->session.mode_label = "Playback";
+            this->session.mode       = SceneFrameSessionMode::playback;
+        }
+        const SceneFrameRecordStats stats = this->recorder.stats();
+        const int available_source_frame  = std::max(stats.latest_ready_frame, stats.written_frame_max);
+        const int visible_frame_max       = std::max(0, available_source_frame);
+        const bool follow_latest          = (this->session.mode == SceneFrameSessionMode::record_running || this->session.mode == SceneFrameSessionMode::record_stopping) && this->timeline.current_frame >= this->timeline.available_frame_max;
+
+        this->timeline.visible             = true;
+        this->timeline.frame_min           = 0;
+        this->timeline.frame_max           = visible_frame_max;
+        this->timeline.available_frame_max = visible_frame_max;
+        this->timeline.first_frame         = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
+        if (follow_latest)
+            this->timeline.current_frame = visible_frame_max;
+        else
+            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+
+        this->session.show_record_stats = true;
+        this->session.simulated_frames  = stats.produced_frames;
+        this->session.written_frames    = stats.written_frames;
+        this->session.cache_bytes       = stats.host_cache_bytes;
+        this->session.max_cache_bytes   = stats.max_host_cache_bytes;
+        if (this->session.mode == SceneFrameSessionMode::record_running) this->session.mode_label = "Record";
+        if (this->session.mode == SceneFrameSessionMode::record_stopping) this->session.mode_label = "Record Stopping";
+        if (this->session.mode == SceneFrameSessionMode::playback) this->session.mode_label = "Playback";
+
+        if (available_source_frame >= 0 && this->applied_record_frame != this->timeline.current_frame) {
+            SceneFrameSnapshot snapshot;
+            if (this->recorder.read(this->timeline.current_frame, snapshot)) {
+                scene.apply_snapshot(snapshot);
+                this->applied_record_frame = this->timeline.current_frame;
+            }
         }
     }
 
@@ -564,7 +663,8 @@ namespace xayah {
 
         ImGuiIO& io                       = ImGui::GetIO();
         const ImVec2 mouse_position       = io.MousePos;
-        const float timeline_top          = viewport->WorkPos.y + viewport->WorkSize.y - this->active_timeline_height();
+        const float timeline_height       = this->timeline.visible ? this->timeline.height : 0.0f;
+        const float timeline_top          = viewport->WorkPos.y + viewport->WorkSize.y - timeline_height;
         const bool transform_gizmo_active = this->gizmo.using_gizmo || ImGuizmo::IsUsingAny();
         const bool in_viewport            = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse && !transform_gizmo_active;
         const bool right_mouse            = ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -673,7 +773,7 @@ namespace xayah {
         if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float timeline_height = this->active_timeline_height();
+        const float timeline_height = this->timeline.visible ? this->timeline.height : 0.0f;
         if (main_viewport->WorkSize.x <= 0.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for 3D scene");
 
         const float viewport_height_ratio         = (main_viewport->WorkSize.y - timeline_height) / main_viewport->WorkSize.y;
@@ -898,8 +998,9 @@ namespace xayah {
 
         const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
         const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
+        const float timeline_height             = this->timeline.visible ? this->timeline.height : 0.0f;
         const float inspector_window_width      = 360.0f;
-        const float inspector_window_max_height = main_viewport->WorkSize.y - this->active_timeline_height() - 24.0f;
+        const float inspector_window_max_height = main_viewport->WorkSize.y - timeline_height - 24.0f;
         if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
 
         ImGui::SetNextWindowViewport(main_viewport->ID);
@@ -951,7 +1052,8 @@ namespace xayah {
 
         ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float gizmo_height = main_viewport->WorkSize.y - this->active_timeline_height();
+        const float timeline_height = this->timeline.visible ? this->timeline.height : 0.0f;
+        const float gizmo_height    = main_viewport->WorkSize.y - timeline_height;
         if (main_viewport->WorkSize.x <= 0.0f || gizmo_height <= 0.0f) throw std::runtime_error("Viewport is too small for transform gizmo");
 
         constexpr ImGuiWindowFlags gizmo_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
@@ -1078,36 +1180,6 @@ namespace xayah {
         if (frame.recreate_after_present) this->recreate_swapchain(scene);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
-    }
-
-    void Spectra::apply_update_result(const SpectraFrameUpdateResult& result) {
-        if (result.timeline_frame_min > result.timeline_frame_max) throw std::runtime_error("Timeline frame range is invalid");
-        if (result.timeline_available_frame_max < result.timeline_frame_min || result.timeline_available_frame_max > result.timeline_frame_max) throw std::runtime_error("Timeline available frame range is invalid");
-
-        const int previous_frame_max       = this->timeline.frame_max;
-        const bool follow_latest           = this->timeline.visible && this->timeline.current_frame >= previous_frame_max;
-        this->timeline.visible             = result.timeline_visible;
-        this->timeline.frame_min           = result.timeline_frame_min;
-        this->timeline.frame_max           = result.timeline_frame_max;
-        this->timeline.available_frame_max = result.timeline_available_frame_max;
-        this->timeline.first_frame         = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
-        if (result.timeline_current_frame.has_value())
-            this->timeline.current_frame = std::clamp(*result.timeline_current_frame, this->timeline.frame_min, this->timeline.frame_max);
-        else if (follow_latest)
-            this->timeline.current_frame = this->timeline.frame_max;
-        else
-            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-
-        this->session.mode_label        = result.mode_label;
-        this->session.show_record_stats = result.show_record_stats;
-        this->session.simulated_frames  = result.simulated_frames;
-        this->session.written_frames    = result.written_frames;
-        this->session.cache_bytes       = result.cache_bytes;
-        this->session.max_cache_bytes   = result.max_cache_bytes;
-    }
-
-    float Spectra::active_timeline_height() const {
-        return this->timeline.visible ? this->timeline.height : 0.0f;
     }
 
     void Spectra::create_viewport_pipeline() {

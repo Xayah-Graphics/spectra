@@ -67,7 +67,7 @@ namespace xayah {
         [[nodiscard]] const Transform& selected_transform() const;
         [[nodiscard]] const char* selected_kind_label() const;
         void validate() const;
-        void initialize_selection();
+        void initialize_objects();
         [[nodiscard]] SceneFrameSnapshot make_snapshot(int frame_index) const;
         void apply_snapshot(const std::variant<VolumeSnapshot, MeshSnapshot, ParticlesSnapshot>& snapshot);
         void apply_snapshot(const SceneFrameSnapshot& snapshot);
