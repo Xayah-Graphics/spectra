@@ -1048,20 +1048,36 @@ namespace xayah {
             ImGui::TableSetupColumn("Resolution");
             ImGui::TableHeadersRow();
             for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
+                const bool selected = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
+                const std::string label = std::string{"Scalar##VolumeGridScalar:"} + grid.name;
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Scalar");
+                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
+                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    settings.grid_kind = VolumeGridKind::centered_scalar;
+                    settings.grid_name = grid.name;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::PopStyleColor();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%s", grid.name.c_str());
+                ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
                 ImGui::TableNextColumn();
                 ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
             }
             for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
+                const bool selected = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
+                const std::string label = std::string{"Vector##VolumeGridVector:"} + grid.name;
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Vector");
+                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
+                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    settings.grid_kind = VolumeGridKind::staggered_vector;
+                    settings.grid_name = grid.name;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::PopStyleColor();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%s", grid.name.c_str());
+                ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
                 ImGui::TableNextColumn();
                 ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
             }
@@ -1070,30 +1086,6 @@ namespace xayah {
 
         ImGui::Separator();
         ImGui::TextColored(accent_color, "Render");
-        const char* grid_kind_label  = settings.grid_kind == VolumeGridKind::centered_scalar ? "Scalar" : "Vector";
-        const std::string grid_label = settings.grid_name + " (" + grid_kind_label + ")";
-        if (ImGui::BeginCombo("Grid", grid_label.c_str())) {
-            for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
-                const bool selected     = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
-                const std::string label = grid.name + " (Scalar)";
-                if (ImGui::Selectable(label.c_str(), selected)) {
-                    settings.grid_kind = VolumeGridKind::centered_scalar;
-                    settings.grid_name = grid.name;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
-                const bool selected     = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
-                const std::string label = grid.name + " (Vector)";
-                if (ImGui::Selectable(label.c_str(), selected)) {
-                    settings.grid_kind = VolumeGridKind::staggered_vector;
-                    settings.grid_name = grid.name;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-
         const char* mode_label = settings.display_mode == VolumeDisplayMode::direct ? "Direct" : "Slice";
         if (ImGui::BeginCombo("Mode", mode_label)) {
             const bool direct_selected = settings.display_mode == VolumeDisplayMode::direct;
