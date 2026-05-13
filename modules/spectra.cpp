@@ -858,8 +858,6 @@ namespace xayah {
                 const std::string label         = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector##SceneVolumeSelect:" + id;
                 const std::string visible_label = std::string{volume.visible ? "V" : "H"} + "##SceneVolumeVisible:" + id;
                 const std::string bbox_label    = std::string{"B##SceneVolumeBounds:"} + id;
-                const char* mode_text           = volume.render_settings.display_mode == VolumeDisplayMode::direct ? "D" : "S";
-                const std::string mode_label    = std::string{mode_text} + "##SceneVolumeMode:" + id;
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -885,14 +883,6 @@ namespace xayah {
                 ImGui::PopStyleColor(5);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.render_settings.show_bounding_box ? "Hide bounding box" : "Show bounding box");
                 ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, volume.render_settings.display_mode == VolumeDisplayMode::direct ? ImVec4{0.32f, 0.62f, 0.96f, 0.78f} : ImVec4{0.92f, 0.62f, 0.26f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f})) volume.render_settings.display_mode = volume.render_settings.display_mode == VolumeDisplayMode::direct ? VolumeDisplayMode::slice : VolumeDisplayMode::direct;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.render_settings.display_mode == VolumeDisplayMode::direct ? "Direct volume rendering" : "Slice volume rendering");
             }
             for (Mesh& mesh : scene.meshes) {
                 const bool selected             = scene.selection.object_id == mesh.id;
