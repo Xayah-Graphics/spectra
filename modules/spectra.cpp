@@ -21,11 +21,6 @@ import std;
 #endif
 
 namespace {
-    struct ViewportShaderVertex {
-        [[maybe_unused]] std::array<float, 4> position{};
-        [[maybe_unused]] std::array<float, 4> color{};
-    };
-
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
         const vk::ImageMemoryBarrier2 image_memory_barrier{
             src_stage,
@@ -813,15 +808,12 @@ namespace xayah {
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
         if (this->viewport.grid_visible) {
-            if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline || !*this->viewport.vertex_buffer) throw std::runtime_error("Viewport pipeline is not initialized");
+            if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline) throw std::runtime_error("Viewport pipeline is not initialized");
 
             command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline);
             command_buffer.setViewport(0, vulkan_viewport);
             command_buffer.setScissor(0, scissor);
             command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const float>{view_projection});
-            const std::array viewport_vertex_buffers{static_cast<vk::Buffer>(*this->viewport.vertex_buffer)};
-            constexpr std::array<vk::DeviceSize, 1> viewport_vertex_offsets{0};
-            command_buffer.bindVertexBuffers(0, viewport_vertex_buffers, viewport_vertex_offsets);
             command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
         }
 
@@ -1820,36 +1812,7 @@ namespace xayah {
         const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 0, nullptr, 1, &push_constant_range};
         this->viewport.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
 
-        std::vector<ViewportShaderVertex> viewport_vertices{};
-        constexpr int grid_radius   = 20;
-        constexpr int grid_width    = grid_radius * 2 + 1;
-        constexpr float axis_length = 20.0f;
-        viewport_vertices.reserve(static_cast<std::size_t>(grid_width) * 4 + 6);
-        for (int line = 0; line < grid_width; ++line) {
-            const float coordinate           = static_cast<float>(line - grid_radius);
-            const std::array<float, 4> color = std::abs(coordinate) < 0.001f ? std::array{0.42f, 0.45f, 0.52f, 1.0f} : std::array{0.28f, 0.31f, 0.36f, 1.0f};
-            viewport_vertices.emplace_back(ViewportShaderVertex{{-static_cast<float>(grid_radius), 0.0f, coordinate, 1.0f}, color});
-            viewport_vertices.emplace_back(ViewportShaderVertex{{static_cast<float>(grid_radius), 0.0f, coordinate, 1.0f}, color});
-            viewport_vertices.emplace_back(ViewportShaderVertex{{coordinate, 0.0f, -static_cast<float>(grid_radius), 1.0f}, color});
-            viewport_vertices.emplace_back(ViewportShaderVertex{{coordinate, 0.0f, static_cast<float>(grid_radius), 1.0f}, color});
-        }
-        viewport_vertices.emplace_back(ViewportShaderVertex{{-axis_length, 0.0f, 0.0f, 1.0f}, {0.95f, 0.22f, 0.28f, 1.0f}});
-        viewport_vertices.emplace_back(ViewportShaderVertex{{axis_length, 0.0f, 0.0f, 1.0f}, {0.95f, 0.22f, 0.28f, 1.0f}});
-        viewport_vertices.emplace_back(ViewportShaderVertex{{0.0f, -axis_length, 0.0f, 1.0f}, {0.28f, 0.86f, 0.40f, 1.0f}});
-        viewport_vertices.emplace_back(ViewportShaderVertex{{0.0f, axis_length, 0.0f, 1.0f}, {0.28f, 0.86f, 0.40f, 1.0f}});
-        viewport_vertices.emplace_back(ViewportShaderVertex{{0.0f, 0.0f, -axis_length, 1.0f}, {0.25f, 0.55f, 1.0f, 1.0f}});
-        viewport_vertices.emplace_back(ViewportShaderVertex{{0.0f, 0.0f, axis_length, 1.0f}, {0.25f, 0.55f, 1.0f, 1.0f}});
-        if (viewport_vertices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Viewport grid has too many vertices");
-        this->viewport.vertex_count = static_cast<std::uint32_t>(viewport_vertices.size());
-        ensure_buffer(this->context.physical_device, this->context.device, this->viewport.vertex_buffer, this->viewport.vertex_memory, this->viewport.vertex_size, viewport_vertices.size() * sizeof(ViewportShaderVertex), vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-        write_buffer(this->viewport.vertex_memory, this->viewport.vertex_size, viewport_vertices.data(), viewport_vertices.size() * sizeof(ViewportShaderVertex));
-
-        constexpr vk::VertexInputBindingDescription vertex_binding{0, sizeof(ViewportShaderVertex), vk::VertexInputRate::eVertex};
-        constexpr std::array vertex_attributes{
-            vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
-            vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, static_cast<std::uint32_t>(sizeof(std::array<float, 4>))},
-        };
-        const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
+        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
         constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eLineList, VK_FALSE};
         vk::PipelineViewportStateCreateInfo viewport_state{};
         viewport_state.viewportCount = 1;
@@ -1907,9 +1870,6 @@ namespace xayah {
     void Spectra::destroy_viewport_pipeline() noexcept {
         this->viewport.pipeline        = nullptr;
         this->viewport.pipeline_layout = nullptr;
-        this->viewport.vertex_buffer   = nullptr;
-        this->viewport.vertex_memory   = nullptr;
-        this->viewport.vertex_size     = 0;
     }
 
     void Spectra::create_bounding_box_renderer() {

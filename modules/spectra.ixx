@@ -86,9 +86,6 @@ namespace xayah {
             Camera camera{};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
-            vk::raii::Buffer vertex_buffer{nullptr};
-            vk::raii::DeviceMemory vertex_memory{nullptr};
-            vk::DeviceSize vertex_size{0};
             std::uint32_t vertex_count{170};
             bool grid_visible{true};
         } viewport;
