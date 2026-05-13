@@ -1043,20 +1043,6 @@ namespace xayah {
             ImGui::PopItemWidth();
             if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
 
-            if (ImGui::Button("T##GizmoTranslate", ImVec2{28.0f, 22.0f})) this->gizmo.operation = GizmoOperation::translate;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
-            ImGui::SameLine();
-            if (ImGui::Button("R##GizmoRotate", ImVec2{28.0f, 22.0f})) this->gizmo.operation = GizmoOperation::rotate;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
-            ImGui::SameLine();
-            if (ImGui::Button("S##GizmoScale", ImVec2{28.0f, 22.0f})) this->gizmo.operation = GizmoOperation::scale;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
-            if (this->gizmo.operation != GizmoOperation::scale) {
-                ImGui::SameLine();
-                const bool local_mode = this->gizmo.mode == GizmoMode::local;
-                if (ImGui::Button(local_mode ? "Local##GizmoMode" : "World##GizmoMode", ImVec2{64.0f, 22.0f})) this->gizmo.mode = local_mode ? GizmoMode::world : GizmoMode::local;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(local_mode ? "Switch to world mode" : "Switch to local mode");
-            }
             ImGui::Separator();
 
             if (active_object.kind == SceneObjectKind::volume) {
@@ -1436,6 +1422,63 @@ namespace xayah {
 
         ImGui::End();
         ImGui::PopStyleVar(2);
+
+        constexpr float toolbar_width = 312.0f;
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + (main_viewport->WorkSize.x - toolbar_width) * 0.5f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2{toolbar_width, 42.0f}, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.16f);
+        constexpr ImGuiWindowFlags toolbar_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 7.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{8.0f, 8.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.025f, 0.030f, 0.036f, 0.42f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.44f, 0.62f, 0.78f, 0.34f});
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.92f, 0.96f, 1.0f, 1.0f});
+        ImGui::Begin("Viewport Gizmo Toolbar", nullptr, toolbar_window_flags);
+        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::translate ? ImVec4{0.30f, 0.56f, 0.90f, 0.52f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.34f, 0.62f, 0.98f, 0.62f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.42f, 0.70f, 1.00f, 0.72f});
+        if (ImGui::Button("T##ViewportGizmoTranslate", ImVec2{34.0f, 24.0f})) this->gizmo.operation = GizmoOperation::translate;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::rotate ? ImVec4{0.88f, 0.50f, 0.30f, 0.52f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.96f, 0.58f, 0.34f, 0.62f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{1.00f, 0.66f, 0.40f, 0.72f});
+        if (ImGui::Button("R##ViewportGizmoRotate", ImVec2{34.0f, 24.0f})) this->gizmo.operation = GizmoOperation::rotate;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::scale ? ImVec4{0.34f, 0.80f, 0.55f, 0.52f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.40f, 0.90f, 0.62f, 0.62f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.50f, 1.00f, 0.72f, 0.72f});
+        if (ImGui::Button("S##ViewportGizmoScale", ImVec2{34.0f, 24.0f})) this->gizmo.operation = GizmoOperation::scale;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2{8.0f, 1.0f});
+        ImGui::SameLine();
+        const bool local_mode = this->gizmo.mode == GizmoMode::local;
+        const bool scale_operation = this->gizmo.operation == GizmoOperation::scale;
+        ImGui::BeginDisabled(scale_operation);
+        ImGui::PushStyleColor(ImGuiCol_Button, local_mode ? ImVec4{0.28f, 0.44f, 0.66f, 0.46f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.36f, 0.56f, 0.82f, 0.56f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.42f, 0.66f, 0.96f, 0.66f});
+        if (ImGui::Button("Local##ViewportGizmoLocal", ImVec2{70.0f, 24.0f})) this->gizmo.mode = GizmoMode::local;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(scale_operation ? "Scale is local" : "Use local object axes");
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, !local_mode ? ImVec4{0.28f, 0.44f, 0.66f, 0.46f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.36f, 0.56f, 0.82f, 0.56f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.42f, 0.66f, 0.96f, 0.66f});
+        if (ImGui::Button("World##ViewportGizmoWorld", ImVec2{70.0f, 24.0f})) this->gizmo.mode = GizmoMode::world;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(scale_operation ? "Scale is local" : "Use world axes");
+        ImGui::PopStyleColor(3);
+        ImGui::EndDisabled();
+        ImGui::End();
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(3);
     }
 
     void Spectra::end_frame(FrameState& frame, const Scene& scene) {

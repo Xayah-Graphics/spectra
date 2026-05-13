@@ -83,7 +83,7 @@ namespace xayah {
 
     export struct MeshRenderSettings {
         MeshDisplayMode display_mode{MeshDisplayMode::surface};
-        bool show_bounding_box{true};
+        bool show_bounding_box{false};
     };
 
     export struct Mesh {
@@ -104,7 +104,7 @@ namespace xayah {
 
     export struct ParticleRenderSettings {
         float radius_scale{1.0f};
-        bool show_bounding_box{true};
+        bool show_bounding_box{false};
     };
 
     export struct Particles {
