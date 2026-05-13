@@ -5,17 +5,16 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 #include <ImGuizmo.h>
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import camera;
 import scene;
-import scene_renderer;
 import std;
 
 #if !defined(SPECTRA_SHADER_DIR)
@@ -74,9 +73,9 @@ namespace {
         std::array<float, 3> scale{};
         ImGuizmo::DecomposeMatrixToComponents(matrix.data(), translation.data(), rotation.data(), scale.data());
         if (scale[0] <= 0.000001f || scale[1] <= 0.000001f || scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
-        transform.translation     = translation;
+        transform.translation      = translation;
         transform.rotation_degrees = rotation;
-        transform.scale           = scale;
+        transform.scale            = scale;
     }
 
 } // namespace
@@ -439,7 +438,6 @@ namespace xayah {
             std::println("{}{}{}\n", dim, std::string(96, '='), reset);
         }
     } catch (...) {
-        this->scene_renderer.destroy();
         this->destroy_viewport_pipeline();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
@@ -466,7 +464,6 @@ namespace xayah {
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
         }
-        this->scene_renderer.destroy();
         this->destroy_viewport_pipeline();
         this->imgui.descriptor_pool = nullptr;
         this->imgui.color_format    = vk::Format::eUndefined;
@@ -498,8 +495,8 @@ namespace xayah {
     }
 
     void Spectra::render(Scene& scene) {
-        scene.validate();
         scene.initialize_selection();
+        scene.validate();
         scene.validate_bake();
         if (scene.bake.mode == ScenePlaybackMode::baked) {
             this->timeline.frame_min     = scene.baked_frame_min();
@@ -508,7 +505,8 @@ namespace xayah {
             this->timeline.first_frame   = this->timeline.frame_min;
         }
 
-        this->scene_renderer.create(this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count, scene);
+        const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
+        scene.create_render_resources(render_create_context);
         try {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
                 FrameState frame{};
@@ -518,18 +516,18 @@ namespace xayah {
             }
 
             this->context.device.waitIdle();
-            this->scene_renderer.destroy();
+            scene.destroy_render_resources();
         } catch (...) {
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
-            this->scene_renderer.destroy();
+            scene.destroy_render_resources();
             throw;
         }
     }
 
-    bool Spectra::begin_frame(FrameState& frame, const Scene& scene) {
+    bool Spectra::begin_frame(FrameState& frame, Scene& scene) {
         glfwPollEvents();
         if (this->surface.resize_requested) {
             this->recreate_swapchain(scene);
@@ -563,16 +561,16 @@ namespace xayah {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
 
-        ImGuiIO& io                 = ImGui::GetIO();
-        const ImVec2 mouse_position = io.MousePos;
-        const float timeline_top    = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
+        ImGuiIO& io                       = ImGui::GetIO();
+        const ImVec2 mouse_position       = io.MousePos;
+        const float timeline_top          = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
         const bool transform_gizmo_active = this->gizmo.using_gizmo || ImGuizmo::IsUsingAny();
-        const bool in_viewport      = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse && !transform_gizmo_active;
-        const bool right_mouse      = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-        const bool middle_mouse     = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-        const bool left_mouse       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        const bool shift            = io.KeyShift;
-        const bool alt              = io.KeyAlt;
+        const bool in_viewport            = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse && !transform_gizmo_active;
+        const bool right_mouse            = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        const bool middle_mouse           = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        const bool left_mouse             = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        const bool shift                  = io.KeyShift;
+        const bool alt                    = io.KeyAlt;
 
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.grid_visible = !this->viewport.grid_visible;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
@@ -672,7 +670,7 @@ namespace xayah {
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (main_viewport->WorkSize.x <= 0.0f || main_viewport->WorkSize.y <= this->timeline.height) throw std::runtime_error("Viewport is too small for 3D scene");
 
-        const float viewport_height_ratio = (main_viewport->WorkSize.y - this->timeline.height) / main_viewport->WorkSize.y;
+        const float viewport_height_ratio         = (main_viewport->WorkSize.y - this->timeline.height) / main_viewport->WorkSize.y;
         const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(std::lround(static_cast<float>(this->swapchain.extent.height) * viewport_height_ratio));
         if (scene_viewport_height == 0 || scene_viewport_height > this->swapchain.extent.height) throw std::runtime_error("Invalid 3D viewport height");
 
@@ -697,7 +695,8 @@ namespace xayah {
 
         command_buffer.setViewport(0, vulkan_viewport);
         command_buffer.setScissor(0, scissor);
-        this->scene_renderer.render(this->context.physical_device, this->context.device, command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up, scene);
+        const SceneRenderFrameContext scene_render_context{&this->context.physical_device, &this->context.device, &command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up};
+        scene.render(scene_render_context);
         command_buffer.endRendering();
 
         this->draw_transform_gizmo(scene);
@@ -708,7 +707,8 @@ namespace xayah {
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
         this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
 
-        struct TimelineSequence final : ImSequencer::SequenceInterface {
+        class TimelineSequence final : public ImSequencer::SequenceInterface {
+        public:
             int frame_min{0};
             int frame_max{0};
             int row_start_frame{0};
@@ -859,138 +859,15 @@ namespace xayah {
             ImGui::EndTable();
         }
 
-        const std::size_t volume_count    = scene.volumes.size();
-        const std::size_t mesh_count      = scene.meshes.size();
-        const std::size_t particles_count = scene.particles.size();
-        const std::size_t object_count    = volume_count + mesh_count + particles_count;
+        const std::size_t volume_count    = scene.volume_count();
+        const std::size_t mesh_count      = scene.mesh_count();
+        const std::size_t particles_count = scene.particles_count();
+        const std::size_t object_count    = scene.object_count();
         ImGui::Separator();
         ImGui::TextColored(accent_color, "Scene");
         ImGui::SameLine();
         ImGui::TextColored(muted_color, "%zu total / %zu volume%s / %zu mesh%s / %zu particle set%s", object_count, volume_count, volume_count == 1 ? "" : "s", mesh_count, mesh_count == 1 ? "" : "es", particles_count, particles_count == 1 ? "" : "s");
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{0.18f, 0.42f, 0.72f, 0.24f});
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.22f, 0.50f, 0.86f, 0.34f});
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4{0.28f, 0.58f, 0.96f, 0.44f});
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{0.0f, 3.0f});
-        if (ImGui::BeginTable("SceneObjectList", 4, ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Visible", ImGuiTableColumnFlags_WidthFixed, 32.0f);
-            ImGui::TableSetupColumn("BBox", ImGuiTableColumnFlags_WidthFixed, 32.0f);
-            ImGui::TableSetupColumn("Mode", ImGuiTableColumnFlags_WidthFixed, 32.0f);
-            for (Volume& volume : scene.volumes) {
-                const bool selected             = scene.selection.object_id == volume.id;
-                const std::size_t scalars       = volume.centered_scalar_grids.size();
-                const std::size_t vectors       = volume.staggered_vector_grids.size();
-                const std::string id            = std::to_string(volume.id);
-                const std::string label         = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector##SceneVolumeSelect:" + id;
-                const std::string visible_label = std::string{volume.visible ? "V" : "H"} + "##SceneVolumeVisible:" + id;
-                const std::string bbox_label    = std::string{"B##SceneVolumeBounds:"} + id;
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : volume.visible ? value_color : muted_color);
-                if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(volume.id);
-                ImGui::PopStyleColor();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, volume.visible ? ImVec4{0.24f, 0.82f, 0.55f, 0.78f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(visible_label.c_str(), ImVec2{26.0f, 22.0f})) volume.visible = !volume.visible;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.visible ? "Hide volume" : "Show volume");
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, volume.render_settings.show_bounding_box ? ImVec4{0.28f, 0.70f, 1.0f, 0.82f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(bbox_label.c_str(), ImVec2{26.0f, 22.0f})) volume.render_settings.show_bounding_box = !volume.render_settings.show_bounding_box;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.render_settings.show_bounding_box ? "Hide bounding box" : "Show bounding box");
-                ImGui::TableNextColumn();
-            }
-            for (Mesh& mesh : scene.meshes) {
-                const bool selected             = scene.selection.object_id == mesh.id;
-                const std::size_t triangles     = mesh.indices.size() / 3;
-                const std::string id            = std::to_string(mesh.id);
-                const std::string label         = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris##SceneMeshSelect:" + id;
-                const std::string visible_label = std::string{mesh.visible ? "V" : "H"} + "##SceneMeshVisible:" + id;
-                const std::string bbox_label    = std::string{"B##SceneMeshBounds:"} + id;
-                const char* mode_text           = mesh.render_settings.display_mode == MeshDisplayMode::surface ? "S" : "W";
-                const std::string mode_label    = std::string{mode_text} + "##SceneMeshMode:" + id;
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : mesh.visible ? value_color : muted_color);
-                if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(mesh.id);
-                ImGui::PopStyleColor();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, mesh.visible ? ImVec4{0.24f, 0.82f, 0.55f, 0.78f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(visible_label.c_str(), ImVec2{26.0f, 22.0f})) mesh.visible = !mesh.visible;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.visible ? "Hide mesh" : "Show mesh");
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, mesh.render_settings.show_bounding_box ? ImVec4{0.72f, 0.54f, 1.0f, 0.82f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(bbox_label.c_str(), ImVec2{26.0f, 22.0f})) mesh.render_settings.show_bounding_box = !mesh.render_settings.show_bounding_box;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.render_settings.show_bounding_box ? "Hide bounding box" : "Show bounding box");
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, mesh.render_settings.display_mode == MeshDisplayMode::surface ? ImVec4{0.66f, 0.48f, 0.96f, 0.78f} : ImVec4{0.28f, 0.80f, 0.88f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f})) mesh.render_settings.display_mode = mesh.render_settings.display_mode == MeshDisplayMode::surface ? MeshDisplayMode::wireframe : MeshDisplayMode::surface;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.render_settings.display_mode == MeshDisplayMode::surface ? "Surface mesh rendering" : "Wireframe mesh rendering");
-            }
-            for (Particles& particles : scene.particles) {
-                const bool selected             = scene.selection.object_id == particles.id;
-                const std::string id            = std::to_string(particles.id);
-                const std::string label         = std::string{"Particles  "} + particles.name + "  " + std::to_string(particles.particles.size()) + " particles##SceneParticlesSelect:" + id;
-                const std::string visible_label = std::string{particles.visible ? "V" : "H"} + "##SceneParticlesVisible:" + id;
-                const std::string bbox_label    = std::string{"B##SceneParticlesBounds:"} + id;
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : particles.visible ? value_color : muted_color);
-                if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(particles.id);
-                ImGui::PopStyleColor();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, particles.visible ? ImVec4{0.24f, 0.82f, 0.55f, 0.78f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(visible_label.c_str(), ImVec2{26.0f, 22.0f})) particles.visible = !particles.visible;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(particles.visible ? "Hide particles" : "Show particles");
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
-                ImGui::PushStyleColor(ImGuiCol_Border, particles.render_settings.show_bounding_box ? ImVec4{0.36f, 0.92f, 0.68f, 0.82f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
-                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(bbox_label.c_str(), ImVec2{26.0f, 22.0f})) particles.render_settings.show_bounding_box = !particles.render_settings.show_bounding_box;
-                ImGui::PopStyleColor(5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(particles.render_settings.show_bounding_box ? "Hide bounding box" : "Show bounding box");
-                ImGui::TableNextColumn();
-            }
-            ImGui::EndTable();
-        }
-        ImGui::PopStyleVar(3);
-        ImGui::PopStyleColor(3);
+        scene.draw_hierarchy_ui();
         ImGui::End();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
@@ -999,384 +876,49 @@ namespace xayah {
     void Spectra::draw_object_inspector(Scene& scene) {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        if (!scene.has_selection()) return;
 
-        const ImVec4 label_color{0.58f, 0.66f, 0.75f, 1.0f};
-        const ImVec4 value_color{0.92f, 0.96f, 1.0f, 1.0f};
         const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
         const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
+        const float inspector_window_width      = 360.0f;
+        const float inspector_window_max_height = main_viewport->WorkSize.y - this->timeline.height - 24.0f;
+        if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
 
-        if (scene.selection.object_id != 0) {
-            const float inspector_window_width      = 360.0f;
-            const float inspector_window_max_height = main_viewport->WorkSize.y - this->timeline.height - 24.0f;
-            if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
-            ImGui::SetNextWindowViewport(main_viewport->ID);
-            ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - inspector_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
-            ImGui::SetNextWindowSizeConstraints(ImVec2{inspector_window_width, 0.0f}, ImVec2{inspector_window_width, inspector_window_max_height});
-            ImGui::SetNextWindowBgAlpha(0.18f);
-            constexpr ImGuiWindowFlags inspector_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - inspector_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
+        ImGui::SetNextWindowSizeConstraints(ImVec2{inspector_window_width, 0.0f}, ImVec2{inspector_window_width, inspector_window_max_height});
+        ImGui::SetNextWindowBgAlpha(0.18f);
+        constexpr ImGuiWindowFlags inspector_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
 
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0f, 14.0f});
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.040f, 0.048f, 0.48f});
-            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35f, 0.62f, 0.95f, 0.42f});
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.08f, 0.095f, 0.11f, 0.42f});
-            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
-            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
-            ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0f, 14.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.040f, 0.048f, 0.48f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35f, 0.62f, 0.95f, 0.42f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.08f, 0.095f, 0.11f, 0.42f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
+        ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
 
-            const SceneObjectRef active_object = scene.selected_object_ref();
-            Transform& active_transform        = scene.selected_transform();
-            const char* active_object_kind     = "Volume";
-            if (active_object.kind == SceneObjectKind::mesh) active_object_kind = "Mesh";
-            if (active_object.kind == SceneObjectKind::particles) active_object_kind = "Particles";
+        Transform& active_transform = scene.selected_transform();
+        ImGui::TextColored(accent_color, "Object Inspector");
+        ImGui::SameLine();
+        ImGui::TextColored(muted_color, "%s", scene.selected_kind_label());
+        ImGui::Separator();
 
-            ImGui::TextColored(accent_color, "Object Inspector");
-            ImGui::SameLine();
-            ImGui::TextColored(muted_color, "%s", active_object_kind);
-            ImGui::Separator();
+        ImGui::TextColored(accent_color, "Transform");
+        ImGui::PushItemWidth(190.0f);
+        ImGui::InputFloat3("Translation", active_transform.translation.data(), "%.3f");
+        ImGui::InputFloat3("Rotation", active_transform.rotation_degrees.data(), "%.3f");
+        ImGui::InputFloat3("Scale", active_transform.scale.data(), "%.3f");
+        ImGui::PopItemWidth();
+        if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
 
-            ImGui::TextColored(accent_color, "Transform");
-            ImGui::PushItemWidth(190.0f);
-            ImGui::InputFloat3("Translation", active_transform.translation.data(), "%.3f");
-            ImGui::InputFloat3("Rotation", active_transform.rotation_degrees.data(), "%.3f");
-            ImGui::InputFloat3("Scale", active_transform.scale.data(), "%.3f");
-            ImGui::PopItemWidth();
-            if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
+        ImGui::Separator();
+        scene.draw_selected_inspector_ui();
 
-            ImGui::Separator();
-
-            if (active_object.kind == SceneObjectKind::volume) {
-                Volume& active_volume          = scene.volumes.at(active_object.index);
-                VolumeRenderSettings& settings = active_volume.render_settings;
-
-                if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Name");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%s", active_volume.name.c_str());
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Local size");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.size[0], active_volume.size[1], active_volume.size[2]);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Grids");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%zu scalar / %zu vector", active_volume.centered_scalar_grids.size(), active_volume.staggered_vector_grids.size());
-                    ImGui::EndTable();
-                }
-
-                ImGui::Separator();
-                ImGui::TextColored(accent_color, "Grids");
-                if (ImGui::BeginTable("InspectorGridList", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
-                    ImGui::TableSetupColumn("Kind");
-                    ImGui::TableSetupColumn("Name");
-                    ImGui::TableSetupColumn("Resolution");
-                    ImGui::TableHeadersRow();
-                    for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
-                        const bool selected     = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
-                        const std::string label = std::string{"Scalar##VolumeGridScalar:"} + grid.name;
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
-                        if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                            settings.grid_kind = VolumeGridKind::centered_scalar;
-                            settings.grid_name = grid.name;
-                        }
-                        if (selected) ImGui::SetItemDefaultFocus();
-                        ImGui::PopStyleColor();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
-                    }
-                    for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
-                        const bool selected     = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
-                        const std::string label = std::string{"Vector##VolumeGridVector:"} + grid.name;
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
-                        if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                            settings.grid_kind = VolumeGridKind::staggered_vector;
-                            settings.grid_name = grid.name;
-                        }
-                        if (selected) ImGui::SetItemDefaultFocus();
-                        ImGui::PopStyleColor();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
-                    }
-                    ImGui::EndTable();
-                }
-
-                ImGui::Separator();
-                ImGui::TextColored(accent_color, "Render");
-                ImGui::Checkbox("Bounding Box", &settings.show_bounding_box);
-                const char* mode_label = settings.display_mode == VolumeDisplayMode::direct ? "Direct" : "Slice";
-                if (ImGui::BeginCombo("Mode", mode_label)) {
-                    const bool direct_selected = settings.display_mode == VolumeDisplayMode::direct;
-                    if (ImGui::Selectable("Direct", direct_selected)) settings.display_mode = VolumeDisplayMode::direct;
-                    if (direct_selected) ImGui::SetItemDefaultFocus();
-
-                    const bool slice_selected = settings.display_mode == VolumeDisplayMode::slice;
-                    if (ImGui::Selectable("Slice", slice_selected)) settings.display_mode = VolumeDisplayMode::slice;
-                    if (slice_selected) ImGui::SetItemDefaultFocus();
-                    ImGui::EndCombo();
-                }
-
-                auto color_map_label = "Viridis";
-                if (settings.color_map == VolumeColorMap::grayscale) color_map_label = "Grayscale";
-                if (settings.color_map == VolumeColorMap::turbo) color_map_label = "Turbo";
-                if (settings.color_map == VolumeColorMap::heat) color_map_label = "Heat";
-                if (ImGui::BeginCombo("Color Map", color_map_label)) {
-                    const bool grayscale_selected = settings.color_map == VolumeColorMap::grayscale;
-                    if (ImGui::Selectable("Grayscale", grayscale_selected)) settings.color_map = VolumeColorMap::grayscale;
-                    if (grayscale_selected) ImGui::SetItemDefaultFocus();
-
-                    const bool viridis_selected = settings.color_map == VolumeColorMap::viridis;
-                    if (ImGui::Selectable("Viridis", viridis_selected)) settings.color_map = VolumeColorMap::viridis;
-                    if (viridis_selected) ImGui::SetItemDefaultFocus();
-
-                    const bool turbo_selected = settings.color_map == VolumeColorMap::turbo;
-                    if (ImGui::Selectable("Turbo", turbo_selected)) settings.color_map = VolumeColorMap::turbo;
-                    if (turbo_selected) ImGui::SetItemDefaultFocus();
-
-                    const bool heat_selected = settings.color_map == VolumeColorMap::heat;
-                    if (ImGui::Selectable("Heat", heat_selected)) settings.color_map = VolumeColorMap::heat;
-                    if (heat_selected) ImGui::SetItemDefaultFocus();
-                    ImGui::EndCombo();
-                }
-
-                if (settings.display_mode == VolumeDisplayMode::slice) {
-                    auto axis_label = "Y";
-                    if (settings.slice_axis == VolumeSliceAxis::x) axis_label = "X";
-                    if (settings.slice_axis == VolumeSliceAxis::z) axis_label = "Z";
-                    if (ImGui::BeginCombo("Axis", axis_label)) {
-                        const bool x_selected = settings.slice_axis == VolumeSliceAxis::x;
-                        if (ImGui::Selectable("X", x_selected)) settings.slice_axis = VolumeSliceAxis::x;
-                        if (x_selected) ImGui::SetItemDefaultFocus();
-
-                        const bool y_selected = settings.slice_axis == VolumeSliceAxis::y;
-                        if (ImGui::Selectable("Y", y_selected)) settings.slice_axis = VolumeSliceAxis::y;
-                        if (y_selected) ImGui::SetItemDefaultFocus();
-
-                        const bool z_selected = settings.slice_axis == VolumeSliceAxis::z;
-                        if (ImGui::Selectable("Z", z_selected)) settings.slice_axis = VolumeSliceAxis::z;
-                        if (z_selected) ImGui::SetItemDefaultFocus();
-                        ImGui::EndCombo();
-                    }
-                    ImGui::SliderFloat("Slice", &settings.slice_position, 0.0f, 1.0f, "%.3f");
-                }
-
-                std::array value_range{settings.value_min, settings.value_max};
-                if (ImGui::InputFloat2("Value Range", value_range.data())) {
-                    settings.value_min = value_range[0];
-                    settings.value_max = value_range[1];
-                }
-                ImGui::SliderFloat("Opacity", &settings.opacity, 0.0f, 1.0f, "%.3f");
-                ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
-            } else if (active_object.kind == SceneObjectKind::mesh) {
-                Mesh& active_mesh            = scene.meshes.at(active_object.index);
-                MeshRenderSettings& settings = active_mesh.render_settings;
-                if (active_mesh.vertices.empty()) throw std::runtime_error(std::string{"Selected mesh has no vertices: "} + active_mesh.name);
-
-                std::array<float, 3> bounds_min = active_mesh.vertices.front().position;
-                std::array<float, 3> bounds_max = active_mesh.vertices.front().position;
-                for (const MeshVertex& vertex : active_mesh.vertices) {
-                    for (std::size_t axis = 0; axis < 3; ++axis) {
-                        if (vertex.position[axis] < bounds_min[axis]) bounds_min[axis] = vertex.position[axis];
-                        if (vertex.position[axis] > bounds_max[axis]) bounds_max[axis] = vertex.position[axis];
-                    }
-                }
-
-                if (ImGui::BeginTable("InspectorMeshIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Name");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%s", active_mesh.name.c_str());
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Vertices");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%zu", active_mesh.vertices.size());
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Triangles");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%zu", active_mesh.indices.size() / 3);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Local bounds min");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Local bounds max");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Playback");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked vertices" : "Live vertices");
-                    ImGui::EndTable();
-                }
-
-                ImGui::Separator();
-                ImGui::TextColored(accent_color, "Render");
-                ImGui::Checkbox("Bounding Box", &settings.show_bounding_box);
-                const char* mode_label = settings.display_mode == MeshDisplayMode::surface ? "Surface" : "Wireframe";
-                if (ImGui::BeginCombo("Mode", mode_label)) {
-                    const bool surface_selected = settings.display_mode == MeshDisplayMode::surface;
-                    if (ImGui::Selectable("Surface", surface_selected)) settings.display_mode = MeshDisplayMode::surface;
-                    if (surface_selected) ImGui::SetItemDefaultFocus();
-
-                    const bool wireframe_selected = settings.display_mode == MeshDisplayMode::wireframe;
-                    if (ImGui::Selectable("Wireframe", wireframe_selected)) settings.display_mode = MeshDisplayMode::wireframe;
-                    if (wireframe_selected) ImGui::SetItemDefaultFocus();
-                    ImGui::EndCombo();
-                }
-
-                ImGui::Separator();
-                ImGui::TextColored(accent_color, "Vertex Format");
-                if (ImGui::BeginTable("InspectorMeshFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Position");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "float3");
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Normal");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "float3");
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Color");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "float3");
-                    ImGui::EndTable();
-                }
-            } else if (active_object.kind == SceneObjectKind::particles) {
-                Particles& active_particles      = scene.particles.at(active_object.index);
-                ParticleRenderSettings& settings = active_particles.render_settings;
-
-                std::array<float, 3> bounds_min{};
-                std::array<float, 3> bounds_max{};
-                float radius_min = 0.0f;
-                float radius_max = 0.0f;
-                if (!active_particles.particles.empty()) {
-                    bounds_min = active_particles.particles.front().position;
-                    bounds_max = active_particles.particles.front().position;
-                    radius_min = active_particles.particles.front().radius;
-                    radius_max = active_particles.particles.front().radius;
-                    for (const Particle& particle : active_particles.particles) {
-                        for (std::size_t axis = 0; axis < 3; ++axis) {
-                            if (particle.position[axis] < bounds_min[axis]) bounds_min[axis] = particle.position[axis];
-                            if (particle.position[axis] > bounds_max[axis]) bounds_max[axis] = particle.position[axis];
-                        }
-                        if (particle.radius < radius_min) radius_min = particle.radius;
-                        if (particle.radius > radius_max) radius_max = particle.radius;
-                    }
-                }
-
-                if (ImGui::BeginTable("InspectorParticlesIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Name");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%s", active_particles.name.c_str());
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Particles");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%zu", active_particles.particles.size());
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Local bounds min");
-                    ImGui::TableNextColumn();
-                    if (active_particles.particles.empty())
-                        ImGui::TextColored(muted_color, "n/a");
-                    else
-                        ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Local bounds max");
-                    ImGui::TableNextColumn();
-                    if (active_particles.particles.empty())
-                        ImGui::TextColored(muted_color, "n/a");
-                    else
-                        ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Radius");
-                    ImGui::TableNextColumn();
-                    if (active_particles.particles.empty())
-                        ImGui::TextColored(muted_color, "n/a");
-                    else
-                        ImGui::TextColored(value_color, "%.3f - %.3f", radius_min, radius_max);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Playback");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked particles" : "Live particles");
-                    ImGui::EndTable();
-                }
-
-                ImGui::Separator();
-                ImGui::TextColored(accent_color, "Render");
-                ImGui::Checkbox("Bounding Box", &settings.show_bounding_box);
-                ImGui::TextColored(value_color, "Billboard");
-                ImGui::InputFloat("Radius Scale", &settings.radius_scale, 0.05f, 0.2f, "%.3f");
-
-                ImGui::Separator();
-                ImGui::TextColored(accent_color, "Particle Format");
-                if (ImGui::BeginTable("InspectorParticleFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Position");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "float3");
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Radius");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "float");
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Color");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "float3");
-                    ImGui::EndTable();
-                }
-            } else {
-                throw std::runtime_error("Object inspector received unsupported scene object kind");
-            }
-
-            ImGui::End();
-            ImGui::PopStyleColor(5);
-            ImGui::PopStyleVar(2);
-        }
+        ImGui::End();
+        ImGui::PopStyleColor(5);
+        ImGui::PopStyleVar(2);
     }
 
     void Spectra::draw_transform_gizmo(Scene& scene) {
@@ -1413,10 +955,10 @@ namespace xayah {
         ImGuizmo::MODE mode = this->gizmo.mode == GizmoMode::world ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
         if (this->gizmo.operation == GizmoOperation::scale) mode = ImGuizmo::LOCAL;
 
-        const float aspect = main_viewport->WorkSize.x / gizmo_height;
-        const std::array<float, 16> view = this->viewport.camera.view_matrix();
+        const float aspect                     = main_viewport->WorkSize.x / gizmo_height;
+        const std::array<float, 16> view       = this->viewport.camera.view_matrix();
         const std::array<float, 16> projection = this->viewport.camera.gizmo_projection_matrix(aspect);
-        std::array<float, 16> matrix = imguizmo_matrix(scene.selected_transform());
+        std::array<float, 16> matrix           = imguizmo_matrix(scene.selected_transform());
         if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data())) update_transform_from_imguizmo_matrix(scene.selected_transform(), matrix);
         this->gizmo.using_gizmo = ImGuizmo::IsUsingAny() || ImGuizmo::IsOver();
 
@@ -1459,7 +1001,7 @@ namespace xayah {
         ImGui::SameLine();
         ImGui::Dummy(ImVec2{8.0f, 1.0f});
         ImGui::SameLine();
-        const bool local_mode = this->gizmo.mode == GizmoMode::local;
+        const bool local_mode      = this->gizmo.mode == GizmoMode::local;
         const bool scale_operation = this->gizmo.operation == GizmoOperation::scale;
         ImGui::BeginDisabled(scale_operation);
         ImGui::PushStyleColor(ImGuiCol_Button, local_mode ? ImVec4{0.28f, 0.44f, 0.66f, 0.46f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
@@ -1481,7 +1023,7 @@ namespace xayah {
         ImGui::PopStyleVar(3);
     }
 
-    void Spectra::end_frame(FrameState& frame, const Scene& scene) {
+    void Spectra::end_frame(FrameState& frame, Scene& scene) {
         if (this->imgui.viewports) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
@@ -1778,7 +1320,7 @@ namespace xayah {
         }
     }
 
-    void Spectra::recreate_swapchain(const Scene& scene) {
+    void Spectra::recreate_swapchain(Scene& scene) {
         {
             int width  = 0;
             int height = 0;
@@ -1806,7 +1348,8 @@ namespace xayah {
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
-        this->scene_renderer.recreate(this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count, scene);
+        const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
+        scene.recreate_render_resources(render_create_context);
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");

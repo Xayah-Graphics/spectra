@@ -195,77 +195,60 @@ int main() {
     }
 
     xayah::Scene scene;
-    scene.volumes.emplace_back(std::move(volume));
-    scene.volumes.emplace_back(std::move(sphere_volume));
-    scene.meshes.emplace_back(std::move(cloth_mesh));
-    scene.particles.emplace_back(std::move(water_particles));
+    scene.add(std::move(volume));
+    scene.add(std::move(sphere_volume));
+    scene.add(std::move(cloth_mesh));
+    scene.add(std::move(water_particles));
     scene.bake.mode = xayah::ScenePlaybackMode::baked;
 
     for (int frame_index = 0; frame_index < 3; ++frame_index) {
-        xayah::BakedSceneFrame baked_frame;
-        baked_frame.frame_index = frame_index;
+        xayah::BakedSceneFrame baked_frame = scene.make_baked_frame(frame_index);
+        const float frame_t                  = static_cast<float>(frame_index);
+        const float plume_density_scale      = 0.65f + frame_t * 0.25f;
+        const float sphere_density_scale     = 1.20f - frame_t * 0.25f;
+        const float staggered_velocity_scale = 0.85f + frame_t * 0.20f;
 
-        for (const xayah::Volume& live_volume : scene.volumes) {
-            xayah::BakedVolumeFrame baked_volume;
-            baked_volume.volume_id                = live_volume.id;
-            baked_volume.centered_scalar_grids    = live_volume.centered_scalar_grids;
-            baked_volume.staggered_vector_grids   = live_volume.staggered_vector_grids;
-            const float frame_t                   = static_cast<float>(frame_index);
-            const float plume_density_scale       = 0.65f + frame_t * 0.25f;
-            const float sphere_density_scale      = 1.20f - frame_t * 0.25f;
-            const float staggered_velocity_scale  = 0.85f + frame_t * 0.20f;
+        for (std::variant<xayah::VolumeSnapshot, xayah::MeshSnapshot, xayah::ParticlesSnapshot>& object_snapshot : baked_frame.objects) {
+            std::visit(
+                [&](auto& snapshot) {
+                    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(snapshot)>, xayah::VolumeSnapshot>) {
+                        for (xayah::CenteredScalarGrid& grid : snapshot.centered_scalar_grids) {
+                            const float scale = snapshot.object_id == 2 ? sphere_density_scale : plume_density_scale;
+                            for (float& value : grid.values) {
+                                value = std::clamp(value * scale, 0.0f, 1.0f);
+                            }
+                        }
 
-            for (xayah::CenteredScalarGrid& grid : baked_volume.centered_scalar_grids) {
-                const float scale = live_volume.name == "offset_sphere" ? sphere_density_scale : plume_density_scale;
-                for (float& value : grid.values) {
-                    value = std::clamp(value * scale, 0.0f, 1.0f);
-                }
-            }
-
-            for (xayah::StaggeredVectorGrid& grid : baked_volume.staggered_vector_grids) {
-                for (float& value : grid.x_values) {
-                    value *= staggered_velocity_scale;
-                }
-                for (float& value : grid.y_values) {
-                    value *= staggered_velocity_scale;
-                }
-                for (float& value : grid.z_values) {
-                    value *= staggered_velocity_scale;
-                }
-            }
-
-            baked_frame.volumes.emplace_back(std::move(baked_volume));
-        }
-
-        for (const xayah::Mesh& live_mesh : scene.meshes) {
-            xayah::BakedMeshFrame baked_mesh;
-            baked_mesh.mesh_id   = live_mesh.id;
-            baked_mesh.vertices  = live_mesh.vertices;
-            const float frame_t  = static_cast<float>(frame_index);
-
-            for (xayah::MeshVertex& vertex : baked_mesh.vertices) {
-                const float wave = std::sin(vertex.position[0] * 3.0f + vertex.position[2] * 1.7f + frame_t * 1.1f);
-                vertex.position[1] += wave * 0.16f;
-            }
-
-            baked_frame.meshes.emplace_back(std::move(baked_mesh));
-        }
-
-        for (const xayah::Particles& live_particles : scene.particles) {
-            xayah::BakedParticlesFrame baked_particles;
-            baked_particles.particles_id = live_particles.id;
-            baked_particles.particles = live_particles.particles;
-            const float frame_t = static_cast<float>(frame_index);
-
-            for (std::size_t index = 0; index < baked_particles.particles.size(); ++index) {
-                xayah::Particle& particle = baked_particles.particles[index];
-                const float t = static_cast<float>(index) / static_cast<float>(baked_particles.particles.size());
-                particle.position[0] += std::sin(frame_t * 0.8f + t * particle_pi * 2.0f) * 0.12f;
-                particle.position[1] += frame_t * 0.10f + std::cos(frame_t * 0.6f + t * particle_pi * 8.0f) * 0.05f;
-                particle.position[2] += std::cos(frame_t * 0.8f + t * particle_pi * 2.0f) * 0.12f;
-            }
-
-            baked_frame.particles.emplace_back(std::move(baked_particles));
+                        for (xayah::StaggeredVectorGrid& grid : snapshot.staggered_vector_grids) {
+                            for (float& value : grid.x_values) {
+                                value *= staggered_velocity_scale;
+                            }
+                            for (float& value : grid.y_values) {
+                                value *= staggered_velocity_scale;
+                            }
+                            for (float& value : grid.z_values) {
+                                value *= staggered_velocity_scale;
+                            }
+                        }
+                    } else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(snapshot)>, xayah::MeshSnapshot>) {
+                        for (xayah::MeshVertex& vertex : snapshot.vertices) {
+                            const float wave = std::sin(vertex.position[0] * 3.0f + vertex.position[2] * 1.7f + frame_t * 1.1f);
+                            vertex.position[1] += wave * 0.16f;
+                        }
+                    } else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(snapshot)>, xayah::ParticlesSnapshot>) {
+                        for (std::size_t index = 0; index < snapshot.particles.size(); ++index) {
+                            xayah::Particle& particle = snapshot.particles[index];
+                            const float t = static_cast<float>(index) / static_cast<float>(snapshot.particles.size());
+                            particle.position[0] += std::sin(frame_t * 0.8f + t * particle_pi * 2.0f) * 0.12f;
+                            particle.position[1] += frame_t * 0.10f + std::cos(frame_t * 0.6f + t * particle_pi * 8.0f) * 0.05f;
+                            particle.position[2] += std::cos(frame_t * 0.8f + t * particle_pi * 2.0f) * 0.12f;
+                        }
+                    } else {
+                        throw std::runtime_error("Unsupported baked scene object snapshot");
+                    }
+                },
+                object_snapshot
+            );
         }
 
         scene.bake.frames.emplace_back(std::move(baked_frame));

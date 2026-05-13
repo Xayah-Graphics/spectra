@@ -71,7 +71,11 @@ target_sources(
         spectra
         PRIVATE
         modules/spectra.cpp
-        modules/scene_renderer.cpp
+        modules/scene_object.cpp
+        modules/volume.cpp
+        modules/mesh.cpp
+        modules/particles.cpp
+        modules/scene.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -89,8 +93,11 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/camera.ixx
+        modules/scene_object.ixx
+        modules/volume.ixx
+        modules/mesh.ixx
+        modules/particles.ixx
         modules/scene.ixx
-        modules/scene_renderer.ixx
         modules/spectra.ixx
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)

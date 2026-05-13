@@ -5,7 +5,6 @@ module;
 export module spectra;
 export import scene;
 import camera;
-import scene_renderer;
 import std;
 
 namespace xayah {
@@ -27,15 +26,15 @@ namespace xayah {
             bool recreate_after_present{false};
         };
 
-        bool begin_frame(FrameState& frame, const Scene& scene);
+        bool begin_frame(FrameState& frame, Scene& scene);
         void record_frame(const FrameState& frame, Scene& scene);
-        void end_frame(FrameState& frame, const Scene& scene);
+        void end_frame(FrameState& frame, Scene& scene);
 
     private:
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
-        void recreate_swapchain(const Scene& scene);
+        void recreate_swapchain(Scene& scene);
         void draw_stats_panel(Scene& scene);
         void draw_object_inspector(Scene& scene);
         void draw_transform_gizmo(Scene& scene);
@@ -85,8 +84,6 @@ namespace xayah {
             std::uint32_t vertex_count{170};
             bool grid_visible{true};
         } viewport;
-
-        SceneRenderer scene_renderer{};
 
         enum class GizmoOperation : std::uint32_t {
             translate = 0,
