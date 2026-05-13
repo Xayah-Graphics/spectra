@@ -133,7 +133,19 @@ if (SPECTRA_BUILD_EXTENSIONS)
     target_link_libraries(pyro PUBLIC CUDA::cudart CUDA::cublas CUDA::cusparse)
     set_property(TARGET pyro PROPERTY CXX_MODULE_STD ON)
 
+    add_library(bouncingball)
+    target_sources(
+            bouncingball
+            PRIVATE
+            ext/bouncingball.cpp
+            PUBLIC
+            FILE_SET cxx_modules TYPE CXX_MODULES FILES
+            ext/bouncingball.ixx
+    )
+    target_link_libraries(bouncingball PUBLIC spectra)
+    set_property(TARGET bouncingball PROPERTY CXX_MODULE_STD ON)
+
     add_executable(test main.cpp)
-    target_link_libraries(test PRIVATE spectra pyro)
+    target_link_libraries(test PRIVATE spectra pyro bouncingball)
     set_property(TARGET test PROPERTY CXX_MODULE_STD ON)
 endif ()

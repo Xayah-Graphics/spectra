@@ -4,11 +4,11 @@ module scene_frame;
 import std;
 
 namespace {
-    constexpr std::array<char, 8> scene_frame_record_magic{'S', 'S', 'F', 'R', 'M', '0', '1', '\0'};
+    constexpr std::array<char, 8> scene_frame_record_magic{'S', 'S', 'F', 'R', 'M', '0', '2', '\0'};
 
     struct SceneFrameRecordHeader {
         std::array<char, 8> magic{};
-        std::uint32_t version{1};
+        std::uint32_t version{2};
         std::int32_t frame_index{0};
         std::uint64_t object_count{0};
     };
@@ -127,12 +127,14 @@ namespace {
 
     void write_record_snapshot(std::ofstream& file, const xayah::MeshSnapshot& snapshot, const std::filesystem::path& path) {
         write_record_value(file, snapshot.object_id, path);
+        write_record_value(file, snapshot.transform, path);
         write_record_vector(file, snapshot.vertices, path);
     }
 
     [[nodiscard]] xayah::MeshSnapshot read_record_mesh_snapshot(std::ifstream& file, const std::filesystem::path& path) {
         xayah::MeshSnapshot snapshot;
         snapshot.object_id = read_record_value<std::uint64_t>(file, path);
+        snapshot.transform = read_record_value<xayah::Transform>(file, path);
         snapshot.vertices  = read_record_vector<xayah::MeshVertex>(file, path);
         return snapshot;
     }
@@ -185,7 +187,7 @@ namespace {
 
         const SceneFrameRecordHeader header = read_record_value<SceneFrameRecordHeader>(file, path);
         if (header.magic != scene_frame_record_magic) throw std::runtime_error(std::string{"Invalid scene frame record magic: "} + path.string());
-        if (header.version != 1u) throw std::runtime_error(std::string{"Unsupported scene frame record version: "} + path.string());
+        if (header.version != 2u) throw std::runtime_error(std::string{"Unsupported scene frame record version: "} + path.string());
         if (header.object_count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::string{"Scene frame record object count is too large: "} + path.string());
 
         xayah::SceneFrameSnapshot snapshot;
@@ -257,7 +259,7 @@ namespace xayah {
 
         std::ofstream manifest{this->state.current_output_directory / "manifest.txt"};
         if (!manifest) throw std::runtime_error(std::string{"Failed to create scene frame record manifest: "} + this->state.current_output_directory.string());
-        manifest << "spectra_scene_frame_record_version 1\n";
+        manifest << "spectra_scene_frame_record_version 2\n";
 
         {
             std::lock_guard lock{this->state.mutex};

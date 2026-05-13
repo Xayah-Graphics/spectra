@@ -24,6 +24,7 @@ namespace xayah {
 
     export struct MeshSnapshot {
         std::uint64_t object_id{0};
+        Transform transform{};
         std::vector<MeshVertex> vertices{};
     };
 

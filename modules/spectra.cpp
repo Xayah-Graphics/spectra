@@ -5,11 +5,11 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 #include <ImGuizmo.h>
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
-#include <imgui.h>
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
@@ -42,20 +42,6 @@ namespace {
     VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
         if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
         return VK_FALSE;
-    }
-
-    std::vector<std::uint32_t> read_spirv(const std::filesystem::path& path) {
-        std::ifstream file{path, std::ios::binary | std::ios::ate};
-        if (!file) throw std::runtime_error(std::string{"Failed to open SPIR-V shader: "} + path.string());
-
-        const std::streamoff byte_count = file.tellg();
-        if (byte_count <= 0 || byte_count % static_cast<std::streamoff>(sizeof(std::uint32_t)) != 0) throw std::runtime_error(std::string{"Invalid SPIR-V shader size: "} + path.string());
-
-        std::vector<std::uint32_t> code(static_cast<std::size_t>(byte_count) / sizeof(std::uint32_t));
-        file.seekg(0, std::ios::beg);
-        file.read(reinterpret_cast<char*>(code.data()), byte_count);
-        if (!file) throw std::runtime_error(std::string{"Failed to read SPIR-V shader: "} + path.string());
-        return code;
     }
 
     [[nodiscard]] std::array<float, 16> imguizmo_matrix(const xayah::Transform& transform) {

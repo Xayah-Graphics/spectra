@@ -316,16 +316,18 @@ namespace xayah {
     }
 
     MeshSnapshot Mesh::make_snapshot() const {
-        return MeshSnapshot{this->id, this->vertices};
+        return MeshSnapshot{this->id, this->transform, this->vertices};
     }
 
     void Mesh::apply_snapshot(const MeshSnapshot& snapshot) {
         if (snapshot.object_id != this->id) throw std::runtime_error(std::string{"Mesh snapshot id does not match object: "} + this->name);
+        if (snapshot.transform.scale[0] <= 0.0f || snapshot.transform.scale[1] <= 0.0f || snapshot.transform.scale[2] <= 0.0f) throw std::runtime_error(std::string{"Snapshot mesh transform scale must be positive: "} + this->name);
         if (snapshot.vertices.size() != this->vertices.size()) throw std::runtime_error(std::string{"Snapshot mesh vertex count does not match live mesh: "} + this->name);
         for (const MeshVertex& vertex : snapshot.vertices) {
             const float normal_length_squared = vertex.normal[0] * vertex.normal[0] + vertex.normal[1] * vertex.normal[1] + vertex.normal[2] * vertex.normal[2];
             if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Snapshot mesh vertex normal must not be zero: "} + this->name);
         }
+        this->transform = snapshot.transform;
         this->vertices = snapshot.vertices;
     }
 } // namespace xayah
