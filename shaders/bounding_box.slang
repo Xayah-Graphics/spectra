@@ -1,5 +1,5 @@
 struct BoundingBoxParameters {
-    float4x4 view_projection;
+    float4x4 model_view_projection;
     float4 bounds_min;
     float4 bounds_max;
     float4 color;
@@ -46,8 +46,8 @@ float3 bounding_box_vertex(uint vertex_id) {
 VertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     VertexOutput output;
     const float3 local_position = bounding_box_vertex(vertex_id);
-    const float3 world_position = parameters.bounds_min.xyz + local_position * (parameters.bounds_max.xyz - parameters.bounds_min.xyz);
-    output.position = mul(parameters.view_projection, float4(world_position, 1.0));
+    const float3 object_position = parameters.bounds_min.xyz + local_position * (parameters.bounds_max.xyz - parameters.bounds_min.xyz);
+    output.position = mul(parameters.model_view_projection, float4(object_position, 1.0));
     output.color = parameters.color;
     return output;
 }

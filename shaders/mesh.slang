@@ -1,5 +1,7 @@
 struct MeshParameters {
     float4x4 view_projection;
+    float4x4 model;
+    float4x4 normal_matrix;
     float4 light_direction;
 };
 
@@ -23,8 +25,9 @@ VertexOutput vertex_main(VertexInput vertex) {
     const MeshParameters parameters = parameters_buffer[0];
 
     VertexOutput output;
-    output.position = mul(parameters.view_projection, float4(vertex.position, 1.0));
-    output.normal = normalize(vertex.normal);
+    const float4 world_position = mul(parameters.model, float4(vertex.position, 1.0));
+    output.position = mul(parameters.view_projection, world_position);
+    output.normal = normalize(mul(parameters.normal_matrix, float4(vertex.normal, 0.0)).xyz);
     output.color = saturate(vertex.color);
     return output;
 }

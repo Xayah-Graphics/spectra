@@ -2,6 +2,12 @@ export module scene;
 import std;
 
 namespace xayah {
+    export struct Transform {
+        std::array<float, 3> translation{0.0f, 0.0f, 0.0f};
+        std::array<float, 3> rotation_degrees{0.0f, 0.0f, 0.0f};
+        std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
+    };
+
     export struct CenteredScalarGrid {
         std::string name{};
         std::array<std::uint32_t, 3> resolution{0, 0, 0};
@@ -57,7 +63,7 @@ namespace xayah {
         std::uint64_t id{0};
         std::string name{};
         bool visible{true};
-        std::array<float, 3> origin{-1.0f, -1.0f, -1.0f};
+        Transform transform{};
         std::array<float, 3> size{2.0f, 2.0f, 2.0f};
         std::vector<CenteredScalarGrid> centered_scalar_grids{};
         std::vector<StaggeredVectorGrid> staggered_vector_grids{};
@@ -84,6 +90,7 @@ namespace xayah {
         std::uint64_t id{0};
         std::string name{};
         bool visible{true};
+        Transform transform{};
         std::vector<MeshVertex> vertices{};
         std::vector<std::uint32_t> indices{};
         MeshRenderSettings render_settings{};
@@ -104,6 +111,7 @@ namespace xayah {
         std::uint64_t id{0};
         std::string name{};
         bool visible{true};
+        Transform transform{};
         std::vector<Particle> particles{};
         ParticleRenderSettings render_settings{};
     };
@@ -175,6 +183,11 @@ namespace xayah {
         [[nodiscard]] int baked_frame_max() const;
         [[nodiscard]] SceneObjectRef object_ref(std::uint64_t object_id) const;
         [[nodiscard]] SceneObjectRef selected_object_ref() const;
+        [[nodiscard]] Transform& object_transform(std::uint64_t object_id);
+        [[nodiscard]] const Transform& object_transform(std::uint64_t object_id) const;
+        [[nodiscard]] Transform& selected_transform();
+        [[nodiscard]] const Transform& selected_transform() const;
+        [[nodiscard]] bool selected_object_visible() const;
         [[nodiscard]] const CenteredScalarGrid& render_centered_scalar_grid(const Volume& volume) const;
         [[nodiscard]] const StaggeredVectorGrid& render_staggered_vector_grid(const Volume& volume) const;
     };
@@ -190,6 +203,7 @@ namespace xayah {
             if (volume.name.empty()) throw std::runtime_error("Volume name must not be empty");
             if (!volume_names.insert(volume.name).second) throw std::runtime_error(std::string{"Duplicate volume name: "} + volume.name);
             if (volume.size[0] <= 0.0f || volume.size[1] <= 0.0f || volume.size[2] <= 0.0f) throw std::runtime_error(std::string{"Volume size must be positive: "} + volume.name);
+            if (volume.transform.scale[0] <= 0.0f || volume.transform.scale[1] <= 0.0f || volume.transform.scale[2] <= 0.0f) throw std::runtime_error(std::string{"Volume transform scale must be positive: "} + volume.name);
             if (volume.centered_scalar_grids.empty() && volume.staggered_vector_grids.empty()) throw std::runtime_error(std::string{"Volume has no grids: "} + volume.name);
 
             std::set<std::string> grid_names{};
@@ -224,6 +238,7 @@ namespace xayah {
             if (mesh.indices.empty()) throw std::runtime_error(std::string{"Mesh has no indices: "} + mesh.name);
             if (mesh.indices.size() % 3 != 0) throw std::runtime_error(std::string{"Mesh index count must be divisible by 3: "} + mesh.name);
             if (mesh.indices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::string{"Mesh has too many indices for Vulkan draw: "} + mesh.name);
+            if (mesh.transform.scale[0] <= 0.0f || mesh.transform.scale[1] <= 0.0f || mesh.transform.scale[2] <= 0.0f) throw std::runtime_error(std::string{"Mesh transform scale must be positive: "} + mesh.name);
 
             for (const MeshVertex& vertex : mesh.vertices) {
                 const float normal_length_squared = vertex.normal[0] * vertex.normal[0] + vertex.normal[1] * vertex.normal[1] + vertex.normal[2] * vertex.normal[2];
@@ -243,6 +258,7 @@ namespace xayah {
             if (!particles_names.insert(particles.name).second) throw std::runtime_error(std::string{"Duplicate particles name: "} + particles.name);
             if (particles.particles.empty()) throw std::runtime_error(std::string{"Particles object has no particles: "} + particles.name);
             if (particles.render_settings.radius_scale <= 0.0f) throw std::runtime_error(std::string{"Particles radius scale must be positive: "} + particles.name);
+            if (particles.transform.scale[0] <= 0.0f || particles.transform.scale[1] <= 0.0f || particles.transform.scale[2] <= 0.0f) throw std::runtime_error(std::string{"Particles transform scale must be positive: "} + particles.name);
 
             for (const Particle& particle : particles.particles) {
                 if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Particle radius must be positive: "} + particles.name);
@@ -389,7 +405,7 @@ namespace xayah {
         this->selection.object_id = object_id;
     }
 
-    void Scene::apply_playback_frame(int frame_index) {
+    void Scene::apply_playback_frame(const int frame_index) {
         if (this->bake.mode == ScenePlaybackMode::live) return;
 
         const BakedSceneFrame* baked_frame = nullptr;
@@ -527,6 +543,38 @@ namespace xayah {
 
     SceneObjectRef Scene::selected_object_ref() const {
         return this->object_ref(this->selection.object_id);
+    }
+
+    Transform& Scene::object_transform(const std::uint64_t object_id) {
+        const SceneObjectRef reference = this->object_ref(object_id);
+        if (reference.kind == SceneObjectKind::volume) return this->volumes.at(reference.index).transform;
+        if (reference.kind == SceneObjectKind::mesh) return this->meshes.at(reference.index).transform;
+        if (reference.kind == SceneObjectKind::particles) return this->particles.at(reference.index).transform;
+        throw std::runtime_error("Cannot access transform for unsupported scene object kind");
+    }
+
+    const Transform& Scene::object_transform(const std::uint64_t object_id) const {
+        const SceneObjectRef reference = this->object_ref(object_id);
+        if (reference.kind == SceneObjectKind::volume) return this->volumes.at(reference.index).transform;
+        if (reference.kind == SceneObjectKind::mesh) return this->meshes.at(reference.index).transform;
+        if (reference.kind == SceneObjectKind::particles) return this->particles.at(reference.index).transform;
+        throw std::runtime_error("Cannot access transform for unsupported scene object kind");
+    }
+
+    Transform& Scene::selected_transform() {
+        return this->object_transform(this->selection.object_id);
+    }
+
+    const Transform& Scene::selected_transform() const {
+        return this->object_transform(this->selection.object_id);
+    }
+
+    bool Scene::selected_object_visible() const {
+        const SceneObjectRef reference = this->selected_object_ref();
+        if (reference.kind == SceneObjectKind::volume) return this->volumes.at(reference.index).visible;
+        if (reference.kind == SceneObjectKind::mesh) return this->meshes.at(reference.index).visible;
+        if (reference.kind == SceneObjectKind::particles) return this->particles.at(reference.index).visible;
+        throw std::runtime_error("Cannot query visibility for unsupported scene object kind");
     }
 
     const CenteredScalarGrid& Scene::render_centered_scalar_grid(const Volume& volume) const {

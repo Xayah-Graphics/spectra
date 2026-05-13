@@ -1,7 +1,8 @@
 struct GridParameters {
     float4x4 view_projection;
-    float4 camera_step;
-    float4 origin_opacity;
+    float4x4 model;
+    float4 camera_local_step;
+    float4 local_min_opacity;
     float4 spacing_value_min;
     uint4 resolution_kind;
     uint4 mode_options;
@@ -32,7 +33,7 @@ StructuredBuffer<GridParameters> parameters_buffer;
 
 struct VertexOutput {
     float4 position : SV_Position;
-    float3 world_position : POSITION0;
+    float3 local_position : POSITION0;
 };
 
 float3 slice_corner(float2 uv, GridParameters parameters) {
@@ -101,9 +102,9 @@ float scalar_at(uint x, uint y, uint z, GridParameters parameters) {
 }
 
 float sample_centered_scalar(float3 position, GridParameters parameters) {
-    const float3 origin = parameters.origin_opacity.xyz;
+    const float3 local_min = parameters.local_min_opacity.xyz;
     const float3 spacing = parameters.spacing_value_min.xyz;
-    const float3 grid_position = (position - origin) / spacing - 0.5;
+    const float3 grid_position = (position - local_min) / spacing - 0.5;
     const float3 max_cell = float3(parameters.resolution_kind.x - 1, parameters.resolution_kind.y - 1, parameters.resolution_kind.z - 1);
 
     if (grid_position.x < 0.0 || grid_position.y < 0.0 || grid_position.z < 0.0) return 0.0;
@@ -247,7 +248,7 @@ float sample_z_face(float3 grid_position, GridParameters parameters) {
 }
 
 float3 sample_staggered_vector(float3 position, GridParameters parameters) {
-    const float3 grid_position = (position - parameters.origin_opacity.xyz) / parameters.spacing_value_min.xyz;
+    const float3 grid_position = (position - parameters.local_min_opacity.xyz) / parameters.spacing_value_min.xyz;
     const float x = sample_x_face(float3(grid_position.x, grid_position.y - 0.5, grid_position.z - 0.5), parameters);
     const float y = sample_y_face(float3(grid_position.x - 0.5, grid_position.y, grid_position.z - 0.5), parameters);
     const float z = sample_z_face(float3(grid_position.x - 0.5, grid_position.y - 0.5, grid_position.z), parameters);
@@ -301,10 +302,11 @@ VertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     else
         local_position = slice_corner(slice_quad_vertex(vertex_id), parameters);
 
-    const float3 world_position = parameters.origin_opacity.xyz + local_position * extent;
+    const float3 object_position = parameters.local_min_opacity.xyz + local_position * extent;
+    const float4 world_position = mul(parameters.model, float4(object_position, 1.0));
     VertexOutput output;
-    output.position = mul(parameters.view_projection, float4(world_position, 1.0));
-    output.world_position = world_position;
+    output.position = mul(parameters.view_projection, world_position);
+    output.local_position = object_position;
     return output;
 }
 
@@ -313,14 +315,14 @@ float4 fragment_main(VertexOutput input) : SV_Target0 {
     const GridParameters parameters = parameters_buffer[0];
 
     if (parameters.mode_options.x == MODE_SLICE) {
-        const float value = normalized_value(sample_grid_value(input.world_position, parameters), parameters);
-        return float4(color_map(value, parameters.mode_options.z), value * parameters.origin_opacity.w);
+        const float value = normalized_value(sample_grid_value(input.local_position, parameters), parameters);
+        return float4(color_map(value, parameters.mode_options.z), value * parameters.local_min_opacity.w);
     }
 
-    const float3 box_min = parameters.origin_opacity.xyz;
-    const float3 box_max = parameters.origin_opacity.xyz + float3(parameters.resolution_kind.x, parameters.resolution_kind.y, parameters.resolution_kind.z) * parameters.spacing_value_min.xyz;
-    const float3 camera_position = parameters.camera_step.xyz;
-    const float3 ray_direction = normalize(input.world_position - camera_position);
+    const float3 box_min = parameters.local_min_opacity.xyz;
+    const float3 box_max = parameters.local_min_opacity.xyz + float3(parameters.resolution_kind.x, parameters.resolution_kind.y, parameters.resolution_kind.z) * parameters.spacing_value_min.xyz;
+    const float3 camera_position = parameters.camera_local_step.xyz;
+    const float3 ray_direction = normalize(input.local_position - camera_position);
 
     float t_near = 0.0;
     float t_far = 0.0;
@@ -329,12 +331,12 @@ float4 fragment_main(VertexOutput input) : SV_Target0 {
     float t = max(t_near, 0.0);
     float accumulated_alpha = 0.0;
     float3 accumulated_color = float3(0.0, 0.0, 0.0);
-    const float step_size = parameters.camera_step.w;
+    const float step_size = parameters.camera_local_step.w;
 
     for (uint step = 0; step < 384 && t <= t_far && accumulated_alpha < 0.98; ++step) {
         const float3 sample_position = camera_position + ray_direction * t;
         const float value = normalized_value(sample_grid_value(sample_position, parameters), parameters);
-        const float alpha = (1.0 - exp(-value * step_size * 4.0)) * parameters.origin_opacity.w;
+        const float alpha = (1.0 - exp(-value * step_size * 4.0)) * parameters.local_min_opacity.w;
         accumulated_color += (1.0 - accumulated_alpha) * alpha * color_map(value, parameters.mode_options.z);
         accumulated_alpha += (1.0 - accumulated_alpha) * alpha;
         t += step_size;

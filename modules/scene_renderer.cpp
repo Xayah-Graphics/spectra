@@ -24,10 +24,137 @@ namespace {
         return code;
     }
 
+    [[nodiscard]] std::array<float, 16> multiply_matrix(const std::array<float, 16>& left, const std::array<float, 16>& right) {
+        std::array<float, 16> result{};
+        for (std::uint32_t column = 0; column < 4; ++column) {
+            for (std::uint32_t row = 0; row < 4; ++row) {
+                result[column * 4 + row] = left[0 * 4 + row] * right[column * 4 + 0] + left[1 * 4 + row] * right[column * 4 + 1] + left[2 * 4 + row] * right[column * 4 + 2] + left[3 * 4 + row] * right[column * 4 + 3];
+            }
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::array<float, 16> multiply_transform_matrix(const std::array<float, 16>& left, const std::array<float, 16>& right) {
+        std::array<float, 16> result{};
+        for (std::uint32_t row = 0; row < 4; ++row) {
+            const std::uint32_t base = row * 4;
+            result[base + 0]        = left[base + 0] * right[0] + left[base + 1] * right[4] + left[base + 2] * right[8] + left[base + 3] * right[12];
+            result[base + 1]        = left[base + 0] * right[1] + left[base + 1] * right[5] + left[base + 2] * right[9] + left[base + 3] * right[13];
+            result[base + 2]        = left[base + 0] * right[2] + left[base + 1] * right[6] + left[base + 2] * right[10] + left[base + 3] * right[14];
+            result[base + 3]        = left[base + 0] * right[3] + left[base + 1] * right[7] + left[base + 2] * right[11] + left[base + 3] * right[15];
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::array<float, 16> transform_matrix(const xayah::Transform& transform) {
+        constexpr float degrees_to_radians = 0.017453292519943295769f;
+        const float x = transform.rotation_degrees[0] * degrees_to_radians;
+        const float y = transform.rotation_degrees[1] * degrees_to_radians;
+        const float z = transform.rotation_degrees[2] * degrees_to_radians;
+        const float cx = std::cos(x);
+        const float sx = std::sin(x);
+        const float cy = std::cos(y);
+        const float sy = std::sin(y);
+        const float cz = std::cos(z);
+        const float sz = std::sin(z);
+
+        const std::array rotation_x{
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, cx, sx, 0.0f,
+            0.0f, -sx, cx, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
+        const std::array rotation_y{
+            cy, 0.0f, -sy, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            sy, 0.0f, cy, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
+        const std::array rotation_z{
+            cz, sz, 0.0f, 0.0f,
+            -sz, cz, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
+
+        std::array<float, 16> matrix = multiply_transform_matrix(multiply_transform_matrix(rotation_x, rotation_y), rotation_z);
+        for (std::uint32_t row = 0; row < 3; ++row) {
+            matrix[0 * 4 + row] *= transform.scale[0];
+            matrix[1 * 4 + row] *= transform.scale[1];
+            matrix[2 * 4 + row] *= transform.scale[2];
+        }
+        matrix[12] = transform.translation[0];
+        matrix[13] = transform.translation[1];
+        matrix[14] = transform.translation[2];
+        matrix[15] = 1.0f;
+        return matrix;
+    }
+
+    [[nodiscard]] std::array<float, 16> inverse_affine_matrix(const std::array<float, 16>& matrix) {
+        const float a00 = matrix[0];
+        const float a01 = matrix[4];
+        const float a02 = matrix[8];
+        const float a10 = matrix[1];
+        const float a11 = matrix[5];
+        const float a12 = matrix[9];
+        const float a20 = matrix[2];
+        const float a21 = matrix[6];
+        const float a22 = matrix[10];
+        const float determinant = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20) + a02 * (a10 * a21 - a11 * a20);
+        if (std::abs(determinant) <= 0.000001f) throw std::runtime_error("Cannot invert singular scene object transform");
+
+        const float inv_det = 1.0f / determinant;
+        const float b00 = (a11 * a22 - a12 * a21) * inv_det;
+        const float b01 = (a02 * a21 - a01 * a22) * inv_det;
+        const float b02 = (a01 * a12 - a02 * a11) * inv_det;
+        const float b10 = (a12 * a20 - a10 * a22) * inv_det;
+        const float b11 = (a00 * a22 - a02 * a20) * inv_det;
+        const float b12 = (a02 * a10 - a00 * a12) * inv_det;
+        const float b20 = (a10 * a21 - a11 * a20) * inv_det;
+        const float b21 = (a01 * a20 - a00 * a21) * inv_det;
+        const float b22 = (a00 * a11 - a01 * a10) * inv_det;
+        const float tx = matrix[12];
+        const float ty = matrix[13];
+        const float tz = matrix[14];
+
+        return {
+            b00, b10, b20, 0.0f,
+            b01, b11, b21, 0.0f,
+            b02, b12, b22, 0.0f,
+            -(b00 * tx + b01 * ty + b02 * tz),
+            -(b10 * tx + b11 * ty + b12 * tz),
+            -(b20 * tx + b21 * ty + b22 * tz),
+            1.0f,
+        };
+    }
+
+    [[nodiscard]] std::array<float, 16> normal_matrix(const std::array<float, 16>& matrix) {
+        const std::array<float, 16> inverse = inverse_affine_matrix(matrix);
+        return {
+            inverse[0], inverse[4], inverse[8], 0.0f,
+            inverse[1], inverse[5], inverse[9], 0.0f,
+            inverse[2], inverse[6], inverse[10], 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
+    }
+
+    [[nodiscard]] std::array<float, 3> transform_point(const std::array<float, 16>& matrix, const std::array<float, 3>& point) {
+        return {
+            matrix[0] * point[0] + matrix[4] * point[1] + matrix[8] * point[2] + matrix[12],
+            matrix[1] * point[0] + matrix[5] * point[1] + matrix[9] * point[2] + matrix[13],
+            matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14],
+        };
+    }
+
+    [[nodiscard]] float maximum_scale(const xayah::Transform& transform) {
+        return std::max(transform.scale[0], std::max(transform.scale[1], transform.scale[2]));
+    }
+
     struct VolumeShaderParameters {
         std::array<float, 16> view_projection{};
-        std::array<float, 4> camera_step{};
-        std::array<float, 4> origin_opacity{};
+        std::array<float, 16> model{};
+        std::array<float, 4> camera_local_step{};
+        std::array<float, 4> local_min_opacity{};
         std::array<float, 4> spacing_value_min{};
         std::array<std::uint32_t, 4> resolution_kind{};
         std::array<std::uint32_t, 4> mode_options{};
@@ -50,6 +177,8 @@ namespace {
 
     struct MeshShaderParameters {
         std::array<float, 16> view_projection{};
+        std::array<float, 16> model{};
+        std::array<float, 16> normal_matrix{};
         std::array<float, 4> light_direction{};
     };
 
@@ -64,7 +193,7 @@ namespace {
     };
 
     struct BoundingBoxShaderParameters {
-        std::array<float, 16> view_projection{};
+        std::array<float, 16> model_view_projection{};
         std::array<float, 4> bounds_min{};
         std::array<float, 4> bounds_max{};
         std::array<float, 4> color{};
@@ -77,11 +206,15 @@ namespace {
 
     BoundingBoxBounds volume_bounds(const xayah::Volume& volume) {
         return BoundingBoxBounds{
-            volume.origin,
             {
-                volume.origin[0] + volume.size[0],
-                volume.origin[1] + volume.size[1],
-                volume.origin[2] + volume.size[2],
+                -volume.size[0] * 0.5f,
+                -volume.size[1] * 0.5f,
+                -volume.size[2] * 0.5f,
+            },
+            {
+                volume.size[0] * 0.5f,
+                volume.size[1] * 0.5f,
+                volume.size[2] * 0.5f,
             },
         };
     }
@@ -254,6 +387,8 @@ namespace xayah {
 
             MeshShaderParameters parameters{};
             parameters.view_projection = view_projection;
+            parameters.model           = transform_matrix(mesh.transform);
+            parameters.normal_matrix   = normal_matrix(parameters.model);
             parameters.light_direction = {-0.45f, -0.85f, -0.25f, 0.0f};
 
             ensure_buffer(physical_device, device, resources.vertex_buffer, resources.vertex_memory, resources.vertex_size, shader_vertices.size() * sizeof(MeshShaderVertex), vk::BufferUsageFlagBits::eVertexBuffer, upload_memory_properties);
@@ -297,6 +432,8 @@ namespace xayah {
 
             std::vector<ParticleShaderVertex> shader_vertices{};
             shader_vertices.reserve(particles.particles.size() * 6);
+            const std::array<float, 16> model = transform_matrix(particles.transform);
+            const float object_radius_scale   = maximum_scale(particles.transform);
             constexpr std::array particle_corners{
                 std::array{-1.0f, -1.0f},
                 std::array{1.0f, -1.0f},
@@ -307,13 +444,14 @@ namespace xayah {
             };
             for (const Particle& particle : particles.particles) {
                 if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Particle radius must be positive: "} + particles.name);
-                const float radius = particle.radius * particles.render_settings.radius_scale;
+                const std::array<float, 3> center = transform_point(model, particle.position);
+                const float radius = particle.radius * particles.render_settings.radius_scale * object_radius_scale;
                 for (const std::array<float, 2>& corner : particle_corners) {
                     shader_vertices.emplace_back(ParticleShaderVertex{
                         {
-                            particle.position[0] + camera_right[0] * corner[0] * radius + camera_up[0] * corner[1] * radius,
-                            particle.position[1] + camera_right[1] * corner[0] * radius + camera_up[1] * corner[1] * radius,
-                            particle.position[2] + camera_right[2] * corner[0] * radius + camera_up[2] * corner[1] * radius,
+                            center[0] + camera_right[0] * corner[0] * radius + camera_up[0] * corner[1] * radius,
+                            center[1] + camera_right[1] * corner[0] * radius + camera_up[1] * corner[1] * radius,
+                            center[2] + camera_right[2] * corner[0] * radius + camera_up[2] * corner[1] * radius,
                             1.0f,
                         },
                         {corner[0], corner[1], 0.0f, 0.0f},
@@ -357,6 +495,14 @@ namespace xayah {
 
             const std::size_t resource_index = static_cast<std::size_t>(frame_index) * scene_volume_count + volume_index;
             VolumeDrawResources& resources   = this->volume_renderer.frame_resources.at(resource_index);
+            const std::array<float, 16> model = transform_matrix(volume.transform);
+            const std::array<float, 16> inverse_model = inverse_affine_matrix(model);
+            const std::array<float, 3> camera_local   = transform_point(inverse_model, camera_position);
+            const std::array<float, 3> local_min{
+                -volume.size[0] * 0.5f,
+                -volume.size[1] * 0.5f,
+                -volume.size[2] * 0.5f,
+            };
 
             if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
                 const CenteredScalarGrid& grid = scene.render_centered_scalar_grid(volume);
@@ -368,8 +514,9 @@ namespace xayah {
 
                 VolumeShaderParameters parameters{};
                 parameters.view_projection   = view_projection;
-                parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
-                parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+                parameters.model             = model;
+                parameters.camera_local_step = {camera_local[0], camera_local[1], camera_local[2], render_settings.raymarch_step};
+                parameters.local_min_opacity = {local_min[0], local_min[1], local_min[2], render_settings.opacity};
                 parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
                 parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::centered_scalar)};
                 parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
@@ -389,8 +536,9 @@ namespace xayah {
 
                 VolumeShaderParameters parameters{};
                 parameters.view_projection   = view_projection;
-                parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
-                parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+                parameters.model             = model;
+                parameters.camera_local_step = {camera_local[0], camera_local[1], camera_local[2], render_settings.raymarch_step};
+                parameters.local_min_opacity = {local_min[0], local_min[1], local_min[2], render_settings.opacity};
                 parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
                 parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::staggered_vector)};
                 parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
@@ -443,10 +591,10 @@ namespace xayah {
             if (!volume.visible || !volume.render_settings.show_bounding_box) continue;
             const BoundingBoxBounds bounds = volume_bounds(volume);
             BoundingBoxShaderParameters parameters{};
-            parameters.view_projection = view_projection;
-            parameters.bounds_min      = {bounds.minimum[0], bounds.minimum[1], bounds.minimum[2], 1.0f};
-            parameters.bounds_max      = {bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], 1.0f};
-            parameters.color           = scene.selection.object_id == volume.id ? selected_bounding_box_color : volume_bounding_box_color;
+            parameters.model_view_projection = multiply_matrix(view_projection, transform_matrix(volume.transform));
+            parameters.bounds_min            = {bounds.minimum[0], bounds.minimum[1], bounds.minimum[2], 1.0f};
+            parameters.bounds_max            = {bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], 1.0f};
+            parameters.color                 = scene.selection.object_id == volume.id ? selected_bounding_box_color : volume_bounding_box_color;
             command_buffer.pushConstants(*this->bounding_box_renderer.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const BoundingBoxShaderParameters>{1, &parameters});
             command_buffer.draw(24, 1, 0, 0);
         }
@@ -454,10 +602,10 @@ namespace xayah {
             if (!mesh.visible || !mesh.render_settings.show_bounding_box) continue;
             const BoundingBoxBounds bounds = mesh_bounds(mesh);
             BoundingBoxShaderParameters parameters{};
-            parameters.view_projection = view_projection;
-            parameters.bounds_min      = {bounds.minimum[0], bounds.minimum[1], bounds.minimum[2], 1.0f};
-            parameters.bounds_max      = {bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], 1.0f};
-            parameters.color           = scene.selection.object_id == mesh.id ? selected_bounding_box_color : mesh_bounding_box_color;
+            parameters.model_view_projection = multiply_matrix(view_projection, transform_matrix(mesh.transform));
+            parameters.bounds_min            = {bounds.minimum[0], bounds.minimum[1], bounds.minimum[2], 1.0f};
+            parameters.bounds_max            = {bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], 1.0f};
+            parameters.color                 = scene.selection.object_id == mesh.id ? selected_bounding_box_color : mesh_bounding_box_color;
             command_buffer.pushConstants(*this->bounding_box_renderer.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const BoundingBoxShaderParameters>{1, &parameters});
             command_buffer.draw(24, 1, 0, 0);
         }
@@ -465,10 +613,10 @@ namespace xayah {
             if (!particles.visible || !particles.render_settings.show_bounding_box || particles.particles.empty()) continue;
             const BoundingBoxBounds bounds = particles_bounds(particles);
             BoundingBoxShaderParameters parameters{};
-            parameters.view_projection = view_projection;
-            parameters.bounds_min      = {bounds.minimum[0], bounds.minimum[1], bounds.minimum[2], 1.0f};
-            parameters.bounds_max      = {bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], 1.0f};
-            parameters.color           = scene.selection.object_id == particles.id ? selected_bounding_box_color : particles_bounding_box_color;
+            parameters.model_view_projection = multiply_matrix(view_projection, transform_matrix(particles.transform));
+            parameters.bounds_min            = {bounds.minimum[0], bounds.minimum[1], bounds.minimum[2], 1.0f};
+            parameters.bounds_max            = {bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], 1.0f};
+            parameters.color                 = scene.selection.object_id == particles.id ? selected_bounding_box_color : particles_bounding_box_color;
             command_buffer.pushConstants(*this->bounding_box_renderer.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const BoundingBoxShaderParameters>{1, &parameters});
             command_buffer.draw(24, 1, 0, 0);
         }

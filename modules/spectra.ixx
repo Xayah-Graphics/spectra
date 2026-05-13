@@ -38,6 +38,7 @@ namespace xayah {
         void recreate_swapchain(const Scene& scene);
         void draw_stats_panel(Scene& scene);
         void draw_object_inspector(Scene& scene);
+        void draw_transform_gizmo(Scene& scene);
 
         struct {
             vk::raii::Context context;
@@ -86,6 +87,23 @@ namespace xayah {
         } viewport;
 
         SceneRenderer scene_renderer{};
+
+        enum class GizmoOperation : std::uint32_t {
+            translate = 0,
+            rotate    = 1,
+            scale     = 2,
+        };
+
+        enum class GizmoMode : std::uint32_t {
+            local = 0,
+            world = 1,
+        };
+
+        struct {
+            GizmoOperation operation{GizmoOperation::translate};
+            GizmoMode mode{GizmoMode::local};
+            bool using_gizmo{false};
+        } gizmo;
 
         struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};

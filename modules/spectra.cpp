@@ -5,10 +5,11 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <ImGuizmo.h>
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
-#include <imgui.h>
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
@@ -56,6 +57,26 @@ namespace {
         file.read(reinterpret_cast<char*>(code.data()), byte_count);
         if (!file) throw std::runtime_error(std::string{"Failed to read SPIR-V shader: "} + path.string());
         return code;
+    }
+
+    [[nodiscard]] std::array<float, 16> imguizmo_matrix(const xayah::Transform& transform) {
+        std::array<float, 16> matrix{};
+        std::array translation{transform.translation[0], transform.translation[1], transform.translation[2]};
+        std::array rotation{transform.rotation_degrees[0], transform.rotation_degrees[1], transform.rotation_degrees[2]};
+        std::array scale{transform.scale[0], transform.scale[1], transform.scale[2]};
+        ImGuizmo::RecomposeMatrixFromComponents(translation.data(), rotation.data(), scale.data(), matrix.data());
+        return matrix;
+    }
+
+    void update_transform_from_imguizmo_matrix(xayah::Transform& transform, const std::array<float, 16>& matrix) {
+        std::array<float, 3> translation{};
+        std::array<float, 3> rotation{};
+        std::array<float, 3> scale{};
+        ImGuizmo::DecomposeMatrixToComponents(matrix.data(), translation.data(), rotation.data(), scale.data());
+        if (scale[0] <= 0.000001f || scale[1] <= 0.000001f || scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
+        transform.translation     = translation;
+        transform.rotation_degrees = rotation;
+        transform.scale           = scale;
     }
 
 } // namespace
@@ -538,13 +559,15 @@ namespace xayah {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        ImGuizmo::BeginFrame();
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
 
         ImGuiIO& io                 = ImGui::GetIO();
         const ImVec2 mouse_position = io.MousePos;
         const float timeline_top    = viewport->WorkPos.y + viewport->WorkSize.y - this->timeline.height;
-        const bool in_viewport      = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse;
+        const bool transform_gizmo_active = this->gizmo.using_gizmo || ImGuizmo::IsUsingAny();
+        const bool in_viewport      = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse && !transform_gizmo_active;
         const bool right_mouse      = ImGui::IsMouseDown(ImGuiMouseButton_Right);
         const bool middle_mouse     = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
         const bool left_mouse       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -645,10 +668,17 @@ namespace xayah {
         command_buffer.beginRendering(scene_rendering_info);
 
         if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
+        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        if (main_viewport->WorkSize.x <= 0.0f || main_viewport->WorkSize.y <= this->timeline.height) throw std::runtime_error("Viewport is too small for 3D scene");
 
-        const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(this->swapchain.extent.height), 0.0f, 1.0f};
-        const vk::Rect2D scissor{{0, 0}, this->swapchain.extent};
-        const float aspect                          = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(this->swapchain.extent.height);
+        const float viewport_height_ratio = (main_viewport->WorkSize.y - this->timeline.height) / main_viewport->WorkSize.y;
+        const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(std::lround(static_cast<float>(this->swapchain.extent.height) * viewport_height_ratio));
+        if (scene_viewport_height == 0 || scene_viewport_height > this->swapchain.extent.height) throw std::runtime_error("Invalid 3D viewport height");
+
+        const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(scene_viewport_height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, {this->swapchain.extent.width, scene_viewport_height}};
+        const float aspect                          = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(scene_viewport_height);
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
         if (this->viewport.grid_visible) {
@@ -670,9 +700,7 @@ namespace xayah {
         this->scene_renderer.render(this->context.physical_device, this->context.device, command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up, scene);
         command_buffer.endRendering();
 
-        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-
+        this->draw_transform_gizmo(scene);
         this->draw_stats_panel(scene);
         this->draw_object_inspector(scene);
 
@@ -997,14 +1025,43 @@ namespace xayah {
             ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
 
             const SceneObjectRef active_object = scene.selected_object_ref();
+            Transform& active_transform        = scene.selected_transform();
+            const char* active_object_kind     = "Volume";
+            if (active_object.kind == SceneObjectKind::mesh) active_object_kind = "Mesh";
+            if (active_object.kind == SceneObjectKind::particles) active_object_kind = "Particles";
+
+            ImGui::TextColored(accent_color, "Object Inspector");
+            ImGui::SameLine();
+            ImGui::TextColored(muted_color, "%s", active_object_kind);
+            ImGui::Separator();
+
+            ImGui::TextColored(accent_color, "Transform");
+            ImGui::PushItemWidth(190.0f);
+            ImGui::InputFloat3("Translation", active_transform.translation.data(), "%.3f");
+            ImGui::InputFloat3("Rotation", active_transform.rotation_degrees.data(), "%.3f");
+            ImGui::InputFloat3("Scale", active_transform.scale.data(), "%.3f");
+            ImGui::PopItemWidth();
+            if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
+
+            if (ImGui::Button("T##GizmoTranslate", ImVec2{28.0f, 22.0f})) this->gizmo.operation = GizmoOperation::translate;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
+            ImGui::SameLine();
+            if (ImGui::Button("R##GizmoRotate", ImVec2{28.0f, 22.0f})) this->gizmo.operation = GizmoOperation::rotate;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
+            ImGui::SameLine();
+            if (ImGui::Button("S##GizmoScale", ImVec2{28.0f, 22.0f})) this->gizmo.operation = GizmoOperation::scale;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
+            if (this->gizmo.operation != GizmoOperation::scale) {
+                ImGui::SameLine();
+                const bool local_mode = this->gizmo.mode == GizmoMode::local;
+                if (ImGui::Button(local_mode ? "Local##GizmoMode" : "World##GizmoMode", ImVec2{64.0f, 22.0f})) this->gizmo.mode = local_mode ? GizmoMode::world : GizmoMode::local;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(local_mode ? "Switch to world mode" : "Switch to local mode");
+            }
+            ImGui::Separator();
+
             if (active_object.kind == SceneObjectKind::volume) {
                 Volume& active_volume          = scene.volumes.at(active_object.index);
                 VolumeRenderSettings& settings = active_volume.render_settings;
-
-                ImGui::TextColored(accent_color, "Object Inspector");
-                ImGui::SameLine();
-                ImGui::TextColored(muted_color, "Volume");
-                ImGui::Separator();
 
                 if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
                     ImGui::TableNextRow();
@@ -1015,13 +1072,7 @@ namespace xayah {
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Origin");
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.origin[0], active_volume.origin[1], active_volume.origin[2]);
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Size");
+                    ImGui::TextColored(label_color, "Local size");
                     ImGui::TableNextColumn();
                     ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.size[0], active_volume.size[1], active_volume.size[2]);
 
@@ -1157,11 +1208,6 @@ namespace xayah {
                     }
                 }
 
-                ImGui::TextColored(accent_color, "Object Inspector");
-                ImGui::SameLine();
-                ImGui::TextColored(muted_color, "Mesh");
-                ImGui::Separator();
-
                 if (ImGui::BeginTable("InspectorMeshIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -1183,13 +1229,13 @@ namespace xayah {
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Bounds min");
+                    ImGui::TextColored(label_color, "Local bounds min");
                     ImGui::TableNextColumn();
                     ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Bounds max");
+                    ImGui::TextColored(label_color, "Local bounds max");
                     ImGui::TableNextColumn();
                     ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
 
@@ -1261,11 +1307,6 @@ namespace xayah {
                     }
                 }
 
-                ImGui::TextColored(accent_color, "Object Inspector");
-                ImGui::SameLine();
-                ImGui::TextColored(muted_color, "Particles");
-                ImGui::Separator();
-
                 if (ImGui::BeginTable("InspectorParticlesIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -1281,7 +1322,7 @@ namespace xayah {
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Bounds min");
+                    ImGui::TextColored(label_color, "Local bounds min");
                     ImGui::TableNextColumn();
                     if (active_particles.particles.empty())
                         ImGui::TextColored(muted_color, "n/a");
@@ -1290,7 +1331,7 @@ namespace xayah {
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::TextColored(label_color, "Bounds max");
+                    ImGui::TextColored(label_color, "Local bounds max");
                     ImGui::TableNextColumn();
                     if (active_particles.particles.empty())
                         ImGui::TextColored(muted_color, "n/a");
@@ -1350,6 +1391,51 @@ namespace xayah {
             ImGui::PopStyleColor(5);
             ImGui::PopStyleVar(2);
         }
+    }
+
+    void Spectra::draw_transform_gizmo(Scene& scene) {
+        if (scene.selection.object_id == 0) {
+            this->gizmo.using_gizmo = false;
+            return;
+        }
+        if (!scene.selected_object_visible()) {
+            this->gizmo.using_gizmo = false;
+            return;
+        }
+
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        const float gizmo_height = main_viewport->WorkSize.y - this->timeline.height;
+        if (main_viewport->WorkSize.x <= 0.0f || gizmo_height <= 0.0f) throw std::runtime_error("Viewport is too small for transform gizmo");
+
+        constexpr ImGuiWindowFlags gizmo_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(main_viewport->WorkPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, gizmo_height}, ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::Begin("Viewport Gizmo", nullptr, gizmo_window_flags);
+
+        ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+        ImGuizmo::SetRect(main_viewport->WorkPos.x, main_viewport->WorkPos.y, main_viewport->WorkSize.x, gizmo_height);
+
+        ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+        if (this->gizmo.operation == GizmoOperation::rotate) operation = ImGuizmo::ROTATE;
+        if (this->gizmo.operation == GizmoOperation::scale) operation = ImGuizmo::SCALE;
+
+        ImGuizmo::MODE mode = this->gizmo.mode == GizmoMode::world ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+        if (this->gizmo.operation == GizmoOperation::scale) mode = ImGuizmo::LOCAL;
+
+        const float aspect = main_viewport->WorkSize.x / gizmo_height;
+        const std::array<float, 16> view = this->viewport.camera.view_matrix();
+        const std::array<float, 16> projection = this->viewport.camera.gizmo_projection_matrix(aspect);
+        std::array<float, 16> matrix = imguizmo_matrix(scene.selected_transform());
+        if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data())) update_transform_from_imguizmo_matrix(scene.selected_transform(), matrix);
+        this->gizmo.using_gizmo = ImGuizmo::IsUsingAny() || ImGuizmo::IsOver();
+
+        ImGui::End();
+        ImGui::PopStyleVar(2);
     }
 
     void Spectra::end_frame(FrameState& frame, const Scene& scene) {

@@ -67,6 +67,33 @@ namespace xayah {
             return multiply(projection(aspect), view());
         }
 
+        [[nodiscard]] std::array<float, 16> view_matrix() const {
+            return view();
+        }
+
+        [[nodiscard]] std::array<float, 16> gizmo_projection_matrix(const float aspect) const {
+            if (aspect <= 0.0f) throw std::runtime_error("Camera aspect ratio must be positive");
+            const float focal = 1.0f / std::tan(this->fov_y * 0.5f);
+            return {
+                focal / aspect,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                focal,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                this->far_z / (this->near_z - this->far_z),
+                -1.0f,
+                0.0f,
+                0.0f,
+                (this->far_z * this->near_z) / (this->near_z - this->far_z),
+                0.0f,
+            };
+        }
+
         [[nodiscard]] std::array<float, 3> position() const {
             return subtract(this->target, multiply(this->forward(), this->distance));
         }
