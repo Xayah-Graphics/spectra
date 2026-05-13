@@ -5,6 +5,7 @@ module;
 export module spectra;
 export import scene;
 import camera;
+import scene_renderer;
 import std;
 
 namespace xayah {
@@ -33,16 +34,10 @@ namespace xayah {
     private:
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
-        void create_bounding_box_renderer();
-        void destroy_bounding_box_renderer() noexcept;
-        void create_mesh_renderer(const Scene& scene);
-        void destroy_mesh_renderer() noexcept;
-        void create_particles_renderer(const Scene& scene);
-        void destroy_particles_renderer() noexcept;
-        void create_volume_renderer(const Scene& scene);
-        void destroy_volume_renderer() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain(const Scene& scene);
+        void draw_stats_panel(Scene& scene);
+        void draw_object_inspector(Scene& scene);
 
         struct {
             vk::raii::Context context;
@@ -90,65 +85,7 @@ namespace xayah {
             bool grid_visible{true};
         } viewport;
 
-        struct {
-            vk::raii::PipelineLayout pipeline_layout{nullptr};
-            vk::raii::Pipeline pipeline{nullptr};
-        } bounding_box_renderer{};
-
-        struct MeshDrawResources {
-            vk::raii::Buffer vertex_buffer{nullptr};
-            vk::raii::DeviceMemory vertex_memory{nullptr};
-            vk::DeviceSize vertex_size{0};
-            vk::raii::Buffer parameters_buffer{nullptr};
-            vk::raii::DeviceMemory parameters_memory{nullptr};
-            vk::DeviceSize parameters_size{0};
-        };
-
-        struct {
-            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
-            vk::raii::DescriptorPool descriptor_pool{nullptr};
-            vk::raii::DescriptorSets descriptor_sets{nullptr};
-            vk::raii::PipelineLayout pipeline_layout{nullptr};
-            vk::raii::Pipeline surface_pipeline{nullptr};
-            vk::raii::Pipeline wireframe_pipeline{nullptr};
-            std::vector<MeshDrawResources> frame_resources{};
-        } mesh_renderer{};
-
-        struct ParticleDrawResources {
-            vk::raii::Buffer vertex_buffer{nullptr};
-            vk::raii::DeviceMemory vertex_memory{nullptr};
-            vk::DeviceSize vertex_size{0};
-        };
-
-        struct {
-            vk::raii::PipelineLayout pipeline_layout{nullptr};
-            vk::raii::Pipeline pipeline{nullptr};
-            std::vector<ParticleDrawResources> frame_resources{};
-        } particles_renderer{};
-
-        struct VolumeDrawResources {
-            vk::raii::Buffer x_data_buffer{nullptr};
-            vk::raii::DeviceMemory x_data_memory{nullptr};
-            vk::DeviceSize x_data_size{0};
-            vk::raii::Buffer y_data_buffer{nullptr};
-            vk::raii::DeviceMemory y_data_memory{nullptr};
-            vk::DeviceSize y_data_size{0};
-            vk::raii::Buffer z_data_buffer{nullptr};
-            vk::raii::DeviceMemory z_data_memory{nullptr};
-            vk::DeviceSize z_data_size{0};
-            vk::raii::Buffer parameters_buffer{nullptr};
-            vk::raii::DeviceMemory parameters_memory{nullptr};
-            vk::DeviceSize parameters_size{0};
-        };
-
-        struct {
-            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
-            vk::raii::DescriptorPool descriptor_pool{nullptr};
-            vk::raii::DescriptorSets descriptor_sets{nullptr};
-            vk::raii::PipelineLayout pipeline_layout{nullptr};
-            vk::raii::Pipeline pipeline{nullptr};
-            std::vector<VolumeDrawResources> frame_resources{};
-        } volume_renderer{};
+        SceneRenderer scene_renderer{};
 
         struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
