@@ -43,6 +43,7 @@ namespace xayah {
         std::string grid_name{};
         VolumeGridKind grid_kind{VolumeGridKind::centered_scalar};
         VolumeDisplayMode display_mode{VolumeDisplayMode::direct};
+        bool show_bounding_box{true};
         VolumeSliceAxis slice_axis{VolumeSliceAxis::y};
         VolumeColorMap color_map{VolumeColorMap::viridis};
         float slice_position{0.5f};
@@ -76,6 +77,7 @@ namespace xayah {
 
     export struct MeshRenderSettings {
         MeshDisplayMode display_mode{MeshDisplayMode::surface};
+        bool show_bounding_box{true};
     };
 
     export struct Mesh {
@@ -95,6 +97,7 @@ namespace xayah {
 
     export struct ParticleRenderSettings {
         float radius_scale{1.0f};
+        bool show_bounding_box{true};
     };
 
     export struct Particles {

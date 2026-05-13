@@ -35,30 +35,11 @@ struct VertexOutput {
     float3 world_position : POSITION0;
 };
 
-static const uint cube_indices[36] = {
-    0, 2, 1, 1, 2, 3,
-    4, 5, 6, 5, 7, 6,
-    0, 4, 2, 4, 6, 2,
-    1, 3, 5, 5, 3, 7,
-    0, 1, 4, 1, 5, 4,
-    2, 6, 3, 3, 6, 7
+struct VertexInput {
+    float3 local_position : POSITION0;
 };
 
-float3 cube_corner(uint index) {
-    return float3(float(index & 1), float((index >> 1) & 1), float((index >> 2) & 1));
-}
-
-float2 quad_uv(uint vertex_index) {
-    if (vertex_index == 0) return float2(0.0, 0.0);
-    if (vertex_index == 1) return float2(1.0, 0.0);
-    if (vertex_index == 2) return float2(0.0, 1.0);
-    if (vertex_index == 3) return float2(1.0, 0.0);
-    if (vertex_index == 4) return float2(1.0, 1.0);
-    return float2(0.0, 1.0);
-}
-
-float3 slice_corner(uint vertex_index, GridParameters parameters) {
-    const float2 uv = quad_uv(vertex_index);
+float3 slice_corner(float2 uv, GridParameters parameters) {
     const float slice = parameters.slice_value_max.x;
     if (parameters.mode_options.y == AXIS_X) return float3(slice, uv.x, uv.y);
     if (parameters.mode_options.y == AXIS_Y) return float3(uv.x, slice, uv.y);
@@ -263,14 +244,14 @@ bool intersect_box(float3 ray_origin, float3 ray_direction, float3 box_min, floa
 }
 
 [shader("vertex")]
-VertexOutput vertex_main(uint vertex_index : SV_VertexID) {
+VertexOutput vertex_main(VertexInput input) {
     const GridParameters parameters = parameters_buffer[0];
     const float3 extent = float3(parameters.resolution_kind.x, parameters.resolution_kind.y, parameters.resolution_kind.z) * parameters.spacing_value_min.xyz;
     float3 local_position = float3(0.0, 0.0, 0.0);
     if (parameters.mode_options.x == MODE_DIRECT)
-        local_position = cube_corner(cube_indices[vertex_index]);
+        local_position = input.local_position;
     else
-        local_position = slice_corner(vertex_index, parameters);
+        local_position = slice_corner(input.local_position.xy, parameters);
 
     const float3 world_position = parameters.origin_opacity.xyz + local_position * extent;
     VertexOutput output;

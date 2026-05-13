@@ -1,21 +1,15 @@
-struct MeshVertex {
-    float4 position;
-    float4 normal;
-    float4 color;
-};
-
 struct MeshParameters {
     float4x4 view_projection;
     float4 light_direction;
 };
 
+struct VertexInput {
+    float3 position : POSITION0;
+    float3 normal : NORMAL0;
+    float3 color : COLOR0;
+};
+
 [[vk::binding(0, 0)]]
-StructuredBuffer<MeshVertex> vertices;
-
-[[vk::binding(1, 0)]]
-StructuredBuffer<uint> indices;
-
-[[vk::binding(2, 0)]]
 StructuredBuffer<MeshParameters> parameters_buffer;
 
 struct VertexOutput {
@@ -25,15 +19,13 @@ struct VertexOutput {
 };
 
 [shader("vertex")]
-VertexOutput vertex_main(uint vertex_index : SV_VertexID) {
-    const uint mesh_vertex_index = indices[vertex_index];
-    const MeshVertex vertex = vertices[mesh_vertex_index];
+VertexOutput vertex_main(VertexInput vertex) {
     const MeshParameters parameters = parameters_buffer[0];
 
     VertexOutput output;
-    output.position = mul(parameters.view_projection, float4(vertex.position.xyz, 1.0));
-    output.normal = normalize(vertex.normal.xyz);
-    output.color = saturate(vertex.color.xyz);
+    output.position = mul(parameters.view_projection, float4(vertex.position, 1.0));
+    output.normal = normalize(vertex.normal);
+    output.color = saturate(vertex.color);
     return output;
 }
 

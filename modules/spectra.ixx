@@ -33,6 +33,8 @@ namespace xayah {
     private:
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
+        void create_bounding_box_renderer();
+        void destroy_bounding_box_renderer() noexcept;
         void create_mesh_renderer(const Scene& scene);
         void destroy_mesh_renderer() noexcept;
         void create_particles_renderer(const Scene& scene);
@@ -84,17 +86,22 @@ namespace xayah {
             Camera camera{};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
+            vk::raii::Buffer vertex_buffer{nullptr};
+            vk::raii::DeviceMemory vertex_memory{nullptr};
+            vk::DeviceSize vertex_size{0};
             std::uint32_t vertex_count{170};
             bool grid_visible{true};
         } viewport;
+
+        struct {
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+        } bounding_box_renderer{};
 
         struct MeshDrawResources {
             vk::raii::Buffer vertex_buffer{nullptr};
             vk::raii::DeviceMemory vertex_memory{nullptr};
             vk::DeviceSize vertex_size{0};
-            vk::raii::Buffer index_buffer{nullptr};
-            vk::raii::DeviceMemory index_memory{nullptr};
-            vk::DeviceSize index_size{0};
             vk::raii::Buffer parameters_buffer{nullptr};
             vk::raii::DeviceMemory parameters_memory{nullptr};
             vk::DeviceSize parameters_size{0};
@@ -111,18 +118,12 @@ namespace xayah {
         } mesh_renderer{};
 
         struct ParticleDrawResources {
-            vk::raii::Buffer particle_buffer{nullptr};
-            vk::raii::DeviceMemory particle_memory{nullptr};
-            vk::DeviceSize particle_size{0};
-            vk::raii::Buffer parameters_buffer{nullptr};
-            vk::raii::DeviceMemory parameters_memory{nullptr};
-            vk::DeviceSize parameters_size{0};
+            vk::raii::Buffer vertex_buffer{nullptr};
+            vk::raii::DeviceMemory vertex_memory{nullptr};
+            vk::DeviceSize vertex_size{0};
         };
 
         struct {
-            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
-            vk::raii::DescriptorPool descriptor_pool{nullptr};
-            vk::raii::DescriptorSets descriptor_sets{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
             std::vector<ParticleDrawResources> frame_resources{};
@@ -149,6 +150,9 @@ namespace xayah {
             vk::raii::DescriptorSets descriptor_sets{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
+            vk::raii::Buffer vertex_buffer{nullptr};
+            vk::raii::DeviceMemory vertex_memory{nullptr};
+            vk::DeviceSize vertex_size{0};
             std::vector<VolumeDrawResources> frame_resources{};
         } volume_renderer{};
 
