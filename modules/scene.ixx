@@ -53,6 +53,7 @@ namespace xayah {
     };
 
     export struct Volume {
+        std::uint64_t id{0};
         std::string name{};
         std::array<float, 3> origin{-1.0f, -1.0f, -1.0f};
         std::array<float, 3> size{2.0f, 2.0f, 2.0f};
@@ -68,6 +69,7 @@ namespace xayah {
     };
 
     export struct Mesh {
+        std::uint64_t id{0};
         std::string name{};
         std::vector<MeshVertex> vertices{};
         std::vector<std::uint32_t> indices{};
@@ -79,13 +81,13 @@ namespace xayah {
     };
 
     export struct BakedVolumeFrame {
-        std::string volume_name{};
+        std::uint64_t volume_id{0};
         std::vector<CenteredScalarGrid> centered_scalar_grids{};
         std::vector<StaggeredVectorGrid> staggered_vector_grids{};
     };
 
     export struct BakedMeshFrame {
-        std::string mesh_name{};
+        std::uint64_t mesh_id{0};
         std::vector<MeshVertex> vertices{};
     };
 
@@ -105,41 +107,45 @@ namespace xayah {
         mesh   = 1,
     };
 
-    export struct SceneObjectSelection {
+    export struct SceneSelection {
+        std::uint64_t object_id{0};
+    };
+
+    export struct SceneObjectRef {
         SceneObjectKind kind{SceneObjectKind::volume};
-        std::string name{};
+        std::size_t index{0};
     };
 
     export class Scene {
     public:
         std::vector<Volume> volumes{};
         std::vector<Mesh> meshes{};
-        SceneObjectSelection selected_object{};
+        SceneSelection selection{};
         SceneBake bake{};
 
         void validate() const;
         void validate_bake() const;
         void initialize_selection();
-        void select_volume(const Volume& volume);
-        void select_mesh(const Mesh& mesh);
+        void select_object(std::uint64_t object_id);
         void apply_playback_frame(int frame_index);
         void initialize_volume_render_settings(Volume& volume);
         void select_first_volume_grid(Volume& volume);
         [[nodiscard]] int baked_frame_min() const;
         [[nodiscard]] int baked_frame_max() const;
-        [[nodiscard]] Volume& selected_volume();
-        [[nodiscard]] const Volume& selected_volume() const;
-        [[nodiscard]] Mesh& selected_mesh();
-        [[nodiscard]] const Mesh& selected_mesh() const;
-        [[nodiscard]] const CenteredScalarGrid& selected_centered_scalar_grid(const Volume& volume) const;
-        [[nodiscard]] const StaggeredVectorGrid& selected_staggered_vector_grid(const Volume& volume) const;
+        [[nodiscard]] SceneObjectRef object_ref(std::uint64_t object_id) const;
+        [[nodiscard]] SceneObjectRef selected_object_ref() const;
+        [[nodiscard]] const CenteredScalarGrid& render_centered_scalar_grid(const Volume& volume) const;
+        [[nodiscard]] const StaggeredVectorGrid& render_staggered_vector_grid(const Volume& volume) const;
     };
 
     void Scene::validate() const {
         if (this->volumes.empty() && this->meshes.empty()) throw std::runtime_error("Scene has no objects to render");
 
+        std::set<std::uint64_t> object_ids{};
         std::set<std::string> volume_names{};
         for (const Volume& volume : this->volumes) {
+            if (volume.id == 0) throw std::runtime_error(std::string{"Volume id must not be zero: "} + volume.name);
+            if (!object_ids.insert(volume.id).second) throw std::runtime_error(std::string{"Duplicate scene object id: "} + std::to_string(volume.id));
             if (volume.name.empty()) throw std::runtime_error("Volume name must not be empty");
             if (!volume_names.insert(volume.name).second) throw std::runtime_error(std::string{"Duplicate volume name: "} + volume.name);
             if (volume.size[0] <= 0.0f || volume.size[1] <= 0.0f || volume.size[2] <= 0.0f) throw std::runtime_error(std::string{"Volume size must be positive: "} + volume.name);
@@ -169,6 +175,8 @@ namespace xayah {
 
         std::set<std::string> mesh_names{};
         for (const Mesh& mesh : this->meshes) {
+            if (mesh.id == 0) throw std::runtime_error(std::string{"Mesh id must not be zero: "} + mesh.name);
+            if (!object_ids.insert(mesh.id).second) throw std::runtime_error(std::string{"Duplicate scene object id: "} + std::to_string(mesh.id));
             if (mesh.name.empty()) throw std::runtime_error("Mesh name must not be empty");
             if (!mesh_names.insert(mesh.name).second) throw std::runtime_error(std::string{"Duplicate mesh name: "} + mesh.name);
             if (mesh.vertices.empty()) throw std::runtime_error(std::string{"Mesh has no vertices: "} + mesh.name);
@@ -185,6 +193,8 @@ namespace xayah {
                 if (index >= mesh.vertices.size()) throw std::runtime_error(std::string{"Mesh index is outside vertex range: "} + mesh.name);
             }
         }
+
+        if (this->selection.object_id != 0) static_cast<void>(this->object_ref(this->selection.object_id));
     }
 
     void Scene::validate_bake() const {
@@ -201,16 +211,16 @@ namespace xayah {
             if (frame.volumes.size() != this->volumes.size()) throw std::runtime_error(std::string{"Baked frame volume count does not match scene volume count: "} + std::to_string(frame.frame_index));
             if (frame.meshes.size() != this->meshes.size()) throw std::runtime_error(std::string{"Baked frame mesh count does not match scene mesh count: "} + std::to_string(frame.frame_index));
 
-            std::set<std::string> baked_volume_names{};
+            std::set<std::uint64_t> baked_volume_ids{};
             for (const BakedVolumeFrame& baked_volume : frame.volumes) {
-                if (baked_volume.volume_name.empty()) throw std::runtime_error("Baked volume name must not be empty");
-                if (!baked_volume_names.insert(baked_volume.volume_name).second) throw std::runtime_error(std::string{"Duplicate baked volume in frame: "} + baked_volume.volume_name);
+                if (baked_volume.volume_id == 0) throw std::runtime_error("Baked volume id must not be zero");
+                if (!baked_volume_ids.insert(baked_volume.volume_id).second) throw std::runtime_error(std::string{"Duplicate baked volume id in frame: "} + std::to_string(baked_volume.volume_id));
             }
 
             for (const Volume& volume : this->volumes) {
                 const BakedVolumeFrame* baked_volume = nullptr;
                 for (const BakedVolumeFrame& candidate : frame.volumes) {
-                    if (candidate.volume_name == volume.name) {
+                    if (candidate.volume_id == volume.id) {
                         baked_volume = &candidate;
                         break;
                     }
@@ -258,16 +268,16 @@ namespace xayah {
                 }
             }
 
-            std::set<std::string> baked_mesh_names{};
+            std::set<std::uint64_t> baked_mesh_ids{};
             for (const BakedMeshFrame& baked_mesh : frame.meshes) {
-                if (baked_mesh.mesh_name.empty()) throw std::runtime_error("Baked mesh name must not be empty");
-                if (!baked_mesh_names.insert(baked_mesh.mesh_name).second) throw std::runtime_error(std::string{"Duplicate baked mesh in frame: "} + baked_mesh.mesh_name);
+                if (baked_mesh.mesh_id == 0) throw std::runtime_error("Baked mesh id must not be zero");
+                if (!baked_mesh_ids.insert(baked_mesh.mesh_id).second) throw std::runtime_error(std::string{"Duplicate baked mesh id in frame: "} + std::to_string(baked_mesh.mesh_id));
             }
 
             for (const Mesh& mesh : this->meshes) {
                 const BakedMeshFrame* baked_mesh = nullptr;
                 for (const BakedMeshFrame& candidate : frame.meshes) {
-                    if (candidate.mesh_name == mesh.name) {
+                    if (candidate.mesh_id == mesh.id) {
                         baked_mesh = &candidate;
                         break;
                     }
@@ -292,35 +302,14 @@ namespace xayah {
             this->initialize_volume_render_settings(volume);
         }
 
-        if (this->selected_object.name.empty()) {
-            if (!this->volumes.empty()) {
-                this->select_volume(this->volumes.front());
-                return;
-            }
-            this->select_mesh(this->meshes.front());
-            return;
-        }
+        if (this->selection.object_id == 0) return;
 
-        if (this->selected_object.kind == SceneObjectKind::volume) {
-            static_cast<void>(this->selected_volume());
-            return;
-        }
-        if (this->selected_object.kind == SceneObjectKind::mesh) {
-            static_cast<void>(this->selected_mesh());
-            return;
-        }
-
-        throw std::runtime_error("Unsupported selected scene object kind");
+        static_cast<void>(this->selected_object_ref());
     }
 
-    void Scene::select_volume(const Volume& volume) {
-        this->selected_object.kind = SceneObjectKind::volume;
-        this->selected_object.name = volume.name;
-    }
-
-    void Scene::select_mesh(const Mesh& mesh) {
-        this->selected_object.kind = SceneObjectKind::mesh;
-        this->selected_object.name = mesh.name;
+    void Scene::select_object(const std::uint64_t object_id) {
+        static_cast<void>(this->object_ref(object_id));
+        this->selection.object_id = object_id;
     }
 
     void Scene::apply_playback_frame(int frame_index) {
@@ -338,12 +327,12 @@ namespace xayah {
         for (const BakedVolumeFrame& baked_volume : baked_frame->volumes) {
             Volume* volume = nullptr;
             for (Volume& candidate : this->volumes) {
-                if (candidate.name == baked_volume.volume_name) {
+                if (candidate.id == baked_volume.volume_id) {
                     volume = &candidate;
                     break;
                 }
             }
-            if (volume == nullptr) throw std::runtime_error(std::string{"Baked frame references missing volume: "} + baked_volume.volume_name);
+            if (volume == nullptr) throw std::runtime_error(std::string{"Baked frame references missing volume id: "} + std::to_string(baked_volume.volume_id));
 
             for (CenteredScalarGrid& grid : volume->centered_scalar_grids) {
                 const CenteredScalarGrid* baked_grid = nullptr;
@@ -381,7 +370,7 @@ namespace xayah {
         for (Mesh& mesh : this->meshes) {
             const BakedMeshFrame* baked_mesh = nullptr;
             for (const BakedMeshFrame& candidate : baked_frame->meshes) {
-                if (candidate.mesh_name == mesh.name) {
+                if (candidate.mesh_id == mesh.id) {
                     baked_mesh = &candidate;
                     break;
                 }
@@ -396,9 +385,9 @@ namespace xayah {
         if (volume.render_settings.grid_name.empty())
             this->select_first_volume_grid(volume);
         else if (volume.render_settings.grid_kind == VolumeGridKind::centered_scalar)
-            static_cast<void>(this->selected_centered_scalar_grid(volume));
+            static_cast<void>(this->render_centered_scalar_grid(volume));
         else
-            static_cast<void>(this->selected_staggered_vector_grid(volume));
+            static_cast<void>(this->render_staggered_vector_grid(volume));
     }
 
     void Scene::select_first_volume_grid(Volume& volume) {
@@ -433,49 +422,32 @@ namespace xayah {
         return frame_max;
     }
 
-    Volume& Scene::selected_volume() {
-        if (this->selected_object.kind != SceneObjectKind::volume) throw std::runtime_error("Selected scene object is not a volume");
-        for (Volume& volume : this->volumes) {
-            if (volume.name == this->selected_object.name) return volume;
+    SceneObjectRef Scene::object_ref(const std::uint64_t object_id) const {
+        if (object_id == 0) throw std::runtime_error("Scene object id must not be zero");
+        for (std::size_t index = 0; index < this->volumes.size(); ++index) {
+            if (this->volumes[index].id == object_id) return SceneObjectRef{SceneObjectKind::volume, index};
         }
-        throw std::runtime_error(std::string{"Selected volume does not exist: "} + this->selected_object.name);
+        for (std::size_t index = 0; index < this->meshes.size(); ++index) {
+            if (this->meshes[index].id == object_id) return SceneObjectRef{SceneObjectKind::mesh, index};
+        }
+        throw std::runtime_error(std::string{"Scene object id does not exist: "} + std::to_string(object_id));
     }
 
-    const Volume& Scene::selected_volume() const {
-        if (this->selected_object.kind != SceneObjectKind::volume) throw std::runtime_error("Selected scene object is not a volume");
-        for (const Volume& volume : this->volumes) {
-            if (volume.name == this->selected_object.name) return volume;
-        }
-        throw std::runtime_error(std::string{"Selected volume does not exist: "} + this->selected_object.name);
+    SceneObjectRef Scene::selected_object_ref() const {
+        return this->object_ref(this->selection.object_id);
     }
 
-    Mesh& Scene::selected_mesh() {
-        if (this->selected_object.kind != SceneObjectKind::mesh) throw std::runtime_error("Selected scene object is not a mesh");
-        for (Mesh& mesh : this->meshes) {
-            if (mesh.name == this->selected_object.name) return mesh;
-        }
-        throw std::runtime_error(std::string{"Selected mesh does not exist: "} + this->selected_object.name);
-    }
-
-    const Mesh& Scene::selected_mesh() const {
-        if (this->selected_object.kind != SceneObjectKind::mesh) throw std::runtime_error("Selected scene object is not a mesh");
-        for (const Mesh& mesh : this->meshes) {
-            if (mesh.name == this->selected_object.name) return mesh;
-        }
-        throw std::runtime_error(std::string{"Selected mesh does not exist: "} + this->selected_object.name);
-    }
-
-    const CenteredScalarGrid& Scene::selected_centered_scalar_grid(const Volume& volume) const {
+    const CenteredScalarGrid& Scene::render_centered_scalar_grid(const Volume& volume) const {
         for (const CenteredScalarGrid& grid : volume.centered_scalar_grids) {
             if (grid.name == volume.render_settings.grid_name) return grid;
         }
-        throw std::runtime_error(std::string{"Selected centered scalar grid does not exist: "} + volume.render_settings.grid_name);
+        throw std::runtime_error(std::string{"Volume render centered scalar grid does not exist: "} + volume.render_settings.grid_name);
     }
 
-    const StaggeredVectorGrid& Scene::selected_staggered_vector_grid(const Volume& volume) const {
+    const StaggeredVectorGrid& Scene::render_staggered_vector_grid(const Volume& volume) const {
         for (const StaggeredVectorGrid& grid : volume.staggered_vector_grids) {
             if (grid.name == volume.render_settings.grid_name) return grid;
         }
-        throw std::runtime_error(std::string{"Selected staggered vector grid does not exist: "} + volume.render_settings.grid_name);
+        throw std::runtime_error(std::string{"Volume render staggered vector grid does not exist: "} + volume.render_settings.grid_name);
     }
 } // namespace xayah

@@ -3,6 +3,7 @@ import std;
 
 int main() {
     xayah::Volume volume;
+    volume.id     = 1;
     volume.name   = "plume";
     volume.origin = {-1.5f, -1.5f, -1.5f};
     volume.size   = {3.0f, 3.0f, 3.0f};
@@ -87,6 +88,7 @@ int main() {
     volume.staggered_vector_grids.emplace_back(std::move(vector_grid));
 
     xayah::Volume sphere_volume;
+    sphere_volume.id     = 2;
     sphere_volume.name   = "offset_sphere";
     sphere_volume.origin = {0.7f, -0.9f, -0.7f};
     sphere_volume.size   = {1.8f, 1.8f, 1.8f};
@@ -128,6 +130,7 @@ int main() {
     sphere_volume.centered_scalar_grids.emplace_back(std::move(sphere_grid));
 
     xayah::Mesh cloth_mesh;
+    cloth_mesh.id = 3;
     cloth_mesh.name = "cloth_patch";
     constexpr std::uint32_t cloth_resolution = 9;
     constexpr float cloth_extent             = 2.4f;
@@ -176,7 +179,7 @@ int main() {
 
         for (const xayah::Volume& live_volume : scene.volumes) {
             xayah::BakedVolumeFrame baked_volume;
-            baked_volume.volume_name              = live_volume.name;
+            baked_volume.volume_id                = live_volume.id;
             baked_volume.centered_scalar_grids    = live_volume.centered_scalar_grids;
             baked_volume.staggered_vector_grids   = live_volume.staggered_vector_grids;
             const float frame_t                   = static_cast<float>(frame_index);
@@ -208,7 +211,7 @@ int main() {
 
         for (const xayah::Mesh& live_mesh : scene.meshes) {
             xayah::BakedMeshFrame baked_mesh;
-            baked_mesh.mesh_name = live_mesh.name;
+            baked_mesh.mesh_id   = live_mesh.id;
             baked_mesh.vertices  = live_mesh.vertices;
             const float frame_t  = static_cast<float>(frame_index);
 

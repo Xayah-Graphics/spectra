@@ -802,7 +802,7 @@ namespace xayah {
             VolumeDrawResources& resources   = this->volume_renderer.frame_resources.at(resource_index);
 
             if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
-                const CenteredScalarGrid& grid = scene.selected_centered_scalar_grid(volume);
+                const CenteredScalarGrid& grid = scene.render_centered_scalar_grid(volume);
                 const std::array spacing{
                     volume.size[0] / static_cast<float>(grid.resolution[0]),
                     volume.size[1] / static_cast<float>(grid.resolution[1]),
@@ -823,7 +823,7 @@ namespace xayah {
                 write_buffer(resources.x_data_memory, resources.x_data_size, grid.values.data(), grid.values.size() * sizeof(float));
                 write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
             } else {
-                const StaggeredVectorGrid& grid = scene.selected_staggered_vector_grid(volume);
+                const StaggeredVectorGrid& grid = scene.render_staggered_vector_grid(volume);
                 const std::array spacing{
                     volume.size[0] / static_cast<float>(grid.resolution[0]),
                     volume.size[1] / static_cast<float>(grid.resolution[1]),
@@ -963,20 +963,20 @@ namespace xayah {
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.22f, 0.50f, 0.86f, 0.34f});
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4{0.28f, 0.58f, 0.96f, 0.44f});
         for (const Volume& volume : scene.volumes) {
-            const bool selected       = scene.selected_object.kind == SceneObjectKind::volume && scene.selected_object.name == volume.name;
+            const bool selected       = scene.selection.object_id == volume.id;
             const std::size_t scalars = volume.centered_scalar_grids.size();
             const std::size_t vectors = volume.staggered_vector_grids.size();
             const std::string label   = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector";
             ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
-            if (ImGui::Selectable(label.c_str(), selected)) scene.select_volume(volume);
+            if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(volume.id);
             ImGui::PopStyleColor();
         }
         for (const Mesh& mesh : scene.meshes) {
-            const bool selected         = scene.selected_object.kind == SceneObjectKind::mesh && scene.selected_object.name == mesh.name;
+            const bool selected         = scene.selection.object_id == mesh.id;
             const std::size_t triangles = mesh.indices.size() / 3;
             const std::string label     = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris";
             ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
-            if (ImGui::Selectable(label.c_str(), selected)) scene.select_mesh(mesh);
+            if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(mesh.id);
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor(3);
@@ -984,32 +984,34 @@ namespace xayah {
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
 
-        const float inspector_window_width      = 360.0f;
-        const float inspector_window_max_height = main_viewport->WorkSize.y - this->timeline.height - 24.0f;
-        if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
-        ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - inspector_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
-        ImGui::SetNextWindowSizeConstraints(ImVec2{inspector_window_width, 0.0f}, ImVec2{inspector_window_width, inspector_window_max_height});
-        ImGui::SetNextWindowBgAlpha(0.18f);
-        constexpr ImGuiWindowFlags inspector_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+        if (scene.selection.object_id != 0) {
+            const float inspector_window_width      = 360.0f;
+            const float inspector_window_max_height = main_viewport->WorkSize.y - this->timeline.height - 24.0f;
+            if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
+            ImGui::SetNextWindowViewport(main_viewport->ID);
+            ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - inspector_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
+            ImGui::SetNextWindowSizeConstraints(ImVec2{inspector_window_width, 0.0f}, ImVec2{inspector_window_width, inspector_window_max_height});
+            ImGui::SetNextWindowBgAlpha(0.18f);
+            constexpr ImGuiWindowFlags inspector_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0f, 14.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.040f, 0.048f, 0.48f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35f, 0.62f, 0.95f, 0.42f});
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.08f, 0.095f, 0.11f, 0.42f});
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
-        ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0f, 14.0f});
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.040f, 0.048f, 0.48f});
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35f, 0.62f, 0.95f, 0.42f});
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.08f, 0.095f, 0.11f, 0.42f});
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
+            ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
 
-        if (scene.selected_object.kind == SceneObjectKind::volume) {
-            Volume& active_volume          = scene.selected_volume();
-            VolumeRenderSettings& settings = active_volume.render_settings;
+            const SceneObjectRef active_object = scene.selected_object_ref();
+            if (active_object.kind == SceneObjectKind::volume) {
+                Volume& active_volume          = scene.volumes.at(active_object.index);
+                VolumeRenderSettings& settings = active_volume.render_settings;
 
-            ImGui::TextColored(accent_color, "Object Inspector");
-            ImGui::SameLine();
-            ImGui::TextColored(muted_color, "Volume");
-            ImGui::Separator();
+                ImGui::TextColored(accent_color, "Object Inspector");
+                ImGui::SameLine();
+                ImGui::TextColored(muted_color, "Volume");
+                ImGui::Separator();
 
         if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
             ImGui::TableNextRow();
@@ -1155,8 +1157,8 @@ namespace xayah {
         }
         ImGui::SliderFloat("Opacity", &settings.opacity, 0.0f, 1.0f, "%.3f");
         ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
-        } else if (scene.selected_object.kind == SceneObjectKind::mesh) {
-            Mesh& active_mesh = scene.selected_mesh();
+        } else if (active_object.kind == SceneObjectKind::mesh) {
+            Mesh& active_mesh = scene.meshes.at(active_object.index);
             if (active_mesh.vertices.empty()) throw std::runtime_error(std::string{"Selected mesh has no vertices: "} + active_mesh.name);
 
             std::array<float, 3> bounds_min = active_mesh.vertices.front().position;
@@ -1238,9 +1240,10 @@ namespace xayah {
             throw std::runtime_error("Object inspector received unsupported scene object kind");
         }
 
-        ImGui::End();
-        ImGui::PopStyleColor(5);
-        ImGui::PopStyleVar(2);
+            ImGui::End();
+            ImGui::PopStyleColor(5);
+            ImGui::PopStyleVar(2);
+        }
 
         if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
         this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
