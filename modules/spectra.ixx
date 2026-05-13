@@ -103,7 +103,8 @@ namespace xayah {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
             vk::raii::DescriptorSets descriptor_sets{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
-            vk::raii::Pipeline pipeline{nullptr};
+            vk::raii::Pipeline surface_pipeline{nullptr};
+            vk::raii::Pipeline wireframe_pipeline{nullptr};
             std::vector<MeshDrawResources> frame_resources{};
         } mesh_renderer{};
 

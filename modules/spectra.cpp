@@ -733,15 +733,38 @@ namespace xayah {
         if (frame.frame_index >= this->sync.frame_count) throw std::runtime_error("Frame index is outside frame resource range");
 
         if (scene_mesh_count != 0) {
-            if (!*this->mesh_renderer.pipeline_layout || !*this->mesh_renderer.pipeline || this->mesh_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Mesh renderer is not initialized");
+            if (!*this->mesh_renderer.pipeline_layout || !*this->mesh_renderer.surface_pipeline || !*this->mesh_renderer.wireframe_pipeline || this->mesh_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Mesh renderer is not initialized");
             if (this->mesh_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_mesh_count) throw std::runtime_error("Mesh renderer resources do not match scene mesh count");
             if (this->mesh_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_mesh_count) throw std::runtime_error("Mesh descriptor sets do not match scene mesh count");
 
-            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.pipeline);
             for (std::size_t mesh_index = 0; mesh_index < scene_mesh_count; ++mesh_index) {
                 const Mesh& mesh = scene.meshes[mesh_index];
+                if (!mesh.visible) continue;
                 const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_mesh_count + mesh_index;
                 MeshDrawResources& resources = this->mesh_renderer.frame_resources.at(resource_index);
+                std::vector<std::uint32_t> wireframe_indices{};
+                const std::uint32_t* draw_indices = mesh.indices.data();
+                std::size_t draw_index_count = mesh.indices.size();
+                if (mesh.render_settings.display_mode == MeshDisplayMode::wireframe) {
+                    if (mesh.indices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 2)) throw std::runtime_error(std::string{"Mesh has too many indices for wireframe draw: "} + mesh.name);
+                    wireframe_indices.reserve(mesh.indices.size() * 2);
+                    for (std::size_t index = 0; index < mesh.indices.size(); index += 3) {
+                        const std::uint32_t i0 = mesh.indices[index + 0];
+                        const std::uint32_t i1 = mesh.indices[index + 1];
+                        const std::uint32_t i2 = mesh.indices[index + 2];
+                        wireframe_indices.emplace_back(i0);
+                        wireframe_indices.emplace_back(i1);
+                        wireframe_indices.emplace_back(i1);
+                        wireframe_indices.emplace_back(i2);
+                        wireframe_indices.emplace_back(i2);
+                        wireframe_indices.emplace_back(i0);
+                    }
+                    draw_indices = wireframe_indices.data();
+                    draw_index_count = wireframe_indices.size();
+                    command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.wireframe_pipeline);
+                } else {
+                    command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.surface_pipeline);
+                }
 
                 std::vector<MeshShaderVertex> shader_vertices{};
                 shader_vertices.reserve(mesh.vertices.size());
@@ -760,10 +783,10 @@ namespace xayah {
                 parameters.light_direction = {-0.45f, -0.85f, -0.25f, 0.0f};
 
                 ensure_buffer(this->context.physical_device, this->context.device, resources.vertex_buffer, resources.vertex_memory, resources.vertex_size, shader_vertices.size() * sizeof(MeshShaderVertex), storage_buffer_usage, upload_memory_properties);
-                ensure_buffer(this->context.physical_device, this->context.device, resources.index_buffer, resources.index_memory, resources.index_size, mesh.indices.size() * sizeof(std::uint32_t), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.index_buffer, resources.index_memory, resources.index_size, draw_index_count * sizeof(std::uint32_t), storage_buffer_usage, upload_memory_properties);
                 ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(MeshShaderParameters), storage_buffer_usage, upload_memory_properties);
                 write_buffer(resources.vertex_memory, resources.vertex_size, shader_vertices.data(), shader_vertices.size() * sizeof(MeshShaderVertex));
-                write_buffer(resources.index_memory, resources.index_size, mesh.indices.data(), mesh.indices.size() * sizeof(std::uint32_t));
+                write_buffer(resources.index_memory, resources.index_size, draw_indices, draw_index_count * sizeof(std::uint32_t));
                 write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(MeshShaderParameters));
 
                 const std::array buffer_infos{
@@ -780,7 +803,7 @@ namespace xayah {
                 this->context.device.updateDescriptorSets(writes, {});
 
                 command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
-                command_buffer.draw(static_cast<std::uint32_t>(mesh.indices.size()), 1, 0, 0);
+                command_buffer.draw(static_cast<std::uint32_t>(draw_index_count), 1, 0, 0);
             }
         }
 
@@ -792,6 +815,7 @@ namespace xayah {
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
         for (std::size_t volume_index = 0; volume_index < scene_volume_count; ++volume_index) {
             const Volume& volume                         = scene.volumes[volume_index];
+            if (!volume.visible) continue;
             const VolumeRenderSettings& render_settings = volume.render_settings;
             if (render_settings.opacity < 0.0f || render_settings.opacity > 1.0f) throw std::runtime_error(std::string{"Volume opacity must be in [0, 1]: "} + volume.name);
             if (render_settings.raymarch_step <= 0.0f) throw std::runtime_error(std::string{"Volume raymarch step must be positive: "} + volume.name);
@@ -962,23 +986,85 @@ namespace xayah {
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{0.18f, 0.42f, 0.72f, 0.24f});
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.22f, 0.50f, 0.86f, 0.34f});
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4{0.28f, 0.58f, 0.96f, 0.44f});
-        for (const Volume& volume : scene.volumes) {
-            const bool selected       = scene.selection.object_id == volume.id;
-            const std::size_t scalars = volume.centered_scalar_grids.size();
-            const std::size_t vectors = volume.staggered_vector_grids.size();
-            const std::string label   = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector";
-            ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
-            if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(volume.id);
-            ImGui::PopStyleColor();
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{0.0f, 3.0f});
+        if (ImGui::BeginTable("SceneObjectList", 3, ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Visible", ImGuiTableColumnFlags_WidthFixed, 32.0f);
+            ImGui::TableSetupColumn("Mode", ImGuiTableColumnFlags_WidthFixed, 32.0f);
+            for (Volume& volume : scene.volumes) {
+                const bool selected       = scene.selection.object_id == volume.id;
+                const std::size_t scalars = volume.centered_scalar_grids.size();
+                const std::size_t vectors = volume.staggered_vector_grids.size();
+                const std::string id      = std::to_string(volume.id);
+                const std::string label   = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector##SceneVolumeSelect:" + id;
+                const std::string visible_label = std::string{volume.visible ? "V" : "H"} + "##SceneVolumeVisible:" + id;
+                const char* mode_text = volume.render_settings.display_mode == VolumeDisplayMode::direct ? "D" : "S";
+                const std::string mode_label = std::string{mode_text} + "##SceneVolumeMode:" + id;
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : volume.visible ? value_color : muted_color);
+                if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(volume.id);
+                ImGui::PopStyleColor();
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_Border, volume.visible ? ImVec4{0.24f, 0.82f, 0.55f, 0.78f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
+                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
+                if (ImGui::Button(visible_label.c_str(), ImVec2{26.0f, 22.0f})) volume.visible = !volume.visible;
+                ImGui::PopStyleColor(5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.visible ? "Hide volume" : "Show volume");
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_Border, volume.render_settings.display_mode == VolumeDisplayMode::direct ? ImVec4{0.32f, 0.62f, 0.96f, 0.78f} : ImVec4{0.92f, 0.62f, 0.26f, 0.78f});
+                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
+                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f}))
+                    volume.render_settings.display_mode = volume.render_settings.display_mode == VolumeDisplayMode::direct ? VolumeDisplayMode::slice : VolumeDisplayMode::direct;
+                ImGui::PopStyleColor(5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.render_settings.display_mode == VolumeDisplayMode::direct ? "Direct volume rendering" : "Slice volume rendering");
+            }
+            for (Mesh& mesh : scene.meshes) {
+                const bool selected         = scene.selection.object_id == mesh.id;
+                const std::size_t triangles = mesh.indices.size() / 3;
+                const std::string id        = std::to_string(mesh.id);
+                const std::string label     = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris##SceneMeshSelect:" + id;
+                const std::string visible_label = std::string{mesh.visible ? "V" : "H"} + "##SceneMeshVisible:" + id;
+                const char* mode_text = mesh.render_settings.display_mode == MeshDisplayMode::surface ? "S" : "W";
+                const std::string mode_label = std::string{mode_text} + "##SceneMeshMode:" + id;
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : mesh.visible ? value_color : muted_color);
+                if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(mesh.id);
+                ImGui::PopStyleColor();
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_Border, mesh.visible ? ImVec4{0.24f, 0.82f, 0.55f, 0.78f} : ImVec4{0.86f, 0.30f, 0.32f, 0.78f});
+                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
+                if (ImGui::Button(visible_label.c_str(), ImVec2{26.0f, 22.0f})) mesh.visible = !mesh.visible;
+                ImGui::PopStyleColor(5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.visible ? "Hide mesh" : "Show mesh");
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
+                ImGui::PushStyleColor(ImGuiCol_Border, mesh.render_settings.display_mode == MeshDisplayMode::surface ? ImVec4{0.66f, 0.48f, 0.96f, 0.78f} : ImVec4{0.28f, 0.80f, 0.88f, 0.78f});
+                ImGui::PushStyleColor(ImGuiCol_Text, value_color);
+                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f}))
+                    mesh.render_settings.display_mode = mesh.render_settings.display_mode == MeshDisplayMode::surface ? MeshDisplayMode::wireframe : MeshDisplayMode::surface;
+                ImGui::PopStyleColor(5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.render_settings.display_mode == MeshDisplayMode::surface ? "Surface mesh rendering" : "Wireframe mesh rendering");
+            }
+            ImGui::EndTable();
         }
-        for (const Mesh& mesh : scene.meshes) {
-            const bool selected         = scene.selection.object_id == mesh.id;
-            const std::size_t triangles = mesh.indices.size() / 3;
-            const std::string label     = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris";
-            ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
-            if (ImGui::Selectable(label.c_str(), selected)) scene.select_object(mesh.id);
-            ImGui::PopStyleColor();
-        }
+        ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(3);
         ImGui::End();
         ImGui::PopStyleColor(2);
@@ -1151,6 +1237,7 @@ namespace xayah {
         ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
         } else if (active_object.kind == SceneObjectKind::mesh) {
             Mesh& active_mesh = scene.meshes.at(active_object.index);
+            MeshRenderSettings& settings = active_mesh.render_settings;
             if (active_mesh.vertices.empty()) throw std::runtime_error(std::string{"Selected mesh has no vertices: "} + active_mesh.name);
 
             std::array<float, 3> bounds_min = active_mesh.vertices.front().position;
@@ -1204,6 +1291,20 @@ namespace xayah {
                 ImGui::TableNextColumn();
                 ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked vertices" : "Live vertices");
                 ImGui::EndTable();
+            }
+
+            ImGui::Separator();
+            ImGui::TextColored(accent_color, "Render");
+            const char* mode_label = settings.display_mode == MeshDisplayMode::surface ? "Surface" : "Wireframe";
+            if (ImGui::BeginCombo("Mode", mode_label)) {
+                const bool surface_selected = settings.display_mode == MeshDisplayMode::surface;
+                if (ImGui::Selectable("Surface", surface_selected)) settings.display_mode = MeshDisplayMode::surface;
+                if (surface_selected) ImGui::SetItemDefaultFocus();
+
+                const bool wireframe_selected = settings.display_mode == MeshDisplayMode::wireframe;
+                if (ImGui::Selectable("Wireframe", wireframe_selected)) settings.display_mode = MeshDisplayMode::wireframe;
+                if (wireframe_selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
             }
 
             ImGui::Separator();
@@ -1433,7 +1534,7 @@ namespace xayah {
     }
 
     void Spectra::create_mesh_renderer(const Scene& scene) {
-        if (*this->mesh_renderer.pipeline || this->mesh_renderer.descriptor_sets.size() != 0 || !this->mesh_renderer.frame_resources.empty()) throw std::runtime_error("Mesh renderer is already initialized");
+        if (*this->mesh_renderer.surface_pipeline || *this->mesh_renderer.wireframe_pipeline || this->mesh_renderer.descriptor_sets.size() != 0 || !this->mesh_renderer.frame_resources.empty()) throw std::runtime_error("Mesh renderer is already initialized");
         if (!*this->context.physical_device) throw std::runtime_error("Cannot create mesh renderer without a physical device");
         if (!*this->context.device) throw std::runtime_error("Cannot create mesh renderer without a Vulkan device");
         if (this->swapchain.format == vk::Format::eUndefined) throw std::runtime_error("Cannot create mesh renderer without a color format");
@@ -1479,7 +1580,7 @@ namespace xayah {
         };
 
         constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
-        constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
         vk::PipelineViewportStateCreateInfo viewport_state{};
         viewport_state.viewportCount = 1;
         viewport_state.scissorCount  = 1;
@@ -1530,15 +1631,18 @@ namespace xayah {
         pipeline_create_info.layout              = *this->mesh_renderer.pipeline_layout;
         pipeline_create_info.renderPass          = nullptr;
         pipeline_create_info.subpass             = 0;
-        this->mesh_renderer.pipeline             = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+        this->mesh_renderer.surface_pipeline     = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+        input_assembly_state.topology            = vk::PrimitiveTopology::eLineList;
+        this->mesh_renderer.wireframe_pipeline   = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
     }
 
     void Spectra::destroy_mesh_renderer() noexcept {
-        this->mesh_renderer.pipeline          = nullptr;
-        this->mesh_renderer.pipeline_layout   = nullptr;
-        this->mesh_renderer.descriptor_sets   = nullptr;
-        this->mesh_renderer.descriptor_pool   = nullptr;
-        this->mesh_renderer.descriptor_layout = nullptr;
+        this->mesh_renderer.wireframe_pipeline = nullptr;
+        this->mesh_renderer.surface_pipeline   = nullptr;
+        this->mesh_renderer.pipeline_layout    = nullptr;
+        this->mesh_renderer.descriptor_sets    = nullptr;
+        this->mesh_renderer.descriptor_pool    = nullptr;
+        this->mesh_renderer.descriptor_layout  = nullptr;
         this->mesh_renderer.frame_resources.clear();
     }
 
@@ -1850,7 +1954,7 @@ namespace xayah {
 
         this->context.device.waitIdle();
 
-        const bool recreate_mesh_renderer   = static_cast<bool>(*this->mesh_renderer.pipeline);
+        const bool recreate_mesh_renderer   = static_cast<bool>(*this->mesh_renderer.surface_pipeline);
         const bool recreate_volume_renderer = static_cast<bool>(*this->volume_renderer.pipeline);
         this->destroy_mesh_renderer();
         this->destroy_volume_renderer();

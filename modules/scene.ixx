@@ -55,6 +55,7 @@ namespace xayah {
     export struct Volume {
         std::uint64_t id{0};
         std::string name{};
+        bool visible{true};
         std::array<float, 3> origin{-1.0f, -1.0f, -1.0f};
         std::array<float, 3> size{2.0f, 2.0f, 2.0f};
         std::vector<CenteredScalarGrid> centered_scalar_grids{};
@@ -68,11 +69,22 @@ namespace xayah {
         std::array<float, 3> color{0.8f, 0.8f, 0.8f};
     };
 
+    export enum class MeshDisplayMode : std::uint32_t {
+        surface   = 0,
+        wireframe = 1,
+    };
+
+    export struct MeshRenderSettings {
+        MeshDisplayMode display_mode{MeshDisplayMode::surface};
+    };
+
     export struct Mesh {
         std::uint64_t id{0};
         std::string name{};
+        bool visible{true};
         std::vector<MeshVertex> vertices{};
         std::vector<std::uint32_t> indices{};
+        MeshRenderSettings render_settings{};
     };
 
     export enum class ScenePlaybackMode : std::uint32_t {
