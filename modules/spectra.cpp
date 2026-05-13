@@ -67,6 +67,17 @@ namespace {
         std::array<float, 4> slice_value_max{};
     };
 
+    struct MeshShaderVertex {
+        std::array<float, 4> position{};
+        std::array<float, 4> normal{};
+        std::array<float, 4> color{};
+    };
+
+    struct MeshShaderParameters {
+        std::array<float, 16> view_projection{};
+        std::array<float, 4> light_direction{};
+    };
+
     std::uint32_t memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
         const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
@@ -462,6 +473,8 @@ namespace xayah {
             std::println("{}{}{}\n", dim, std::string(96, '='), reset);
         }
     } catch (...) {
+        this->destroy_mesh_renderer();
+        this->destroy_volume_renderer();
         this->destroy_viewport_pipeline();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
@@ -489,6 +502,7 @@ namespace xayah {
             ImGui::DestroyContext();
         }
         this->destroy_volume_renderer();
+        this->destroy_mesh_renderer();
         this->destroy_viewport_pipeline();
         this->imgui.descriptor_pool = nullptr;
         this->imgui.color_format    = vk::Format::eUndefined;
@@ -530,7 +544,8 @@ namespace xayah {
             this->timeline.first_frame   = this->timeline.frame_min;
         }
 
-        this->create_volume_renderer(scene);
+        if (!scene.meshes.empty()) this->create_mesh_renderer(scene);
+        if (!scene.volumes.empty()) this->create_volume_renderer(scene);
         try {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
                 FrameState frame{};
@@ -541,12 +556,14 @@ namespace xayah {
 
             this->context.device.waitIdle();
             this->destroy_volume_renderer();
+            this->destroy_mesh_renderer();
         } catch (...) {
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
             this->destroy_volume_renderer();
+            this->destroy_mesh_renderer();
             throw;
         }
     }
@@ -704,19 +721,74 @@ namespace xayah {
             command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
         }
 
-        const std::size_t scene_volume_count = scene.volumes.size();
-        if (!*this->volume_renderer.pipeline_layout || !*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Volume renderer is not initialized");
-        if (frame.frame_index >= this->sync.frame_count) throw std::runtime_error("Volume frame index is outside frame resource range");
-        if (scene_volume_count == 0) throw std::runtime_error("Cannot render a scene without volumes");
-        if (this->volume_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume renderer resources do not match scene volume count");
-        if (this->volume_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume descriptor sets do not match scene volume count");
-
         const std::array<float, 3> camera_position = this->viewport.camera.position();
         constexpr vk::BufferUsageFlags storage_buffer_usage{vk::BufferUsageFlagBits::eStorageBuffer};
         constexpr vk::MemoryPropertyFlags upload_memory_properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
 
         command_buffer.setViewport(0, vulkan_viewport);
         command_buffer.setScissor(0, scissor);
+
+        const std::size_t scene_mesh_count   = scene.meshes.size();
+        const std::size_t scene_volume_count = scene.volumes.size();
+        if (frame.frame_index >= this->sync.frame_count) throw std::runtime_error("Frame index is outside frame resource range");
+
+        if (scene_mesh_count != 0) {
+            if (!*this->mesh_renderer.pipeline_layout || !*this->mesh_renderer.pipeline || this->mesh_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Mesh renderer is not initialized");
+            if (this->mesh_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_mesh_count) throw std::runtime_error("Mesh renderer resources do not match scene mesh count");
+            if (this->mesh_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_mesh_count) throw std::runtime_error("Mesh descriptor sets do not match scene mesh count");
+
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.pipeline);
+            for (std::size_t mesh_index = 0; mesh_index < scene_mesh_count; ++mesh_index) {
+                const Mesh& mesh = scene.meshes[mesh_index];
+                const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_mesh_count + mesh_index;
+                MeshDrawResources& resources = this->mesh_renderer.frame_resources.at(resource_index);
+
+                std::vector<MeshShaderVertex> shader_vertices{};
+                shader_vertices.reserve(mesh.vertices.size());
+                for (const MeshVertex& vertex : mesh.vertices) {
+                    shader_vertices.emplace_back(
+                        MeshShaderVertex{
+                            {vertex.position[0], vertex.position[1], vertex.position[2], 1.0f},
+                            {vertex.normal[0], vertex.normal[1], vertex.normal[2], 0.0f},
+                            {vertex.color[0], vertex.color[1], vertex.color[2], 1.0f},
+                        }
+                    );
+                }
+
+                MeshShaderParameters parameters{};
+                parameters.view_projection = view_projection;
+                parameters.light_direction = {-0.45f, -0.85f, -0.25f, 0.0f};
+
+                ensure_buffer(this->context.physical_device, this->context.device, resources.vertex_buffer, resources.vertex_memory, resources.vertex_size, shader_vertices.size() * sizeof(MeshShaderVertex), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.index_buffer, resources.index_memory, resources.index_size, mesh.indices.size() * sizeof(std::uint32_t), storage_buffer_usage, upload_memory_properties);
+                ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(MeshShaderParameters), storage_buffer_usage, upload_memory_properties);
+                write_buffer(resources.vertex_memory, resources.vertex_size, shader_vertices.data(), shader_vertices.size() * sizeof(MeshShaderVertex));
+                write_buffer(resources.index_memory, resources.index_size, mesh.indices.data(), mesh.indices.size() * sizeof(std::uint32_t));
+                write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(MeshShaderParameters));
+
+                const std::array buffer_infos{
+                    vk::DescriptorBufferInfo{*resources.vertex_buffer, 0, resources.vertex_size},
+                    vk::DescriptorBufferInfo{*resources.index_buffer, 0, resources.index_size},
+                    vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
+                };
+                const vk::DescriptorSet descriptor_set = *this->mesh_renderer.descriptor_sets[resource_index];
+                const std::array writes{
+                    vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
+                    vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
+                    vk::WriteDescriptorSet{descriptor_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[2]},
+                };
+                this->context.device.updateDescriptorSets(writes, {});
+
+                command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
+                command_buffer.draw(static_cast<std::uint32_t>(mesh.indices.size()), 1, 0, 0);
+            }
+        }
+
+        if (scene_volume_count != 0) {
+            if (!*this->volume_renderer.pipeline_layout || !*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Volume renderer is not initialized");
+            if (this->volume_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume renderer resources do not match scene volume count");
+            if (this->volume_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume descriptor sets do not match scene volume count");
+
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
         for (std::size_t volume_index = 0; volume_index < scene_volume_count; ++volume_index) {
             const Volume& volume                         = scene.volumes[volume_index];
@@ -800,6 +872,7 @@ namespace xayah {
             command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
             command_buffer.draw(volume_vertex_count, 1, 0, 0);
         }
+        }
         command_buffer.endRendering();
 
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
@@ -880,11 +953,12 @@ namespace xayah {
         }
 
         const std::size_t volume_count = scene.volumes.size();
-        const std::size_t object_count = volume_count;
+        const std::size_t mesh_count   = scene.meshes.size();
+        const std::size_t object_count = volume_count + mesh_count;
         ImGui::Separator();
         ImGui::TextColored(accent_color, "Scene");
         ImGui::SameLine();
-        ImGui::TextColored(muted_color, "%zu total / %zu volume%s", object_count, volume_count, volume_count == 1 ? "" : "s");
+        ImGui::TextColored(muted_color, "%zu total / %zu volume%s / %zu mesh%s", object_count, volume_count, volume_count == 1 ? "" : "s", mesh_count, mesh_count == 1 ? "" : "es");
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{0.18f, 0.42f, 0.72f, 0.24f});
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4{0.22f, 0.50f, 0.86f, 0.34f});
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4{0.28f, 0.58f, 0.96f, 0.44f});
@@ -895,6 +969,14 @@ namespace xayah {
             const std::string label   = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector";
             ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
             if (ImGui::Selectable(label.c_str(), selected)) scene.select_volume(volume);
+            ImGui::PopStyleColor();
+        }
+        for (const Mesh& mesh : scene.meshes) {
+            const bool selected         = scene.selected_object.kind == SceneObjectKind::mesh && scene.selected_object.name == mesh.name;
+            const std::size_t triangles = mesh.indices.size() / 3;
+            const std::string label     = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris";
+            ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : value_color);
+            if (ImGui::Selectable(label.c_str(), selected)) scene.select_mesh(mesh);
             ImGui::PopStyleColor();
         }
         ImGui::PopStyleColor(3);
@@ -919,15 +1001,15 @@ namespace xayah {
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
         ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
-        if (scene.selected_object.kind != SceneObjectKind::volume) throw std::runtime_error("Object inspector only supports volume objects");
 
-        Volume& active_volume          = scene.selected_volume();
-        VolumeRenderSettings& settings = active_volume.render_settings;
+        if (scene.selected_object.kind == SceneObjectKind::volume) {
+            Volume& active_volume          = scene.selected_volume();
+            VolumeRenderSettings& settings = active_volume.render_settings;
 
-        ImGui::TextColored(accent_color, "Object Inspector");
-        ImGui::SameLine();
-        ImGui::TextColored(muted_color, "Volume");
-        ImGui::Separator();
+            ImGui::TextColored(accent_color, "Object Inspector");
+            ImGui::SameLine();
+            ImGui::TextColored(muted_color, "Volume");
+            ImGui::Separator();
 
         if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
             ImGui::TableNextRow();
@@ -1073,6 +1155,88 @@ namespace xayah {
         }
         ImGui::SliderFloat("Opacity", &settings.opacity, 0.0f, 1.0f, "%.3f");
         ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
+        } else if (scene.selected_object.kind == SceneObjectKind::mesh) {
+            Mesh& active_mesh = scene.selected_mesh();
+            if (active_mesh.vertices.empty()) throw std::runtime_error(std::string{"Selected mesh has no vertices: "} + active_mesh.name);
+
+            std::array<float, 3> bounds_min = active_mesh.vertices.front().position;
+            std::array<float, 3> bounds_max = active_mesh.vertices.front().position;
+            for (const MeshVertex& vertex : active_mesh.vertices) {
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    if (vertex.position[axis] < bounds_min[axis]) bounds_min[axis] = vertex.position[axis];
+                    if (vertex.position[axis] > bounds_max[axis]) bounds_max[axis] = vertex.position[axis];
+                }
+            }
+
+            ImGui::TextColored(accent_color, "Object Inspector");
+            ImGui::SameLine();
+            ImGui::TextColored(muted_color, "Mesh");
+            ImGui::Separator();
+
+            if (ImGui::BeginTable("InspectorMeshIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Name");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%s", active_mesh.name.c_str());
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Vertices");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%zu", active_mesh.vertices.size());
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Triangles");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%zu", active_mesh.indices.size() / 3);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Bounds min");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Bounds max");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Playback");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked vertices" : "Live vertices");
+                ImGui::EndTable();
+            }
+
+            ImGui::Separator();
+            ImGui::TextColored(accent_color, "Vertex Format");
+            if (ImGui::BeginTable("InspectorMeshFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Position");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "float3");
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Normal");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "float3");
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(label_color, "Color");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(value_color, "float3");
+                ImGui::EndTable();
+            }
+        } else {
+            throw std::runtime_error("Object inspector received unsupported scene object kind");
+        }
 
         ImGui::End();
         ImGui::PopStyleColor(5);
@@ -1271,6 +1435,116 @@ namespace xayah {
     void Spectra::destroy_viewport_pipeline() noexcept {
         this->viewport.pipeline        = nullptr;
         this->viewport.pipeline_layout = nullptr;
+    }
+
+    void Spectra::create_mesh_renderer(const Scene& scene) {
+        if (*this->mesh_renderer.pipeline || this->mesh_renderer.descriptor_sets.size() != 0 || !this->mesh_renderer.frame_resources.empty()) throw std::runtime_error("Mesh renderer is already initialized");
+        if (!*this->context.physical_device) throw std::runtime_error("Cannot create mesh renderer without a physical device");
+        if (!*this->context.device) throw std::runtime_error("Cannot create mesh renderer without a Vulkan device");
+        if (this->swapchain.format == vk::Format::eUndefined) throw std::runtime_error("Cannot create mesh renderer without a color format");
+        if (this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create mesh renderer without a depth format");
+        if (this->sync.frame_count == 0) throw std::runtime_error("Cannot create mesh renderer without frames in flight");
+        if (scene.meshes.empty()) throw std::runtime_error("Cannot create mesh renderer for a scene without meshes");
+        if (scene.meshes.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / this->sync.frame_count)) throw std::runtime_error("Scene has too many meshes for frame resources");
+
+        const std::uint32_t descriptor_set_count = static_cast<std::uint32_t>(scene.meshes.size() * this->sync.frame_count);
+        this->mesh_renderer.frame_resources.resize(descriptor_set_count);
+        if (descriptor_set_count > std::numeric_limits<std::uint32_t>::max() / 3) throw std::runtime_error("Mesh descriptor pool size is too large");
+
+        constexpr std::array bindings{
+            vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{2, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+        };
+        const vk::DescriptorSetLayoutCreateInfo descriptor_layout_create_info{{}, static_cast<std::uint32_t>(bindings.size()), bindings.data()};
+        this->mesh_renderer.descriptor_layout = vk::raii::DescriptorSetLayout{this->context.device, descriptor_layout_create_info};
+
+        const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eStorageBuffer, descriptor_set_count * 3};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, descriptor_set_count, 1, &pool_size};
+        this->mesh_renderer.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+
+        std::vector layouts(descriptor_set_count, *this->mesh_renderer.descriptor_layout);
+        const vk::DescriptorSetAllocateInfo allocate_info{*this->mesh_renderer.descriptor_pool, descriptor_set_count, layouts.data()};
+        this->mesh_renderer.descriptor_sets = vk::raii::DescriptorSets{this->context.device, allocate_info};
+        if (this->mesh_renderer.descriptor_sets.size() != descriptor_set_count) throw std::runtime_error("Failed to allocate mesh descriptor sets");
+
+        const vk::DescriptorSetLayout descriptor_layout = *this->mesh_renderer.descriptor_layout;
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_layout};
+        this->mesh_renderer.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
+
+        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "mesh.vert.spv");
+        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "mesh.frag.spv");
+        const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
+        const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
+        const vk::raii::ShaderModule vertex_shader{this->context.device, vertex_module_create_info};
+        const vk::raii::ShaderModule fragment_shader{this->context.device, fragment_module_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+
+        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
+        constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        vk::PipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount  = 1;
+
+        constexpr vk::PipelineRasterizationStateCreateInfo rasterization_state{
+            {},
+            VK_FALSE,
+            VK_FALSE,
+            vk::PolygonMode::eFill,
+            vk::CullModeFlagBits::eNone,
+            vk::FrontFace::eCounterClockwise,
+            VK_FALSE,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+        };
+        constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
+        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+
+        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+        color_blend_attachment.blendEnable    = VK_FALSE;
+        color_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+
+        const vk::Format color_format   = this->swapchain.format;
+        const vk::Format stencil_format = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? this->swapchain.depth_format : vk::Format::eUndefined;
+        vk::PipelineRenderingCreateInfo rendering_create_info{};
+        rendering_create_info.colorAttachmentCount    = 1;
+        rendering_create_info.pColorAttachmentFormats = &color_format;
+        rendering_create_info.depthAttachmentFormat   = this->swapchain.depth_format;
+        rendering_create_info.stencilAttachmentFormat = stencil_format;
+
+        vk::GraphicsPipelineCreateInfo pipeline_create_info{};
+        pipeline_create_info.pNext               = &rendering_create_info;
+        pipeline_create_info.stageCount          = static_cast<std::uint32_t>(shader_stages.size());
+        pipeline_create_info.pStages             = shader_stages.data();
+        pipeline_create_info.pVertexInputState   = &vertex_input_state;
+        pipeline_create_info.pInputAssemblyState = &input_assembly_state;
+        pipeline_create_info.pViewportState      = &viewport_state;
+        pipeline_create_info.pRasterizationState = &rasterization_state;
+        pipeline_create_info.pMultisampleState   = &multisample_state;
+        pipeline_create_info.pDepthStencilState  = &depth_stencil_state;
+        pipeline_create_info.pColorBlendState    = &color_blend_state;
+        pipeline_create_info.pDynamicState       = &dynamic_state;
+        pipeline_create_info.layout              = *this->mesh_renderer.pipeline_layout;
+        pipeline_create_info.renderPass          = nullptr;
+        pipeline_create_info.subpass             = 0;
+        this->mesh_renderer.pipeline             = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+    }
+
+    void Spectra::destroy_mesh_renderer() noexcept {
+        this->mesh_renderer.pipeline          = nullptr;
+        this->mesh_renderer.pipeline_layout   = nullptr;
+        this->mesh_renderer.descriptor_sets   = nullptr;
+        this->mesh_renderer.descriptor_pool   = nullptr;
+        this->mesh_renderer.descriptor_layout = nullptr;
+        this->mesh_renderer.frame_resources.clear();
     }
 
     void Spectra::create_volume_renderer(const Scene& scene) {
@@ -1581,7 +1855,9 @@ namespace xayah {
 
         this->context.device.waitIdle();
 
+        const bool recreate_mesh_renderer   = static_cast<bool>(*this->mesh_renderer.pipeline);
         const bool recreate_volume_renderer = static_cast<bool>(*this->volume_renderer.pipeline);
+        this->destroy_mesh_renderer();
         this->destroy_volume_renderer();
         this->destroy_viewport_pipeline();
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
@@ -1598,6 +1874,7 @@ namespace xayah {
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
+        if (recreate_mesh_renderer) this->create_mesh_renderer(scene);
         if (recreate_volume_renderer) this->create_volume_renderer(scene);
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());

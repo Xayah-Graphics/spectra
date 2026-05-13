@@ -33,6 +33,8 @@ namespace xayah {
     private:
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
+        void create_mesh_renderer(const Scene& scene);
+        void destroy_mesh_renderer() noexcept;
         void create_volume_renderer(const Scene& scene);
         void destroy_volume_renderer() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
@@ -83,6 +85,27 @@ namespace xayah {
             std::uint32_t vertex_count{170};
             bool grid_visible{true};
         } viewport;
+
+        struct MeshDrawResources {
+            vk::raii::Buffer vertex_buffer{nullptr};
+            vk::raii::DeviceMemory vertex_memory{nullptr};
+            vk::DeviceSize vertex_size{0};
+            vk::raii::Buffer index_buffer{nullptr};
+            vk::raii::DeviceMemory index_memory{nullptr};
+            vk::DeviceSize index_size{0};
+            vk::raii::Buffer parameters_buffer{nullptr};
+            vk::raii::DeviceMemory parameters_memory{nullptr};
+            vk::DeviceSize parameters_size{0};
+        };
+
+        struct {
+            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::vector<MeshDrawResources> frame_resources{};
+        } mesh_renderer{};
 
         struct VolumeDrawResources {
             vk::raii::Buffer x_data_buffer{nullptr};

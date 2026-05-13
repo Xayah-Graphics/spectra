@@ -127,9 +127,47 @@ int main() {
     }
     sphere_volume.centered_scalar_grids.emplace_back(std::move(sphere_grid));
 
+    xayah::Mesh cloth_mesh;
+    cloth_mesh.name = "cloth_patch";
+    constexpr std::uint32_t cloth_resolution = 9;
+    constexpr float cloth_extent             = 2.4f;
+    constexpr float cloth_pi                 = 3.14159265358979323846f;
+
+    for (std::uint32_t z = 0; z < cloth_resolution; ++z) {
+        for (std::uint32_t x = 0; x < cloth_resolution; ++x) {
+            const float u = static_cast<float>(x) / static_cast<float>(cloth_resolution - 1);
+            const float v = static_cast<float>(z) / static_cast<float>(cloth_resolution - 1);
+            xayah::MeshVertex vertex;
+            vertex.position = {
+                -cloth_extent * 0.5f + cloth_extent * u,
+                0.45f + std::sin(u * cloth_pi * 2.0f) * std::cos(v * cloth_pi * 2.0f) * 0.08f,
+                -cloth_extent * 0.5f + cloth_extent * v,
+            };
+            vertex.normal = {0.0f, 1.0f, 0.0f};
+            vertex.color  = {0.20f + u * 0.40f, 0.45f + v * 0.25f, 0.92f};
+            cloth_mesh.vertices.emplace_back(vertex);
+        }
+    }
+
+    for (std::uint32_t z = 0; z < cloth_resolution - 1; ++z) {
+        for (std::uint32_t x = 0; x < cloth_resolution - 1; ++x) {
+            const std::uint32_t i0 = x + z * cloth_resolution;
+            const std::uint32_t i1 = i0 + 1;
+            const std::uint32_t i2 = i0 + cloth_resolution;
+            const std::uint32_t i3 = i2 + 1;
+            cloth_mesh.indices.emplace_back(i0);
+            cloth_mesh.indices.emplace_back(i2);
+            cloth_mesh.indices.emplace_back(i1);
+            cloth_mesh.indices.emplace_back(i1);
+            cloth_mesh.indices.emplace_back(i2);
+            cloth_mesh.indices.emplace_back(i3);
+        }
+    }
+
     xayah::Scene scene;
     scene.volumes.emplace_back(std::move(volume));
     scene.volumes.emplace_back(std::move(sphere_volume));
+    scene.meshes.emplace_back(std::move(cloth_mesh));
     scene.bake.mode = xayah::ScenePlaybackMode::baked;
 
     for (int frame_index = 0; frame_index < 3; ++frame_index) {
@@ -166,6 +204,20 @@ int main() {
             }
 
             baked_frame.volumes.emplace_back(std::move(baked_volume));
+        }
+
+        for (const xayah::Mesh& live_mesh : scene.meshes) {
+            xayah::BakedMeshFrame baked_mesh;
+            baked_mesh.mesh_name = live_mesh.name;
+            baked_mesh.vertices  = live_mesh.vertices;
+            const float frame_t  = static_cast<float>(frame_index);
+
+            for (xayah::MeshVertex& vertex : baked_mesh.vertices) {
+                const float wave = std::sin(vertex.position[0] * 3.0f + vertex.position[2] * 1.7f + frame_t * 1.1f);
+                vertex.position[1] += wave * 0.16f;
+            }
+
+            baked_frame.meshes.emplace_back(std::move(baked_mesh));
         }
 
         scene.bake.frames.emplace_back(std::move(baked_frame));

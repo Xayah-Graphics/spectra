@@ -61,6 +61,18 @@ namespace xayah {
         VolumeRenderSettings render_settings{};
     };
 
+    export struct MeshVertex {
+        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
+        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
+        std::array<float, 3> color{0.8f, 0.8f, 0.8f};
+    };
+
+    export struct Mesh {
+        std::string name{};
+        std::vector<MeshVertex> vertices{};
+        std::vector<std::uint32_t> indices{};
+    };
+
     export enum class ScenePlaybackMode : std::uint32_t {
         live  = 0,
         baked = 1,
@@ -72,9 +84,15 @@ namespace xayah {
         std::vector<StaggeredVectorGrid> staggered_vector_grids{};
     };
 
+    export struct BakedMeshFrame {
+        std::string mesh_name{};
+        std::vector<MeshVertex> vertices{};
+    };
+
     export struct BakedSceneFrame {
         int frame_index{0};
         std::vector<BakedVolumeFrame> volumes{};
+        std::vector<BakedMeshFrame> meshes{};
     };
 
     export struct SceneBake {
@@ -84,6 +102,7 @@ namespace xayah {
 
     export enum class SceneObjectKind : std::uint32_t {
         volume = 0,
+        mesh   = 1,
     };
 
     export struct SceneObjectSelection {
@@ -94,6 +113,7 @@ namespace xayah {
     export class Scene {
     public:
         std::vector<Volume> volumes{};
+        std::vector<Mesh> meshes{};
         SceneObjectSelection selected_object{};
         SceneBake bake{};
 
@@ -101,6 +121,7 @@ namespace xayah {
         void validate_bake() const;
         void initialize_selection();
         void select_volume(const Volume& volume);
+        void select_mesh(const Mesh& mesh);
         void apply_playback_frame(int frame_index);
         void initialize_volume_render_settings(Volume& volume);
         void select_first_volume_grid(Volume& volume);
@@ -108,12 +129,14 @@ namespace xayah {
         [[nodiscard]] int baked_frame_max() const;
         [[nodiscard]] Volume& selected_volume();
         [[nodiscard]] const Volume& selected_volume() const;
+        [[nodiscard]] Mesh& selected_mesh();
+        [[nodiscard]] const Mesh& selected_mesh() const;
         [[nodiscard]] const CenteredScalarGrid& selected_centered_scalar_grid(const Volume& volume) const;
         [[nodiscard]] const StaggeredVectorGrid& selected_staggered_vector_grid(const Volume& volume) const;
     };
 
     void Scene::validate() const {
-        if (this->volumes.empty()) throw std::runtime_error("Scene has no volumes to render");
+        if (this->volumes.empty() && this->meshes.empty()) throw std::runtime_error("Scene has no objects to render");
 
         std::set<std::string> volume_names{};
         for (const Volume& volume : this->volumes) {
@@ -143,6 +166,25 @@ namespace xayah {
                 if (grid.z_values.size() != z_count) throw std::runtime_error(std::string{"Staggered vector grid z-face value count does not match grid resolution: "} + grid.name);
             }
         }
+
+        std::set<std::string> mesh_names{};
+        for (const Mesh& mesh : this->meshes) {
+            if (mesh.name.empty()) throw std::runtime_error("Mesh name must not be empty");
+            if (!mesh_names.insert(mesh.name).second) throw std::runtime_error(std::string{"Duplicate mesh name: "} + mesh.name);
+            if (mesh.vertices.empty()) throw std::runtime_error(std::string{"Mesh has no vertices: "} + mesh.name);
+            if (mesh.indices.empty()) throw std::runtime_error(std::string{"Mesh has no indices: "} + mesh.name);
+            if (mesh.indices.size() % 3 != 0) throw std::runtime_error(std::string{"Mesh index count must be divisible by 3: "} + mesh.name);
+            if (mesh.indices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::string{"Mesh has too many indices for Vulkan draw: "} + mesh.name);
+
+            for (const MeshVertex& vertex : mesh.vertices) {
+                const float normal_length_squared = vertex.normal[0] * vertex.normal[0] + vertex.normal[1] * vertex.normal[1] + vertex.normal[2] * vertex.normal[2];
+                if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Mesh vertex normal must not be zero: "} + mesh.name);
+            }
+
+            for (const std::uint32_t index : mesh.indices) {
+                if (index >= mesh.vertices.size()) throw std::runtime_error(std::string{"Mesh index is outside vertex range: "} + mesh.name);
+            }
+        }
     }
 
     void Scene::validate_bake() const {
@@ -157,6 +199,7 @@ namespace xayah {
             if (frame.frame_index < frame_min) frame_min = frame.frame_index;
             if (frame.frame_index > frame_max) frame_max = frame.frame_index;
             if (frame.volumes.size() != this->volumes.size()) throw std::runtime_error(std::string{"Baked frame volume count does not match scene volume count: "} + std::to_string(frame.frame_index));
+            if (frame.meshes.size() != this->meshes.size()) throw std::runtime_error(std::string{"Baked frame mesh count does not match scene mesh count: "} + std::to_string(frame.frame_index));
 
             std::set<std::string> baked_volume_names{};
             for (const BakedVolumeFrame& baked_volume : frame.volumes) {
@@ -214,6 +257,29 @@ namespace xayah {
                     if (baked_grid->z_values.size() != grid.z_values.size()) throw std::runtime_error(std::string{"Baked staggered vector grid z-face value count does not match live grid: "} + grid.name);
                 }
             }
+
+            std::set<std::string> baked_mesh_names{};
+            for (const BakedMeshFrame& baked_mesh : frame.meshes) {
+                if (baked_mesh.mesh_name.empty()) throw std::runtime_error("Baked mesh name must not be empty");
+                if (!baked_mesh_names.insert(baked_mesh.mesh_name).second) throw std::runtime_error(std::string{"Duplicate baked mesh in frame: "} + baked_mesh.mesh_name);
+            }
+
+            for (const Mesh& mesh : this->meshes) {
+                const BakedMeshFrame* baked_mesh = nullptr;
+                for (const BakedMeshFrame& candidate : frame.meshes) {
+                    if (candidate.mesh_name == mesh.name) {
+                        baked_mesh = &candidate;
+                        break;
+                    }
+                }
+                if (baked_mesh == nullptr) throw std::runtime_error(std::string{"Baked frame is missing mesh: "} + mesh.name);
+                if (baked_mesh->vertices.size() != mesh.vertices.size()) throw std::runtime_error(std::string{"Baked mesh vertex count does not match live mesh: "} + mesh.name);
+
+                for (const MeshVertex& vertex : baked_mesh->vertices) {
+                    const float normal_length_squared = vertex.normal[0] * vertex.normal[0] + vertex.normal[1] * vertex.normal[1] + vertex.normal[2] * vertex.normal[2];
+                    if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Baked mesh vertex normal must not be zero: "} + mesh.name);
+                }
+            }
         }
 
         for (int frame_index = frame_min; frame_index <= frame_max; ++frame_index) {
@@ -227,12 +293,20 @@ namespace xayah {
         }
 
         if (this->selected_object.name.empty()) {
-            this->select_volume(this->volumes.front());
+            if (!this->volumes.empty()) {
+                this->select_volume(this->volumes.front());
+                return;
+            }
+            this->select_mesh(this->meshes.front());
             return;
         }
 
         if (this->selected_object.kind == SceneObjectKind::volume) {
             static_cast<void>(this->selected_volume());
+            return;
+        }
+        if (this->selected_object.kind == SceneObjectKind::mesh) {
+            static_cast<void>(this->selected_mesh());
             return;
         }
 
@@ -242,6 +316,11 @@ namespace xayah {
     void Scene::select_volume(const Volume& volume) {
         this->selected_object.kind = SceneObjectKind::volume;
         this->selected_object.name = volume.name;
+    }
+
+    void Scene::select_mesh(const Mesh& mesh) {
+        this->selected_object.kind = SceneObjectKind::mesh;
+        this->selected_object.name = mesh.name;
     }
 
     void Scene::apply_playback_frame(int frame_index) {
@@ -297,6 +376,19 @@ namespace xayah {
                 grid.y_values = baked_grid->y_values;
                 grid.z_values = baked_grid->z_values;
             }
+        }
+
+        for (Mesh& mesh : this->meshes) {
+            const BakedMeshFrame* baked_mesh = nullptr;
+            for (const BakedMeshFrame& candidate : baked_frame->meshes) {
+                if (candidate.mesh_name == mesh.name) {
+                    baked_mesh = &candidate;
+                    break;
+                }
+            }
+            if (baked_mesh == nullptr) throw std::runtime_error(std::string{"Baked frame is missing mesh: "} + mesh.name);
+            if (baked_mesh->vertices.size() != mesh.vertices.size()) throw std::runtime_error(std::string{"Baked mesh vertex count does not match live mesh: "} + mesh.name);
+            mesh.vertices = baked_mesh->vertices;
         }
     }
 
@@ -355,6 +447,22 @@ namespace xayah {
             if (volume.name == this->selected_object.name) return volume;
         }
         throw std::runtime_error(std::string{"Selected volume does not exist: "} + this->selected_object.name);
+    }
+
+    Mesh& Scene::selected_mesh() {
+        if (this->selected_object.kind != SceneObjectKind::mesh) throw std::runtime_error("Selected scene object is not a mesh");
+        for (Mesh& mesh : this->meshes) {
+            if (mesh.name == this->selected_object.name) return mesh;
+        }
+        throw std::runtime_error(std::string{"Selected mesh does not exist: "} + this->selected_object.name);
+    }
+
+    const Mesh& Scene::selected_mesh() const {
+        if (this->selected_object.kind != SceneObjectKind::mesh) throw std::runtime_error("Selected scene object is not a mesh");
+        for (const Mesh& mesh : this->meshes) {
+            if (mesh.name == this->selected_object.name) return mesh;
+        }
+        throw std::runtime_error(std::string{"Selected mesh does not exist: "} + this->selected_object.name);
     }
 
     const CenteredScalarGrid& Scene::selected_centered_scalar_grid(const Volume& volume) const {
