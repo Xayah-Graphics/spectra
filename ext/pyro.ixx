@@ -10,5 +10,14 @@ namespace xayah {
         PyroSolver(PyroSolver&& other) noexcept            = default;
         PyroSolver& operator=(const PyroSolver& other)     = delete;
         PyroSolver& operator=(PyroSolver&& other) noexcept = default;
+
+    private:
+        struct {
+
+        } host;
+
+        struct {
+
+        } device;
     };
 } // namespace xayah
