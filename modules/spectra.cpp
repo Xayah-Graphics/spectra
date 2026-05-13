@@ -229,14 +229,16 @@ namespace xayah {
             if (!supported_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("Device does not support timelineSemaphore");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
+            if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().shaderDemoteToHelperInvocation) throw std::runtime_error("Device does not support shaderDemoteToHelperInvocation");
 
             vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}, {}};
-            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy  = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid   = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore    = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2     = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering     = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy            = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid             = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters           = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore              = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2               = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering               = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().shaderDemoteToHelperInvocation = VK_TRUE;
 
             constexpr std::array queue_priorities{1.0f};
             const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
@@ -760,10 +762,10 @@ namespace xayah {
                 const Mesh& mesh = scene.meshes[mesh_index];
                 if (!mesh.visible) continue;
                 const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_mesh_count + mesh_index;
-                MeshDrawResources& resources = this->mesh_renderer.frame_resources.at(resource_index);
+                MeshDrawResources& resources     = this->mesh_renderer.frame_resources.at(resource_index);
                 std::vector<std::uint32_t> wireframe_indices{};
                 const std::uint32_t* draw_indices = mesh.indices.data();
-                std::size_t draw_index_count = mesh.indices.size();
+                std::size_t draw_index_count      = mesh.indices.size();
                 if (mesh.render_settings.display_mode == MeshDisplayMode::wireframe) {
                     if (mesh.indices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 2)) throw std::runtime_error(std::string{"Mesh has too many indices for wireframe draw: "} + mesh.name);
                     wireframe_indices.reserve(mesh.indices.size() * 2);
@@ -778,7 +780,7 @@ namespace xayah {
                         wireframe_indices.emplace_back(i2);
                         wireframe_indices.emplace_back(i0);
                     }
-                    draw_indices = wireframe_indices.data();
+                    draw_indices     = wireframe_indices.data();
                     draw_index_count = wireframe_indices.size();
                     command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_renderer.wireframe_pipeline);
                 } else {
@@ -788,13 +790,11 @@ namespace xayah {
                 std::vector<MeshShaderVertex> shader_vertices{};
                 shader_vertices.reserve(mesh.vertices.size());
                 for (const MeshVertex& vertex : mesh.vertices) {
-                    shader_vertices.emplace_back(
-                        MeshShaderVertex{
-                            {vertex.position[0], vertex.position[1], vertex.position[2], 1.0f},
-                            {vertex.normal[0], vertex.normal[1], vertex.normal[2], 0.0f},
-                            {vertex.color[0], vertex.color[1], vertex.color[2], 1.0f},
-                        }
-                    );
+                    shader_vertices.emplace_back(MeshShaderVertex{
+                        {vertex.position[0], vertex.position[1], vertex.position[2], 1.0f},
+                        {vertex.normal[0], vertex.normal[1], vertex.normal[2], 0.0f},
+                        {vertex.color[0], vertex.color[1], vertex.color[2], 1.0f},
+                    });
                 }
 
                 MeshShaderParameters parameters{};
@@ -845,12 +845,10 @@ namespace xayah {
                 shader_particles.reserve(particles.particles.size());
                 for (const Particle& particle : particles.particles) {
                     if (particle.radius <= 0.0f) throw std::runtime_error(std::string{"Particle radius must be positive: "} + particles.name);
-                    shader_particles.emplace_back(
-                        ParticleShaderParticle{
-                            {particle.position[0], particle.position[1], particle.position[2], particle.radius},
-                            {particle.color[0], particle.color[1], particle.color[2], 1.0f},
-                        }
-                    );
+                    shader_particles.emplace_back(ParticleShaderParticle{
+                        {particle.position[0], particle.position[1], particle.position[2], particle.radius},
+                        {particle.color[0], particle.color[1], particle.color[2], 1.0f},
+                    });
                 }
 
                 ParticleShaderParameters parameters{};
@@ -884,90 +882,90 @@ namespace xayah {
             if (this->volume_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume renderer resources do not match scene volume count");
             if (this->volume_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume descriptor sets do not match scene volume count");
 
-        command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
-        for (std::size_t volume_index = 0; volume_index < scene_volume_count; ++volume_index) {
-            const Volume& volume                         = scene.volumes[volume_index];
-            if (!volume.visible) continue;
-            const VolumeRenderSettings& render_settings = volume.render_settings;
-            if (render_settings.opacity < 0.0f || render_settings.opacity > 1.0f) throw std::runtime_error(std::string{"Volume opacity must be in [0, 1]: "} + volume.name);
-            if (render_settings.raymarch_step <= 0.0f) throw std::runtime_error(std::string{"Volume raymarch step must be positive: "} + volume.name);
-            if (render_settings.value_min >= render_settings.value_max) throw std::runtime_error(std::string{"Volume value range is invalid: "} + volume.name);
-            if (render_settings.slice_position < 0.0f || render_settings.slice_position > 1.0f) throw std::runtime_error(std::string{"Volume slice position must be in [0, 1]: "} + volume.name);
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
+            for (std::size_t volume_index = 0; volume_index < scene_volume_count; ++volume_index) {
+                const Volume& volume = scene.volumes[volume_index];
+                if (!volume.visible) continue;
+                const VolumeRenderSettings& render_settings = volume.render_settings;
+                if (render_settings.opacity < 0.0f || render_settings.opacity > 1.0f) throw std::runtime_error(std::string{"Volume opacity must be in [0, 1]: "} + volume.name);
+                if (render_settings.raymarch_step <= 0.0f) throw std::runtime_error(std::string{"Volume raymarch step must be positive: "} + volume.name);
+                if (render_settings.value_min >= render_settings.value_max) throw std::runtime_error(std::string{"Volume value range is invalid: "} + volume.name);
+                if (render_settings.slice_position < 0.0f || render_settings.slice_position > 1.0f) throw std::runtime_error(std::string{"Volume slice position must be in [0, 1]: "} + volume.name);
 
-            const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_volume_count + volume_index;
-            VolumeDrawResources& resources   = this->volume_renderer.frame_resources.at(resource_index);
+                const std::size_t resource_index = static_cast<std::size_t>(frame.frame_index) * scene_volume_count + volume_index;
+                VolumeDrawResources& resources   = this->volume_renderer.frame_resources.at(resource_index);
 
-            if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
-                const CenteredScalarGrid& grid = scene.render_centered_scalar_grid(volume);
-                const std::array spacing{
-                    volume.size[0] / static_cast<float>(grid.resolution[0]),
-                    volume.size[1] / static_cast<float>(grid.resolution[1]),
-                    volume.size[2] / static_cast<float>(grid.resolution[2]),
+                if (render_settings.grid_kind == VolumeGridKind::centered_scalar) {
+                    const CenteredScalarGrid& grid = scene.render_centered_scalar_grid(volume);
+                    const std::array spacing{
+                        volume.size[0] / static_cast<float>(grid.resolution[0]),
+                        volume.size[1] / static_cast<float>(grid.resolution[1]),
+                        volume.size[2] / static_cast<float>(grid.resolution[2]),
+                    };
+
+                    VolumeShaderParameters parameters{};
+                    parameters.view_projection   = view_projection;
+                    parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
+                    parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+                    parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
+                    parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::centered_scalar)};
+                    parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
+                    parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
+
+                    ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                    ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
+                    write_buffer(resources.x_data_memory, resources.x_data_size, grid.values.data(), grid.values.size() * sizeof(float));
+                    write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+                } else {
+                    const StaggeredVectorGrid& grid = scene.render_staggered_vector_grid(volume);
+                    const std::array spacing{
+                        volume.size[0] / static_cast<float>(grid.resolution[0]),
+                        volume.size[1] / static_cast<float>(grid.resolution[1]),
+                        volume.size[2] / static_cast<float>(grid.resolution[2]),
+                    };
+
+                    VolumeShaderParameters parameters{};
+                    parameters.view_projection   = view_projection;
+                    parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
+                    parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
+                    parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
+                    parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::staggered_vector)};
+                    parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
+                    parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
+
+                    ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.x_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                    ensure_buffer(this->context.physical_device, this->context.device, resources.y_data_buffer, resources.y_data_memory, resources.y_data_size, grid.y_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                    ensure_buffer(this->context.physical_device, this->context.device, resources.z_data_buffer, resources.z_data_memory, resources.z_data_size, grid.z_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
+                    ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
+                    write_buffer(resources.x_data_memory, resources.x_data_size, grid.x_values.data(), grid.x_values.size() * sizeof(float));
+                    write_buffer(resources.y_data_memory, resources.y_data_size, grid.y_values.data(), grid.y_values.size() * sizeof(float));
+                    write_buffer(resources.z_data_memory, resources.z_data_size, grid.z_values.data(), grid.z_values.size() * sizeof(float));
+                    write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+                }
+
+                const vk::raii::Buffer& y_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.y_data_buffer;
+                const vk::raii::Buffer& z_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.z_data_buffer;
+                const vk::DeviceSize y_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.y_data_size;
+                const vk::DeviceSize z_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.z_data_size;
+                const std::array buffer_infos{
+                    vk::DescriptorBufferInfo{*resources.x_data_buffer, 0, resources.x_data_size},
+                    vk::DescriptorBufferInfo{*y_data_buffer, 0, y_data_size},
+                    vk::DescriptorBufferInfo{*z_data_buffer, 0, z_data_size},
+                    vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
                 };
-
-                VolumeShaderParameters parameters{};
-                parameters.view_projection   = view_projection;
-                parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
-                parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
-                parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
-                parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::centered_scalar)};
-                parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
-                parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
-
-                ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-                ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
-                write_buffer(resources.x_data_memory, resources.x_data_size, grid.values.data(), grid.values.size() * sizeof(float));
-                write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
-            } else {
-                const StaggeredVectorGrid& grid = scene.render_staggered_vector_grid(volume);
-                const std::array spacing{
-                    volume.size[0] / static_cast<float>(grid.resolution[0]),
-                    volume.size[1] / static_cast<float>(grid.resolution[1]),
-                    volume.size[2] / static_cast<float>(grid.resolution[2]),
+                const vk::DescriptorSet descriptor_set = *this->volume_renderer.descriptor_sets[resource_index];
+                const std::array writes{
+                    vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
+                    vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
+                    vk::WriteDescriptorSet{descriptor_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[2]},
+                    vk::WriteDescriptorSet{descriptor_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[3]},
                 };
+                this->context.device.updateDescriptorSets(writes, {});
 
-                VolumeShaderParameters parameters{};
-                parameters.view_projection   = view_projection;
-                parameters.camera_step       = {camera_position[0], camera_position[1], camera_position[2], render_settings.raymarch_step};
-                parameters.origin_opacity    = {volume.origin[0], volume.origin[1], volume.origin[2], render_settings.opacity};
-                parameters.spacing_value_min = {spacing[0], spacing[1], spacing[2], render_settings.value_min};
-                parameters.resolution_kind   = {grid.resolution[0], grid.resolution[1], grid.resolution[2], static_cast<std::uint32_t>(VolumeGridKind::staggered_vector)};
-                parameters.mode_options      = {static_cast<std::uint32_t>(render_settings.display_mode), static_cast<std::uint32_t>(render_settings.slice_axis), static_cast<std::uint32_t>(render_settings.color_map), 0};
-                parameters.slice_value_max   = {render_settings.slice_position, render_settings.value_max, 0.0f, 0.0f};
-
-                ensure_buffer(this->context.physical_device, this->context.device, resources.x_data_buffer, resources.x_data_memory, resources.x_data_size, grid.x_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-                ensure_buffer(this->context.physical_device, this->context.device, resources.y_data_buffer, resources.y_data_memory, resources.y_data_size, grid.y_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-                ensure_buffer(this->context.physical_device, this->context.device, resources.z_data_buffer, resources.z_data_memory, resources.z_data_size, grid.z_values.size() * sizeof(float), storage_buffer_usage, upload_memory_properties);
-                ensure_buffer(this->context.physical_device, this->context.device, resources.parameters_buffer, resources.parameters_memory, resources.parameters_size, sizeof(VolumeShaderParameters), storage_buffer_usage, upload_memory_properties);
-                write_buffer(resources.x_data_memory, resources.x_data_size, grid.x_values.data(), grid.x_values.size() * sizeof(float));
-                write_buffer(resources.y_data_memory, resources.y_data_size, grid.y_values.data(), grid.y_values.size() * sizeof(float));
-                write_buffer(resources.z_data_memory, resources.z_data_size, grid.z_values.data(), grid.z_values.size() * sizeof(float));
-                write_buffer(resources.parameters_memory, resources.parameters_size, &parameters, sizeof(VolumeShaderParameters));
+                const std::uint32_t volume_vertex_count = render_settings.display_mode == VolumeDisplayMode::direct ? 36u : 6u;
+                command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
+                command_buffer.draw(volume_vertex_count, 1, 0, 0);
             }
-
-            const vk::raii::Buffer& y_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.y_data_buffer;
-            const vk::raii::Buffer& z_data_buffer = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_buffer : resources.z_data_buffer;
-            const vk::DeviceSize y_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.y_data_size;
-            const vk::DeviceSize z_data_size      = render_settings.grid_kind == VolumeGridKind::centered_scalar ? resources.x_data_size : resources.z_data_size;
-            const std::array buffer_infos{
-                vk::DescriptorBufferInfo{*resources.x_data_buffer, 0, resources.x_data_size},
-                vk::DescriptorBufferInfo{*y_data_buffer, 0, y_data_size},
-                vk::DescriptorBufferInfo{*z_data_buffer, 0, z_data_size},
-                vk::DescriptorBufferInfo{*resources.parameters_buffer, 0, resources.parameters_size},
-            };
-            const vk::DescriptorSet descriptor_set = *this->volume_renderer.descriptor_sets[resource_index];
-            const std::array writes{
-                vk::WriteDescriptorSet{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[0]},
-                vk::WriteDescriptorSet{descriptor_set, 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[1]},
-                vk::WriteDescriptorSet{descriptor_set, 2, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[2]},
-                vk::WriteDescriptorSet{descriptor_set, 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[3]},
-            };
-            this->context.device.updateDescriptorSets(writes, {});
-
-            const std::uint32_t volume_vertex_count = render_settings.display_mode == VolumeDisplayMode::direct ? 36u : 6u;
-            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
-            command_buffer.draw(volume_vertex_count, 1, 0, 0);
-        }
         }
         command_buffer.endRendering();
 
@@ -1067,14 +1065,14 @@ namespace xayah {
             ImGui::TableSetupColumn("Visible", ImGuiTableColumnFlags_WidthFixed, 32.0f);
             ImGui::TableSetupColumn("Mode", ImGuiTableColumnFlags_WidthFixed, 32.0f);
             for (Volume& volume : scene.volumes) {
-                const bool selected       = scene.selection.object_id == volume.id;
-                const std::size_t scalars = volume.centered_scalar_grids.size();
-                const std::size_t vectors = volume.staggered_vector_grids.size();
-                const std::string id      = std::to_string(volume.id);
-                const std::string label   = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector##SceneVolumeSelect:" + id;
+                const bool selected             = scene.selection.object_id == volume.id;
+                const std::size_t scalars       = volume.centered_scalar_grids.size();
+                const std::size_t vectors       = volume.staggered_vector_grids.size();
+                const std::string id            = std::to_string(volume.id);
+                const std::string label         = std::string{"Volume  "} + volume.name + "  " + std::to_string(scalars) + " scalar, " + std::to_string(vectors) + " vector##SceneVolumeSelect:" + id;
                 const std::string visible_label = std::string{volume.visible ? "V" : "H"} + "##SceneVolumeVisible:" + id;
-                const char* mode_text = volume.render_settings.display_mode == VolumeDisplayMode::direct ? "D" : "S";
-                const std::string mode_label = std::string{mode_text} + "##SceneVolumeMode:" + id;
+                const char* mode_text           = volume.render_settings.display_mode == VolumeDisplayMode::direct ? "D" : "S";
+                const std::string mode_label    = std::string{mode_text} + "##SceneVolumeMode:" + id;
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -1096,19 +1094,18 @@ namespace xayah {
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
                 ImGui::PushStyleColor(ImGuiCol_Border, volume.render_settings.display_mode == VolumeDisplayMode::direct ? ImVec4{0.32f, 0.62f, 0.96f, 0.78f} : ImVec4{0.92f, 0.62f, 0.26f, 0.78f});
                 ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f}))
-                    volume.render_settings.display_mode = volume.render_settings.display_mode == VolumeDisplayMode::direct ? VolumeDisplayMode::slice : VolumeDisplayMode::direct;
+                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f})) volume.render_settings.display_mode = volume.render_settings.display_mode == VolumeDisplayMode::direct ? VolumeDisplayMode::slice : VolumeDisplayMode::direct;
                 ImGui::PopStyleColor(5);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip(volume.render_settings.display_mode == VolumeDisplayMode::direct ? "Direct volume rendering" : "Slice volume rendering");
             }
             for (Mesh& mesh : scene.meshes) {
-                const bool selected         = scene.selection.object_id == mesh.id;
-                const std::size_t triangles = mesh.indices.size() / 3;
-                const std::string id        = std::to_string(mesh.id);
-                const std::string label     = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris##SceneMeshSelect:" + id;
+                const bool selected             = scene.selection.object_id == mesh.id;
+                const std::size_t triangles     = mesh.indices.size() / 3;
+                const std::string id            = std::to_string(mesh.id);
+                const std::string label         = std::string{"Mesh  "} + mesh.name + "  " + std::to_string(mesh.vertices.size()) + " vertices, " + std::to_string(triangles) + " tris##SceneMeshSelect:" + id;
                 const std::string visible_label = std::string{mesh.visible ? "V" : "H"} + "##SceneMeshVisible:" + id;
-                const char* mode_text = mesh.render_settings.display_mode == MeshDisplayMode::surface ? "S" : "W";
-                const std::string mode_label = std::string{mode_text} + "##SceneMeshMode:" + id;
+                const char* mode_text           = mesh.render_settings.display_mode == MeshDisplayMode::surface ? "S" : "W";
+                const std::string mode_label    = std::string{mode_text} + "##SceneMeshMode:" + id;
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -1130,15 +1127,14 @@ namespace xayah {
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.0f, 0.0f, 0.0f, 0.0f});
                 ImGui::PushStyleColor(ImGuiCol_Border, mesh.render_settings.display_mode == MeshDisplayMode::surface ? ImVec4{0.66f, 0.48f, 0.96f, 0.78f} : ImVec4{0.28f, 0.80f, 0.88f, 0.78f});
                 ImGui::PushStyleColor(ImGuiCol_Text, value_color);
-                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f}))
-                    mesh.render_settings.display_mode = mesh.render_settings.display_mode == MeshDisplayMode::surface ? MeshDisplayMode::wireframe : MeshDisplayMode::surface;
+                if (ImGui::Button(mode_label.c_str(), ImVec2{28.0f, 0.0f})) mesh.render_settings.display_mode = mesh.render_settings.display_mode == MeshDisplayMode::surface ? MeshDisplayMode::wireframe : MeshDisplayMode::surface;
                 ImGui::PopStyleColor(5);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip(mesh.render_settings.display_mode == MeshDisplayMode::surface ? "Surface mesh rendering" : "Wireframe mesh rendering");
             }
             for (Particles& particles : scene.particles) {
-                const bool selected = scene.selection.object_id == particles.id;
-                const std::string id = std::to_string(particles.id);
-                const std::string label = std::string{"Particles  "} + particles.name + "  " + std::to_string(particles.particles.size()) + " particles##SceneParticlesSelect:" + id;
+                const bool selected             = scene.selection.object_id == particles.id;
+                const std::string id            = std::to_string(particles.id);
+                const std::string label         = std::string{"Particles  "} + particles.name + "  " + std::to_string(particles.particles.size()) + " particles##SceneParticlesSelect:" + id;
                 const std::string visible_label = std::string{particles.visible ? "V" : "H"} + "##SceneParticlesVisible:" + id;
 
                 ImGui::TableNextRow();
@@ -1193,336 +1189,342 @@ namespace xayah {
                 ImGui::TextColored(muted_color, "Volume");
                 ImGui::Separator();
 
-        if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Name");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%s", active_volume.name.c_str());
+                if (ImGui::BeginTable("InspectorIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Name");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%s", active_volume.name.c_str());
 
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Origin");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.origin[0], active_volume.origin[1], active_volume.origin[2]);
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Origin");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.origin[0], active_volume.origin[1], active_volume.origin[2]);
 
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Size");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.size[0], active_volume.size[1], active_volume.size[2]);
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Size");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", active_volume.size[0], active_volume.size[1], active_volume.size[2]);
 
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Grids");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%zu scalar / %zu vector", active_volume.centered_scalar_grids.size(), active_volume.staggered_vector_grids.size());
-            ImGui::EndTable();
-        }
-
-        ImGui::Separator();
-        ImGui::TextColored(accent_color, "Grids");
-        if (ImGui::BeginTable("InspectorGridList", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Kind");
-            ImGui::TableSetupColumn("Name");
-            ImGui::TableSetupColumn("Resolution");
-            ImGui::TableHeadersRow();
-            for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
-                const bool selected = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
-                const std::string label = std::string{"Scalar##VolumeGridScalar:"} + grid.name;
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
-                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    settings.grid_kind = VolumeGridKind::centered_scalar;
-                    settings.grid_name = grid.name;
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Grids");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%zu scalar / %zu vector", active_volume.centered_scalar_grids.size(), active_volume.staggered_vector_grids.size());
+                    ImGui::EndTable();
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
-                ImGui::PopStyleColor();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
-            }
-            for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
-                const bool selected = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
-                const std::string label = std::string{"Vector##VolumeGridVector:"} + grid.name;
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
-                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    settings.grid_kind = VolumeGridKind::staggered_vector;
-                    settings.grid_name = grid.name;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-                ImGui::PopStyleColor();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
-            }
-            ImGui::EndTable();
-        }
 
-        ImGui::Separator();
-        ImGui::TextColored(accent_color, "Render");
-        const char* mode_label = settings.display_mode == VolumeDisplayMode::direct ? "Direct" : "Slice";
-        if (ImGui::BeginCombo("Mode", mode_label)) {
-            const bool direct_selected = settings.display_mode == VolumeDisplayMode::direct;
-            if (ImGui::Selectable("Direct", direct_selected)) settings.display_mode = VolumeDisplayMode::direct;
-            if (direct_selected) ImGui::SetItemDefaultFocus();
-
-            const bool slice_selected = settings.display_mode == VolumeDisplayMode::slice;
-            if (ImGui::Selectable("Slice", slice_selected)) settings.display_mode = VolumeDisplayMode::slice;
-            if (slice_selected) ImGui::SetItemDefaultFocus();
-            ImGui::EndCombo();
-        }
-
-        auto color_map_label = "Viridis";
-        if (settings.color_map == VolumeColorMap::grayscale) color_map_label = "Grayscale";
-        if (settings.color_map == VolumeColorMap::turbo) color_map_label = "Turbo";
-        if (settings.color_map == VolumeColorMap::heat) color_map_label = "Heat";
-        if (ImGui::BeginCombo("Color Map", color_map_label)) {
-            const bool grayscale_selected = settings.color_map == VolumeColorMap::grayscale;
-            if (ImGui::Selectable("Grayscale", grayscale_selected)) settings.color_map = VolumeColorMap::grayscale;
-            if (grayscale_selected) ImGui::SetItemDefaultFocus();
-
-            const bool viridis_selected = settings.color_map == VolumeColorMap::viridis;
-            if (ImGui::Selectable("Viridis", viridis_selected)) settings.color_map = VolumeColorMap::viridis;
-            if (viridis_selected) ImGui::SetItemDefaultFocus();
-
-            const bool turbo_selected = settings.color_map == VolumeColorMap::turbo;
-            if (ImGui::Selectable("Turbo", turbo_selected)) settings.color_map = VolumeColorMap::turbo;
-            if (turbo_selected) ImGui::SetItemDefaultFocus();
-
-            const bool heat_selected = settings.color_map == VolumeColorMap::heat;
-            if (ImGui::Selectable("Heat", heat_selected)) settings.color_map = VolumeColorMap::heat;
-            if (heat_selected) ImGui::SetItemDefaultFocus();
-            ImGui::EndCombo();
-        }
-
-        if (settings.display_mode == VolumeDisplayMode::slice) {
-            auto axis_label = "Y";
-            if (settings.slice_axis == VolumeSliceAxis::x) axis_label = "X";
-            if (settings.slice_axis == VolumeSliceAxis::z) axis_label = "Z";
-            if (ImGui::BeginCombo("Axis", axis_label)) {
-                const bool x_selected = settings.slice_axis == VolumeSliceAxis::x;
-                if (ImGui::Selectable("X", x_selected)) settings.slice_axis = VolumeSliceAxis::x;
-                if (x_selected) ImGui::SetItemDefaultFocus();
-
-                const bool y_selected = settings.slice_axis == VolumeSliceAxis::y;
-                if (ImGui::Selectable("Y", y_selected)) settings.slice_axis = VolumeSliceAxis::y;
-                if (y_selected) ImGui::SetItemDefaultFocus();
-
-                const bool z_selected = settings.slice_axis == VolumeSliceAxis::z;
-                if (ImGui::Selectable("Z", z_selected)) settings.slice_axis = VolumeSliceAxis::z;
-                if (z_selected) ImGui::SetItemDefaultFocus();
-                ImGui::EndCombo();
-            }
-            ImGui::SliderFloat("Slice", &settings.slice_position, 0.0f, 1.0f, "%.3f");
-        }
-
-        std::array value_range{settings.value_min, settings.value_max};
-        if (ImGui::InputFloat2("Value Range", value_range.data())) {
-            settings.value_min = value_range[0];
-            settings.value_max = value_range[1];
-        }
-        ImGui::SliderFloat("Opacity", &settings.opacity, 0.0f, 1.0f, "%.3f");
-        ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
-        } else if (active_object.kind == SceneObjectKind::mesh) {
-            Mesh& active_mesh = scene.meshes.at(active_object.index);
-            MeshRenderSettings& settings = active_mesh.render_settings;
-            if (active_mesh.vertices.empty()) throw std::runtime_error(std::string{"Selected mesh has no vertices: "} + active_mesh.name);
-
-            std::array<float, 3> bounds_min = active_mesh.vertices.front().position;
-            std::array<float, 3> bounds_max = active_mesh.vertices.front().position;
-            for (const MeshVertex& vertex : active_mesh.vertices) {
-                for (std::size_t axis = 0; axis < 3; ++axis) {
-                    if (vertex.position[axis] < bounds_min[axis]) bounds_min[axis] = vertex.position[axis];
-                    if (vertex.position[axis] > bounds_max[axis]) bounds_max[axis] = vertex.position[axis];
-                }
-            }
-
-            ImGui::TextColored(accent_color, "Object Inspector");
-            ImGui::SameLine();
-            ImGui::TextColored(muted_color, "Mesh");
-            ImGui::Separator();
-
-            if (ImGui::BeginTable("InspectorMeshIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Name");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%s", active_mesh.name.c_str());
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Vertices");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%zu", active_mesh.vertices.size());
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Triangles");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%zu", active_mesh.indices.size() / 3);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Bounds min");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Bounds max");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Playback");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked vertices" : "Live vertices");
-                ImGui::EndTable();
-            }
-
-            ImGui::Separator();
-            ImGui::TextColored(accent_color, "Render");
-            const char* mode_label = settings.display_mode == MeshDisplayMode::surface ? "Surface" : "Wireframe";
-            if (ImGui::BeginCombo("Mode", mode_label)) {
-                const bool surface_selected = settings.display_mode == MeshDisplayMode::surface;
-                if (ImGui::Selectable("Surface", surface_selected)) settings.display_mode = MeshDisplayMode::surface;
-                if (surface_selected) ImGui::SetItemDefaultFocus();
-
-                const bool wireframe_selected = settings.display_mode == MeshDisplayMode::wireframe;
-                if (ImGui::Selectable("Wireframe", wireframe_selected)) settings.display_mode = MeshDisplayMode::wireframe;
-                if (wireframe_selected) ImGui::SetItemDefaultFocus();
-                ImGui::EndCombo();
-            }
-
-            ImGui::Separator();
-            ImGui::TextColored(accent_color, "Vertex Format");
-            if (ImGui::BeginTable("InspectorMeshFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Position");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "float3");
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Normal");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "float3");
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Color");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "float3");
-                ImGui::EndTable();
-            }
-        } else if (active_object.kind == SceneObjectKind::particles) {
-            Particles& active_particles = scene.particles.at(active_object.index);
-            ParticleRenderSettings& settings = active_particles.render_settings;
-
-            std::array<float, 3> bounds_min{};
-            std::array<float, 3> bounds_max{};
-            float radius_min = 0.0f;
-            float radius_max = 0.0f;
-            if (!active_particles.particles.empty()) {
-                bounds_min = active_particles.particles.front().position;
-                bounds_max = active_particles.particles.front().position;
-                radius_min = active_particles.particles.front().radius;
-                radius_max = active_particles.particles.front().radius;
-                for (const Particle& particle : active_particles.particles) {
-                    for (std::size_t axis = 0; axis < 3; ++axis) {
-                        if (particle.position[axis] < bounds_min[axis]) bounds_min[axis] = particle.position[axis];
-                        if (particle.position[axis] > bounds_max[axis]) bounds_max[axis] = particle.position[axis];
+                ImGui::Separator();
+                ImGui::TextColored(accent_color, "Grids");
+                if (ImGui::BeginTable("InspectorGridList", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("Kind");
+                    ImGui::TableSetupColumn("Name");
+                    ImGui::TableSetupColumn("Resolution");
+                    ImGui::TableHeadersRow();
+                    for (const CenteredScalarGrid& grid : active_volume.centered_scalar_grids) {
+                        const bool selected     = settings.grid_kind == VolumeGridKind::centered_scalar && grid.name == settings.grid_name;
+                        const std::string label = std::string{"Scalar##VolumeGridScalar:"} + grid.name;
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
+                        if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                            settings.grid_kind = VolumeGridKind::centered_scalar;
+                            settings.grid_name = grid.name;
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                        ImGui::PopStyleColor();
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
                     }
-                    if (particle.radius < radius_min) radius_min = particle.radius;
-                    if (particle.radius > radius_max) radius_max = particle.radius;
+                    for (const StaggeredVectorGrid& grid : active_volume.staggered_vector_grids) {
+                        const bool selected     = settings.grid_kind == VolumeGridKind::staggered_vector && grid.name == settings.grid_name;
+                        const std::string label = std::string{"Vector##VolumeGridVector:"} + grid.name;
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::PushStyleColor(ImGuiCol_Text, selected ? accent_color : label_color);
+                        if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                            settings.grid_kind = VolumeGridKind::staggered_vector;
+                            settings.grid_name = grid.name;
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                        ImGui::PopStyleColor();
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(selected ? accent_color : value_color, "%s", grid.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextColored(muted_color, "%u x %u x %u", grid.resolution[0], grid.resolution[1], grid.resolution[2]);
+                    }
+                    ImGui::EndTable();
                 }
+
+                ImGui::Separator();
+                ImGui::TextColored(accent_color, "Render");
+                const char* mode_label = settings.display_mode == VolumeDisplayMode::direct ? "Direct" : "Slice";
+                if (ImGui::BeginCombo("Mode", mode_label)) {
+                    const bool direct_selected = settings.display_mode == VolumeDisplayMode::direct;
+                    if (ImGui::Selectable("Direct", direct_selected)) settings.display_mode = VolumeDisplayMode::direct;
+                    if (direct_selected) ImGui::SetItemDefaultFocus();
+
+                    const bool slice_selected = settings.display_mode == VolumeDisplayMode::slice;
+                    if (ImGui::Selectable("Slice", slice_selected)) settings.display_mode = VolumeDisplayMode::slice;
+                    if (slice_selected) ImGui::SetItemDefaultFocus();
+                    ImGui::EndCombo();
+                }
+
+                auto color_map_label = "Viridis";
+                if (settings.color_map == VolumeColorMap::grayscale) color_map_label = "Grayscale";
+                if (settings.color_map == VolumeColorMap::turbo) color_map_label = "Turbo";
+                if (settings.color_map == VolumeColorMap::heat) color_map_label = "Heat";
+                if (ImGui::BeginCombo("Color Map", color_map_label)) {
+                    const bool grayscale_selected = settings.color_map == VolumeColorMap::grayscale;
+                    if (ImGui::Selectable("Grayscale", grayscale_selected)) settings.color_map = VolumeColorMap::grayscale;
+                    if (grayscale_selected) ImGui::SetItemDefaultFocus();
+
+                    const bool viridis_selected = settings.color_map == VolumeColorMap::viridis;
+                    if (ImGui::Selectable("Viridis", viridis_selected)) settings.color_map = VolumeColorMap::viridis;
+                    if (viridis_selected) ImGui::SetItemDefaultFocus();
+
+                    const bool turbo_selected = settings.color_map == VolumeColorMap::turbo;
+                    if (ImGui::Selectable("Turbo", turbo_selected)) settings.color_map = VolumeColorMap::turbo;
+                    if (turbo_selected) ImGui::SetItemDefaultFocus();
+
+                    const bool heat_selected = settings.color_map == VolumeColorMap::heat;
+                    if (ImGui::Selectable("Heat", heat_selected)) settings.color_map = VolumeColorMap::heat;
+                    if (heat_selected) ImGui::SetItemDefaultFocus();
+                    ImGui::EndCombo();
+                }
+
+                if (settings.display_mode == VolumeDisplayMode::slice) {
+                    auto axis_label = "Y";
+                    if (settings.slice_axis == VolumeSliceAxis::x) axis_label = "X";
+                    if (settings.slice_axis == VolumeSliceAxis::z) axis_label = "Z";
+                    if (ImGui::BeginCombo("Axis", axis_label)) {
+                        const bool x_selected = settings.slice_axis == VolumeSliceAxis::x;
+                        if (ImGui::Selectable("X", x_selected)) settings.slice_axis = VolumeSliceAxis::x;
+                        if (x_selected) ImGui::SetItemDefaultFocus();
+
+                        const bool y_selected = settings.slice_axis == VolumeSliceAxis::y;
+                        if (ImGui::Selectable("Y", y_selected)) settings.slice_axis = VolumeSliceAxis::y;
+                        if (y_selected) ImGui::SetItemDefaultFocus();
+
+                        const bool z_selected = settings.slice_axis == VolumeSliceAxis::z;
+                        if (ImGui::Selectable("Z", z_selected)) settings.slice_axis = VolumeSliceAxis::z;
+                        if (z_selected) ImGui::SetItemDefaultFocus();
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SliderFloat("Slice", &settings.slice_position, 0.0f, 1.0f, "%.3f");
+                }
+
+                std::array value_range{settings.value_min, settings.value_max};
+                if (ImGui::InputFloat2("Value Range", value_range.data())) {
+                    settings.value_min = value_range[0];
+                    settings.value_max = value_range[1];
+                }
+                ImGui::SliderFloat("Opacity", &settings.opacity, 0.0f, 1.0f, "%.3f");
+                ImGui::InputFloat("Raymarch Step", &settings.raymarch_step, 0.001f, 0.01f, "%.4f");
+            } else if (active_object.kind == SceneObjectKind::mesh) {
+                Mesh& active_mesh            = scene.meshes.at(active_object.index);
+                MeshRenderSettings& settings = active_mesh.render_settings;
+                if (active_mesh.vertices.empty()) throw std::runtime_error(std::string{"Selected mesh has no vertices: "} + active_mesh.name);
+
+                std::array<float, 3> bounds_min = active_mesh.vertices.front().position;
+                std::array<float, 3> bounds_max = active_mesh.vertices.front().position;
+                for (const MeshVertex& vertex : active_mesh.vertices) {
+                    for (std::size_t axis = 0; axis < 3; ++axis) {
+                        if (vertex.position[axis] < bounds_min[axis]) bounds_min[axis] = vertex.position[axis];
+                        if (vertex.position[axis] > bounds_max[axis]) bounds_max[axis] = vertex.position[axis];
+                    }
+                }
+
+                ImGui::TextColored(accent_color, "Object Inspector");
+                ImGui::SameLine();
+                ImGui::TextColored(muted_color, "Mesh");
+                ImGui::Separator();
+
+                if (ImGui::BeginTable("InspectorMeshIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Name");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%s", active_mesh.name.c_str());
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Vertices");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%zu", active_mesh.vertices.size());
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Triangles");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%zu", active_mesh.indices.size() / 3);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Bounds min");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Bounds max");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Playback");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked vertices" : "Live vertices");
+                    ImGui::EndTable();
+                }
+
+                ImGui::Separator();
+                ImGui::TextColored(accent_color, "Render");
+                const char* mode_label = settings.display_mode == MeshDisplayMode::surface ? "Surface" : "Wireframe";
+                if (ImGui::BeginCombo("Mode", mode_label)) {
+                    const bool surface_selected = settings.display_mode == MeshDisplayMode::surface;
+                    if (ImGui::Selectable("Surface", surface_selected)) settings.display_mode = MeshDisplayMode::surface;
+                    if (surface_selected) ImGui::SetItemDefaultFocus();
+
+                    const bool wireframe_selected = settings.display_mode == MeshDisplayMode::wireframe;
+                    if (ImGui::Selectable("Wireframe", wireframe_selected)) settings.display_mode = MeshDisplayMode::wireframe;
+                    if (wireframe_selected) ImGui::SetItemDefaultFocus();
+                    ImGui::EndCombo();
+                }
+
+                ImGui::Separator();
+                ImGui::TextColored(accent_color, "Vertex Format");
+                if (ImGui::BeginTable("InspectorMeshFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Position");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "float3");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Normal");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "float3");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Color");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "float3");
+                    ImGui::EndTable();
+                }
+            } else if (active_object.kind == SceneObjectKind::particles) {
+                Particles& active_particles      = scene.particles.at(active_object.index);
+                ParticleRenderSettings& settings = active_particles.render_settings;
+
+                std::array<float, 3> bounds_min{};
+                std::array<float, 3> bounds_max{};
+                float radius_min = 0.0f;
+                float radius_max = 0.0f;
+                if (!active_particles.particles.empty()) {
+                    bounds_min = active_particles.particles.front().position;
+                    bounds_max = active_particles.particles.front().position;
+                    radius_min = active_particles.particles.front().radius;
+                    radius_max = active_particles.particles.front().radius;
+                    for (const Particle& particle : active_particles.particles) {
+                        for (std::size_t axis = 0; axis < 3; ++axis) {
+                            if (particle.position[axis] < bounds_min[axis]) bounds_min[axis] = particle.position[axis];
+                            if (particle.position[axis] > bounds_max[axis]) bounds_max[axis] = particle.position[axis];
+                        }
+                        if (particle.radius < radius_min) radius_min = particle.radius;
+                        if (particle.radius > radius_max) radius_max = particle.radius;
+                    }
+                }
+
+                ImGui::TextColored(accent_color, "Object Inspector");
+                ImGui::SameLine();
+                ImGui::TextColored(muted_color, "Particles");
+                ImGui::Separator();
+
+                if (ImGui::BeginTable("InspectorParticlesIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Name");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%s", active_particles.name.c_str());
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Particles");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "%zu", active_particles.particles.size());
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Bounds min");
+                    ImGui::TableNextColumn();
+                    if (active_particles.particles.empty())
+                        ImGui::TextColored(muted_color, "n/a");
+                    else
+                        ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Bounds max");
+                    ImGui::TableNextColumn();
+                    if (active_particles.particles.empty())
+                        ImGui::TextColored(muted_color, "n/a");
+                    else
+                        ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Radius");
+                    ImGui::TableNextColumn();
+                    if (active_particles.particles.empty())
+                        ImGui::TextColored(muted_color, "n/a");
+                    else
+                        ImGui::TextColored(value_color, "%.3f - %.3f", radius_min, radius_max);
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Playback");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked particles" : "Live particles");
+                    ImGui::EndTable();
+                }
+
+                ImGui::Separator();
+                ImGui::TextColored(accent_color, "Render");
+                ImGui::TextColored(value_color, "Billboard");
+                ImGui::InputFloat("Radius Scale", &settings.radius_scale, 0.05f, 0.2f, "%.3f");
+
+                ImGui::Separator();
+                ImGui::TextColored(accent_color, "Particle Format");
+                if (ImGui::BeginTable("InspectorParticleFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Position");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "float3");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Radius");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "float");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(label_color, "Color");
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(value_color, "float3");
+                    ImGui::EndTable();
+                }
+            } else {
+                throw std::runtime_error("Object inspector received unsupported scene object kind");
             }
-
-            ImGui::TextColored(accent_color, "Object Inspector");
-            ImGui::SameLine();
-            ImGui::TextColored(muted_color, "Particles");
-            ImGui::Separator();
-
-            if (ImGui::BeginTable("InspectorParticlesIdentity", 2, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Name");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%s", active_particles.name.c_str());
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Particles");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%zu", active_particles.particles.size());
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Bounds min");
-                ImGui::TableNextColumn();
-                if (active_particles.particles.empty()) ImGui::TextColored(muted_color, "n/a");
-                else ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_min[0], bounds_min[1], bounds_min[2]);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Bounds max");
-                ImGui::TableNextColumn();
-                if (active_particles.particles.empty()) ImGui::TextColored(muted_color, "n/a");
-                else ImGui::TextColored(value_color, "%.2f, %.2f, %.2f", bounds_max[0], bounds_max[1], bounds_max[2]);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Radius");
-                ImGui::TableNextColumn();
-                if (active_particles.particles.empty()) ImGui::TextColored(muted_color, "n/a");
-                else ImGui::TextColored(value_color, "%.3f - %.3f", radius_min, radius_max);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Playback");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, scene.bake.mode == ScenePlaybackMode::baked ? "Baked particles" : "Live particles");
-                ImGui::EndTable();
-            }
-
-            ImGui::Separator();
-            ImGui::TextColored(accent_color, "Render");
-            ImGui::TextColored(value_color, "Billboard");
-            ImGui::InputFloat("Radius Scale", &settings.radius_scale, 0.05f, 0.2f, "%.3f");
-
-            ImGui::Separator();
-            ImGui::TextColored(accent_color, "Particle Format");
-            if (ImGui::BeginTable("InspectorParticleFormat", 2, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Position");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "float3");
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Radius");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "float");
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Color");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "float3");
-                ImGui::EndTable();
-            }
-        } else {
-            throw std::runtime_error("Object inspector received unsupported scene object kind");
-        }
 
             ImGui::End();
             ImGui::PopStyleColor(5);
