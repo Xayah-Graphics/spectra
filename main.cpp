@@ -2,6 +2,7 @@ import spectra;
 import pyro;
 import bouncingball;
 import cloth;
+import sparkles;
 import std;
 
 namespace {
@@ -214,6 +215,38 @@ namespace {
         return snapshot;
     }
 
+    xayah::Particle make_particle(const xayah::SparklesParticle& particle) {
+        return xayah::Particle{particle.position, particle.radius, particle.color};
+    }
+
+    std::vector<xayah::Particle> make_particles(const std::span<const xayah::SparklesParticle> particles) {
+        std::vector<xayah::Particle> scene_particles;
+        scene_particles.reserve(particles.size());
+        for (const xayah::SparklesParticle& particle : particles) scene_particles.emplace_back(make_particle(particle));
+        return scene_particles;
+    }
+
+    xayah::Particles make_sparkles_particles(const std::uint64_t object_id, const std::string& name, const xayah::SparklesSolver& solver) {
+        xayah::Particles particles;
+        particles.id                                = object_id;
+        particles.name                              = name;
+        particles.particles                         = make_particles(solver.particles());
+        particles.render_settings.radius_scale      = 1.0f;
+        particles.render_settings.show_bounding_box = false;
+        return particles;
+    }
+
+    xayah::ParticlesSnapshot make_sparkles_snapshot(const std::uint64_t object_id, const xayah::SparklesSolver& solver) {
+        return xayah::ParticlesSnapshot{object_id, make_particles(solver.particles())};
+    }
+
+    xayah::SceneFrameSnapshot make_sparkles_scene_frame_snapshot(const int frame_index, const std::uint64_t object_id, const xayah::SparklesSolver& solver) {
+        xayah::SceneFrameSnapshot snapshot;
+        snapshot.frame_index = frame_index;
+        snapshot.objects.emplace_back(make_sparkles_snapshot(object_id, solver));
+        return snapshot;
+    }
+
     void run_pyro_demo() {
         constexpr std::uint64_t volume_id = 1;
         xayah::PyroConfig simulation;
@@ -304,11 +337,44 @@ namespace {
             return make_cloth_scene_frame_snapshot(request.frame_index, cloth_id, solver, cloth_color);
         });
     }
+
+    void run_sparkles_demo() {
+        constexpr std::uint64_t object_id = 1;
+
+        xayah::SparklesConfig config;
+        config.origin                     = {0.0f, 0.0f, 0.0f};
+        config.launch_speed               = 6.15f;
+        config.launch_speed_jitter        = 0.45f;
+        config.lateral_launch_speed       = 0.32f;
+        config.rocket_lifetime            = 1.28f;
+        config.restart_delay              = 0.95f;
+        config.gravity                    = 3.75f;
+        config.explosion_particles        = 620u;
+        config.ring_particles             = 220u;
+        config.glitter_particles          = 190u;
+        config.trail_particles_per_second = 150.0f;
+
+        xayah::SparklesSolver solver{config};
+
+        xayah::Scene scene;
+        scene.add(make_sparkles_particles(object_id, "sparkles_firework", solver));
+
+        xayah::Spectra spectra;
+        spectra.render(scene, [&](const xayah::SceneFrameRequest& request) {
+            if (request.reset_stream) solver.reset();
+            solver.step(request.delta_seconds);
+            return make_sparkles_scene_frame_snapshot(request.frame_index, object_id, solver);
+        });
+    }
 } // namespace
 
 int main(const int argc, char** argv) {
-    if (argc > 2) throw std::runtime_error("Usage: test [--cloth|--bouncingball|--pyro]");
+    if (argc > 2) throw std::runtime_error("Usage: test [--sparkles|--cloth|--bouncingball|--pyro]");
     const std::string_view mode = argc == 2 ? std::string_view{argv[1]} : std::string_view{"--cloth"};
+    if (mode == "--sparkles") {
+        run_sparkles_demo();
+        return 0;
+    }
     if (mode == "--cloth") {
         run_cloth_demo();
         return 0;
