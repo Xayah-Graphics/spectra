@@ -72,10 +72,6 @@ namespace {
         std::array<float, 4> slice_value_max{};
     };
 
-    struct VolumeShaderVertex {
-        [[maybe_unused]] std::array<float, 4> local_position{};
-    };
-
     struct MeshShaderVertex {
         [[maybe_unused]] std::array<float, 4> position{};
         [[maybe_unused]] std::array<float, 4> normal{};
@@ -959,14 +955,11 @@ namespace xayah {
         }
 
         if (scene_volume_count != 0) {
-            if (!*this->volume_renderer.pipeline_layout || !*this->volume_renderer.pipeline || !*this->volume_renderer.vertex_buffer || this->volume_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Volume renderer is not initialized");
+            if (!*this->volume_renderer.pipeline_layout || !*this->volume_renderer.pipeline || this->volume_renderer.descriptor_sets.size() == 0) throw std::runtime_error("Volume renderer is not initialized");
             if (this->volume_renderer.frame_resources.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume renderer resources do not match scene volume count");
             if (this->volume_renderer.descriptor_sets.size() != static_cast<std::size_t>(this->sync.frame_count) * scene_volume_count) throw std::runtime_error("Volume descriptor sets do not match scene volume count");
 
             command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline);
-            const std::array volume_vertex_buffers{static_cast<vk::Buffer>(*this->volume_renderer.vertex_buffer)};
-            constexpr std::array<vk::DeviceSize, 1> volume_vertex_offsets{0};
-            command_buffer.bindVertexBuffers(0, volume_vertex_buffers, volume_vertex_offsets);
             for (std::size_t volume_index = 0; volume_index < scene_volume_count; ++volume_index) {
                 const Volume& volume = scene.volumes[volume_index];
                 if (!volume.visible) continue;
@@ -1047,9 +1040,8 @@ namespace xayah {
                 this->context.device.updateDescriptorSets(writes, {});
 
                 const std::uint32_t volume_vertex_count = render_settings.display_mode == VolumeDisplayMode::direct ? 36u : 6u;
-                const std::uint32_t volume_first_vertex = render_settings.display_mode == VolumeDisplayMode::direct ? 0u : 36u;
                 command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_renderer.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
-                command_buffer.draw(volume_vertex_count, 1, volume_first_vertex, 0);
+                command_buffer.draw(volume_vertex_count, 1, 0, 0);
             }
         }
 
@@ -2255,53 +2247,6 @@ namespace xayah {
         const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_layout};
         this->volume_renderer.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
 
-        constexpr std::array volume_vertices{
-            VolumeShaderVertex{{0.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 1.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 0.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{1.0f, 1.0f, 0.0f, 1.0f}},
-            VolumeShaderVertex{{0.0f, 1.0f, 0.0f, 1.0f}},
-        };
-        ensure_buffer(this->context.physical_device, this->context.device, this->volume_renderer.vertex_buffer, this->volume_renderer.vertex_memory, this->volume_renderer.vertex_size, volume_vertices.size() * sizeof(VolumeShaderVertex), vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-        write_buffer(this->volume_renderer.vertex_memory, this->volume_renderer.vertex_size, volume_vertices.data(), volume_vertices.size() * sizeof(VolumeShaderVertex));
-
         const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "volume.vert.spv");
         const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "volume.frag.spv");
         const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
@@ -2313,11 +2258,7 @@ namespace xayah {
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
         };
 
-        constexpr vk::VertexInputBindingDescription vertex_binding{0, sizeof(VolumeShaderVertex), vk::VertexInputRate::eVertex};
-        constexpr std::array vertex_attributes{
-            vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
-        };
-        const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
+        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
         constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
         vk::PipelineViewportStateCreateInfo viewport_state{};
         viewport_state.viewportCount = 1;
@@ -2381,9 +2322,6 @@ namespace xayah {
     void Spectra::destroy_volume_renderer() noexcept {
         this->volume_renderer.pipeline          = nullptr;
         this->volume_renderer.pipeline_layout   = nullptr;
-        this->volume_renderer.vertex_buffer     = nullptr;
-        this->volume_renderer.vertex_memory     = nullptr;
-        this->volume_renderer.vertex_size       = 0;
         this->volume_renderer.descriptor_sets   = nullptr;
         this->volume_renderer.descriptor_pool   = nullptr;
         this->volume_renderer.descriptor_layout = nullptr;

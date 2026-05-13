@@ -35,15 +35,63 @@ struct VertexOutput {
     float3 world_position : POSITION0;
 };
 
-struct VertexInput {
-    float3 local_position : POSITION0;
-};
-
 float3 slice_corner(float2 uv, GridParameters parameters) {
     const float slice = parameters.slice_value_max.x;
     if (parameters.mode_options.y == AXIS_X) return float3(slice, uv.x, uv.y);
     if (parameters.mode_options.y == AXIS_Y) return float3(uv.x, slice, uv.y);
     return float3(uv.x, uv.y, slice);
+}
+
+float3 direct_volume_vertex(uint vertex_id) {
+    switch (vertex_id) {
+    case 0: return float3(0.0, 0.0, 0.0);
+    case 1: return float3(0.0, 1.0, 0.0);
+    case 2: return float3(1.0, 0.0, 0.0);
+    case 3: return float3(1.0, 0.0, 0.0);
+    case 4: return float3(0.0, 1.0, 0.0);
+    case 5: return float3(1.0, 1.0, 0.0);
+    case 6: return float3(0.0, 0.0, 1.0);
+    case 7: return float3(1.0, 0.0, 1.0);
+    case 8: return float3(0.0, 1.0, 1.0);
+    case 9: return float3(1.0, 0.0, 1.0);
+    case 10: return float3(1.0, 1.0, 1.0);
+    case 11: return float3(0.0, 1.0, 1.0);
+    case 12: return float3(0.0, 0.0, 0.0);
+    case 13: return float3(0.0, 0.0, 1.0);
+    case 14: return float3(0.0, 1.0, 0.0);
+    case 15: return float3(0.0, 0.0, 1.0);
+    case 16: return float3(0.0, 1.0, 1.0);
+    case 17: return float3(0.0, 1.0, 0.0);
+    case 18: return float3(1.0, 0.0, 0.0);
+    case 19: return float3(1.0, 1.0, 0.0);
+    case 20: return float3(1.0, 0.0, 1.0);
+    case 21: return float3(1.0, 0.0, 1.0);
+    case 22: return float3(1.0, 1.0, 0.0);
+    case 23: return float3(1.0, 1.0, 1.0);
+    case 24: return float3(0.0, 0.0, 0.0);
+    case 25: return float3(1.0, 0.0, 0.0);
+    case 26: return float3(0.0, 0.0, 1.0);
+    case 27: return float3(1.0, 0.0, 0.0);
+    case 28: return float3(1.0, 0.0, 1.0);
+    case 29: return float3(0.0, 0.0, 1.0);
+    case 30: return float3(0.0, 1.0, 0.0);
+    case 31: return float3(0.0, 1.0, 1.0);
+    case 32: return float3(1.0, 1.0, 0.0);
+    case 33: return float3(1.0, 1.0, 0.0);
+    case 34: return float3(0.0, 1.0, 1.0);
+    default: return float3(1.0, 1.0, 1.0);
+    }
+}
+
+float2 slice_quad_vertex(uint vertex_id) {
+    switch (vertex_id) {
+    case 0: return float2(0.0, 0.0);
+    case 1: return float2(1.0, 0.0);
+    case 2: return float2(0.0, 1.0);
+    case 3: return float2(1.0, 0.0);
+    case 4: return float2(1.0, 1.0);
+    default: return float2(0.0, 1.0);
+    }
 }
 
 float scalar_at(uint x, uint y, uint z, GridParameters parameters) {
@@ -244,14 +292,14 @@ bool intersect_box(float3 ray_origin, float3 ray_direction, float3 box_min, floa
 }
 
 [shader("vertex")]
-VertexOutput vertex_main(VertexInput input) {
+VertexOutput vertex_main(uint vertex_id : SV_VertexID) {
     const GridParameters parameters = parameters_buffer[0];
     const float3 extent = float3(parameters.resolution_kind.x, parameters.resolution_kind.y, parameters.resolution_kind.z) * parameters.spacing_value_min.xyz;
     float3 local_position = float3(0.0, 0.0, 0.0);
     if (parameters.mode_options.x == MODE_DIRECT)
-        local_position = input.local_position;
+        local_position = direct_volume_vertex(vertex_id);
     else
-        local_position = slice_corner(input.local_position.xy, parameters);
+        local_position = slice_corner(slice_quad_vertex(vertex_id), parameters);
 
     const float3 world_position = parameters.origin_opacity.xyz + local_position * extent;
     VertexOutput output;

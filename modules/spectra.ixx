@@ -150,9 +150,6 @@ namespace xayah {
             vk::raii::DescriptorSets descriptor_sets{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
-            vk::raii::Buffer vertex_buffer{nullptr};
-            vk::raii::DeviceMemory vertex_memory{nullptr};
-            vk::DeviceSize vertex_size{0};
             std::vector<VolumeDrawResources> frame_resources{};
         } volume_renderer{};
 
