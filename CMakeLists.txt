@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 4.3.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 project(spectra VERSION 1.0.0 LANGUAGES CXX CUDA)
 
+option(SPECTRA_BUILD_EXTENSIONS "Build optional extensions" ON)
+
 
 # ============================================================================
 # C++ Configuration
@@ -105,6 +107,31 @@ target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS SPECTRA_S
 target_include_directories(spectra PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImGuizmo ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 
-add_executable(test main.cpp)
-target_link_libraries(test PRIVATE spectra)
-set_property(TARGET test PROPERTY CXX_MODULE_STD ON)
+if (SPECTRA_BUILD_EXTENSIONS)
+    # ============================================================================
+    # CUDA Configuration
+    # ============================================================================
+    set(CMAKE_CUDA_STANDARD 20)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_EXTENSIONS OFF)
+    set(CMAKE_CUDA_ARCHITECTURES 120)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    find_package(CUDAToolkit REQUIRED)
+    add_library(pyro)
+    target_sources(
+            pyro
+            PRIVATE
+            ext/pyro.cpp
+            ext/pyro.cu
+            PUBLIC
+            FILE_SET cxx_modules TYPE CXX_MODULES FILES
+            ext/pyro.ixx
+    )
+    target_link_libraries(pyro PUBLIC CUDA::cudart CUDA::cublas CUDA::cusparse)
+    set_property(TARGET pyro PROPERTY CXX_MODULE_STD ON)
+
+    add_executable(test main.cpp)
+    target_link_libraries(test PRIVATE spectra pyro)
+    set_property(TARGET test PROPERTY CXX_MODULE_STD ON)
+endif ()
