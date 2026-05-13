@@ -60,7 +60,6 @@ namespace xayah {
     export struct PyroConfig {
         std::array<std::uint32_t, 3> resolution{64, 96, 64};
         float cell_size{0.01875f};
-        float dt{1.0f / 90.0f};
         std::int32_t pressure_iterations{64};
         float ambient_temperature{0.0f};
         float buoyancy_density_factor{0.15f};
@@ -103,7 +102,7 @@ namespace xayah {
 
         void reset();
         void set_plume_source(const PyroPlumeSource& source);
-        void step();
+        void step(float delta_seconds);
         [[nodiscard]] PyroFrame read_frame(int frame_index);
 
     private:
@@ -113,7 +112,6 @@ namespace xayah {
             std::int32_t ny{0};
             std::int32_t nz{0};
             float cell_size{0.0f};
-            float dt{0.0f};
             std::int32_t pressure_iterations{0};
             float ambient_temperature{0.0f};
             float buoyancy_density_factor{0.0f};
@@ -188,7 +186,7 @@ namespace xayah {
         void create_device();
         void destroy_device() noexcept;
         void initialize_pressure_system();
-        void solve_pressure();
+        void solve_pressure(float delta_seconds);
         void reset_moved_from() noexcept;
     };
 } // namespace xayah

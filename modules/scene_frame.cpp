@@ -360,6 +360,7 @@ namespace xayah {
 
     void SceneFrameRecorder::producer_loop(std::function<SceneFrameSnapshot(const SceneFrameRequest&)> producer) {
         try {
+            std::chrono::steady_clock::time_point previous_time = std::chrono::steady_clock::now();
             for (int frame_index = 0;; ++frame_index) {
                 {
                     std::lock_guard lock{this->state.mutex};
@@ -367,7 +368,10 @@ namespace xayah {
                     if (this->state.stop_requested) break;
                 }
 
-                SceneFrameSnapshot snapshot = producer(SceneFrameRequest{frame_index, 0.0f, frame_index == 0});
+                const std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
+                const float delta_seconds                                = std::chrono::duration<float>{current_time - previous_time}.count();
+                previous_time                                            = current_time;
+                SceneFrameSnapshot snapshot                              = producer(SceneFrameRequest{frame_index, delta_seconds, frame_index == 0});
                 if (snapshot.frame_index != frame_index) throw std::runtime_error("Scene frame producer returned an unexpected record frame index");
                 const std::uint64_t frame_bytes = scene_frame_snapshot_bytes(snapshot);
                 if (frame_bytes > this->state.config.max_host_cache_bytes) throw std::runtime_error("Scene frame record cache cannot fit one frame");

@@ -328,6 +328,6 @@ namespace xayah {
             if (normal_length_squared <= 0.000001f) throw std::runtime_error(std::string{"Snapshot mesh vertex normal must not be zero: "} + this->name);
         }
         this->transform = snapshot.transform;
-        this->vertices = snapshot.vertices;
+        this->vertices  = snapshot.vertices;
     }
 } // namespace xayah

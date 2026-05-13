@@ -111,7 +111,7 @@ namespace {
                 solver.reset();
                 solver.set_plume_source(source);
             }
-            solver.step();
+            solver.step(request.delta_seconds);
             return make_pyro_scene_frame_snapshot(volume_id, solver.read_frame(request.frame_index));
         });
     }
@@ -121,11 +121,10 @@ namespace {
         config.object_id      = 1;
         config.name           = "bouncing_ball";
         config.radius         = 0.35f;
-        config.start_position = {-1.1f, 3.2f, 0.0f};
-        config.initial_velocity  = {1.35f, 0.0f, 0.0f};
+        config.start_position    = {0.0f, 3.2f, 0.0f};
+        config.initial_velocity  = {0.0f, 0.0f, 0.0f};
         config.floor_y           = 0.0f;
         config.restitution       = 0.84f;
-        config.dt                = 1.0f / 60.0f;
         config.color             = {0.95f, 0.42f, 0.28f};
         config.show_bounding_box = true;
 
@@ -137,7 +136,7 @@ namespace {
         xayah::Spectra spectra;
         spectra.render(scene, [&](const xayah::SceneFrameRequest& request) {
             if (request.reset_stream) solver.reset();
-            solver.step();
+            solver.step(request.delta_seconds);
             return make_bouncing_ball_scene_frame_snapshot(request.frame_index, solver);
         });
     }

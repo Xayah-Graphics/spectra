@@ -54,7 +54,6 @@ namespace {
         if (config.resolution[0] == 0 || config.resolution[1] == 0 || config.resolution[2] == 0) throw std::runtime_error("Pyro resolution must be positive");
         if (config.resolution[0] > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) || config.resolution[1] > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) || config.resolution[2] > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) throw std::runtime_error("Pyro resolution exceeds CUDA solver int range");
         if (config.cell_size <= 0.0f) throw std::runtime_error("Pyro cell_size must be positive");
-        if (config.dt <= 0.0f) throw std::runtime_error("Pyro dt must be positive");
         if (config.pressure_iterations <= 0) throw std::runtime_error("Pyro pressure_iterations must be positive");
         if (!paired_periodic(config.flow_boundary.x_minus, config.flow_boundary.x_plus) || !paired_periodic(config.flow_boundary.y_minus, config.flow_boundary.y_plus) || !paired_periodic(config.flow_boundary.z_minus, config.flow_boundary.z_plus)) throw std::runtime_error("Pyro flow periodic boundaries must be paired");
         if (!paired_periodic(config.density_boundary.x_minus, config.density_boundary.x_plus) || !paired_periodic(config.density_boundary.y_minus, config.density_boundary.y_plus) || !paired_periodic(config.density_boundary.z_minus, config.density_boundary.z_plus)) throw std::runtime_error("Pyro density periodic boundaries must be paired");
@@ -126,7 +125,6 @@ namespace xayah {
         this->host.ny                          = static_cast<std::int32_t>(config.resolution[1]);
         this->host.nz                          = static_cast<std::int32_t>(config.resolution[2]);
         this->host.cell_size                   = config.cell_size;
-        this->host.dt                          = config.dt;
         this->host.pressure_iterations         = config.pressure_iterations;
         this->host.ambient_temperature         = config.ambient_temperature;
         this->host.buoyancy_density_factor     = config.buoyancy_density_factor;
@@ -226,7 +224,9 @@ namespace xayah {
         check_cuda(cudaStreamSynchronize(this->host.stream), "cudaStreamSynchronize plume source");
     }
 
-    void PyroSolver::step() {
+    void PyroSolver::step(const float delta_seconds) {
+        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0f) throw std::runtime_error("Pyro delta_seconds must be finite and non-negative");
+        if (delta_seconds == 0.0f) return;
         const std::uint32_t* flow_types = this->host.flow_boundary_types.data();
         const float* flow_velocity      = this->host.flow_boundary_velocity.data();
         const float* flow_pressure      = this->host.flow_boundary_pressure.data();
@@ -245,27 +245,27 @@ namespace xayah {
         pyro_cuda::launch_add_buoyancy(this->host.stream, this->host.cells, this->host.block, this->device.force[1], this->device.density_data, this->device.temperature_data, this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.ambient_temperature, this->host.buoyancy_density_factor, this->host.buoyancy_temperature_factor, flow_types, flow_velocity, flow_pressure);
         pyro_cuda::launch_add_vorticity_confinement(this->host.stream, this->host.cells, this->host.block, this->device.force[0], this->device.force[1], this->device.force[2], this->device.vorticity[0], this->device.vorticity[1], this->device.vorticity[2], this->device.vorticity_magnitude, this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, this->host.vorticity_confinement, flow_types, flow_velocity, flow_pressure);
         for (std::uint32_t axis = 0; axis < 3u; ++axis) {
-            pyro_cuda::launch_add_center_force_to_staggered_component(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.velocity[axis], this->device.force[axis], this->host.nx, this->host.ny, this->host.nz, this->host.dt);
+            pyro_cuda::launch_add_center_force_to_staggered_component(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.velocity[axis], this->device.force[axis], this->host.nx, this->host.ny, this->host.nz, delta_seconds);
             pyro_cuda::launch_enforce_staggered_boundary(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.velocity[axis], this->device.occupancy, this->device.solid_velocity[axis], this->host.nx, this->host.ny, this->host.nz, flow_types, flow_velocity, flow_pressure);
             if (periodic[axis]) pyro_cuda::launch_sync_periodic_staggered_component(this->host.stream, this->host.sync_velocity_grid[axis], this->host.sync_block, axis, this->device.velocity[axis], this->host.nx, this->host.ny, this->host.nz);
         }
         for (std::uint32_t axis = 0; axis < 3u; ++axis) {
-            pyro_cuda::launch_advect_staggered_component(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.temp_velocity[axis], this->device.velocity[axis], this->device.velocity[0], this->device.velocity[1], this->device.velocity[2], this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, this->host.dt, this->host.scalar_advection_mode, flow_types, flow_velocity, flow_pressure);
+            pyro_cuda::launch_advect_staggered_component(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.temp_velocity[axis], this->device.velocity[axis], this->device.velocity[0], this->device.velocity[1], this->device.velocity[2], this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, delta_seconds, this->host.scalar_advection_mode, flow_types, flow_velocity, flow_pressure);
             pyro_cuda::launch_enforce_staggered_boundary(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.temp_velocity[axis], this->device.occupancy, this->device.solid_velocity[axis], this->host.nx, this->host.ny, this->host.nz, flow_types, flow_velocity, flow_pressure);
             if (periodic[axis]) pyro_cuda::launch_sync_periodic_staggered_component(this->host.stream, this->host.sync_velocity_grid[axis], this->host.sync_block, axis, this->device.temp_velocity[axis], this->host.nx, this->host.ny, this->host.nz);
         }
-        this->solve_pressure();
+        this->solve_pressure(delta_seconds);
         for (std::uint32_t axis = 0; axis < 3u; ++axis) {
-            pyro_cuda::launch_project_staggered_component(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.temp_velocity[axis], this->device.pressure, this->device.occupancy, this->device.solid_velocity[axis], this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, this->host.dt, flow_types, flow_velocity, flow_pressure);
+            pyro_cuda::launch_project_staggered_component(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.temp_velocity[axis], this->device.pressure, this->device.occupancy, this->device.solid_velocity[axis], this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, delta_seconds, flow_types, flow_velocity, flow_pressure);
             pyro_cuda::launch_enforce_staggered_boundary(this->host.stream, this->host.velocity_cells[axis], this->host.block, axis, this->device.temp_velocity[axis], this->device.occupancy, this->device.solid_velocity[axis], this->host.nx, this->host.ny, this->host.nz, flow_types, flow_velocity, flow_pressure);
             if (periodic[axis]) pyro_cuda::launch_sync_periodic_staggered_component(this->host.stream, this->host.sync_velocity_grid[axis], this->host.sync_block, axis, this->device.temp_velocity[axis], this->host.nx, this->host.ny, this->host.nz);
             check_cuda(cudaMemcpyAsync(this->device.velocity[axis], this->device.temp_velocity[axis], this->host.velocity_bytes[axis], cudaMemcpyDeviceToDevice, this->host.stream), "cudaMemcpyAsync velocity");
         }
-        pyro_cuda::launch_add_scaled(this->host.stream, this->host.linear_grid, 256u, this->device.temperature_temp, this->device.temperature_data, this->device.temperature_source, this->host.dt, this->host.cell_count);
-        pyro_cuda::launch_advect_centered_scalar(this->host.stream, this->host.cells, this->host.block, this->device.temperature_data, this->device.temperature_temp, this->device.velocity[0], this->device.velocity[1], this->device.velocity[2], this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, this->host.dt, this->host.scalar_advection_mode, this->host.temperature_boundary_types.data(), this->host.temperature_boundary_values.data(), flow_types, flow_velocity, flow_pressure);
+        pyro_cuda::launch_add_scaled(this->host.stream, this->host.linear_grid, 256u, this->device.temperature_temp, this->device.temperature_data, this->device.temperature_source, delta_seconds, this->host.cell_count);
+        pyro_cuda::launch_advect_centered_scalar(this->host.stream, this->host.cells, this->host.block, this->device.temperature_data, this->device.temperature_temp, this->device.velocity[0], this->device.velocity[1], this->device.velocity[2], this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, delta_seconds, this->host.scalar_advection_mode, this->host.temperature_boundary_types.data(), this->host.temperature_boundary_values.data(), flow_types, flow_velocity, flow_pressure);
         pyro_cuda::launch_apply_solid_scalar(this->host.stream, this->host.linear_grid, 256u, this->device.temperature_data, this->device.occupancy, this->device.solid_temperature, this->host.nx, this->host.ny, this->host.nz, this->host.ambient_temperature);
-        pyro_cuda::launch_add_scaled(this->host.stream, this->host.linear_grid, 256u, this->device.density_temp, this->device.density_data, this->device.density_source, this->host.dt, this->host.cell_count);
-        pyro_cuda::launch_advect_centered_scalar(this->host.stream, this->host.cells, this->host.block, this->device.density_data, this->device.density_temp, this->device.velocity[0], this->device.velocity[1], this->device.velocity[2], this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, this->host.dt, this->host.scalar_advection_mode, this->host.density_boundary_types.data(), this->host.density_boundary_values.data(), flow_types, flow_velocity, flow_pressure);
+        pyro_cuda::launch_add_scaled(this->host.stream, this->host.linear_grid, 256u, this->device.density_temp, this->device.density_data, this->device.density_source, delta_seconds, this->host.cell_count);
+        pyro_cuda::launch_advect_centered_scalar(this->host.stream, this->host.cells, this->host.block, this->device.density_data, this->device.density_temp, this->device.velocity[0], this->device.velocity[1], this->device.velocity[2], this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, delta_seconds, this->host.scalar_advection_mode, this->host.density_boundary_types.data(), this->host.density_boundary_values.data(), flow_types, flow_velocity, flow_pressure);
         pyro_cuda::launch_boundary_fill_centered_scalar(this->host.stream, this->host.cells, this->host.block, this->device.density_temp, this->device.density_data, this->device.occupancy, this->host.nx, this->host.ny, this->host.nz, this->host.density_boundary_types.data(), this->host.density_boundary_values.data());
         check_cuda(cudaMemcpyAsync(this->device.density_data, this->device.density_temp, this->host.cell_bytes, cudaMemcpyDeviceToDevice, this->host.stream), "cudaMemcpyAsync density");
     }
@@ -499,13 +499,13 @@ namespace xayah {
         check_cusparse(cusparseSpMV_preprocess(this->host.cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha, this->host.pressure_matrix, this->host.pressure_vec_p, &spmv_beta, this->host.pressure_vec_ap, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, this->device.spmv_buffer), "cusparseSpMV_preprocess");
     }
 
-    void PyroSolver::solve_pressure() {
+    void PyroSolver::solve_pressure(const float delta_seconds) {
         const std::uint32_t* flow_types = this->host.flow_boundary_types.data();
         const float* flow_velocity      = this->host.flow_boundary_velocity.data();
         const float* flow_pressure      = this->host.flow_boundary_pressure.data();
         pyro_cuda::launch_fill_int(this->host.stream, 1u, 1u, this->device.pressure_anchor, static_cast<int>(this->host.cell_count), 1u);
         pyro_cuda::launch_find_pressure_anchor(this->host.stream, this->host.linear_grid, 256u, this->device.pressure_anchor, this->device.occupancy, this->host.cell_count);
-        pyro_cuda::launch_compute_projection_rhs(this->host.stream, this->host.cells, this->host.block, this->device.pressure_rhs, this->device.temp_velocity[0], this->device.temp_velocity[1], this->device.temp_velocity[2], this->device.occupancy, this->device.pressure_anchor, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, this->host.dt, flow_types, flow_velocity, flow_pressure);
+        pyro_cuda::launch_compute_projection_rhs(this->host.stream, this->host.cells, this->host.block, this->device.pressure_rhs, this->device.temp_velocity[0], this->device.temp_velocity[1], this->device.temp_velocity[2], this->device.occupancy, this->device.pressure_anchor, this->host.nx, this->host.ny, this->host.nz, this->host.cell_size, delta_seconds, flow_types, flow_velocity, flow_pressure);
         pyro_cuda::launch_build_projection_matrix(this->host.stream, this->host.linear_grid, 256u, this->device.pressure_values, this->device.pressure_row_offsets, this->device.pressure_column_indices, this->device.occupancy, this->device.pressure_anchor, this->host.nx, this->host.ny, this->host.nz, flow_types, flow_velocity, flow_pressure);
         check_cuda(cudaMemsetAsync(this->device.pressure, 0, this->host.cell_bytes, this->host.stream), "cudaMemsetAsync pressure");
         check_cublas(cublasScopy(this->host.cublas, static_cast<int>(this->host.cell_count), this->device.pressure_rhs, 1, this->device.pcg_r, 1), "cublasScopy rhs");
