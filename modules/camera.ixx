@@ -64,7 +64,13 @@ namespace xayah {
 
         [[nodiscard]] std::array<float, 16> view_projection(const float aspect) const {
             if (aspect <= 0.0f) throw std::runtime_error("Camera aspect ratio must be positive");
-            return multiply(projection(aspect), view());
+            return multiply(projection(aspect, this->far_z), view());
+        }
+
+        [[nodiscard]] std::array<float, 16> view_projection(const float aspect, const float far_clip) const {
+            if (aspect <= 0.0f) throw std::runtime_error("Camera aspect ratio must be positive");
+            if (far_clip <= this->near_z) throw std::runtime_error("Camera far clip must be greater than near clip");
+            return multiply(projection(aspect, far_clip), view());
         }
 
         [[nodiscard]] std::array<float, 16> view_matrix() const {
@@ -94,6 +100,14 @@ namespace xayah {
             };
         }
 
+        [[nodiscard]] std::array<float, 3> forward() const {
+            return normalize(std::array<float, 3>{
+                std::cos(this->pitch) * std::sin(this->yaw),
+                std::sin(this->pitch),
+                std::cos(this->pitch) * std::cos(this->yaw),
+            });
+        }
+
         [[nodiscard]] std::array<float, 3> position() const {
             return subtract(this->target, multiply(this->forward(), this->distance));
         }
@@ -114,14 +128,6 @@ namespace xayah {
         float fov_y{1.0471976f};
         float near_z{0.05f};
         float far_z{500.0f};
-
-        [[nodiscard]] std::array<float, 3> forward() const {
-            return normalize(std::array<float, 3>{
-                std::cos(this->pitch) * std::sin(this->yaw),
-                std::sin(this->pitch),
-                std::cos(this->pitch) * std::cos(this->yaw),
-            });
-        }
 
         [[nodiscard]] std::array<float, 16> view() const {
             const std::array<float, 3> forward = this->forward();
@@ -149,7 +155,7 @@ namespace xayah {
             };
         }
 
-        [[nodiscard]] std::array<float, 16> projection(const float aspect) const {
+        [[nodiscard]] std::array<float, 16> projection(const float aspect, const float far_clip) const {
             const float focal = 1.0f / std::tan(this->fov_y * 0.5f);
             return {
                 focal / aspect,
@@ -162,11 +168,11 @@ namespace xayah {
                 0.0f,
                 0.0f,
                 0.0f,
-                this->far_z / (this->near_z - this->far_z),
+                far_clip / (this->near_z - far_clip),
                 -1.0f,
                 0.0f,
                 0.0f,
-                (this->far_z * this->near_z) / (this->near_z - this->far_z),
+                (far_clip * this->near_z) / (this->near_z - far_clip),
                 0.0f,
             };
         }

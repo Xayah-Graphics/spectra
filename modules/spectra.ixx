@@ -54,6 +54,7 @@ namespace xayah {
         void draw_camera_window();
         void draw_scene_browser(Scene& scene);
         void draw_settings_window();
+        void draw_grid_settings_window();
         void draw_render_output();
         void draw_object_inspector(Scene& scene);
         void draw_environment_window();
@@ -106,10 +107,21 @@ namespace xayah {
 
         struct {
             Camera camera{};
+            vk::raii::DescriptorSetLayout descriptor_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            struct FrameResources {
+                vk::raii::Buffer parameter_buffer{nullptr};
+                vk::raii::DeviceMemory parameter_memory{nullptr};
+                vk::DeviceSize parameter_size{0};
+            };
+            std::vector<FrameResources> frame_resources{};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
-            vk::raii::Pipeline pipeline{nullptr};
-            std::uint32_t vertex_count{170};
-            bool grid_visible{true};
+            vk::raii::Pipeline grid_pipeline{nullptr};
+            vk::raii::Pipeline axis_pipeline{nullptr};
+            std::uint32_t grid_num_lines{151};
+            float grid_unit{1.0f};
+            bool show_grid{false};
         } viewport;
 
         enum class GizmoOperation : std::uint32_t {
@@ -153,6 +165,7 @@ namespace xayah {
             bool axis_visible{true};
             bool gizmo_visible{true};
             bool snap_enabled{false};
+            bool grid_settings_visible{false};
             bool viewport_known{false};
             bool viewport_hovered{false};
             bool viewport_focused{false};
@@ -166,6 +179,8 @@ namespace xayah {
             float tonemap_exposure{0.0f};
             float tonemap_gamma{2.2f};
             bool tonemap_aces{true};
+            float snap_rotation_degrees{45.0f};
+            float snap_scale{0.1f};
             std::string status_message{"Ready"};
         } ui;
 

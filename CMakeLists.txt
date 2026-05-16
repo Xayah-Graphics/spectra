@@ -27,15 +27,15 @@ add_subdirectory(vendor/glfw)
 # Shaders
 # ============================================================================
 set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-set(SPECTRA_VIEWPORT_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/viewport_grid.slang)
+set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
 set(SPECTRA_VOLUME_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/volume.slang)
 set(SPECTRA_MESH_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/mesh.slang)
 set(SPECTRA_PARTICLES_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/particles.slang)
 set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
 set(
         SPECTRA_SHADER_OUTPUTS
-        ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.frag.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/volume.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/volume.frag.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/mesh.vert.spv
@@ -48,8 +48,8 @@ set(
 add_custom_command(
         OUTPUT ${SPECTRA_SHADER_OUTPUTS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_SHADER_OUTPUT_DIR}
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VIEWPORT_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VIEWPORT_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/viewport_grid.frag.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VOLUME_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/volume.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VOLUME_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/volume.frag.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_MESH_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/mesh.vert.spv
@@ -58,7 +58,7 @@ add_custom_command(
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PARTICLES_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/particles.frag.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        DEPENDS ${SPECTRA_VIEWPORT_SHADER} ${SPECTRA_VOLUME_SHADER} ${SPECTRA_MESH_SHADER} ${SPECTRA_PARTICLES_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER}
+        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_VOLUME_SHADER} ${SPECTRA_MESH_SHADER} ${SPECTRA_PARTICLES_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER}
         VERBATIM
 )
 add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})

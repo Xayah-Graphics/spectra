@@ -69,6 +69,79 @@ namespace {
         transform.scale            = scale;
     }
 
+    constexpr std::uint32_t viewport_grid_flag_show_grid = 1u << 0u;
+    constexpr std::uint32_t viewport_grid_flag_axis_x    = 1u << 1u;
+    constexpr std::uint32_t viewport_grid_flag_axis_y    = 1u << 2u;
+    constexpr std::uint32_t viewport_grid_flag_axis_z    = 1u << 3u;
+    constexpr float viewport_grid_line_width             = 1.5f;
+    constexpr float viewport_grid_far_clip               = 100000.0f;
+
+    struct ViewportGridPushConstants {
+        std::uint32_t grid_flag{0};
+    };
+
+    struct ViewportGridParameters {
+        std::array<float, 16> view_projection{};
+        std::array<float, 4> camera_position_far_clip{};
+        std::array<float, 4> viewport_size_perspective{};
+        std::array<float, 4> steps{};
+        std::array<float, 4> offset_clip_rect{};
+        std::array<float, 4> level_num_lines{};
+        std::array<float, 4> minor_color{};
+        std::array<float, 4> major_color{};
+        std::array<float, 4> axis_color_x{};
+        std::array<float, 4> axis_color_y{};
+        std::array<float, 4> axis_color_z{};
+    };
+
+    [[nodiscard]] std::array<float, 3> subtract_vector(const std::array<float, 3>& left, const std::array<float, 3>& right) {
+        return {left[0] - right[0], left[1] - right[1], left[2] - right[2]};
+    }
+
+    [[nodiscard]] std::array<float, 3> multiply_vector(const std::array<float, 3>& vector, const float value) {
+        return {vector[0] * value, vector[1] * value, vector[2] * value};
+    }
+
+    [[nodiscard]] float viewport_grid_distance_to_floor(const std::array<float, 3>& camera_position, const std::array<float, 3>& view_forward) {
+        const float ray_distance_to_floor = std::abs(view_forward[1]) >= 0.000001f ? std::abs(camera_position[1] / view_forward[1]) : std::abs(camera_position[1]);
+        const float height_above_floor    = std::abs(camera_position[1]);
+        const float blend                 = 1.0f - std::min(1.0f, std::abs(view_forward[1]));
+        return std::max(0.001f, (1.0f - blend) * ray_distance_to_floor + blend * height_above_floor);
+    }
+
+    [[nodiscard]] float viewport_grid_level(const float distance_to_floor, const float grid_unit) {
+        return std::clamp(std::log10(std::max(distance_to_floor / grid_unit, 0.001f)), 0.0f, 3.999f);
+    }
+
+    [[nodiscard]] ViewportGridParameters viewport_grid_parameters(const xayah::Camera& camera, const float aspect, const std::array<float, 2>& viewport_size, const float grid_unit, const std::uint32_t num_lines) {
+        if (grid_unit <= 0.0f) throw std::runtime_error("Grid unit must be positive");
+        if (num_lines < 11 || (num_lines % 2u) == 0u) throw std::runtime_error("Grid line count must be an odd value >= 11");
+        if (viewport_size[0] <= 0.0f || viewport_size[1] <= 0.0f) throw std::runtime_error("Grid viewport size must be positive");
+
+        const std::array<float, 3> camera_position = camera.position();
+        const std::array<float, 3> view_forward    = camera.forward();
+        const float distance_to_floor              = viewport_grid_distance_to_floor(camera_position, view_forward);
+        const float level                          = viewport_grid_level(distance_to_floor, grid_unit);
+        const std::array<float, 3> floor_point     = subtract_vector(camera_position, multiply_vector(view_forward, distance_to_floor));
+        const std::uint32_t coarsest_index         = std::min(static_cast<std::uint32_t>(std::floor(level)) + 1u, 3u);
+        const std::array<float, 4> steps{std::pow(10.0f, 0.0f) * grid_unit, std::pow(10.0f, 1.0f) * grid_unit, std::pow(10.0f, 2.0f) * grid_unit, std::pow(10.0f, 3.0f) * grid_unit};
+        const float clip_extent = steps[coarsest_index] * static_cast<float>(num_lines / 2u);
+
+        ViewportGridParameters parameters{};
+        parameters.view_projection           = camera.view_projection(aspect, viewport_grid_far_clip);
+        parameters.camera_position_far_clip  = {camera_position[0], camera_position[1], camera_position[2], viewport_grid_far_clip};
+        parameters.viewport_size_perspective = {viewport_size[0], viewport_size[1], 1.0f, 0.0f};
+        parameters.steps                     = steps;
+        parameters.offset_clip_rect          = {floor_point[0], floor_point[2], clip_extent, clip_extent};
+        parameters.level_num_lines           = {level, static_cast<float>(num_lines), 0.0f, 0.0f};
+        parameters.minor_color               = {0.5f, 0.5f, 0.5f, 1.0f};
+        parameters.major_color               = {0.5f, 0.5f, 0.5f, 1.0f};
+        parameters.axis_color_x              = {0.619f, 0.235f, 0.290f, 1.0f};
+        parameters.axis_color_y              = {0.357f, 0.482f, 0.185f, 1.0f};
+        parameters.axis_color_z              = {0.231f, 0.357f, 0.518f, 1.0f};
+        return parameters;
+    }
+
     [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
         return ImVec4{red, green, blue, alpha};
     }
@@ -174,7 +247,7 @@ namespace xayah {
         this->surface.glfw_initialized = true;
 
         constexpr std::array<const char*, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
-        constexpr std::array enabled_device_extensions{vk::KHRSwapchainExtensionName};
+        constexpr std::array enabled_device_extensions{vk::KHRSwapchainExtensionName, vk::KHRLineRasterizationExtensionName};
         std::vector<const char*> enabled_instance_extensions{};
 
         {
@@ -246,7 +319,13 @@ namespace xayah {
                 if (physical_device.getProperties().apiVersion < VK_API_VERSION_1_4) continue;
 
                 const std::vector<vk::ExtensionProperties> available_extensions = physical_device.enumerateDeviceExtensionProperties();
-                if (const auto found = std::ranges::find(available_extensions, std::string_view{vk::KHRSwapchainExtensionName}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) continue;
+                bool required_extensions_available                              = true;
+                for (const char* required_extension : enabled_device_extensions) {
+                    if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) required_extensions_available = false;
+                }
+                if (!required_extensions_available) continue;
+                const vk::PhysicalDeviceProperties properties = physical_device.getProperties();
+                if (properties.limits.lineWidthRange[0] > viewport_grid_line_width || properties.limits.lineWidthRange[1] < viewport_grid_line_width) continue;
 
                 const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
                 for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
@@ -259,26 +338,30 @@ namespace xayah {
                 }
                 if (selected) break;
             }
-            if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain and graphics-present queue support");
+            if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, line rasterization, 1.5-wide line, and graphics-present queue support");
         }
         {
-            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
+            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceLineRasterizationFeatures>();
             if (!supported_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) throw std::runtime_error("Device does not support shaderDrawParameters");
             if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy) throw std::runtime_error("Device does not support samplerAnisotropy");
             if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid) throw std::runtime_error("Device does not support fillModeNonSolid");
+            if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines) throw std::runtime_error("Device does not support wideLines");
             if (!supported_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("Device does not support timelineSemaphore");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().shaderDemoteToHelperInvocation) throw std::runtime_error("Device does not support shaderDemoteToHelperInvocation");
+            if (!supported_features.get<vk::PhysicalDeviceLineRasterizationFeatures>().smoothLines) throw std::runtime_error("Device does not support smoothLines");
 
-            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}, {}};
+            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceLineRasterizationFeatures> enabled_features{{}, {}, {}, {}, {}};
             enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy            = VK_TRUE;
             enabled_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid             = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines                    = VK_TRUE;
             enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters           = VK_TRUE;
             enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore              = VK_TRUE;
             enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2               = VK_TRUE;
             enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering               = VK_TRUE;
             enabled_features.get<vk::PhysicalDeviceVulkan13Features>().shaderDemoteToHelperInvocation = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceLineRasterizationFeatures>().smoothLines           = VK_TRUE;
 
             constexpr std::array queue_priorities{1.0f};
             const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
@@ -418,7 +501,7 @@ namespace xayah {
             const auto properties_chain                                    = this->context.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
             const vk::PhysicalDeviceProperties& properties                 = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
             const vk::PhysicalDeviceDriverProperties& driver               = properties_chain.get<vk::PhysicalDeviceDriverProperties>();
-            const auto features                                            = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features>();
+            const auto features                                            = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceLineRasterizationFeatures>();
             const vk::PhysicalDeviceMemoryProperties memory                = this->context.physical_device.getMemoryProperties();
             const vk::SurfaceCapabilitiesKHR surface_capabilities          = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
             const std::vector<vk::SurfaceFormatKHR> surface_formats        = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
@@ -463,10 +546,12 @@ namespace xayah {
             std::println("\n{}{}Enabled Device Features{}", bold, magenta, reset);
             std::println("  {}[ENABLED]{} samplerAnisotropy", green, reset);
             std::println("  {}[ENABLED]{} fillModeNonSolid", green, reset);
+            std::println("  {}[ENABLED]{} wideLines", green, reset);
             std::println("  {}[ENABLED]{} shaderDrawParameters", green, reset);
             std::println("  {}[ENABLED]{} timelineSemaphore", green, reset);
             std::println("  {}[ENABLED]{} synchronization2", green, reset);
             std::println("  {}[ENABLED]{} dynamicRendering", green, reset);
+            std::println("  {}[ENABLED]{} smoothLines", green, reset);
             std::println("  {}[support]{} robustBufferAccess: {}", dim, reset, static_cast<bool>(features.get<vk::PhysicalDeviceFeatures2>().features.robustBufferAccess));
 
             std::println("\n{}{}Queue Families{} {}", bold, magenta, reset, queue_families.size());
@@ -758,7 +843,8 @@ namespace xayah {
 
         this->input.space_pressed = !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
         this->input.shift_down    = shift;
-        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) this->viewport.grid_visible = !this->viewport.grid_visible;
+        if (in_viewport && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_G, false)) this->viewport.show_grid = !this->viewport.show_grid;
+        if (in_viewport && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_T, false)) this->ui.gizmo_visible = !this->ui.gizmo_visible;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
 
         CameraInput input{};
@@ -793,6 +879,7 @@ namespace xayah {
         this->draw_camera_window();
         this->draw_scene_browser(scene);
         this->draw_settings_window();
+        this->draw_grid_settings_window();
         this->draw_render_output();
         this->draw_object_inspector(scene);
         this->draw_environment_window();
@@ -896,16 +983,6 @@ namespace xayah {
         const float aspect                          = static_cast<float>(scene_viewport_width) / static_cast<float>(scene_viewport_height);
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
-        if (this->viewport.grid_visible) {
-            if (!*this->viewport.pipeline_layout || !*this->viewport.pipeline) throw std::runtime_error("Viewport pipeline is not initialized");
-
-            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline);
-            command_buffer.setViewport(0, vulkan_viewport);
-            command_buffer.setScissor(0, scissor);
-            command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const float>{view_projection});
-            command_buffer.draw(this->viewport.vertex_count, 1, 0, 0);
-        }
-
         const std::array<float, 3> camera_position = this->viewport.camera.position();
         const std::array<float, 3> camera_right    = this->viewport.camera.right();
         const std::array<float, 3> camera_up       = this->viewport.camera.up();
@@ -914,6 +991,38 @@ namespace xayah {
         command_buffer.setScissor(0, scissor);
         const SceneRenderFrameContext scene_render_context{&this->context.physical_device, &this->context.device, &command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up};
         scene.render(scene_render_context);
+
+        if (this->viewport.show_grid) {
+            if (!*this->viewport.pipeline_layout || !*this->viewport.grid_pipeline || !*this->viewport.axis_pipeline) throw std::runtime_error("Viewport grid pipeline is not initialized");
+            if (this->viewport.descriptor_sets.size() != this->sync.frame_count || this->viewport.frame_resources.size() != this->sync.frame_count) throw std::runtime_error("Viewport grid per-frame resources are invalid");
+
+            const ViewportGridParameters parameters  = viewport_grid_parameters(this->viewport.camera, aspect, {static_cast<float>(scene_viewport_width), static_cast<float>(scene_viewport_height)}, this->viewport.grid_unit, this->viewport.grid_num_lines);
+            constexpr vk::BufferUsageFlags usage     = vk::BufferUsageFlagBits::eStorageBuffer;
+            constexpr vk::MemoryPropertyFlags memory = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+            auto& frame_resources                    = this->viewport.frame_resources.at(frame.frame_index);
+            ensure_buffer(this->context.physical_device, this->context.device, frame_resources.parameter_buffer, frame_resources.parameter_memory, frame_resources.parameter_size, sizeof(ViewportGridParameters), usage, memory);
+            write_buffer(frame_resources.parameter_memory, frame_resources.parameter_size, &parameters, sizeof(ViewportGridParameters));
+
+            const vk::DescriptorBufferInfo buffer_info{*frame_resources.parameter_buffer, 0, sizeof(ViewportGridParameters)};
+            const vk::DescriptorSet descriptor_set = *this->viewport.descriptor_sets[frame.frame_index];
+            const vk::WriteDescriptorSet write{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_info};
+            const std::array writes{write};
+            this->context.device.updateDescriptorSets(writes, {});
+
+            command_buffer.setViewport(0, vulkan_viewport);
+            command_buffer.setScissor(0, scissor);
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
+
+            ViewportGridPushConstants push_constants{viewport_grid_flag_show_grid};
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.grid_pipeline);
+            command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, vk::ArrayProxy<const ViewportGridPushConstants>{1, &push_constants});
+            command_buffer.draw(12u * this->viewport.grid_num_lines, 1, 0, 0);
+
+            push_constants.grid_flag = viewport_grid_flag_axis_x | viewport_grid_flag_axis_y | viewport_grid_flag_axis_z;
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.axis_pipeline);
+            command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, vk::ArrayProxy<const ViewportGridPushConstants>{1, &push_constants});
+            command_buffer.draw(6, 1, 0, 0);
+        }
         command_buffer.endRendering();
 
         ImGui::Render();
@@ -988,10 +1097,12 @@ namespace xayah {
             ImGui::EndDisabled();
             ImGui::Separator();
             ImGui::MenuItem(ICON_MS_VIEW_IN_AR " 3D Axis", nullptr, &this->ui.axis_visible);
-            ImGui::MenuItem(ICON_MS_GRID_ON " Grid", "Tab", &this->viewport.grid_visible);
-            ImGui::MenuItem(ICON_MS_3D_ROTATION " Gizmo", nullptr, &this->ui.gizmo_visible);
+            ImGui::MenuItem(ICON_MS_GRID_ON " Grid", "G", &this->viewport.show_grid);
+            ImGui::MenuItem(ICON_MS_3D_ROTATION " Gizmo", "T", &this->ui.gizmo_visible);
             ImGui::MenuItem(ICON_MS_STRAIGHTEN " Snap", nullptr, &this->ui.snap_enabled);
             ImGui::MenuItem(ICON_MS_MOVIE " Timeline", nullptr, &this->ui.timeline_visible);
+            ImGui::Separator();
+            ImGui::MenuItem(ICON_MS_GRID_VIEW " Grid & Snap Settings...", nullptr, &this->ui.grid_settings_visible);
             ImGui::EndMenu();
         }
 
@@ -1052,8 +1163,8 @@ namespace xayah {
             {ICON_MS_TONALITY, "F6", &this->ui.tonemapper_visible, "Tonemapper"},
         }};
         const std::array<ToggleButton, 4> viewport_toggles{{
-            {ICON_MS_GRID_ON, "Tab", &this->viewport.grid_visible, "Grid"},
-            {ICON_MS_3D_ROTATION, nullptr, &this->ui.gizmo_visible, "Gizmo"},
+            {ICON_MS_GRID_ON, "G", &this->viewport.show_grid, "Grid"},
+            {ICON_MS_3D_ROTATION, "T", &this->ui.gizmo_visible, "Gizmo"},
             {ICON_MS_STRAIGHTEN, nullptr, &this->ui.snap_enabled, "Snap"},
             {ICON_MS_MOVIE, nullptr, &this->ui.timeline_visible, "Timeline"},
         }};
@@ -1290,9 +1401,7 @@ namespace xayah {
             ImGui::EndCombo();
         }
         ImGui::Separator();
-        ImGui::Checkbox("Wireframe Grid", &this->viewport.grid_visible);
         ImGui::Checkbox("Gizmo", &this->ui.gizmo_visible);
-        ImGui::Checkbox("Snap", &this->ui.snap_enabled);
         ImGui::Checkbox("3D Axis", &this->ui.axis_visible);
         ImGui::Separator();
         const char* backend_label = "CPU";
@@ -1325,6 +1434,26 @@ namespace xayah {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("pbrt bridge is not connected in stage 2");
         }
+        ImGui::End();
+    }
+
+    void Spectra::draw_grid_settings_window() {
+        if (!this->ui.grid_settings_visible) return;
+        if (!ImGui::Begin(ICON_MS_GRID_VIEW " Grid & Snap", &this->ui.grid_settings_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        ImGui::DragFloat("Grid Unit", &this->viewport.grid_unit, 0.01f, 0.001f, 1000.0f, "%.3f");
+        ImGui::Checkbox("Enable Snapping", &this->ui.snap_enabled);
+        ImGui::BeginDisabled(!this->ui.snap_enabled);
+        ImGui::Text("Translation %.3f (= Grid Unit)", this->viewport.grid_unit);
+        ImGui::DragFloat("Rotation (deg)", &this->ui.snap_rotation_degrees, 0.1f, 0.001f, 360.0f, "%.3f");
+        ImGui::DragFloat("Scale", &this->ui.snap_scale, 0.001f, 0.001f, 100.0f, "%.3f");
+        ImGui::EndDisabled();
+        if (this->viewport.grid_unit <= 0.0f) throw std::runtime_error("Grid unit must stay positive");
+        if (this->ui.snap_rotation_degrees <= 0.0f) throw std::runtime_error("Snap rotation must stay positive");
+        if (this->ui.snap_scale <= 0.0f) throw std::runtime_error("Snap scale must stay positive");
         ImGui::End();
     }
 
@@ -1604,7 +1733,15 @@ namespace xayah {
         const std::array<float, 16> view       = this->viewport.camera.view_matrix();
         const std::array<float, 16> projection = this->viewport.camera.gizmo_projection_matrix(aspect);
         std::array<float, 16> matrix           = imguizmo_matrix(scene.selected_transform());
-        if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data())) update_transform_from_imguizmo_matrix(scene.selected_transform(), matrix);
+        std::array<float, 3> snap_values{};
+        const float* snap = nullptr;
+        if (this->ui.snap_enabled) {
+            if (this->gizmo.operation == GizmoOperation::translate) snap_values = {this->viewport.grid_unit, this->viewport.grid_unit, this->viewport.grid_unit};
+            if (this->gizmo.operation == GizmoOperation::rotate) snap_values = {this->ui.snap_rotation_degrees, this->ui.snap_rotation_degrees, this->ui.snap_rotation_degrees};
+            if (this->gizmo.operation == GizmoOperation::scale) snap_values = {this->ui.snap_scale, this->ui.snap_scale, this->ui.snap_scale};
+            snap = snap_values.data();
+        }
+        if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data(), nullptr, snap)) update_transform_from_imguizmo_matrix(scene.selected_transform(), matrix);
         this->gizmo.using_gizmo = ImGuizmo::IsUsingAny() || ImGuizmo::IsOver();
 
         ImGui::End();
@@ -1654,9 +1791,32 @@ namespace xayah {
         if (!*this->context.physical_device) throw std::runtime_error("Cannot create viewport pipeline without a physical device");
         if (!*this->context.device) throw std::runtime_error("Cannot create viewport pipeline without a Vulkan device");
         if (this->swapchain.format == vk::Format::eUndefined || this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create viewport pipeline without swapchain formats");
+        if (this->sync.frame_count == 0) throw std::runtime_error("Cannot create viewport grid without frames in flight");
 
-        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.vert.spv");
-        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "viewport_grid.frag.spv");
+        constexpr std::array bindings{
+            vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+        };
+        const vk::DescriptorSetLayoutCreateInfo descriptor_layout_create_info{{}, static_cast<std::uint32_t>(bindings.size()), bindings.data()};
+        this->viewport.descriptor_layout = vk::raii::DescriptorSetLayout{this->context.device, descriptor_layout_create_info};
+
+        const vk::DescriptorSetLayout descriptor_layout_handle = *this->viewport.descriptor_layout;
+        constexpr vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(ViewportGridPushConstants)};
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_layout_handle, 1, &push_constant_range};
+        this->viewport.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
+
+        const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eStorageBuffer, this->sync.frame_count};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->sync.frame_count, 1, &pool_size};
+        this->viewport.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+
+        const std::vector descriptor_layouts(this->sync.frame_count, descriptor_layout_handle);
+        const vk::DescriptorSetAllocateInfo allocate_info{*this->viewport.descriptor_pool, this->sync.frame_count, descriptor_layouts.data()};
+        this->viewport.descriptor_sets = vk::raii::DescriptorSets{this->context.device, allocate_info};
+        if (this->viewport.descriptor_sets.size() != this->sync.frame_count) throw std::runtime_error("Failed to allocate viewport grid descriptor sets");
+        this->viewport.frame_resources.clear();
+        this->viewport.frame_resources.resize(this->sync.frame_count);
+
+        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "gizmo_grid.vert.spv");
+        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "gizmo_grid.frag.spv");
         const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
         const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
         const vk::raii::ShaderModule vertex_shader{this->context.device, vertex_module_create_info};
@@ -1666,17 +1826,14 @@ namespace xayah {
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
         };
 
-        constexpr vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex, 0, sizeof(float) * 16};
-        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 0, nullptr, 1, &push_constant_range};
-        this->viewport.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
-
         constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
         constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eLineList, VK_FALSE};
         vk::PipelineViewportStateCreateInfo viewport_state{};
         viewport_state.viewportCount = 1;
         viewport_state.scissorCount  = 1;
 
-        constexpr vk::PipelineRasterizationStateCreateInfo rasterization_state{
+        const vk::PipelineRasterizationLineStateCreateInfo line_state{vk::LineRasterizationMode::eRectangularSmooth, VK_FALSE, 0, 0};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{
             {},
             VK_FALSE,
             VK_FALSE,
@@ -1687,15 +1844,34 @@ namespace xayah {
             0.0f,
             0.0f,
             0.0f,
-            1.0f,
+            viewport_grid_line_width,
+            &line_state,
         };
         constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
-        constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineDepthStencilStateCreateInfo grid_depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineDepthStencilStateCreateInfo axis_depth_stencil_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
 
-        vk::PipelineColorBlendAttachmentState color_blend_attachment{};
-        color_blend_attachment.blendEnable    = VK_FALSE;
-        color_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &color_blend_attachment};
+        vk::PipelineColorBlendAttachmentState grid_blend_attachment{};
+        grid_blend_attachment.blendEnable         = VK_TRUE;
+        grid_blend_attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+        grid_blend_attachment.dstColorBlendFactor = vk::BlendFactor::eOne;
+        grid_blend_attachment.colorBlendOp        = vk::BlendOp::eAdd;
+        grid_blend_attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        grid_blend_attachment.dstAlphaBlendFactor = vk::BlendFactor::eZero;
+        grid_blend_attachment.alphaBlendOp        = vk::BlendOp::eAdd;
+        grid_blend_attachment.colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        const vk::PipelineColorBlendStateCreateInfo grid_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &grid_blend_attachment};
+
+        vk::PipelineColorBlendAttachmentState axis_blend_attachment{};
+        axis_blend_attachment.blendEnable         = VK_TRUE;
+        axis_blend_attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+        axis_blend_attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        axis_blend_attachment.colorBlendOp        = vk::BlendOp::eAdd;
+        axis_blend_attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        axis_blend_attachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        axis_blend_attachment.alphaBlendOp        = vk::BlendOp::eAdd;
+        axis_blend_attachment.colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        const vk::PipelineColorBlendStateCreateInfo axis_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &axis_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
 
@@ -1716,18 +1892,26 @@ namespace xayah {
         pipeline_create_info.pViewportState      = &viewport_state;
         pipeline_create_info.pRasterizationState = &rasterization_state;
         pipeline_create_info.pMultisampleState   = &multisample_state;
-        pipeline_create_info.pDepthStencilState  = &depth_stencil_state;
-        pipeline_create_info.pColorBlendState    = &color_blend_state;
+        pipeline_create_info.pDepthStencilState  = &grid_depth_stencil_state;
+        pipeline_create_info.pColorBlendState    = &grid_blend_state;
         pipeline_create_info.pDynamicState       = &dynamic_state;
         pipeline_create_info.layout              = *this->viewport.pipeline_layout;
         pipeline_create_info.renderPass          = nullptr;
         pipeline_create_info.subpass             = 0;
-        this->viewport.pipeline                  = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+        this->viewport.grid_pipeline             = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+        pipeline_create_info.pDepthStencilState  = &axis_depth_stencil_state;
+        pipeline_create_info.pColorBlendState    = &axis_blend_state;
+        this->viewport.axis_pipeline             = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
     }
 
     void Spectra::destroy_viewport_pipeline() noexcept {
-        this->viewport.pipeline        = nullptr;
+        this->viewport.axis_pipeline   = nullptr;
+        this->viewport.grid_pipeline   = nullptr;
         this->viewport.pipeline_layout = nullptr;
+        this->viewport.frame_resources.clear();
+        this->viewport.descriptor_sets   = nullptr;
+        this->viewport.descriptor_pool   = nullptr;
+        this->viewport.descriptor_layout = nullptr;
     }
 
     void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
