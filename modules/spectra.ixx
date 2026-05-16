@@ -53,6 +53,11 @@ namespace xayah {
         void draw_dockspace();
         void draw_viewport_window();
         void draw_camera_window();
+        void draw_camera_quick_actions(CameraState& camera);
+        void draw_camera_navigation();
+        bool draw_camera_projection(CameraState& camera);
+        bool draw_camera_position(CameraState& camera);
+        bool draw_camera_other(CameraState& camera);
         void draw_scene_browser(Scene& scene);
         void draw_settings_window();
         void draw_grid_settings_window();
@@ -188,7 +193,6 @@ namespace xayah {
             bool tonemap_aces{true};
             float snap_rotation_degrees{45.0f};
             float snap_scale{0.1f};
-            std::string status_message{"Ready"};
         } ui;
 
         struct {
@@ -228,14 +232,12 @@ namespace xayah {
 
         struct {
             std::string status{"Idle"};
-            std::string output_path{"render-output.png"};
             std::string error{"pbrt backend is not connected in stage 2"};
         } render_output;
 
         struct {
             std::string mode_label{"Idle"};
             SceneFrameSessionMode mode{SceneFrameSessionMode::idle};
-            bool show_record_stats{false};
             int next_frame_index{0};
             int simulated_frames{0};
             int written_frames{0};

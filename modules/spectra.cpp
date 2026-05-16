@@ -75,6 +75,26 @@ namespace {
     constexpr std::uint32_t viewport_grid_flag_axis_z    = 1u << 3u;
     constexpr float viewport_grid_line_width             = 1.5f;
     constexpr float viewport_grid_far_clip               = 100000.0f;
+    constexpr float camera_button_spacing                = 4.0f;
+
+    [[nodiscard]] bool begin_camera_property_table(const char* id) {
+        if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit)) return false;
+        ImGui::TableSetupColumn("Property");
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        return true;
+    }
+
+    void begin_camera_property_row(const char* label) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(label);
+        ImGui::TableNextColumn();
+        ImGui::SetNextItemWidth(-1.0f);
+    }
+
+    void camera_tooltip(const char* text) {
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
+    }
 
     struct ViewportGridPushConstants {
         std::uint32_t grid_flag{0};
@@ -705,7 +725,6 @@ namespace xayah {
             this->timeline.visible          = false;
             this->session.mode_label        = "Preview Stopped";
             this->session.mode              = SceneFrameSessionMode::idle;
-            this->session.show_record_stats = false;
         } else if (this->input.space_pressed && this->session.mode == SceneFrameSessionMode::record_running) {
             this->recorder.request_stop();
             this->session.mode_label = "Record Stopping";
@@ -719,7 +738,6 @@ namespace xayah {
                 this->recorder.start(record_config, frame_producer);
                 this->session.mode_label           = "Record";
                 this->session.mode                 = SceneFrameSessionMode::record_running;
-                this->session.show_record_stats    = true;
                 this->session.next_frame_index     = 0;
                 this->session.simulated_frames     = 0;
                 this->session.written_frames       = 0;
@@ -735,7 +753,6 @@ namespace xayah {
                 this->timeline.visible          = false;
                 this->session.mode_label        = "Preview";
                 this->session.mode              = SceneFrameSessionMode::preview_running;
-                this->session.show_record_stats = false;
                 this->session.next_frame_index  = 0;
                 this->session.simulated_frames  = 0;
                 this->session.written_frames    = 0;
@@ -757,8 +774,7 @@ namespace xayah {
         }
 
         if (this->session.mode != SceneFrameSessionMode::record_running && this->session.mode != SceneFrameSessionMode::record_stopping && this->session.mode != SceneFrameSessionMode::playback) {
-            this->timeline.visible          = false;
-            this->session.show_record_stats = false;
+            this->timeline.visible = false;
             return;
         }
 
@@ -781,7 +797,6 @@ namespace xayah {
         else
             this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
 
-        this->session.show_record_stats = true;
         this->session.simulated_frames  = stats.produced_frames;
         this->session.written_frames    = stats.written_frames;
         this->session.cache_bytes       = stats.host_cache_bytes;
@@ -1125,37 +1140,20 @@ namespace xayah {
         if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) fit_aspect = this->ui.viewport_size[0] / this->ui.viewport_size[1];
         if (!io.WantTextInput && io.KeyCtrl && io.KeyShift && scene.object_count() != 0 && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
             const BoundingBoxBounds bounds = scene.world_bounds();
-            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
         } else if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && scene.has_selection() && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
             const BoundingBoxBounds bounds = scene.selected_world_bounds();
-            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
         }
 
         if (!ImGui::BeginMainMenuBar()) return;
 
         if (ImGui::BeginMenu("File")) {
-            ImGui::BeginDisabled(true);
-            ImGui::MenuItem(ICON_MS_ADD " New", "Ctrl+N");
-            ImGui::MenuItem(ICON_MS_FOLDER_OPEN " Open", "Ctrl+O");
-            ImGui::MenuItem(ICON_MS_FILE_OPEN " Merge", nullptr);
-            ImGui::MenuItem(ICON_MS_PUBLIC " Load HDR", "Ctrl+Shift+O");
-            ImGui::Separator();
-            ImGui::MenuItem(ICON_MS_SAVE " Save", "Ctrl+S");
-            ImGui::MenuItem(ICON_MS_IMAGE " Save Image", "Ctrl+Shift+S");
-            ImGui::EndDisabled();
-            ImGui::Separator();
             if (ImGui::MenuItem(ICON_MS_CLOSE " Exit", "Ctrl+Q")) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            ImGui::BeginDisabled(true);
-            ImGui::MenuItem(ICON_MS_UNDO " Undo", "Ctrl+Z");
-            ImGui::MenuItem(ICON_MS_REDO " Redo", "Ctrl+Y");
-            ImGui::MenuItem(ICON_MS_ADD " Duplicate", "Ctrl+D");
-            ImGui::MenuItem(ICON_MS_DELETE " Delete", "Del");
-            ImGui::EndDisabled();
-            ImGui::Separator();
             ImGui::BeginDisabled(!scene.has_selection());
             if (ImGui::MenuItem(ICON_MS_CLOSE " Clear Selection", "Esc")) scene.selection.object_id = 0;
             ImGui::EndDisabled();
@@ -1167,13 +1165,13 @@ namespace xayah {
             ImGui::BeginDisabled(scene.object_count() == 0);
             if (ImGui::MenuItem(ICON_MS_ZOOM_OUT " Fit Scene", "Ctrl+Shift+F")) {
                 const BoundingBoxBounds bounds = scene.world_bounds();
-                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
             }
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!scene.has_selection());
             if (ImGui::MenuItem(ICON_MS_ZOOM_IN " Fit Object", "Ctrl+F")) {
                 const BoundingBoxBounds bounds = scene.selected_world_bounds();
-                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
             }
             ImGui::EndDisabled();
             ImGui::Separator();
@@ -1206,20 +1204,6 @@ namespace xayah {
             const bool path_selected    = this->renderer.mode == RendererMode::path_tracer;
             if (ImGui::MenuItem(ICON_MS_IMAGE " Preview", nullptr, preview_selected)) this->renderer.mode = RendererMode::preview;
             if (ImGui::MenuItem(ICON_MS_AUTO_AWESOME " Path Trace", nullptr, path_selected)) this->renderer.mode = RendererMode::path_tracer;
-            ImGui::Separator();
-            ImGui::BeginDisabled(true);
-            ImGui::MenuItem(ICON_MS_PLAY_ARROW " Start", nullptr);
-            ImGui::MenuItem(ICON_MS_STOP " Stop", nullptr);
-            ImGui::EndDisabled();
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Tools")) {
-            ImGui::BeginDisabled(true);
-            ImGui::MenuItem(ICON_MS_REFRESH " Reload Shaders", "Ctrl+Shift+R");
-            ImGui::MenuItem(ICON_MS_BUILD " Recreate Tangents");
-            ImGui::MenuItem(ICON_MS_COMPRESS " Compact Scene", "Ctrl+K");
-            ImGui::EndDisabled();
             ImGui::EndMenu();
         }
 
@@ -1251,7 +1235,7 @@ namespace xayah {
         }};
 
         const float button_size  = ImGui::GetFrameHeight();
-        const float total_width  = 2.0f + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 5) * button_size + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 8) * 2.0f;
+        const float total_width  = 2.0f + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 2) * button_size + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 5) * 2.0f;
         const float window_width = ImGui::GetWindowWidth();
         if (window_width <= total_width + 260.0f) throw std::runtime_error("Viewport is too small for main menu toolbar");
 
@@ -1295,16 +1279,6 @@ namespace xayah {
         if (ImGui::Button(ICON_MS_AUTO_AWESOME, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::path_tracer;
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("pbrt path tracer");
-        ImGui::SameLine(0.0f, 2.0f);
-
-        ImGui::BeginDisabled(true);
-        ImGui::Button(ICON_MS_PLAY_ARROW, ImVec2{button_size, button_size});
-        ImGui::SameLine(0.0f, 2.0f);
-        ImGui::Button(ICON_MS_STOP, ImVec2{button_size, button_size});
-        ImGui::SameLine(0.0f, 2.0f);
-        ImGui::Button(ICON_MS_SAVE, ImVec2{button_size, button_size});
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Render job controls will be connected after pbrt bridge");
 
         if (!scene.has_selection() || !scene.selected_object_visible()) return;
         ImGui::SameLine();
@@ -1398,79 +1372,230 @@ namespace xayah {
             return;
         }
 
-        CameraState camera = this->viewport.camera.state();
-        const char* mode_label = "Examine";
-        if (this->viewport.camera.get_mode() == CameraMode::fly) mode_label = "Fly";
-        if (this->viewport.camera.get_mode() == CameraMode::walk) mode_label = "Walk";
-        if (ImGui::BeginCombo("Mode", mode_label)) {
-            const bool examine_selected = this->viewport.camera.get_mode() == CameraMode::examine;
-            if (ImGui::Selectable("Examine", examine_selected)) this->viewport.camera.set_mode(CameraMode::examine);
-            if (examine_selected) ImGui::SetItemDefaultFocus();
-            const bool fly_selected = this->viewport.camera.get_mode() == CameraMode::fly;
-            if (ImGui::Selectable("Fly", fly_selected)) this->viewport.camera.set_mode(CameraMode::fly);
-            if (fly_selected) ImGui::SetItemDefaultFocus();
-            const bool walk_selected = this->viewport.camera.get_mode() == CameraMode::walk;
-            if (ImGui::Selectable("Walk", walk_selected)) this->viewport.camera.set_mode(CameraMode::walk);
-            if (walk_selected) ImGui::SetItemDefaultFocus();
-            ImGui::EndCombo();
-        }
+        CameraState camera       = this->viewport.camera.state();
+        bool changed             = false;
+        bool instant_changed     = false;
+        this->draw_camera_quick_actions(camera);
+        this->draw_camera_navigation();
+        ImGui::Separator();
+        instant_changed |= this->draw_camera_projection(camera);
+        changed |= this->draw_camera_position(camera);
+        changed |= this->draw_camera_other(camera);
+        if (changed || instant_changed) this->viewport.camera.set_camera(camera, instant_changed);
 
-        const char* projection_label = camera.projection == CameraProjection::perspective ? "Perspective" : "Orthographic";
-        if (ImGui::BeginCombo("Projection", projection_label)) {
-            const bool perspective_selected = camera.projection == CameraProjection::perspective;
-            if (ImGui::Selectable("Perspective", perspective_selected)) this->viewport.camera.set_projection(CameraProjection::perspective);
-            if (perspective_selected) ImGui::SetItemDefaultFocus();
-            const bool orthographic_selected = camera.projection == CameraProjection::orthographic;
-            if (ImGui::Selectable("Orthographic", orthographic_selected)) this->viewport.camera.set_projection(CameraProjection::orthographic);
-            if (orthographic_selected) ImGui::SetItemDefaultFocus();
-            ImGui::EndCombo();
+        ImGui::End();
+    }
+
+    void Spectra::draw_camera_quick_actions(CameraState& camera) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+
+        if (ImGui::Button(ICON_MS_HOME)) {
+            this->viewport.camera.reset_home();
             camera = this->viewport.camera.state();
         }
+        camera_tooltip("Reset to home camera position");
 
-        if (ImGui::InputFloat3("Eye", camera.eye.data(), "%.3f")) this->viewport.camera.set_lookat(camera.eye, this->viewport.camera.state().center, this->viewport.camera.state().up, true);
-        camera = this->viewport.camera.state();
-        if (ImGui::InputFloat3("Center", camera.center.data(), "%.3f")) this->viewport.camera.set_lookat(this->viewport.camera.state().eye, camera.center, this->viewport.camera.state().up, true);
-        camera = this->viewport.camera.state();
-        if (ImGui::InputFloat3("Up", camera.up.data(), "%.3f")) this->viewport.camera.set_lookat(this->viewport.camera.state().eye, this->viewport.camera.state().center, camera.up, true);
-        camera = this->viewport.camera.state();
-        if (ImGui::SliderFloat("FOV", &camera.fov_degrees, 0.01f, 179.0f, "%.2f deg")) this->viewport.camera.set_fov(camera.fov_degrees);
-        camera = this->viewport.camera.state();
-        if (ImGui::InputFloat2("Clip", camera.near_far.data(), "%.4f")) this->viewport.camera.set_clip_planes(camera.near_far);
-        camera = this->viewport.camera.state();
-        ImGui::BeginDisabled(camera.projection != CameraProjection::orthographic);
-        if (ImGui::InputFloat2("Ortho Size", camera.orthographic_magnitudes.data(), "%.3f")) this->viewport.camera.set_orthographic_magnitudes(camera.orthographic_magnitudes);
-        ImGui::EndDisabled();
+        const float help_button_size = ImGui::CalcTextSize(ICON_MS_HELP).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - help_button_size, 0.0f);
+        if (ImGui::Button(ICON_MS_HELP)) ImGui::OpenPopup("Camera Help");
+        camera_tooltip("Show camera controls help");
 
-        float speed = this->viewport.camera.get_speed();
-        if (ImGui::DragFloat("Speed", &speed, 0.01f, 0.001f, 1000.0f, "%.3f")) this->viewport.camera.set_speed(speed);
-        float duration = this->viewport.camera.get_animation_duration();
-        if (ImGui::DragFloat("Animation", &duration, 0.01f, 0.0f, 10.0f, "%.3f s")) this->viewport.camera.set_animation_duration(duration);
+        ImGui::PopStyleColor();
 
-        const std::array<float, 3> right = this->viewport.camera.right();
-        const std::array<float, 3> up    = this->viewport.camera.up();
-        if (ImGui::BeginTable("CameraBasisTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 96.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Right");
-            ImGui::TableNextColumn();
-            ImGui::Text("%.3f, %.3f, %.3f", right[0], right[1], right[2]);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("View Up");
-            ImGui::TableNextColumn();
-            ImGui::Text("%.3f, %.3f, %.3f", up[0], up[1], up[2]);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Distance");
-            ImGui::TableNextColumn();
-            ImGui::Text("%.3f", this->viewport.camera.distance_to_center());
-            ImGui::EndTable();
+        if (ImGui::BeginPopupModal("Camera Help", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Camera Controls:");
+            ImGui::BulletText("Left Mouse: Orbit / Pan / Dolly depending on modifiers and mode");
+            ImGui::BulletText("Middle Mouse: Pan");
+            ImGui::BulletText("Right Mouse: Dolly");
+            ImGui::BulletText("Mouse Wheel: Dolly / Shift+Wheel: Zoom");
+            ImGui::Indent();
+            ImGui::TextColored(ImVec4{0.7f, 0.7f, 0.7f, 1.0f}, "Perspective: changes FOV");
+            ImGui::TextColored(ImVec4{0.7f, 0.7f, 0.7f, 1.0f}, "Orthographic: changes viewport size");
+            ImGui::Unindent();
+            ImGui::BulletText("WASD / Arrow Keys: Move camera");
+            ImGui::BulletText("Home: Reset camera");
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Navigation Modes:");
+            ImGui::BulletText("Examine: Orbit around center point");
+            ImGui::BulletText("Fly: Free movement in 3D space");
+            ImGui::BulletText("Walk: Movement constrained to horizontal plane");
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Projection Types:");
+            ImGui::BulletText("Perspective: Objects get smaller with distance");
+            ImGui::BulletText("Orthographic: Parallel projection, no size change");
+            if (ImGui::Button("Close", ImVec2{120.0f, 0.0f})) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
-        if (ImGui::Button(ICON_MS_HOME " Reset Camera")) this->viewport.camera.reset_home();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset camera home");
-        ImGui::End();
+    }
+
+    void Spectra::draw_camera_navigation() {
+        ImGui::Separator();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
+
+        const CameraMode mode = this->viewport.camera.get_mode();
+        ImGui::PushStyleColor(ImGuiCol_Button, mode == CameraMode::examine ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button(ICON_MS_ORBIT)) this->viewport.camera.set_mode(CameraMode::examine);
+        ImGui::PopStyleColor();
+        camera_tooltip("Orbit around a point of interest");
+
+        ImGui::SameLine(0.0f, camera_button_spacing);
+        ImGui::PushStyleColor(ImGuiCol_Button, mode == CameraMode::fly ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button(ICON_MS_FLIGHT)) this->viewport.camera.set_mode(CameraMode::fly);
+        ImGui::PopStyleColor();
+        camera_tooltip("Fly: Free camera movement");
+
+        ImGui::SameLine(0.0f, camera_button_spacing);
+        ImGui::PushStyleColor(ImGuiCol_Button, mode == CameraMode::walk ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button(ICON_MS_DIRECTIONS_WALK)) this->viewport.camera.set_mode(CameraMode::walk);
+        ImGui::PopStyleColor();
+        camera_tooltip("Walk: Stay on a horizontal plane");
+
+        const CameraMode current_mode = this->viewport.camera.get_mode();
+        if (current_mode == CameraMode::fly || current_mode == CameraMode::walk) {
+            if (begin_camera_property_table("##CameraSpeed")) {
+                float speed = this->viewport.camera.get_speed();
+                begin_camera_property_row("Speed");
+                if (ImGui::DragFloat("##Speed", &speed, 0.2f, 0.001f, 1000.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) this->viewport.camera.set_speed(speed);
+                camera_tooltip("Speed of camera movement");
+                ImGui::EndTable();
+            }
+        }
+    }
+
+    bool Spectra::draw_camera_projection(CameraState& camera) {
+        bool changed = false;
+        if (ImGui::TreeNodeEx("Projection", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (begin_camera_property_table("##CameraProjection")) {
+                begin_camera_property_row("Type");
+                bool is_perspective = camera.projection == CameraProjection::perspective;
+                if (ImGui::RadioButton("Perspective", is_perspective)) {
+                    if (!is_perspective) {
+                        this->viewport.camera.set_camera(camera, true);
+                        this->viewport.camera.set_projection(CameraProjection::perspective);
+                        camera = this->viewport.camera.state();
+                    }
+                }
+                is_perspective = camera.projection == CameraProjection::perspective;
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Orthographic", !is_perspective)) {
+                    if (is_perspective) {
+                        this->viewport.camera.set_camera(camera, true);
+                        this->viewport.camera.set_projection(CameraProjection::orthographic);
+                        camera = this->viewport.camera.state();
+                    }
+                }
+
+                if (camera.projection == CameraProjection::perspective) {
+                    begin_camera_property_row("FOV");
+                    if (ImGui::SliderFloat("##FOV", &camera.fov_degrees, 1.0f, 179.0f, "%.1f deg", ImGuiSliderFlags_Logarithmic)) changed = true;
+                    camera_tooltip("Field of view of the camera in degrees");
+                } else {
+                    begin_camera_property_row("View");
+                    const float distance               = this->viewport.camera.distance_to_center();
+                    const std::array<float, 3> center  = camera.center;
+                    struct AxisView {
+                        const char* label;
+                        const char* tooltip;
+                        std::array<float, 3> direction;
+                        std::array<float, 3> up;
+                    };
+                    constexpr std::array<AxisView, 6> axis_views{{
+                        {"+X", "Right view", {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+                        {"-X", "Left view", {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+                        {"+Y", "Top view", {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
+                        {"-Y", "Bottom view", {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+                        {"+Z", "Front view", {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}},
+                        {"-Z", "Back view", {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
+                    }};
+                    for (std::size_t index = 0; index < axis_views.size(); ++index) {
+                        if (index > 0) ImGui::SameLine();
+                        if (ImGui::Button(axis_views[index].label)) {
+                            camera.eye = {
+                                center[0] + axis_views[index].direction[0] * distance,
+                                center[1] + axis_views[index].direction[1] * distance,
+                                center[2] + axis_views[index].direction[2] * distance,
+                            };
+                            camera.up = axis_views[index].up;
+                            changed   = true;
+                        }
+                        camera_tooltip(axis_views[index].tooltip);
+                    }
+
+                    begin_camera_property_row("Mag");
+                    std::array<float, 2> magnitudes = camera.orthographic_magnitudes;
+                    if (ImGui::DragFloat2("##Mag", magnitudes.data(), 0.1f, 0.01f, 10000.0f, "%.3f")) {
+                        if (magnitudes[0] != camera.orthographic_magnitudes[0]) {
+                            camera.orthographic_magnitudes[0] = magnitudes[0];
+                            camera.orthographic_magnitudes[1] = magnitudes[0] / this->viewport.camera.aspect_ratio();
+                        } else if (magnitudes[1] != camera.orthographic_magnitudes[1]) {
+                            camera.orthographic_magnitudes[1] = magnitudes[1];
+                            camera.orthographic_magnitudes[0] = magnitudes[1] * this->viewport.camera.aspect_ratio();
+                        }
+                        changed = true;
+                    }
+                    camera_tooltip("Orthographic half-width and half-height");
+                }
+
+                begin_camera_property_row("Z-Clip");
+                if (ImGui::DragFloat2("##ZClip", camera.near_far.data(), 20000.0f, 0.00001f, 1000000000.0f, "%.6f", ImGuiSliderFlags_Logarithmic)) changed = true;
+                camera_tooltip("Near and far clip planes for depth buffer");
+                ImGui::EndTable();
+            }
+            ImGui::TreePop();
+        }
+        return changed;
+    }
+
+    bool Spectra::draw_camera_position(CameraState& camera) {
+        bool changed = false;
+        if (ImGui::TreeNodeEx("Position", ImGuiTreeNodeFlags_None)) {
+            CameraState edited = camera;
+            bool local_changed = false;
+            if (begin_camera_property_table("##CameraPosition")) {
+                begin_camera_property_row("Eye");
+                local_changed |= ImGui::InputFloat3("##Eye", edited.eye.data(), "%.3f");
+                begin_camera_property_row("Center");
+                local_changed |= ImGui::InputFloat3("##Center", edited.center.data(), "%.3f");
+                begin_camera_property_row("Up");
+                local_changed |= ImGui::InputFloat3("##Up", edited.up.data(), "%.3f");
+                ImGui::EndTable();
+            }
+            if (!this->viewport.camera.is_animating() && local_changed) {
+                camera.eye    = edited.eye;
+                camera.center = edited.center;
+                camera.up     = edited.up;
+                changed       = true;
+            }
+            ImGui::TreePop();
+        }
+        return changed;
+    }
+
+    bool Spectra::draw_camera_other(CameraState& camera) {
+        bool changed = false;
+        if (ImGui::TreeNodeEx("Other", ImGuiTreeNodeFlags_None)) {
+            if (begin_camera_property_table("##CameraOther")) {
+                begin_camera_property_row("Up vector");
+                const bool y_is_up = camera.up[0] == 0.0f && camera.up[1] == 1.0f && camera.up[2] == 0.0f;
+                if (ImGui::RadioButton("Y-up", y_is_up)) {
+                    camera.up = {0.0f, 1.0f, 0.0f};
+                    changed   = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Z-up", !y_is_up)) {
+                    camera.up = {0.0f, 0.0f, 1.0f};
+                    changed   = true;
+                }
+
+                begin_camera_property_row("Transition");
+                float duration = this->viewport.camera.get_animation_duration();
+                if (ImGui::SliderFloat("##Transition", &duration, 0.0f, 2.0f, "%.2fs")) this->viewport.camera.set_animation_duration(duration);
+                camera_tooltip("Transition duration of camera movement");
+                ImGui::EndTable();
+            }
+            ImGui::TreePop();
+        }
+        return changed;
     }
 
     void Spectra::draw_scene_browser(Scene& scene) {
@@ -1555,12 +1680,6 @@ namespace xayah {
             if (this->renderer.resolution[0] <= 0 || this->renderer.resolution[1] <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "Resolution must stay positive");
             if (this->renderer.samples_per_pixel <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "SPP must stay positive");
             if (this->renderer.thread_count <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "Thread count must stay positive");
-            ImGui::BeginDisabled(true);
-            ImGui::Button(ICON_MS_PLAY_ARROW " Start");
-            ImGui::SameLine();
-            ImGui::Button(ICON_MS_STOP " Stop");
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("pbrt bridge is not connected in stage 2");
         }
         ImGui::End();
     }
