@@ -47,8 +47,19 @@ namespace xayah {
 
         void render_loop(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer);
         void update_scene_frame_session(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer, float delta_seconds);
-        void draw_stats_panel(Scene& scene);
+        void draw_main_menu(Scene& scene);
+        void draw_menu_toolbar(Scene& scene);
+        void draw_dockspace();
+        void draw_viewport_window();
+        void draw_camera_window();
+        void draw_scene_browser(Scene& scene);
+        void draw_settings_window();
+        void draw_render_output();
         void draw_object_inspector(Scene& scene);
+        void draw_environment_window();
+        void draw_tonemapper_window();
+        void draw_statistics_window(Scene& scene);
+        void draw_timeline_window();
         void draw_transform_gizmo(Scene& scene);
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
@@ -129,6 +140,36 @@ namespace xayah {
         } imgui;
 
         struct {
+            bool dock_layout_initialized{false};
+            bool camera_visible{true};
+            bool scene_browser_visible{true};
+            bool settings_visible{true};
+            bool inspector_visible{true};
+            bool environment_visible{true};
+            bool tonemapper_visible{true};
+            bool statistics_visible{true};
+            bool render_output_visible{true};
+            bool timeline_visible{true};
+            bool axis_visible{true};
+            bool gizmo_visible{true};
+            bool snap_enabled{false};
+            bool viewport_known{false};
+            bool viewport_hovered{false};
+            bool viewport_focused{false};
+            std::array<float, 2> viewport_position{0.0f, 0.0f};
+            std::array<float, 2> viewport_size{1280.0f, 720.0f};
+            int environment_type{0};
+            bool solid_background{false};
+            std::array<float, 3> background_color{0.02f, 0.02f, 0.025f};
+            float environment_intensity{1.0f};
+            float environment_rotation_degrees{0.0f};
+            float tonemap_exposure{0.0f};
+            float tonemap_gamma{2.2f};
+            bool tonemap_aces{true};
+            std::string status_message{"Ready"};
+        } ui;
+
+        struct {
             int frame_min{0};
             int frame_max{0};
             int available_frame_max{0};
@@ -142,6 +183,32 @@ namespace xayah {
             bool space_pressed{false};
             bool shift_down{false};
         } input;
+
+        enum class RendererMode : std::uint32_t {
+            preview     = 0,
+            path_tracer = 1,
+        };
+
+        enum class PathTraceBackend : std::uint32_t {
+            cpu       = 0,
+            wavefront = 1,
+            gpu       = 2,
+        };
+
+        struct {
+            RendererMode mode{RendererMode::preview};
+            std::array<int, 2> resolution{1280, 720};
+            int samples_per_pixel{64};
+            int thread_count{30};
+            PathTraceBackend backend{PathTraceBackend::cpu};
+            std::array<char, 256> output_path{"render-output.png"};
+        } renderer;
+
+        struct {
+            std::string status{"Idle"};
+            std::string output_path{"render-output.png"};
+            std::string error{"pbrt backend is not connected in stage 2"};
+        } render_output;
 
         struct {
             std::string mode_label{"Idle"};

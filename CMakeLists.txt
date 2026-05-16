@@ -106,7 +106,7 @@ target_sources(
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
 target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS SPECTRA_SHADER_DIR="${SPECTRA_SHADER_OUTPUT_DIR}")
-target_include_directories(spectra PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImGuizmo ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include)
+target_include_directories(spectra PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImGuizmo ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 
 if (SPECTRA_BUILD_EXTENSIONS)

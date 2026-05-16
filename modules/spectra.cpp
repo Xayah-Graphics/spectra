@@ -10,6 +10,11 @@ module;
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
+#include <imgui_internal.h>
+#include <material_symbols/IconsMaterialSymbols.h>
+#include <material_symbols/material_symbols_rounded_regular.h>
+#include <roboto/roboto_mono.h>
+#include <roboto/roboto_regular.h>
 
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
@@ -62,6 +67,103 @@ namespace {
         transform.translation      = translation;
         transform.rotation_degrees = rotation;
         transform.scale            = scale;
+    }
+
+    [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
+        return ImVec4{red, green, blue, alpha};
+    }
+
+    void load_imgui_fonts() {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.Fonts == nullptr) throw std::runtime_error("ImGui font atlas is unavailable");
+
+        ImFontConfig font_config{};
+        font_config.OversampleH   = 3;
+        font_config.OversampleV   = 3;
+        constexpr float font_size = 15.0f;
+        ImFont* default_font      = io.Fonts->AddFontFromMemoryCompressedTTF(g_roboto_regular_compressed_data, g_roboto_regular_compressed_size, font_size, &font_config);
+        if (default_font == nullptr) throw std::runtime_error("Failed to load Roboto regular font");
+
+        ImFontConfig icon_config{};
+        icon_config.MergeMode     = true;
+        icon_config.PixelSnapH    = true;
+        icon_config.OversampleH   = 3;
+        icon_config.OversampleV   = 3;
+        constexpr float icon_size = 1.28571429f * font_size;
+        icon_config.GlyphOffset.x = icon_size * 0.01f;
+        icon_config.GlyphOffset.y = icon_size * 0.2f;
+        constexpr std::array<ImWchar, 3> icon_ranges{ICON_MIN_MS, ICON_MAX_MS, 0};
+        if (io.Fonts->AddFontFromMemoryCompressedTTF(g_materialSymbolsRounded_compressed_data, g_materialSymbolsRounded_compressed_size, icon_size, &icon_config, icon_ranges.data()) == nullptr) throw std::runtime_error("Failed to load Material Symbols icon font");
+
+        ImFontConfig mono_config{};
+        mono_config.OversampleH = 3;
+        mono_config.OversampleV = 3;
+        if (io.Fonts->AddFontFromMemoryCompressedTTF(g_roboto_mono_compressed_data, g_roboto_mono_compressed_size, font_size, &mono_config) == nullptr) throw std::runtime_error("Failed to load Roboto mono font");
+        io.FontDefault = default_font;
+    }
+
+    void apply_imgui_style(const bool viewports) {
+        ImGui::StyleColorsDark();
+        ImGuiStyle& style                  = ImGui::GetStyle();
+        style.WindowRounding               = 0.0f;
+        style.WindowBorderSize             = 0.0f;
+        style.ColorButtonPosition          = ImGuiDir_Right;
+        style.FrameRounding                = 2.0f;
+        style.FrameBorderSize              = 1.0f;
+        style.GrabRounding                 = 4.0f;
+        style.IndentSpacing                = 12.0f;
+        style.Colors[ImGuiCol_WindowBg]    = imgui_srgb(0.2f, 0.2f, 0.2f, 1.0f);
+        style.Colors[ImGuiCol_MenuBarBg]   = imgui_srgb(0.2f, 0.2f, 0.2f, 1.0f);
+        style.Colors[ImGuiCol_ScrollbarBg] = imgui_srgb(0.2f, 0.2f, 0.2f, 1.0f);
+        style.Colors[ImGuiCol_PopupBg]     = imgui_srgb(0.135f, 0.135f, 0.135f, 1.0f);
+        style.Colors[ImGuiCol_Border]      = imgui_srgb(0.4f, 0.4f, 0.4f, 0.5f);
+        style.Colors[ImGuiCol_FrameBg]     = imgui_srgb(0.05f, 0.05f, 0.05f, 0.5f);
+
+        const ImVec4 normal_color = imgui_srgb(0.465f, 0.465f, 0.525f, 1.0f);
+        constexpr std::array normal_colors{
+            ImGuiCol_Header,
+            ImGuiCol_SliderGrab,
+            ImGuiCol_Button,
+            ImGuiCol_CheckMark,
+            ImGuiCol_ResizeGrip,
+            ImGuiCol_TextSelectedBg,
+            ImGuiCol_Separator,
+            ImGuiCol_FrameBgActive,
+        };
+        for (const ImGuiCol color_id : normal_colors) style.Colors[color_id] = normal_color;
+
+        const ImVec4 active_color = imgui_srgb(0.365f, 0.365f, 0.425f, 1.0f);
+        constexpr std::array active_colors{
+            ImGuiCol_HeaderActive,
+            ImGuiCol_SliderGrabActive,
+            ImGuiCol_ButtonActive,
+            ImGuiCol_ResizeGripActive,
+            ImGuiCol_SeparatorActive,
+        };
+        for (const ImGuiCol color_id : active_colors) style.Colors[color_id] = active_color;
+
+        const ImVec4 hovered_color = imgui_srgb(0.565f, 0.565f, 0.625f, 1.0f);
+        constexpr std::array hovered_colors{
+            ImGuiCol_HeaderHovered,
+            ImGuiCol_ButtonHovered,
+            ImGuiCol_FrameBgHovered,
+            ImGuiCol_ResizeGripHovered,
+            ImGuiCol_SeparatorHovered,
+        };
+        for (const ImGuiCol color_id : hovered_colors) style.Colors[color_id] = hovered_color;
+
+        style.Colors[ImGuiCol_TitleBgActive]    = imgui_srgb(0.465f, 0.465f, 0.465f, 1.0f);
+        style.Colors[ImGuiCol_TitleBg]          = imgui_srgb(0.125f, 0.125f, 0.125f, 1.0f);
+        style.Colors[ImGuiCol_Tab]              = imgui_srgb(0.05f, 0.05f, 0.05f, 0.5f);
+        style.Colors[ImGuiCol_TabHovered]       = imgui_srgb(0.465f, 0.495f, 0.525f, 1.0f);
+        style.Colors[ImGuiCol_TabActive]        = imgui_srgb(0.282f, 0.290f, 0.302f, 1.0f);
+        style.Colors[ImGuiCol_ModalWindowDimBg] = imgui_srgb(0.465f, 0.465f, 0.465f, 0.350f);
+        style.Colors[ImGuiCol_ButtonActive]     = static_cast<ImVec4>(ImColor::HSV(0.3F, 0.5F, 0.5F));
+        ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
+        if (viewports) {
+            style.WindowRounding              = 0.0f;
+            style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+        }
     }
 
 } // namespace
@@ -255,12 +357,8 @@ namespace xayah {
                 ImGuiIO& io = ImGui::GetIO();
                 if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
                 if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-                ImGui::StyleColorsDark();
-                if (this->imgui.viewports) {
-                    ImGuiStyle& style                 = ImGui::GetStyle();
-                    style.WindowRounding              = 0.0f;
-                    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-                }
+                load_imgui_fonts();
+                apply_imgui_style(this->imgui.viewports);
 
                 if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
                 glfw_backend_initialized = true;
@@ -272,18 +370,18 @@ namespace xayah {
                 pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
 
                 ImGui_ImplVulkan_InitInfo init_info{};
-                init_info.ApiVersion                  = VK_API_VERSION_1_4;
-                init_info.Instance                    = static_cast<VkInstance>(*this->context.instance);
-                init_info.PhysicalDevice              = static_cast<VkPhysicalDevice>(*this->context.physical_device);
-                init_info.Device                      = static_cast<VkDevice>(*this->context.device);
-                init_info.QueueFamily                 = this->context.graphics_queue_index;
-                init_info.Queue                       = static_cast<VkQueue>(*this->context.graphics_queue);
-                init_info.DescriptorPool              = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
-                init_info.MinImageCount               = this->imgui.min_image_count;
-                init_info.ImageCount                  = this->imgui.image_count;
-                init_info.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
-                init_info.UseDynamicRendering         = true;
-                init_info.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
+                init_info.ApiVersion                                   = VK_API_VERSION_1_4;
+                init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
+                init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
+                init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
+                init_info.QueueFamily                                  = this->context.graphics_queue_index;
+                init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
+                init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
+                init_info.MinImageCount                                = this->imgui.min_image_count;
+                init_info.ImageCount                                   = this->imgui.image_count;
+                init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
+                init_info.UseDynamicRendering                          = true;
+                init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
                 if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
                 vulkan_backend_initialized = true;
                 this->imgui.initialized    = true;
@@ -649,10 +747,9 @@ namespace xayah {
 
         ImGuiIO& io                       = ImGui::GetIO();
         const ImVec2 mouse_position       = io.MousePos;
-        const float timeline_height       = this->timeline.visible ? this->timeline.height : 0.0f;
-        const float timeline_top          = viewport->WorkPos.y + viewport->WorkSize.y - timeline_height;
         const bool transform_gizmo_active = this->gizmo.using_gizmo || ImGuizmo::IsUsingAny();
-        const bool in_viewport            = mouse_position.x >= viewport->WorkPos.x && mouse_position.x < viewport->WorkPos.x + viewport->WorkSize.x && mouse_position.y >= viewport->WorkPos.y && mouse_position.y < timeline_top && !io.WantCaptureMouse && !transform_gizmo_active;
+        const bool in_viewport_rect       = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
+        const bool in_viewport            = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused) && !transform_gizmo_active;
         const bool right_mouse            = ImGui::IsMouseDown(ImGuiMouseButton_Right);
         const bool middle_mouse           = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
         const bool left_mouse             = ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -672,12 +769,12 @@ namespace xayah {
         input.orbit         = in_viewport && ((right_mouse && !shift) || (alt && left_mouse));
         input.pan           = in_viewport && (middle_mouse || (right_mouse && shift));
         input.fly           = in_viewport && right_mouse && !shift;
-        input.move_forward  = ImGui::IsKeyDown(ImGuiKey_W);
-        input.move_backward = ImGui::IsKeyDown(ImGuiKey_S);
-        input.move_left     = ImGui::IsKeyDown(ImGuiKey_A);
-        input.move_right    = ImGui::IsKeyDown(ImGuiKey_D);
-        input.move_up       = ImGui::IsKeyDown(ImGuiKey_E);
-        input.move_down     = ImGui::IsKeyDown(ImGuiKey_Q);
+        input.move_forward  = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_W);
+        input.move_backward = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_S);
+        input.move_left     = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_A);
+        input.move_right    = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_D);
+        input.move_up       = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_E);
+        input.move_down     = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_Q);
         this->viewport.camera.update(input);
         return true;
     }
@@ -689,6 +786,20 @@ namespace xayah {
             this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
             this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
         }
+
+        this->draw_main_menu(scene);
+        this->draw_dockspace();
+        this->draw_viewport_window();
+        this->draw_camera_window();
+        this->draw_scene_browser(scene);
+        this->draw_settings_window();
+        this->draw_render_output();
+        this->draw_object_inspector(scene);
+        this->draw_environment_window();
+        this->draw_tonemapper_window();
+        this->draw_statistics_window(scene);
+        this->draw_timeline_window();
+        this->draw_transform_gizmo(scene);
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
         command_buffer.reset();
@@ -730,7 +841,8 @@ namespace xayah {
         this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::eColorAttachmentOptimal;
         this->swapchain.depth_layout                     = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
-        constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}};
+        const std::array<float, 4> clear_color = this->ui.solid_background ? std::array{this->ui.background_color[0], this->ui.background_color[1], this->ui.background_color[2], 1.0f} : std::array{0.02f, 0.02f, 0.025f, 1.0f};
+        const vk::ClearValue color_clear_value{vk::ClearColorValue{clear_color}};
         constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
         const vk::RenderingAttachmentInfo color_attachment{
             *this->swapchain.image_views[frame.image_index],
@@ -759,16 +871,29 @@ namespace xayah {
         if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float timeline_height = this->timeline.visible ? this->timeline.height : 0.0f;
-        if (main_viewport->WorkSize.x <= 0.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for 3D scene");
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!this->ui.viewport_known) throw std::runtime_error("Docked viewport window is not available");
+        if (this->ui.viewport_size[0] <= 0.0f || this->ui.viewport_size[1] <= 0.0f) throw std::runtime_error("Docked viewport size must be positive");
+        if (io.DisplaySize.x <= 0.0f || io.DisplaySize.y <= 0.0f) throw std::runtime_error("ImGui display size must be positive");
 
-        const float viewport_height_ratio         = (main_viewport->WorkSize.y - timeline_height) / main_viewport->WorkSize.y;
-        const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(std::lround(static_cast<float>(this->swapchain.extent.height) * viewport_height_ratio));
-        if (scene_viewport_height == 0 || scene_viewport_height > this->swapchain.extent.height) throw std::runtime_error("Invalid 3D viewport height");
+        const float framebuffer_scale_x = static_cast<float>(this->swapchain.extent.width) / io.DisplaySize.x;
+        const float framebuffer_scale_y = static_cast<float>(this->swapchain.extent.height) / io.DisplaySize.y;
+        const float viewport_min_x      = (this->ui.viewport_position[0] - main_viewport->Pos.x) * framebuffer_scale_x;
+        const float viewport_min_y      = (this->ui.viewport_position[1] - main_viewport->Pos.y) * framebuffer_scale_y;
+        const float viewport_max_x      = (this->ui.viewport_position[0] + this->ui.viewport_size[0] - main_viewport->Pos.x) * framebuffer_scale_x;
+        const float viewport_max_y      = (this->ui.viewport_position[1] + this->ui.viewport_size[1] - main_viewport->Pos.y) * framebuffer_scale_y;
+        const std::int32_t viewport_x   = static_cast<std::int32_t>(std::floor(viewport_min_x));
+        const std::int32_t viewport_y   = static_cast<std::int32_t>(std::floor(viewport_min_y));
+        const std::int32_t viewport_r   = static_cast<std::int32_t>(std::ceil(viewport_max_x));
+        const std::int32_t viewport_b   = static_cast<std::int32_t>(std::ceil(viewport_max_y));
+        if (viewport_x < 0 || viewport_y < 0 || viewport_r > static_cast<std::int32_t>(this->swapchain.extent.width) || viewport_b > static_cast<std::int32_t>(this->swapchain.extent.height)) throw std::runtime_error("Docked viewport is outside the swapchain framebuffer");
+        if (viewport_r <= viewport_x || viewport_b <= viewport_y) throw std::runtime_error("Docked viewport framebuffer size must be positive");
 
-        const vk::Viewport vulkan_viewport{0.0f, 0.0f, static_cast<float>(this->swapchain.extent.width), static_cast<float>(scene_viewport_height), 0.0f, 1.0f};
-        const vk::Rect2D scissor{{0, 0}, {this->swapchain.extent.width, scene_viewport_height}};
-        const float aspect                          = static_cast<float>(this->swapchain.extent.width) / static_cast<float>(scene_viewport_height);
+        const std::uint32_t scene_viewport_width  = static_cast<std::uint32_t>(viewport_r - viewport_x);
+        const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(viewport_b - viewport_y);
+        const vk::Viewport vulkan_viewport{static_cast<float>(viewport_x), static_cast<float>(viewport_y), static_cast<float>(scene_viewport_width), static_cast<float>(scene_viewport_height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{viewport_x, viewport_y}, {scene_viewport_width, scene_viewport_height}};
+        const float aspect                          = static_cast<float>(scene_viewport_width) / static_cast<float>(scene_viewport_height);
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
         if (this->viewport.grid_visible) {
@@ -791,70 +916,6 @@ namespace xayah {
         scene.render(scene_render_context);
         command_buffer.endRendering();
 
-        this->draw_transform_gizmo(scene);
-        this->draw_stats_panel(scene);
-        this->draw_object_inspector(scene);
-
-        if (this->timeline.visible) {
-            if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
-            if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
-            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-            this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
-
-            class TimelineSequence final : public ImSequencer::SequenceInterface {
-            public:
-                int frame_min{0};
-                int frame_max{0};
-                int available_frame_max{0};
-                int row_start_frame{0};
-                int row_end_frame{0};
-
-                TimelineSequence(const int frame_min, const int frame_max, const int available_frame_max) : frame_min{frame_min}, frame_max{frame_max}, available_frame_max{available_frame_max}, row_start_frame{frame_min}, row_end_frame{available_frame_max} {}
-
-                int GetFrameMin() const override {
-                    return this->frame_min;
-                }
-
-                int GetFrameMax() const override {
-                    return this->frame_max;
-                }
-
-                int GetItemCount() const override {
-                    return 1;
-                }
-
-                const char* GetItemLabel(const int index) const override {
-                    if (index != 0) throw std::runtime_error("Timeline row index out of range");
-                    return "Frame";
-                }
-
-                void Get(const int index, int** start, int** end, int* type, unsigned int* color) override {
-                    if (index != 0) throw std::runtime_error("Timeline row index out of range");
-                    if (start != nullptr) *start = &this->row_start_frame;
-                    if (end != nullptr) *end = &this->row_end_frame;
-                    if (type != nullptr) *type = 0;
-                    if (color != nullptr) *color = 0x4E79A7;
-                }
-            };
-
-            if (main_viewport->WorkSize.x <= 320.0f || main_viewport->WorkSize.y <= timeline_height) throw std::runtime_error("Viewport is too small for fixed timeline");
-
-            ImGui::SetNextWindowViewport(main_viewport->ID);
-            ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x, main_viewport->WorkPos.y + main_viewport->WorkSize.y - timeline_height}, ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, timeline_height}, ImGuiCond_Always);
-            constexpr ImGuiWindowFlags timeline_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
-
-            TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max, this->timeline.available_frame_max};
-            constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
-            ImGui::Begin("Spectra Timeline", nullptr, timeline_window_flags);
-            ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
-            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-            ImGui::End();
-            ImGui::PopStyleVar(2);
-        }
-
         ImGui::Render();
         const vk::RenderingAttachmentInfo imgui_color_attachment{
             *this->swapchain.image_views[frame.image_index],
@@ -876,157 +937,635 @@ namespace xayah {
         command_buffer.end();
     }
 
-    void Spectra::draw_stats_panel(Scene& scene) {
+    void Spectra::draw_main_menu(Scene& scene) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (!io.WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.scene_browser_visible = !this->ui.scene_browser_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.settings_visible = !this->ui.settings_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.inspector_visible = !this->ui.inspector_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.environment_visible = !this->ui.environment_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) scene.selection.object_id = 0;
+        }
+
+        if (!ImGui::BeginMainMenuBar()) return;
+
+        if (ImGui::BeginMenu("File")) {
+            ImGui::BeginDisabled(true);
+            ImGui::MenuItem(ICON_MS_ADD " New", "Ctrl+N");
+            ImGui::MenuItem(ICON_MS_FOLDER_OPEN " Open", "Ctrl+O");
+            ImGui::MenuItem(ICON_MS_FILE_OPEN " Merge", nullptr);
+            ImGui::MenuItem(ICON_MS_PUBLIC " Load HDR", "Ctrl+Shift+O");
+            ImGui::Separator();
+            ImGui::MenuItem(ICON_MS_SAVE " Save", "Ctrl+S");
+            ImGui::MenuItem(ICON_MS_IMAGE " Save Image", "Ctrl+Shift+S");
+            ImGui::EndDisabled();
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_MS_CLOSE " Exit", "Ctrl+Q")) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Edit")) {
+            ImGui::BeginDisabled(true);
+            ImGui::MenuItem(ICON_MS_UNDO " Undo", "Ctrl+Z");
+            ImGui::MenuItem(ICON_MS_REDO " Redo", "Ctrl+Y");
+            ImGui::MenuItem(ICON_MS_ADD " Duplicate", "Ctrl+D");
+            ImGui::MenuItem(ICON_MS_DELETE " Delete", "Del");
+            ImGui::EndDisabled();
+            ImGui::Separator();
+            ImGui::BeginDisabled(!scene.has_selection());
+            if (ImGui::MenuItem(ICON_MS_CLOSE " Clear Selection", "Esc")) scene.selection.object_id = 0;
+            ImGui::EndDisabled();
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem(ICON_MS_HOME " Reset Camera", "H")) this->viewport.camera.reset_home();
+            ImGui::BeginDisabled(true);
+            ImGui::MenuItem(ICON_MS_ZOOM_OUT " Fit Scene", "Ctrl+Shift+F");
+            ImGui::MenuItem(ICON_MS_ZOOM_IN " Fit Object", "Ctrl+F");
+            ImGui::EndDisabled();
+            ImGui::Separator();
+            ImGui::MenuItem(ICON_MS_VIEW_IN_AR " 3D Axis", nullptr, &this->ui.axis_visible);
+            ImGui::MenuItem(ICON_MS_GRID_ON " Grid", "Tab", &this->viewport.grid_visible);
+            ImGui::MenuItem(ICON_MS_3D_ROTATION " Gizmo", nullptr, &this->ui.gizmo_visible);
+            ImGui::MenuItem(ICON_MS_STRAIGHTEN " Snap", nullptr, &this->ui.snap_enabled);
+            ImGui::MenuItem(ICON_MS_MOVIE " Timeline", nullptr, &this->ui.timeline_visible);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Windows")) {
+            ImGui::MenuItem(ICON_MS_PHOTO_CAMERA " Camera", "F1", &this->ui.camera_visible);
+            ImGui::MenuItem(ICON_MS_ACCOUNT_TREE " Scene Browser", "F2", &this->ui.scene_browser_visible);
+            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F3", &this->ui.settings_visible);
+            ImGui::MenuItem(ICON_MS_LIST_ALT " Inspector", "F4", &this->ui.inspector_visible);
+            ImGui::MenuItem(ICON_MS_PUBLIC " Environment", "F5", &this->ui.environment_visible);
+            ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F6", &this->ui.tonemapper_visible);
+            ImGui::Separator();
+            ImGui::MenuItem(ICON_MS_MONITORING " Render Output", nullptr, &this->ui.render_output_visible);
+            ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", nullptr, &this->ui.statistics_visible);
+            ImGui::MenuItem(ICON_MS_MOVIE " Timeline", nullptr, &this->ui.timeline_visible);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Render")) {
+            const bool preview_selected = this->renderer.mode == RendererMode::preview;
+            const bool path_selected    = this->renderer.mode == RendererMode::path_tracer;
+            if (ImGui::MenuItem(ICON_MS_IMAGE " Preview", nullptr, preview_selected)) this->renderer.mode = RendererMode::preview;
+            if (ImGui::MenuItem(ICON_MS_AUTO_AWESOME " Path Trace", nullptr, path_selected)) this->renderer.mode = RendererMode::path_tracer;
+            ImGui::Separator();
+            ImGui::BeginDisabled(true);
+            ImGui::MenuItem(ICON_MS_PLAY_ARROW " Start", nullptr);
+            ImGui::MenuItem(ICON_MS_STOP " Stop", nullptr);
+            ImGui::EndDisabled();
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Tools")) {
+            ImGui::BeginDisabled(true);
+            ImGui::MenuItem(ICON_MS_REFRESH " Reload Shaders", "Ctrl+Shift+R");
+            ImGui::MenuItem(ICON_MS_BUILD " Recreate Tangents");
+            ImGui::MenuItem(ICON_MS_COMPRESS " Compact Scene", "Ctrl+K");
+            ImGui::EndDisabled();
+            ImGui::EndMenu();
+        }
+
+        this->draw_menu_toolbar(scene);
+        ImGui::EndMainMenuBar();
+    }
+
+    void Spectra::draw_menu_toolbar(Scene& scene) {
+        struct ToggleButton {
+            const char* icon;
+            const char* shortcut;
+            bool* visible;
+            const char* tooltip;
+        };
+
+        const std::array<ToggleButton, 6> window_toggles{{
+            {ICON_MS_PHOTO_CAMERA, "F1", &this->ui.camera_visible, "Camera"},
+            {ICON_MS_ACCOUNT_TREE, "F2", &this->ui.scene_browser_visible, "Scene Browser"},
+            {ICON_MS_SETTINGS, "F3", &this->ui.settings_visible, "Settings"},
+            {ICON_MS_LIST_ALT, "F4", &this->ui.inspector_visible, "Inspector"},
+            {ICON_MS_PUBLIC, "F5", &this->ui.environment_visible, "Environment"},
+            {ICON_MS_TONALITY, "F6", &this->ui.tonemapper_visible, "Tonemapper"},
+        }};
+        const std::array<ToggleButton, 4> viewport_toggles{{
+            {ICON_MS_GRID_ON, "Tab", &this->viewport.grid_visible, "Grid"},
+            {ICON_MS_3D_ROTATION, nullptr, &this->ui.gizmo_visible, "Gizmo"},
+            {ICON_MS_STRAIGHTEN, nullptr, &this->ui.snap_enabled, "Snap"},
+            {ICON_MS_MOVIE, nullptr, &this->ui.timeline_visible, "Timeline"},
+        }};
+
+        const float button_size  = ImGui::GetFrameHeight();
+        const float total_width  = 2.0f + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 5) * button_size + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 8) * 2.0f;
+        const float window_width = ImGui::GetWindowWidth();
+        if (window_width <= total_width + 260.0f) throw std::runtime_error("Viewport is too small for main menu toolbar");
+
+        ImGui::SameLine(window_width * 0.5f - total_width * 0.5f);
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        for (const ToggleButton& toggle : window_toggles) {
+            ImGui::PushStyleColor(ImGuiCol_Button, *toggle.visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+            if (ImGui::Button(toggle.icon, ImVec2{button_size, button_size})) *toggle.visible = !*toggle.visible;
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle %s Window (%s)", toggle.tooltip, toggle.shortcut);
+            ImGui::SameLine(0.0f, 2.0f);
+        }
+
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        for (const ToggleButton& toggle : viewport_toggles) {
+            ImGui::PushStyleColor(ImGuiCol_Button, *toggle.visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+            if (ImGui::Button(toggle.icon, ImVec2{button_size, button_size})) *toggle.visible = !*toggle.visible;
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                if (toggle.shortcut == nullptr)
+                    ImGui::SetTooltip("Toggle %s", toggle.tooltip);
+                else
+                    ImGui::SetTooltip("Toggle %s (%s)", toggle.tooltip, toggle.shortcut);
+            }
+            ImGui::SameLine(0.0f, 2.0f);
+        }
+
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        const bool preview_mode = this->renderer.mode == RendererMode::preview;
+        ImGui::PushStyleColor(ImGuiCol_Button, preview_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button(ICON_MS_IMAGE, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::preview;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preview renderer");
+        ImGui::SameLine(0.0f, 2.0f);
+
+        const bool path_mode = this->renderer.mode == RendererMode::path_tracer;
+        ImGui::PushStyleColor(ImGuiCol_Button, path_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button(ICON_MS_AUTO_AWESOME, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::path_tracer;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("pbrt path tracer");
+        ImGui::SameLine(0.0f, 2.0f);
+
+        ImGui::BeginDisabled(true);
+        ImGui::Button(ICON_MS_PLAY_ARROW, ImVec2{button_size, button_size});
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::Button(ICON_MS_STOP, ImVec2{button_size, button_size});
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::Button(ICON_MS_SAVE, ImVec2{button_size, button_size});
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Render job controls will be connected after pbrt bridge");
+
+        if (!scene.has_selection() || !scene.selected_object_visible()) return;
+        ImGui::SameLine();
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::translate ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button("T##MenuTranslate", ImVec2{button_size, button_size})) this->gizmo.operation = GizmoOperation::translate;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::rotate ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button("R##MenuRotate", ImVec2{button_size, button_size})) this->gizmo.operation = GizmoOperation::rotate;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::scale ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button("S##MenuScale", ImVec2{button_size, button_size})) this->gizmo.operation = GizmoOperation::scale;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
+    }
+
+    void Spectra::draw_dockspace() {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        if (main_viewport->WorkSize.x <= 640.0f || main_viewport->WorkSize.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
 
-        ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.02f);
-        constexpr ImGuiWindowFlags stats_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
+        constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
+        const ImVec4 dockspace_window_background     = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{dockspace_window_background.x, dockspace_window_background.y, dockspace_window_background.z, 0.0f});
+        const ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, main_viewport, dockspace_flags);
+        ImGui::PopStyleColor();
+        if (dockspace_id == 0) throw std::runtime_error("Failed to create Spectra dockspace");
+        if (this->ui.dock_layout_initialized) return;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.045f, 0.055f, 0.62f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.28f, 0.55f, 0.90f, 0.55f});
-        ImGui::Begin("Spectra Stats", nullptr, stats_window_flags);
-        {
-            const ImVec2 window_pos  = ImGui::GetWindowPos();
-            const ImVec2 window_size = ImGui::GetWindowSize();
-            ImGui::GetWindowDrawList()->AddRectFilled(window_pos, ImVec2{window_pos.x + 4.0f, window_pos.y + window_size.y}, IM_COL32(76, 158, 255, 210), 8.0f, ImDrawFlags_RoundCornersLeft);
+        ImGui::DockBuilderRemoveNode(dockspace_id);
+        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace | dockspace_flags);
+        ImGui::DockBuilderSetNodePos(dockspace_id, main_viewport->WorkPos);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, main_viewport->WorkSize);
+
+        ImGuiID center_id      = dockspace_id;
+        ImGuiID left_id        = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.25f, nullptr, &center_id);
+        ImGuiID left_bottom_id = ImGui::DockBuilderSplitNode(left_id, ImGuiDir_Down, 0.35f, nullptr, &left_id);
+        ImGuiID right_id       = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.25f, nullptr, &center_id);
+        ImGuiID inspector_id   = ImGui::DockBuilderSplitNode(right_id, ImGuiDir_Down, 0.35f, nullptr, &right_id);
+        ImGuiID bottom_id      = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.35f, nullptr, &center_id);
+        if (left_id == 0 || left_bottom_id == 0 || right_id == 0 || inspector_id == 0 || bottom_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra dock layout");
+
+        ImGui::DockBuilderDockWindow("Viewport", center_id);
+        ImGui::DockBuilderDockWindow("Camera", left_id);
+        ImGui::DockBuilderDockWindow("Settings", left_id);
+        ImGui::DockBuilderDockWindow("Tonemapper", left_bottom_id);
+        ImGui::DockBuilderDockWindow("Environment", left_bottom_id);
+        ImGui::DockBuilderDockWindow("Scene Browser", right_id);
+        ImGui::DockBuilderDockWindow("Inspector", inspector_id);
+        ImGui::DockBuilderDockWindow("Render Output", bottom_id);
+        ImGui::DockBuilderDockWindow("Statistics", bottom_id);
+        ImGui::DockBuilderDockWindow("Timeline", bottom_id);
+        ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
+        if (central_node == nullptr) throw std::runtime_error("Failed to find Spectra central dock node");
+        central_node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+        ImGui::DockBuilderFinish(dockspace_id);
+        this->ui.dock_layout_initialized = true;
+    }
+
+    void Spectra::draw_viewport_window() {
+        constexpr ImGuiWindowFlags viewport_window_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
+        if (ImGui::Begin("Viewport", nullptr, viewport_window_flags)) {
+            const ImVec2 viewport_position = ImGui::GetCursorScreenPos();
+            const ImVec2 viewport_size     = ImGui::GetContentRegionAvail();
+            if (viewport_size.x <= 0.0f || viewport_size.y <= 0.0f) throw std::runtime_error("Viewport dock window has no drawable area");
+            this->ui.viewport_known    = true;
+            this->ui.viewport_position = {viewport_position.x, viewport_position.y};
+            this->ui.viewport_size     = {viewport_size.x, viewport_size.y};
+            this->ui.viewport_hovered  = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow);
+            this->ui.viewport_focused  = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
+            ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+        } else {
+            this->ui.viewport_known   = false;
+            this->ui.viewport_hovered = false;
+            this->ui.viewport_focused = false;
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+    }
+
+    void Spectra::draw_camera_window() {
+        if (!this->ui.camera_visible) return;
+        if (!ImGui::Begin("Camera", &this->ui.camera_visible)) {
+            ImGui::End();
+            return;
         }
 
-        const ImVec4 label_color{0.58f, 0.66f, 0.75f, 1.0f};
-        const ImVec4 value_color{0.92f, 0.96f, 1.0f, 1.0f};
-        const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
-        const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
-        const float fps        = ImGui::GetIO().Framerate;
-        const ImVec4 fps_color = fps >= 55.0f ? ImVec4{0.46f, 0.90f, 0.62f, 1.0f} : ImVec4{0.95f, 0.68f, 0.36f, 1.0f};
-
-        ImGui::TextColored(accent_color, "Spectra");
-        ImGui::SameLine();
-        ImGui::TextColored(muted_color, "Vulkan 1.4 RAII");
-        ImGui::Separator();
-        if (ImGui::BeginTable("Stats", 2, ImGuiTableFlags_SizingFixedFit)) {
+        const std::array<float, 3> position = this->viewport.camera.position();
+        const std::array<float, 3> right    = this->viewport.camera.right();
+        const std::array<float, 3> up       = this->viewport.camera.up();
+        if (ImGui::BeginTable("CameraTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 96.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Framebuffer");
+            ImGui::TextUnformatted("Position");
             ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
-
+            ImGui::Text("%.3f, %.3f, %.3f", position[0], position[1], position[2]);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Swapchain");
+            ImGui::TextUnformatted("Right");
             ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%u images", static_cast<std::uint32_t>(this->swapchain.images.size()));
-
+            ImGui::Text("%.3f, %.3f, %.3f", right[0], right[1], right[2]);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Frame slot");
+            ImGui::TextUnformatted("Up");
             ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%u / %u", this->sync.frame_index, this->sync.frame_count);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Timeline");
-            ImGui::TableNextColumn();
-            if (this->timeline.visible)
-                ImGui::TextColored(value_color, "%d / %d ready / %d total", this->timeline.current_frame, this->timeline.available_frame_max, this->timeline.frame_max);
-            else
-                ImGui::TextColored(value_color, "Hidden");
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "Mode");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(value_color, "%s", this->session.mode_label.c_str());
-
-            if (this->session.show_record_stats) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Record frames");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%d sim / %d disk", this->session.simulated_frames, this->session.written_frames);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(label_color, "Record cache");
-                ImGui::TableNextColumn();
-                ImGui::TextColored(value_color, "%.1f / %.1f MB", static_cast<double>(this->session.cache_bytes) / (1024.0 * 1024.0), static_cast<double>(this->session.max_cache_bytes) / (1024.0 * 1024.0));
-            }
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextColored(label_color, "FPS");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(fps_color, "%.1f", fps);
+            ImGui::Text("%.3f, %.3f, %.3f", up[0], up[1], up[2]);
             ImGui::EndTable();
         }
+        if (ImGui::Button(ICON_MS_HOME " Reset Camera")) this->viewport.camera.reset_home();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset camera home");
+        ImGui::End();
+    }
 
+    void Spectra::draw_scene_browser(Scene& scene) {
+        if (!this->ui.scene_browser_visible) return;
+        if (!ImGui::Begin("Scene Browser", &this->ui.scene_browser_visible)) {
+            ImGui::End();
+            return;
+        }
         const std::size_t volume_count    = scene.volume_count();
         const std::size_t mesh_count      = scene.mesh_count();
         const std::size_t particles_count = scene.particles_count();
         const std::size_t object_count    = scene.object_count();
+        if (ImGui::BeginTable("SceneSummary", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Objects");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", object_count);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Volumes");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", volume_count);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Meshes");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", mesh_count);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Particles");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", particles_count);
+            ImGui::EndTable();
+        }
         ImGui::Separator();
-        ImGui::TextColored(accent_color, "Scene");
-        ImGui::SameLine();
-        ImGui::TextColored(muted_color, "%zu total / %zu volume%s / %zu mesh%s / %zu particle set%s", object_count, volume_count, volume_count == 1 ? "" : "s", mesh_count, mesh_count == 1 ? "" : "es", particles_count, particles_count == 1 ? "" : "s");
         scene.draw_hierarchy_ui();
         ImGui::End();
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar(2);
+    }
+
+    void Spectra::draw_settings_window() {
+        if (!this->ui.settings_visible) return;
+        if (!ImGui::Begin("Settings", &this->ui.settings_visible)) {
+            ImGui::End();
+            return;
+        }
+        const bool preview_selected = this->renderer.mode == RendererMode::preview;
+        const bool path_selected    = this->renderer.mode == RendererMode::path_tracer;
+        if (ImGui::BeginCombo("Active Renderer", preview_selected ? "Preview" : "Path Tracer")) {
+            if (ImGui::Selectable("Preview", preview_selected)) this->renderer.mode = RendererMode::preview;
+            if (preview_selected) ImGui::SetItemDefaultFocus();
+            if (ImGui::Selectable("Path Tracer", path_selected)) this->renderer.mode = RendererMode::path_tracer;
+            if (path_selected) ImGui::SetItemDefaultFocus();
+            ImGui::EndCombo();
+        }
+        ImGui::Separator();
+        ImGui::Checkbox("Wireframe Grid", &this->viewport.grid_visible);
+        ImGui::Checkbox("Gizmo", &this->ui.gizmo_visible);
+        ImGui::Checkbox("Snap", &this->ui.snap_enabled);
+        ImGui::Checkbox("3D Axis", &this->ui.axis_visible);
+        ImGui::Separator();
+        const char* backend_label = "CPU";
+        if (this->renderer.backend == PathTraceBackend::wavefront) backend_label = "Wavefront";
+        if (this->renderer.backend == PathTraceBackend::gpu) backend_label = "GPU";
+        if (ImGui::CollapsingHeader("Path Tracer", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::BeginCombo("Backend", backend_label)) {
+                const bool cpu_selected = this->renderer.backend == PathTraceBackend::cpu;
+                if (ImGui::Selectable("CPU", cpu_selected)) this->renderer.backend = PathTraceBackend::cpu;
+                if (cpu_selected) ImGui::SetItemDefaultFocus();
+                const bool wavefront_selected = this->renderer.backend == PathTraceBackend::wavefront;
+                if (ImGui::Selectable("Wavefront", wavefront_selected)) this->renderer.backend = PathTraceBackend::wavefront;
+                if (wavefront_selected) ImGui::SetItemDefaultFocus();
+                const bool gpu_selected = this->renderer.backend == PathTraceBackend::gpu;
+                if (ImGui::Selectable("GPU", gpu_selected)) this->renderer.backend = PathTraceBackend::gpu;
+                if (gpu_selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
+            }
+            ImGui::InputInt2("Resolution", this->renderer.resolution.data());
+            ImGui::InputInt("SPP", &this->renderer.samples_per_pixel);
+            ImGui::InputInt("Threads", &this->renderer.thread_count);
+            ImGui::InputText("Output", this->renderer.output_path.data(), this->renderer.output_path.size());
+            if (this->renderer.resolution[0] <= 0 || this->renderer.resolution[1] <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "Resolution must stay positive");
+            if (this->renderer.samples_per_pixel <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "SPP must stay positive");
+            if (this->renderer.thread_count <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "Thread count must stay positive");
+            ImGui::BeginDisabled(true);
+            ImGui::Button(ICON_MS_PLAY_ARROW " Start");
+            ImGui::SameLine();
+            ImGui::Button(ICON_MS_STOP " Stop");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("pbrt bridge is not connected in stage 2");
+        }
+        ImGui::End();
+    }
+
+    void Spectra::draw_render_output() {
+        if (!this->ui.render_output_visible) return;
+        if (!ImGui::Begin("Render Output", &this->ui.render_output_visible)) {
+            ImGui::End();
+            return;
+        }
+        const char* mode_label = this->renderer.mode == RendererMode::preview ? "Vulkan preview" : "pbrt path tracer";
+        if (ImGui::BeginTable("RenderOutputTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 112.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Status");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ImVec4{0.58f, 0.76f, 0.96f, 1.0f}, "%s", this->render_output.status.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Mode");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(mode_label);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Output");
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", this->renderer.output_path.data());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Message");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ImVec4{0.95f, 0.62f, 0.42f, 1.0f}, "%s", this->render_output.error.c_str());
+            ImGui::EndTable();
+        }
+        ImGui::End();
     }
 
     void Spectra::draw_object_inspector(Scene& scene) {
-        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (!scene.has_selection()) return;
-
-        const ImVec4 accent_color{0.43f, 0.70f, 1.0f, 1.0f};
-        const ImVec4 muted_color{0.70f, 0.76f, 0.82f, 1.0f};
-        const float timeline_height             = this->timeline.visible ? this->timeline.height : 0.0f;
-        const float inspector_window_width      = 360.0f;
-        const float inspector_window_max_height = main_viewport->WorkSize.y - timeline_height - 24.0f;
-        if (inspector_window_max_height <= 240.0f) throw std::runtime_error("Viewport is too small for fixed object inspector");
-
-        ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + main_viewport->WorkSize.x - inspector_window_width - 12.0f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
-        ImGui::SetNextWindowSizeConstraints(ImVec2{inspector_window_width, 0.0f}, ImVec2{inspector_window_width, inspector_window_max_height});
-        ImGui::SetNextWindowBgAlpha(0.18f);
-        constexpr ImGuiWindowFlags inspector_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0f, 14.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.040f, 0.048f, 0.48f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35f, 0.62f, 0.95f, 0.42f});
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.08f, 0.095f, 0.11f, 0.42f});
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{0.13f, 0.18f, 0.24f, 0.56f});
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{0.18f, 0.26f, 0.34f, 0.68f});
-        ImGui::Begin("Object Inspector", nullptr, inspector_window_flags);
-
+        if (!this->ui.inspector_visible) return;
+        if (!ImGui::Begin("Inspector", &this->ui.inspector_visible)) {
+            ImGui::End();
+            return;
+        }
+        if (!scene.has_selection()) {
+            ImGui::TextDisabled("No selection");
+            ImGui::End();
+            return;
+        }
         Transform& active_transform = scene.selected_transform();
-        ImGui::TextColored(accent_color, "Object Inspector");
-        ImGui::SameLine();
-        ImGui::TextColored(muted_color, "%s", scene.selected_kind_label());
+        ImGui::Text("%s", scene.selected_kind_label());
         ImGui::Separator();
-
-        ImGui::TextColored(accent_color, "Transform");
-        ImGui::PushItemWidth(190.0f);
-        ImGui::InputFloat3("Translation", active_transform.translation.data(), "%.3f");
-        ImGui::InputFloat3("Rotation", active_transform.rotation_degrees.data(), "%.3f");
-        ImGui::InputFloat3("Scale", active_transform.scale.data(), "%.3f");
-        ImGui::PopItemWidth();
-        if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
-
+        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::InputFloat3("Translation", active_transform.translation.data(), "%.3f");
+            ImGui::InputFloat3("Rotation", active_transform.rotation_degrees.data(), "%.3f");
+            ImGui::InputFloat3("Scale", active_transform.scale.data(), "%.3f");
+            if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
+        }
         ImGui::Separator();
         scene.draw_selected_inspector_ui();
-
         ImGui::End();
-        ImGui::PopStyleColor(5);
-        ImGui::PopStyleVar(2);
+    }
+
+    void Spectra::draw_environment_window() {
+        if (!this->ui.environment_visible) return;
+        if (!ImGui::Begin("Environment", &this->ui.environment_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        const char* environment_label = this->ui.environment_type == 0 ? "Sky" : "HDR";
+        if (ImGui::BeginCombo("Environment Type", environment_label)) {
+            const bool sky_selected = this->ui.environment_type == 0;
+            if (ImGui::Selectable("Sky", sky_selected)) this->ui.environment_type = 0;
+            if (sky_selected) ImGui::SetItemDefaultFocus();
+            const bool hdr_selected = this->ui.environment_type == 1;
+            if (ImGui::Selectable("HDR", hdr_selected)) this->ui.environment_type = 1;
+            if (hdr_selected) ImGui::SetItemDefaultFocus();
+            ImGui::EndCombo();
+        }
+        ImGui::Checkbox("Solid Color", &this->ui.solid_background);
+        if (this->ui.solid_background) ImGui::ColorEdit3("Background", this->ui.background_color.data());
+        ImGui::SliderFloat("Intensity", &this->ui.environment_intensity, 0.0f, 100.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Rotation", &this->ui.environment_rotation_degrees, -360.0f, 360.0f, "%.1f deg");
+        ImGui::End();
+    }
+
+    void Spectra::draw_tonemapper_window() {
+        if (!this->ui.tonemapper_visible) return;
+        if (!ImGui::Begin("Tonemapper", &this->ui.tonemapper_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        ImGui::Checkbox("ACES", &this->ui.tonemap_aces);
+        ImGui::SliderFloat("Exposure", &this->ui.tonemap_exposure, -8.0f, 8.0f, "%.2f");
+        ImGui::SliderFloat("Gamma", &this->ui.tonemap_gamma, 0.8f, 4.0f, "%.2f");
+        if (this->ui.tonemap_gamma <= 0.0f) throw std::runtime_error("Tonemapper gamma must be positive");
+        ImGui::End();
+    }
+
+    void Spectra::draw_statistics_window(Scene& scene) {
+        if (!this->ui.statistics_visible) return;
+        if (!ImGui::Begin("Statistics", &this->ui.statistics_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        const float fps = ImGui::GetIO().Framerate;
+        if (ImGui::BeginTable("StatisticsTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 128.0f);
+            ImGui::TableHeadersRow();
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Framebuffer");
+            ImGui::TableNextColumn();
+            ImGui::Text("%u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Swapchain Images");
+            ImGui::TableNextColumn();
+            ImGui::Text("%u", static_cast<std::uint32_t>(this->swapchain.images.size()));
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Frame Slot");
+            ImGui::TableNextColumn();
+            ImGui::Text("%u / %u", this->sync.frame_index, this->sync.frame_count);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Scene Objects");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", scene.object_count());
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Volumes");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", scene.volume_count());
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Meshes");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", scene.mesh_count());
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Particles");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", scene.particles_count());
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Session");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(this->session.mode_label.c_str());
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("FPS");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", fps);
+            ImGui::EndTable();
+        }
+        ImGui::End();
+    }
+
+    void Spectra::draw_timeline_window() {
+        if (!this->ui.timeline_visible) return;
+        if (!ImGui::Begin("Timeline", &this->ui.timeline_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        if (!this->timeline.visible) {
+            ImGui::TextDisabled("Timeline is idle");
+            ImGui::End();
+            return;
+        }
+        if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
+        if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
+        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+        this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
+
+        class TimelineSequence final : public ImSequencer::SequenceInterface {
+        public:
+            int frame_min{0};
+            int frame_max{0};
+            int available_frame_max{0};
+            int row_start_frame{0};
+            int row_end_frame{0};
+
+            TimelineSequence(const int frame_min, const int frame_max, const int available_frame_max) : frame_min{frame_min}, frame_max{frame_max}, available_frame_max{available_frame_max}, row_start_frame{frame_min}, row_end_frame{available_frame_max} {}
+
+            int GetFrameMin() const override {
+                return this->frame_min;
+            }
+
+            int GetFrameMax() const override {
+                return this->frame_max;
+            }
+
+            int GetItemCount() const override {
+                return 1;
+            }
+
+            const char* GetItemLabel(const int index) const override {
+                if (index != 0) throw std::runtime_error("Timeline row index out of range");
+                return "Frame";
+            }
+
+            void Get(const int index, int** start, int** end, int* type, unsigned int* color) override {
+                if (index != 0) throw std::runtime_error("Timeline row index out of range");
+                if (start != nullptr) *start = &this->row_start_frame;
+                if (end != nullptr) *end = &this->row_end_frame;
+                if (type != nullptr) *type = 0;
+                if (color != nullptr) *color = 0x4E79A7;
+            }
+        };
+
+        TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max, this->timeline.available_frame_max};
+        constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
+        ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
+        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
+        ImGui::End();
     }
 
     void Spectra::draw_transform_gizmo(Scene& scene) {
+        if (!this->ui.gizmo_visible) {
+            this->gizmo.using_gizmo = false;
+            return;
+        }
+        if (!this->ui.viewport_known) {
+            this->gizmo.using_gizmo = false;
+            return;
+        }
         if (scene.selection.object_id == 0) {
             this->gizmo.using_gizmo = false;
             return;
@@ -1038,21 +1577,21 @@ namespace xayah {
 
         ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float timeline_height = this->timeline.visible ? this->timeline.height : 0.0f;
-        const float gizmo_height    = main_viewport->WorkSize.y - timeline_height;
-        if (main_viewport->WorkSize.x <= 0.0f || gizmo_height <= 0.0f) throw std::runtime_error("Viewport is too small for transform gizmo");
+        const float gizmo_width  = this->ui.viewport_size[0];
+        const float gizmo_height = this->ui.viewport_size[1];
+        if (gizmo_width <= 0.0f || gizmo_height <= 0.0f) throw std::runtime_error("Viewport is too small for transform gizmo");
 
         constexpr ImGuiWindowFlags gizmo_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
         ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(main_viewport->WorkPos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, gizmo_height}, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2{this->ui.viewport_position[0], this->ui.viewport_position[1]}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2{gizmo_width, gizmo_height}, ImGuiCond_Always);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::Begin("Viewport Gizmo", nullptr, gizmo_window_flags);
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-        ImGuizmo::SetRect(main_viewport->WorkPos.x, main_viewport->WorkPos.y, main_viewport->WorkSize.x, gizmo_height);
+        ImGuizmo::SetRect(this->ui.viewport_position[0], this->ui.viewport_position[1], gizmo_width, gizmo_height);
 
         ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
         if (this->gizmo.operation == GizmoOperation::rotate) operation = ImGuizmo::ROTATE;
@@ -1061,7 +1600,7 @@ namespace xayah {
         ImGuizmo::MODE mode = this->gizmo.mode == GizmoMode::world ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
         if (this->gizmo.operation == GizmoOperation::scale) mode = ImGuizmo::LOCAL;
 
-        const float aspect                     = main_viewport->WorkSize.x / gizmo_height;
+        const float aspect                     = gizmo_width / gizmo_height;
         const std::array<float, 16> view       = this->viewport.camera.view_matrix();
         const std::array<float, 16> projection = this->viewport.camera.gizmo_projection_matrix(aspect);
         std::array<float, 16> matrix           = imguizmo_matrix(scene.selected_transform());
@@ -1070,63 +1609,6 @@ namespace xayah {
 
         ImGui::End();
         ImGui::PopStyleVar(2);
-
-        constexpr float toolbar_width = 312.0f;
-        ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{main_viewport->WorkPos.x + (main_viewport->WorkSize.x - toolbar_width) * 0.5f, main_viewport->WorkPos.y + 12.0f}, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2{toolbar_width, 42.0f}, ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.16f);
-        constexpr ImGuiWindowFlags toolbar_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 7.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{8.0f, 8.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.025f, 0.030f, 0.036f, 0.42f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.44f, 0.62f, 0.78f, 0.34f});
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.92f, 0.96f, 1.0f, 1.0f});
-        ImGui::Begin("Viewport Gizmo Toolbar", nullptr, toolbar_window_flags);
-        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::translate ? ImVec4{0.30f, 0.56f, 0.90f, 0.52f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.34f, 0.62f, 0.98f, 0.62f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.42f, 0.70f, 1.00f, 0.72f});
-        if (ImGui::Button("T##ViewportGizmoTranslate", ImVec2{34.0f, 24.0f})) this->gizmo.operation = GizmoOperation::translate;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
-        ImGui::PopStyleColor(3);
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::rotate ? ImVec4{0.88f, 0.50f, 0.30f, 0.52f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.96f, 0.58f, 0.34f, 0.62f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{1.00f, 0.66f, 0.40f, 0.72f});
-        if (ImGui::Button("R##ViewportGizmoRotate", ImVec2{34.0f, 24.0f})) this->gizmo.operation = GizmoOperation::rotate;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
-        ImGui::PopStyleColor(3);
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::scale ? ImVec4{0.34f, 0.80f, 0.55f, 0.52f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.40f, 0.90f, 0.62f, 0.62f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.50f, 1.00f, 0.72f, 0.72f});
-        if (ImGui::Button("S##ViewportGizmoScale", ImVec2{34.0f, 24.0f})) this->gizmo.operation = GizmoOperation::scale;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
-        ImGui::PopStyleColor(3);
-        ImGui::SameLine();
-        ImGui::Dummy(ImVec2{8.0f, 1.0f});
-        ImGui::SameLine();
-        const bool local_mode      = this->gizmo.mode == GizmoMode::local;
-        const bool scale_operation = this->gizmo.operation == GizmoOperation::scale;
-        ImGui::BeginDisabled(scale_operation);
-        ImGui::PushStyleColor(ImGuiCol_Button, local_mode ? ImVec4{0.28f, 0.44f, 0.66f, 0.46f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.36f, 0.56f, 0.82f, 0.56f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.42f, 0.66f, 0.96f, 0.66f});
-        if (ImGui::Button("Local##ViewportGizmoLocal", ImVec2{70.0f, 24.0f})) this->gizmo.mode = GizmoMode::local;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(scale_operation ? "Scale is local" : "Use local object axes");
-        ImGui::PopStyleColor(3);
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, !local_mode ? ImVec4{0.28f, 0.44f, 0.66f, 0.46f} : ImVec4{0.02f, 0.025f, 0.030f, 0.16f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.36f, 0.56f, 0.82f, 0.56f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.42f, 0.66f, 0.96f, 0.66f});
-        if (ImGui::Button("World##ViewportGizmoWorld", ImVec2{70.0f, 24.0f})) this->gizmo.mode = GizmoMode::world;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(scale_operation ? "Scale is local" : "Use world axes");
-        ImGui::PopStyleColor(3);
-        ImGui::EndDisabled();
-        ImGui::End();
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar(3);
     }
 
     void Spectra::end_frame(FrameState& frame, Scene& scene) {
@@ -1257,7 +1739,7 @@ namespace xayah {
             if (present_modes.empty()) throw std::runtime_error("Surface has no present modes");
 
             if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined) {
-                this->swapchain.format      = vk::Format::eB8G8R8A8Srgb;
+                this->swapchain.format      = vk::Format::eB8G8R8A8Unorm;
                 this->swapchain.color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
             } else {
                 this->swapchain.format      = surface_formats.front().format;
@@ -1265,8 +1747,6 @@ namespace xayah {
 
                 bool selected = false;
                 constexpr std::array preferred_surface_formats{
-                    vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear},
-                    vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear},
                     vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
                     vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
                 };
@@ -1506,12 +1986,8 @@ namespace xayah {
                     ImGuiIO& io = ImGui::GetIO();
                     if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
                     if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-                    ImGui::StyleColorsDark();
-                    if (this->imgui.viewports) {
-                        ImGuiStyle& style                 = ImGui::GetStyle();
-                        style.WindowRounding              = 0.0f;
-                        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-                    }
+                    load_imgui_fonts();
+                    apply_imgui_style(this->imgui.viewports);
 
                     if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
                     glfw_backend_initialized = true;
@@ -1523,18 +1999,18 @@ namespace xayah {
                     pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
 
                     ImGui_ImplVulkan_InitInfo init_info{};
-                    init_info.ApiVersion                  = VK_API_VERSION_1_4;
-                    init_info.Instance                    = static_cast<VkInstance>(*this->context.instance);
-                    init_info.PhysicalDevice              = static_cast<VkPhysicalDevice>(*this->context.physical_device);
-                    init_info.Device                      = static_cast<VkDevice>(*this->context.device);
-                    init_info.QueueFamily                 = this->context.graphics_queue_index;
-                    init_info.Queue                       = static_cast<VkQueue>(*this->context.graphics_queue);
-                    init_info.DescriptorPool              = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
-                    init_info.MinImageCount               = this->imgui.min_image_count;
-                    init_info.ImageCount                  = this->imgui.image_count;
-                    init_info.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
-                    init_info.UseDynamicRendering         = true;
-                    init_info.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
+                    init_info.ApiVersion                                   = VK_API_VERSION_1_4;
+                    init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
+                    init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
+                    init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
+                    init_info.QueueFamily                                  = this->context.graphics_queue_index;
+                    init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
+                    init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
+                    init_info.MinImageCount                                = this->imgui.min_image_count;
+                    init_info.ImageCount                                   = this->imgui.image_count;
+                    init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
+                    init_info.UseDynamicRendering                          = true;
+                    init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
                     if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
                     vulkan_backend_initialized = true;
                     this->imgui.initialized    = true;
