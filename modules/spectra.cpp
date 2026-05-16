@@ -130,7 +130,7 @@ namespace {
         ViewportGridParameters parameters{};
         parameters.view_projection           = camera.view_projection(aspect, viewport_grid_far_clip);
         parameters.camera_position_far_clip  = {camera_position[0], camera_position[1], camera_position[2], viewport_grid_far_clip};
-        parameters.viewport_size_perspective = {viewport_size[0], viewport_size[1], 1.0f, 0.0f};
+        parameters.viewport_size_perspective = {viewport_size[0], viewport_size[1], camera.projection() == xayah::CameraProjection::perspective ? 1.0f : 0.0f, 0.0f};
         parameters.steps                     = steps;
         parameters.offset_clip_rect          = {floor_point[0], floor_point[2], clip_extent, clip_extent};
         parameters.level_num_lines           = {level, static_cast<float>(num_lines), 0.0f, 0.0f};
@@ -839,29 +839,65 @@ namespace xayah {
         const bool middle_mouse           = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
         const bool left_mouse             = ImGui::IsMouseDown(ImGuiMouseButton_Left);
         const bool shift                  = io.KeyShift;
+        const bool ctrl                   = io.KeyCtrl;
         const bool alt                    = io.KeyAlt;
 
         this->input.space_pressed = !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
         this->input.shift_down    = shift;
+        this->viewport.camera.update_animation(io.DeltaTime);
+        if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) this->viewport.camera.set_window_size({static_cast<std::uint32_t>(this->ui.viewport_size[0]), static_cast<std::uint32_t>(this->ui.viewport_size[1])});
         if (in_viewport && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_G, false)) this->viewport.show_grid = !this->viewport.show_grid;
         if (in_viewport && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_T, false)) this->ui.gizmo_visible = !this->ui.gizmo_visible;
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
 
-        CameraInput input{};
-        input.delta_seconds = io.DeltaTime;
-        input.mouse_delta_x = in_viewport ? io.MouseDelta.x : 0.0f;
-        input.mouse_delta_y = in_viewport ? io.MouseDelta.y : 0.0f;
-        input.mouse_wheel   = in_viewport ? io.MouseWheel : 0.0f;
-        input.orbit         = in_viewport && ((right_mouse && !shift) || (alt && left_mouse));
-        input.pan           = in_viewport && (middle_mouse || (right_mouse && shift));
-        input.fly           = in_viewport && right_mouse && !shift;
-        input.move_forward  = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_W);
-        input.move_backward = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_S);
-        input.move_left     = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_A);
-        input.move_right    = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_D);
-        input.move_up       = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_E);
-        input.move_down     = in_viewport && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_Q);
-        this->viewport.camera.update(input);
+        if (in_viewport && !io.WantTextInput) {
+            CameraInputs camera_inputs{};
+            camera_inputs.left_mouse   = left_mouse;
+            camera_inputs.middle_mouse = middle_mouse;
+            camera_inputs.right_mouse  = right_mouse;
+            camera_inputs.shift        = shift;
+            camera_inputs.ctrl         = ctrl;
+            camera_inputs.alt          = alt;
+
+            if (!alt) {
+                float key_motion = io.DeltaTime;
+                bool keyboard_camera_motion = false;
+                if (shift) key_motion *= 5.0f;
+                if (ctrl) key_motion *= 0.1f;
+                if (ImGui::IsKeyDown(ImGuiKey_W)) {
+                    this->viewport.camera.key_motion({key_motion, 0.0f}, CameraAction::dolly);
+                    keyboard_camera_motion = true;
+                }
+                if (ImGui::IsKeyDown(ImGuiKey_S)) {
+                    this->viewport.camera.key_motion({-key_motion, 0.0f}, CameraAction::dolly);
+                    keyboard_camera_motion = true;
+                }
+                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
+                    this->viewport.camera.key_motion({key_motion, 0.0f}, CameraAction::pan);
+                    keyboard_camera_motion = true;
+                }
+                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
+                    this->viewport.camera.key_motion({-key_motion, 0.0f}, CameraAction::pan);
+                    keyboard_camera_motion = true;
+                }
+                if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
+                    this->viewport.camera.key_motion({0.0f, key_motion}, CameraAction::pan);
+                    keyboard_camera_motion = true;
+                }
+                if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
+                    this->viewport.camera.key_motion({0.0f, -key_motion}, CameraAction::pan);
+                    keyboard_camera_motion = true;
+                }
+                if (keyboard_camera_motion) {
+                    camera_inputs.shift = false;
+                    camera_inputs.ctrl  = false;
+                }
+            }
+
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) this->viewport.camera.set_mouse_position({mouse_position.x, mouse_position.y});
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f)) static_cast<void>(this->viewport.camera.mouse_move({mouse_position.x, mouse_position.y}, camera_inputs));
+            if (io.MouseWheel != 0.0f) this->viewport.camera.wheel(io.MouseWheel * -10.0f, camera_inputs);
+        }
         return true;
     }
 
@@ -980,6 +1016,7 @@ namespace xayah {
         const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(viewport_b - viewport_y);
         const vk::Viewport vulkan_viewport{static_cast<float>(viewport_x), static_cast<float>(viewport_y), static_cast<float>(scene_viewport_width), static_cast<float>(scene_viewport_height), 0.0f, 1.0f};
         const vk::Rect2D scissor{{viewport_x, viewport_y}, {scene_viewport_width, scene_viewport_height}};
+        this->viewport.camera.set_window_size({scene_viewport_width, scene_viewport_height});
         const float aspect                          = static_cast<float>(scene_viewport_width) / static_cast<float>(scene_viewport_height);
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
@@ -1058,6 +1095,16 @@ namespace xayah {
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) scene.selection.object_id = 0;
         }
 
+        float fit_aspect = this->viewport.camera.aspect_ratio();
+        if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) fit_aspect = this->ui.viewport_size[0] / this->ui.viewport_size[1];
+        if (!io.WantTextInput && io.KeyCtrl && io.KeyShift && scene.object_count() != 0 && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            const BoundingBoxBounds bounds = scene.world_bounds();
+            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+        } else if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && scene.has_selection() && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            const BoundingBoxBounds bounds = scene.selected_world_bounds();
+            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+        }
+
         if (!ImGui::BeginMainMenuBar()) return;
 
         if (ImGui::BeginMenu("File")) {
@@ -1091,9 +1138,17 @@ namespace xayah {
 
         if (ImGui::BeginMenu("View")) {
             if (ImGui::MenuItem(ICON_MS_HOME " Reset Camera", "H")) this->viewport.camera.reset_home();
-            ImGui::BeginDisabled(true);
-            ImGui::MenuItem(ICON_MS_ZOOM_OUT " Fit Scene", "Ctrl+Shift+F");
-            ImGui::MenuItem(ICON_MS_ZOOM_IN " Fit Object", "Ctrl+F");
+            ImGui::BeginDisabled(scene.object_count() == 0);
+            if (ImGui::MenuItem(ICON_MS_ZOOM_OUT " Fit Scene", "Ctrl+Shift+F")) {
+                const BoundingBoxBounds bounds = scene.world_bounds();
+                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+            }
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!scene.has_selection());
+            if (ImGui::MenuItem(ICON_MS_ZOOM_IN " Fit Object", "Ctrl+F")) {
+                const BoundingBoxBounds bounds = scene.selected_world_bounds();
+                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, false, fit_aspect);
+            }
             ImGui::EndDisabled();
             ImGui::Separator();
             ImGui::MenuItem(ICON_MS_VIEW_IN_AR " 3D Axis", nullptr, &this->ui.axis_visible);
@@ -1317,17 +1372,59 @@ namespace xayah {
             return;
         }
 
-        const std::array<float, 3> position = this->viewport.camera.position();
-        const std::array<float, 3> right    = this->viewport.camera.right();
-        const std::array<float, 3> up       = this->viewport.camera.up();
-        if (ImGui::BeginTable("CameraTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
+        CameraState camera = this->viewport.camera.state();
+        const char* mode_label = "Examine";
+        if (this->viewport.camera.get_mode() == CameraMode::fly) mode_label = "Fly";
+        if (this->viewport.camera.get_mode() == CameraMode::walk) mode_label = "Walk";
+        if (ImGui::BeginCombo("Mode", mode_label)) {
+            const bool examine_selected = this->viewport.camera.get_mode() == CameraMode::examine;
+            if (ImGui::Selectable("Examine", examine_selected)) this->viewport.camera.set_mode(CameraMode::examine);
+            if (examine_selected) ImGui::SetItemDefaultFocus();
+            const bool fly_selected = this->viewport.camera.get_mode() == CameraMode::fly;
+            if (ImGui::Selectable("Fly", fly_selected)) this->viewport.camera.set_mode(CameraMode::fly);
+            if (fly_selected) ImGui::SetItemDefaultFocus();
+            const bool walk_selected = this->viewport.camera.get_mode() == CameraMode::walk;
+            if (ImGui::Selectable("Walk", walk_selected)) this->viewport.camera.set_mode(CameraMode::walk);
+            if (walk_selected) ImGui::SetItemDefaultFocus();
+            ImGui::EndCombo();
+        }
+
+        const char* projection_label = camera.projection == CameraProjection::perspective ? "Perspective" : "Orthographic";
+        if (ImGui::BeginCombo("Projection", projection_label)) {
+            const bool perspective_selected = camera.projection == CameraProjection::perspective;
+            if (ImGui::Selectable("Perspective", perspective_selected)) this->viewport.camera.set_projection(CameraProjection::perspective);
+            if (perspective_selected) ImGui::SetItemDefaultFocus();
+            const bool orthographic_selected = camera.projection == CameraProjection::orthographic;
+            if (ImGui::Selectable("Orthographic", orthographic_selected)) this->viewport.camera.set_projection(CameraProjection::orthographic);
+            if (orthographic_selected) ImGui::SetItemDefaultFocus();
+            ImGui::EndCombo();
+            camera = this->viewport.camera.state();
+        }
+
+        if (ImGui::InputFloat3("Eye", camera.eye.data(), "%.3f")) this->viewport.camera.set_lookat(camera.eye, this->viewport.camera.state().center, this->viewport.camera.state().up, true);
+        camera = this->viewport.camera.state();
+        if (ImGui::InputFloat3("Center", camera.center.data(), "%.3f")) this->viewport.camera.set_lookat(this->viewport.camera.state().eye, camera.center, this->viewport.camera.state().up, true);
+        camera = this->viewport.camera.state();
+        if (ImGui::InputFloat3("Up", camera.up.data(), "%.3f")) this->viewport.camera.set_lookat(this->viewport.camera.state().eye, this->viewport.camera.state().center, camera.up, true);
+        camera = this->viewport.camera.state();
+        if (ImGui::SliderFloat("FOV", &camera.fov_degrees, 0.01f, 179.0f, "%.2f deg")) this->viewport.camera.set_fov(camera.fov_degrees);
+        camera = this->viewport.camera.state();
+        if (ImGui::InputFloat2("Clip", camera.near_far.data(), "%.4f")) this->viewport.camera.set_clip_planes(camera.near_far);
+        camera = this->viewport.camera.state();
+        ImGui::BeginDisabled(camera.projection != CameraProjection::orthographic);
+        if (ImGui::InputFloat2("Ortho Size", camera.orthographic_magnitudes.data(), "%.3f")) this->viewport.camera.set_orthographic_magnitudes(camera.orthographic_magnitudes);
+        ImGui::EndDisabled();
+
+        float speed = this->viewport.camera.get_speed();
+        if (ImGui::DragFloat("Speed", &speed, 0.01f, 0.001f, 1000.0f, "%.3f")) this->viewport.camera.set_speed(speed);
+        float duration = this->viewport.camera.get_animation_duration();
+        if (ImGui::DragFloat("Animation", &duration, 0.01f, 0.0f, 10.0f, "%.3f s")) this->viewport.camera.set_animation_duration(duration);
+
+        const std::array<float, 3> right = this->viewport.camera.right();
+        const std::array<float, 3> up    = this->viewport.camera.up();
+        if (ImGui::BeginTable("CameraBasisTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 96.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Position");
-            ImGui::TableNextColumn();
-            ImGui::Text("%.3f, %.3f, %.3f", position[0], position[1], position[2]);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextUnformatted("Right");
@@ -1335,9 +1432,14 @@ namespace xayah {
             ImGui::Text("%.3f, %.3f, %.3f", right[0], right[1], right[2]);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Up");
+            ImGui::TextUnformatted("View Up");
             ImGui::TableNextColumn();
             ImGui::Text("%.3f, %.3f, %.3f", up[0], up[1], up[2]);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Distance");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f", this->viewport.camera.distance_to_center());
             ImGui::EndTable();
         }
         if (ImGui::Button(ICON_MS_HOME " Reset Camera")) this->viewport.camera.reset_home();
@@ -1718,7 +1820,7 @@ namespace xayah {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::Begin("Viewport Gizmo", nullptr, gizmo_window_flags);
 
-        ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetOrthographic(this->viewport.camera.orthographic());
         ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
         ImGuizmo::SetRect(this->ui.viewport_position[0], this->ui.viewport_position[1], gizmo_width, gizmo_height);
 

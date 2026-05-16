@@ -28,6 +28,38 @@ namespace {
         if (kind == xayah::SceneObjectKind::particles) return "Particles";
         throw std::runtime_error("Unsupported scene object kind label");
     }
+
+    xayah::BoundingBoxBounds transformed_bounds(const xayah::Transform& transform, const xayah::BoundingBoxBounds& bounds) {
+        const std::array<float, 16> matrix = xayah::transform_matrix(transform);
+        bool initialized                  = false;
+        xayah::BoundingBoxBounds result{};
+        for (std::uint32_t corner = 0; corner < 8; ++corner) {
+            const std::array<float, 3> local_point{
+                (corner & 1u) != 0u ? bounds.maximum[0] : bounds.minimum[0],
+                (corner & 2u) != 0u ? bounds.maximum[1] : bounds.minimum[1],
+                (corner & 4u) != 0u ? bounds.maximum[2] : bounds.minimum[2],
+            };
+            const std::array<float, 3> world_point = xayah::transform_point(matrix, local_point);
+            if (!initialized) {
+                result      = {world_point, world_point};
+                initialized = true;
+                continue;
+            }
+            for (std::uint32_t axis = 0; axis < 3; ++axis) {
+                if (world_point[axis] < result.minimum[axis]) result.minimum[axis] = world_point[axis];
+                if (world_point[axis] > result.maximum[axis]) result.maximum[axis] = world_point[axis];
+            }
+        }
+        if (!initialized) throw std::runtime_error("Cannot transform empty scene bounds");
+        return result;
+    }
+
+    void expand_bounds(xayah::BoundingBoxBounds& result, const xayah::BoundingBoxBounds& value) {
+        for (std::uint32_t axis = 0; axis < 3; ++axis) {
+            if (value.minimum[axis] < result.minimum[axis]) result.minimum[axis] = value.minimum[axis];
+            if (value.maximum[axis] > result.maximum[axis]) result.maximum[axis] = value.maximum[axis];
+        }
+    }
 } // namespace
 
 namespace xayah {
@@ -195,6 +227,28 @@ namespace xayah {
     bool Scene::selected_object_visible() const {
         const SceneObjectRef reference = this->selected_object_ref();
         return std::visit([](const auto& object) { return object.visible; }, this->objects.at(reference.index));
+    }
+
+    BoundingBoxBounds Scene::world_bounds() const {
+        if (this->objects.empty()) throw std::runtime_error("Cannot fit camera to an empty scene");
+        bool initialized{};
+        BoundingBoxBounds result{};
+        for (const std::variant<Volume, Mesh, Particles>& object : this->objects) {
+            const BoundingBoxBounds object_bounds = std::visit([](const auto& value) { return transformed_bounds(value.transform, value.bounds()); }, object);
+            if (!initialized) {
+                result      = object_bounds;
+                initialized = true;
+            } else {
+                expand_bounds(result, object_bounds);
+            }
+        }
+        if (!initialized) throw std::runtime_error("Cannot fit camera to an empty scene");
+        return result;
+    }
+
+    BoundingBoxBounds Scene::selected_world_bounds() const {
+        const SceneObjectRef reference = this->selected_object_ref();
+        return std::visit([](const auto& object) { return transformed_bounds(object.transform, object.bounds()); }, this->objects.at(reference.index));
     }
 
     Transform& Scene::object_transform(const std::uint64_t object_id) {

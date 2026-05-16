@@ -61,6 +61,8 @@ namespace xayah {
         void select_object(std::uint64_t object_id);
         [[nodiscard]] bool has_selection() const;
         [[nodiscard]] bool selected_object_visible() const;
+        [[nodiscard]] BoundingBoxBounds world_bounds() const;
+        [[nodiscard]] BoundingBoxBounds selected_world_bounds() const;
         [[nodiscard]] Transform& object_transform(std::uint64_t object_id);
         [[nodiscard]] const Transform& object_transform(std::uint64_t object_id) const;
         [[nodiscard]] Transform& selected_transform();
