@@ -47,6 +47,7 @@ namespace xayah {
 
         void render_loop(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer);
         void update_scene_frame_session(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer, float delta_seconds);
+        void update_window_title(float delta_seconds);
         void draw_main_menu(Scene& scene);
         void draw_menu_toolbar(Scene& scene);
         void draw_dockspace();
@@ -85,6 +86,12 @@ namespace xayah {
             bool resize_requested{false};
             bool glfw_initialized{false};
         } surface;
+
+        struct {
+            std::string base{"Spectra"};
+            float refresh_timer{0.0f};
+            std::uint64_t frame_count{0};
+        } window_title;
 
         struct {
             vk::raii::SwapchainKHR handle{nullptr};

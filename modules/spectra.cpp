@@ -245,6 +245,9 @@ namespace xayah {
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
+        const std::string app_name_string{app_name};
+        const std::string engine_name_string{engine_name};
+        this->window_title.base = app_name_string;
 
         constexpr std::array<const char*, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
         constexpr std::array enabled_device_extensions{vk::KHRSwapchainExtensionName, vk::KHRLineRasterizationExtensionName};
@@ -267,9 +270,9 @@ namespace xayah {
             }
 
             const vk::ApplicationInfo application_info{
-                std::string{app_name}.c_str(),
+                app_name_string.c_str(),
                 VK_MAKE_VERSION(1, 0, 0),
-                std::string{engine_name}.c_str(),
+                engine_name_string.c_str(),
                 VK_MAKE_VERSION(1, 0, 0),
                 vk::ApiVersion14,
             };
@@ -296,7 +299,7 @@ namespace xayah {
             if (window_width == 0 || window_height == 0 || window_width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || window_height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Invalid GLFW window resolution");
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
             glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-            this->surface.window = std::shared_ptr<GLFWwindow>{glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), std::string{app_name}.c_str(), nullptr, nullptr), [](GLFWwindow* window) { glfwDestroyWindow(window); }};
+            this->surface.window = std::shared_ptr<GLFWwindow>{glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr), [](GLFWwindow* window) { glfwDestroyWindow(window); }};
             if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
             glfwSetWindowUserPointer(this->surface.window.get(), this);
             glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
@@ -794,6 +797,29 @@ namespace xayah {
                 this->applied_record_frame = this->timeline.current_frame;
             }
         }
+    }
+
+    void Spectra::update_window_title(const float delta_seconds) {
+        if (this->surface.window == nullptr) throw std::runtime_error("Cannot update window title without a GLFW window");
+
+        ++this->window_title.frame_count;
+        this->window_title.refresh_timer += delta_seconds;
+        if (this->window_title.refresh_timer <= 1.0f) return;
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.Framerate <= 0.0f) return;
+
+        std::uint32_t width  = this->swapchain.extent.width;
+        std::uint32_t height = this->swapchain.extent.height;
+        if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) {
+            width  = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[0])));
+            height = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[1])));
+        }
+
+        const char* renderer_label = this->renderer.mode == RendererMode::preview ? "Preview" : "pbrt Path Tracer";
+        const std::string title    = std::format("{} - {} | {} | {}x{} | {:.0f} FPS / {:.3f}ms | Frame {}", this->window_title.base, renderer_label, this->session.mode_label, width, height, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
+        glfwSetWindowTitle(this->surface.window.get(), title.c_str());
+        this->window_title.refresh_timer = 0.0f;
     }
 
     bool Spectra::begin_frame(FrameState& frame, Scene& scene) {
@@ -1865,26 +1891,35 @@ namespace xayah {
         const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
         const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
         const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
+        bool frame_presented = true;
         try {
             if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
                 frame.recreate_after_present = true;
-            else if (present_result == vk::Result::eErrorSurfaceLostKHR)
+            else if (present_result == vk::Result::eErrorSurfaceLostKHR) {
                 frame.recreate_after_present = true;
+                frame_presented              = false;
+            }
             else if (present_result != vk::Result::eSuccess)
                 throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
         } catch (const vk::OutOfDateKHRError&) {
             frame.recreate_after_present = true;
+            frame_presented              = false;
         } catch (const vk::SystemError& error) {
-            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
+            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR)) {
                 frame.recreate_after_present = true;
+                frame_presented              = false;
+            }
             else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
                 frame.recreate_after_present = true;
-            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
+            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR)) {
                 frame.recreate_after_present = true;
+                frame_presented              = false;
+            }
             else
                 throw;
         }
         if (frame.recreate_after_present) this->recreate_swapchain(scene);
+        if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
