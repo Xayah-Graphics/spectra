@@ -78,6 +78,13 @@ namespace {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
     }
 
+    [[nodiscard]] const char* pbrt_backend_label(const xayah::PbrtPathTraceBackend backend) {
+        if (backend == xayah::PbrtPathTraceBackend::cpu) return "CPU";
+        if (backend == xayah::PbrtPathTraceBackend::wavefront) return "Wavefront";
+        if (backend == xayah::PbrtPathTraceBackend::gpu) return "GPU";
+        throw std::runtime_error("Unknown PBRT backend");
+    }
+
     struct ViewportGridPushConstants {
         std::uint32_t grid_flag{0};
     };
@@ -1516,31 +1523,6 @@ namespace xayah {
         ImGui::Separator();
         ImGui::Checkbox("Gizmo", &this->ui.gizmo_visible);
         ImGui::Checkbox("3D Axis", &this->ui.axis_visible);
-        ImGui::Separator();
-        const char* backend_label = "CPU";
-        if (this->renderer.backend == PbrtPathTraceBackend::wavefront) backend_label = "Wavefront";
-        if (this->renderer.backend == PbrtPathTraceBackend::gpu) backend_label = "GPU";
-        if (ImGui::CollapsingHeader("Path Tracer", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::BeginCombo("Backend", backend_label)) {
-                const bool cpu_selected = this->renderer.backend == PbrtPathTraceBackend::cpu;
-                if (ImGui::Selectable("CPU", cpu_selected)) this->renderer.backend = PbrtPathTraceBackend::cpu;
-                if (cpu_selected) ImGui::SetItemDefaultFocus();
-                const bool wavefront_selected = this->renderer.backend == PbrtPathTraceBackend::wavefront;
-                if (ImGui::Selectable("Wavefront", wavefront_selected)) this->renderer.backend = PbrtPathTraceBackend::wavefront;
-                if (wavefront_selected) ImGui::SetItemDefaultFocus();
-                const bool gpu_selected = this->renderer.backend == PbrtPathTraceBackend::gpu;
-                if (ImGui::Selectable("GPU", gpu_selected)) this->renderer.backend = PbrtPathTraceBackend::gpu;
-                if (gpu_selected) ImGui::SetItemDefaultFocus();
-                ImGui::EndCombo();
-            }
-            ImGui::InputInt2("Resolution", this->renderer.resolution.data());
-            ImGui::InputInt("SPP", &this->renderer.samples_per_pixel);
-            ImGui::InputInt("Threads", &this->renderer.thread_count);
-            ImGui::InputText("Output", this->renderer.output_path.data(), this->renderer.output_path.size());
-            if (this->renderer.resolution[0] <= 0 || this->renderer.resolution[1] <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "Resolution must stay positive");
-            if (this->renderer.samples_per_pixel <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "SPP must stay positive");
-            if (this->renderer.thread_count <= 0) ImGui::TextColored(ImVec4{0.95f, 0.52f, 0.42f, 1.0f}, "Thread count must stay positive");
-        }
         ImGui::End();
     }
 
@@ -1570,7 +1552,35 @@ namespace xayah {
             ImGui::End();
             return;
         }
+        if (ImGui::CollapsingHeader("PBRT Final Render", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::BeginCombo("Backend", pbrt_backend_label(this->renderer.backend))) {
+                const bool cpu_selected = this->renderer.backend == PbrtPathTraceBackend::cpu;
+                if (ImGui::Selectable("CPU", cpu_selected)) this->renderer.backend = PbrtPathTraceBackend::cpu;
+                if (cpu_selected) ImGui::SetItemDefaultFocus();
+                const bool wavefront_selected = this->renderer.backend == PbrtPathTraceBackend::wavefront;
+                if (ImGui::Selectable("Wavefront", wavefront_selected)) this->renderer.backend = PbrtPathTraceBackend::wavefront;
+                if (wavefront_selected) ImGui::SetItemDefaultFocus();
+                const bool gpu_selected = this->renderer.backend == PbrtPathTraceBackend::gpu;
+                if (ImGui::Selectable("GPU", gpu_selected)) this->renderer.backend = PbrtPathTraceBackend::gpu;
+                if (gpu_selected) ImGui::SetItemDefaultFocus();
+                ImGui::EndCombo();
+            }
+            ImGui::InputInt2("Resolution", this->renderer.resolution.data());
+            ImGui::InputInt("SPP", &this->renderer.samples_per_pixel);
+            ImGui::InputInt("Threads", &this->renderer.thread_count);
+            ImGui::InputText("Output", this->renderer.output_path.data(), this->renderer.output_path.size());
+        }
+        ImGui::Separator();
         if (ImGui::Button(ICON_MS_AUTO_AWESOME " Render PBRT")) {
+            this->render_output.has_result             = true;
+            this->render_output.last_backend           = this->renderer.backend;
+            this->render_output.last_resolution        = this->renderer.resolution;
+            this->render_output.last_samples_per_pixel = this->renderer.samples_per_pixel;
+            this->render_output.last_thread_count      = this->renderer.thread_count;
+            this->render_output.last_seconds           = 0.0;
+            this->render_output.last_output_path       = this->renderer.output_path.data();
+            this->render_output.status                 = "Rendering";
+            this->render_output.message                = "PBRT render is running";
             try {
                 PbrtRenderSettings settings{};
                 settings.resolution        = this->renderer.resolution;
@@ -1578,17 +1588,17 @@ namespace xayah {
                 settings.thread_count      = this->renderer.thread_count;
                 settings.backend           = this->renderer.backend;
                 settings.output_path       = this->renderer.output_path;
-                this->render_output.status = "Rendering";
                 PbrtRenderResult result    = document.render_final(settings);
-                this->render_output.status = result.success ? "Complete" : "Failed";
-                this->render_output.error  = std::format("{} ({:.3f}s)", result.message, result.seconds);
+                this->render_output.last_seconds     = result.seconds;
+                this->render_output.last_output_path = result.output_path;
+                this->render_output.status           = result.success ? "Complete" : "Failed";
+                this->render_output.message          = result.message;
             } catch (const std::exception& error) {
-                this->render_output.status = "Failed";
-                this->render_output.error  = error.what();
+                this->render_output.status  = "Failed";
+                this->render_output.message = error.what();
             }
         }
         ImGui::Separator();
-        const char* mode_label = this->renderer.mode == RendererMode::preview ? "Vulkan preview" : "pbrt path tracer";
         if (ImGui::BeginTable("RenderOutputTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 112.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
@@ -1599,19 +1609,41 @@ namespace xayah {
             ImGui::TextColored(ImVec4{0.58f, 0.76f, 0.96f, 1.0f}, "%s", this->render_output.status.c_str());
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Mode");
+            ImGui::TextUnformatted("Backend");
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(mode_label);
+            ImGui::TextUnformatted(this->render_output.has_result ? pbrt_backend_label(this->render_output.last_backend) : pbrt_backend_label(this->renderer.backend));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Resolution");
+            ImGui::TableNextColumn();
+            const std::array<int, 2> resolution = this->render_output.has_result ? this->render_output.last_resolution : this->renderer.resolution;
+            ImGui::Text("%d x %d", resolution[0], resolution[1]);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("SPP");
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", this->render_output.has_result ? this->render_output.last_samples_per_pixel : this->renderer.samples_per_pixel);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Threads");
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", this->render_output.has_result ? this->render_output.last_thread_count : this->renderer.thread_count);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextUnformatted("Output");
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", this->renderer.output_path.data());
+            ImGui::TextDisabled("%s", this->render_output.has_result ? this->render_output.last_output_path.c_str() : this->renderer.output_path.data());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Seconds");
+            ImGui::TableNextColumn();
+            if (this->render_output.has_result) ImGui::Text("%.3f", this->render_output.last_seconds); else ImGui::TextDisabled("-");
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextUnformatted("Message");
             ImGui::TableNextColumn();
-            ImGui::TextColored(ImVec4{0.95f, 0.62f, 0.42f, 1.0f}, "%s", this->render_output.error.c_str());
+            const ImVec4 message_color = this->render_output.status == "Failed" ? ImVec4{0.95f, 0.52f, 0.42f, 1.0f} : ImVec4{0.58f, 0.76f, 0.96f, 1.0f};
+            ImGui::TextColored(message_color, "%s", this->render_output.message.c_str());
             ImGui::EndTable();
         }
         ImGui::End();

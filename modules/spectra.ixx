@@ -212,7 +212,14 @@ namespace xayah {
 
         struct {
             std::string status{"Idle"};
-            std::string error{"Ready"};
+            std::string message{"Ready"};
+            bool has_result{false};
+            PbrtPathTraceBackend last_backend{PbrtPathTraceBackend::cpu};
+            std::array<int, 2> last_resolution{0, 0};
+            int last_samples_per_pixel{0};
+            int last_thread_count{0};
+            double last_seconds{0.0};
+            std::string last_output_path{};
         } render_output;
 
         struct {
