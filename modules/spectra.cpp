@@ -18,6 +18,8 @@ module;
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
 
+#include <pbrt/util/image.h>
+
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import camera;
@@ -85,6 +87,40 @@ namespace {
         throw std::runtime_error("Unknown PBRT backend");
     }
 
+    [[nodiscard]] std::uint32_t find_memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
+        const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
+        for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            const bool supported = (memory_type_bits & (1u << index)) != 0;
+            const bool matching  = (memory_properties.memoryTypes[index].propertyFlags & required_properties) == required_properties;
+            if (supported && matching) return index;
+        }
+        throw std::runtime_error("No matching Vulkan memory type");
+    }
+
+    [[nodiscard]] std::string lowercase_ascii(std::string text) {
+        for (char& character : text) {
+            if (character >= 'A' && character <= 'Z') character = static_cast<char>(character - 'A' + 'a');
+        }
+        return text;
+    }
+
+    [[nodiscard]] bool render_output_extension_supported(const std::string& extension) {
+        return extension == ".exr" || extension == ".png" || extension == ".pfm" || extension == ".hdr" || extension == ".qoi";
+    }
+
+    [[nodiscard]] std::uint8_t linear_channel_to_byte(float value) {
+        if (!std::isfinite(value)) value = 0.0f;
+        value = std::clamp(value, 0.0f, 1.0f);
+        value = std::pow(value, 1.0f / 2.2f);
+        return static_cast<std::uint8_t>(std::clamp(std::lround(value * 255.0f), 0l, 255l));
+    }
+
+    [[nodiscard]] std::uint8_t alpha_channel_to_byte(float value) {
+        if (!std::isfinite(value)) value = 1.0f;
+        value = std::clamp(value, 0.0f, 1.0f);
+        return static_cast<std::uint8_t>(std::clamp(std::lround(value * 255.0f), 0l, 255l));
+    }
+
     struct ViewportGridPushConstants {
         std::uint32_t grid_flag{0};
     };
@@ -109,6 +145,87 @@ namespace {
 
     [[nodiscard]] std::array<float, 3> multiply_vector(const std::array<float, 3>& vector, const float value) {
         return {vector[0] * value, vector[1] * value, vector[2] * value};
+    }
+
+    [[nodiscard]] std::array<float, 3> add_vector(const std::array<float, 3>& left, const std::array<float, 3>& right) {
+        return {left[0] + right[0], left[1] + right[1], left[2] + right[2]};
+    }
+
+    [[nodiscard]] std::array<float, 3> cross_vector(const std::array<float, 3>& left, const std::array<float, 3>& right) {
+        return {
+            left[1] * right[2] - left[2] * right[1],
+            left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0],
+        };
+    }
+
+    [[nodiscard]] std::array<float, 3> normalize_vector(const std::array<float, 3>& value) {
+        const float length = std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+        if (length <= 0.000001f) throw std::runtime_error("Cannot normalize a zero-length vector");
+        return {value[0] / length, value[1] / length, value[2] / length};
+    }
+
+    [[nodiscard]] float pbrt_float_parameter(const std::vector<xayah::PbrtParameter>& parameters, const std::string_view name, const float default_value) {
+        for (const xayah::PbrtParameter& parameter : parameters) {
+            if (parameter.name == name && !parameter.floats.empty()) return parameter.floats.front();
+            if (parameter.name == name && !parameter.ints.empty()) return static_cast<float>(parameter.ints.front());
+        }
+        return default_value;
+    }
+
+    [[nodiscard]] xayah::PbrtParameter* find_pbrt_parameter(std::vector<xayah::PbrtParameter>& parameters, const std::string_view name) {
+        for (xayah::PbrtParameter& parameter : parameters) {
+            if (parameter.name == name) return &parameter;
+        }
+        return nullptr;
+    }
+
+    xayah::PbrtParameter& ensure_pbrt_float_parameter(xayah::PbrtElement& element, const std::string_view type, const std::string_view name, const std::size_t count, const float value) {
+        xayah::PbrtParameter* parameter = find_pbrt_parameter(element.parameters, name);
+        if (parameter == nullptr) {
+            xayah::PbrtParameter created{};
+            created.type = std::string{type};
+            created.name = std::string{name};
+            created.floats.assign(count, value);
+            element.parameters.push_back(std::move(created));
+            return element.parameters.back();
+        }
+        parameter->type = std::string{type};
+        parameter->floats.assign(count, value);
+        parameter->ints.clear();
+        parameter->strings.clear();
+        parameter->bools.clear();
+        return *parameter;
+    }
+
+    [[nodiscard]] std::array<float, 16> viewport_camera_to_pbrt_camera_transform(const xayah::CameraState& camera) {
+        const std::array<float, 3> eye = camera.eye;
+        const std::array<float, 3> forward = normalize_vector(subtract_vector(camera.center, camera.eye));
+        const std::array<float, 3> right = normalize_vector(cross_vector(normalize_vector(camera.up), forward));
+        const std::array<float, 3> up = cross_vector(forward, right);
+        return {
+            right[0],
+            right[1],
+            right[2],
+            0.0f,
+            up[0],
+            up[1],
+            up[2],
+            0.0f,
+            forward[0],
+            forward[1],
+            forward[2],
+            0.0f,
+            eye[0],
+            eye[1],
+            eye[2],
+            1.0f,
+        };
+    }
+
+    [[nodiscard]] std::string pbrt_element_combo_label(const xayah::PbrtElement& element) {
+        if (element.detail.empty()) return std::format("{} #{}", element.name, element.id);
+        return std::format("{}  {}  #{}", element.name, element.detail, element.id);
     }
 
     [[nodiscard]] float viewport_grid_distance_to_floor(const std::array<float, 3>& camera_position, const std::array<float, 3>& view_forward) {
@@ -635,11 +752,13 @@ namespace xayah {
     }
 
     Spectra::~Spectra() noexcept {
+        this->join_render_output_job();
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
         }
 
+        this->destroy_render_output_image();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -682,7 +801,7 @@ namespace xayah {
     void Spectra::render_loop(PbrtDocument& document) {
         document.validate();
 
-        const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
+        const RenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
         document.create_render_resources(render_create_context);
         try {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
@@ -692,9 +811,11 @@ namespace xayah {
                 this->end_frame(frame, document);
             }
 
+            this->join_render_output_job();
             this->context.device.waitIdle();
             document.destroy_render_resources();
         } catch (...) {
+            this->join_render_output_job();
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
@@ -704,7 +825,7 @@ namespace xayah {
         }
     }
 
-    void Spectra::update_window_title(const float delta_seconds) {
+    void Spectra::update_window_title(const float delta_seconds, const PbrtDocument& document) {
         if (this->surface.window == nullptr) throw std::runtime_error("Cannot update window title without a GLFW window");
 
         ++this->window_title.frame_count;
@@ -721,8 +842,10 @@ namespace xayah {
             height = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[1])));
         }
 
-        const char* renderer_label = this->renderer.mode == RendererMode::preview ? "Preview" : "pbrt Path Tracer";
-        const std::string title    = std::format("{} - {} | {} | {}x{} | {:.0f} FPS / {:.3f}ms | Frame {}", this->window_title.base, renderer_label, this->session.mode_label, width, height, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
+        const char* renderer_label = this->renderer.mode == RendererMode::path_tracer ? "pbrt Path Tracer" : "Debug Overlay";
+        const PbrtDocumentStats stats = document.stats();
+        const std::string scene_label = document.path().empty() ? "Default PBRT" : document.path().filename().string();
+        const std::string title = std::format("{} - {} | {} | {} | {} | {}x{} | C{} L{} M{} T{} | Obj {} Tri {} | {:.0f} FPS / {:.3f}ms | Frame {}", this->window_title.base, scene_label, renderer_label, this->render_output.status, this->session.mode_label, width, height, stats.cameras, stats.lights, stats.materials, stats.textures, stats.preview_instances, stats.preview_triangles, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
     }
@@ -833,6 +956,7 @@ namespace xayah {
     }
 
     void Spectra::record_frame(const FrameState& frame, PbrtDocument& document) {
+        this->poll_render_output_job();
         if (this->timeline.visible) {
             if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
             if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
@@ -843,8 +967,10 @@ namespace xayah {
         this->draw_main_menu(document);
         this->draw_dockspace();
         this->draw_viewport_window();
-        this->draw_camera_window();
+        this->draw_camera_window(document);
         this->draw_scene_browser(document);
+        this->draw_light_window(document);
+        this->draw_material_window(document);
         this->draw_settings_window();
         this->draw_grid_settings_window();
         this->draw_render_output(document);
@@ -964,8 +1090,8 @@ namespace xayah {
 
         command_buffer.setViewport(0, vulkan_viewport);
         command_buffer.setScissor(0, scissor);
-        const SceneRenderFrameContext scene_render_context{&this->context.physical_device, &this->context.device, &command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up};
-        document.render(scene_render_context);
+        const RenderFrameContext render_frame_context{&this->context.physical_device, &this->context.device, &command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up};
+        document.render(render_frame_context);
 
         if (this->viewport.show_grid) {
             if (!*this->viewport.pipeline_layout || !*this->viewport.grid_pipeline || !*this->viewport.axis_pipeline) throw std::runtime_error("Viewport grid pipeline is not initialized");
@@ -1026,10 +1152,12 @@ namespace xayah {
         if (!io.WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.scene_browser_visible = !this->ui.scene_browser_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.settings_visible = !this->ui.settings_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.inspector_visible = !this->ui.inspector_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.environment_visible = !this->ui.environment_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.light_visible = !this->ui.light_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.material_visible = !this->ui.material_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.settings_visible = !this->ui.settings_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) this->ui.inspector_visible = !this->ui.inspector_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F7, false)) this->ui.environment_visible = !this->ui.environment_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F8, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) document.clear_selection();
         }
 
@@ -1085,10 +1213,12 @@ namespace xayah {
         if (ImGui::BeginMenu("Windows")) {
             ImGui::MenuItem(ICON_MS_PHOTO_CAMERA " Camera", "F1", &this->ui.camera_visible);
             ImGui::MenuItem(ICON_MS_ACCOUNT_TREE " Scene Browser", "F2", &this->ui.scene_browser_visible);
-            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F3", &this->ui.settings_visible);
-            ImGui::MenuItem(ICON_MS_LIST_ALT " Inspector", "F4", &this->ui.inspector_visible);
-            ImGui::MenuItem(ICON_MS_PUBLIC " Environment", "F5", &this->ui.environment_visible);
-            ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F6", &this->ui.tonemapper_visible);
+            ImGui::MenuItem(ICON_MS_LIGHTBULB " Lights", "F3", &this->ui.light_visible);
+            ImGui::MenuItem(ICON_MS_PALETTE " Materials", "F4", &this->ui.material_visible);
+            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F5", &this->ui.settings_visible);
+            ImGui::MenuItem(ICON_MS_LIST_ALT " Inspector", "F6", &this->ui.inspector_visible);
+            ImGui::MenuItem(ICON_MS_PUBLIC " Environment", "F7", &this->ui.environment_visible);
+            ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F8", &this->ui.tonemapper_visible);
             ImGui::Separator();
             ImGui::MenuItem(ICON_MS_MONITORING " Render Output", nullptr, &this->ui.render_output_visible);
             ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", nullptr, &this->ui.statistics_visible);
@@ -1097,10 +1227,10 @@ namespace xayah {
         }
 
         if (ImGui::BeginMenu("Render")) {
-            const bool preview_selected = this->renderer.mode == RendererMode::preview;
             const bool path_selected    = this->renderer.mode == RendererMode::path_tracer;
-            if (ImGui::MenuItem(ICON_MS_IMAGE " Preview", nullptr, preview_selected)) this->renderer.mode = RendererMode::preview;
+            const bool overlay_selected = this->renderer.mode == RendererMode::debug_overlay;
             if (ImGui::MenuItem(ICON_MS_AUTO_AWESOME " Path Trace", nullptr, path_selected)) this->renderer.mode = RendererMode::path_tracer;
+            if (ImGui::MenuItem(ICON_MS_IMAGE " Debug Overlay", nullptr, overlay_selected)) this->renderer.mode = RendererMode::debug_overlay;
             ImGui::EndMenu();
         }
 
@@ -1116,13 +1246,15 @@ namespace xayah {
             const char* tooltip;
         };
 
-        const std::array<ToggleButton, 6> window_toggles{{
+        const std::array<ToggleButton, 8> window_toggles{{
             {ICON_MS_PHOTO_CAMERA, "F1", &this->ui.camera_visible, "Camera"},
             {ICON_MS_ACCOUNT_TREE, "F2", &this->ui.scene_browser_visible, "Scene Browser"},
-            {ICON_MS_SETTINGS, "F3", &this->ui.settings_visible, "Settings"},
-            {ICON_MS_LIST_ALT, "F4", &this->ui.inspector_visible, "Inspector"},
-            {ICON_MS_PUBLIC, "F5", &this->ui.environment_visible, "Environment"},
-            {ICON_MS_TONALITY, "F6", &this->ui.tonemapper_visible, "Tonemapper"},
+            {ICON_MS_LIGHTBULB, "F3", &this->ui.light_visible, "Lights"},
+            {ICON_MS_PALETTE, "F4", &this->ui.material_visible, "Materials"},
+            {ICON_MS_SETTINGS, "F5", &this->ui.settings_visible, "Settings"},
+            {ICON_MS_LIST_ALT, "F6", &this->ui.inspector_visible, "Inspector"},
+            {ICON_MS_PUBLIC, "F7", &this->ui.environment_visible, "Environment"},
+            {ICON_MS_TONALITY, "F8", &this->ui.tonemapper_visible, "Tonemapper"},
         }};
         const std::array<ToggleButton, 4> viewport_toggles{{
             {ICON_MS_GRID_ON, "G", &this->viewport.show_grid, "Grid"},
@@ -1164,18 +1296,18 @@ namespace xayah {
 
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
-        const bool preview_mode = this->renderer.mode == RendererMode::preview;
-        ImGui::PushStyleColor(ImGuiCol_Button, preview_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button(ICON_MS_IMAGE, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::preview;
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preview renderer");
-        ImGui::SameLine(0.0f, 2.0f);
-
         const bool path_mode = this->renderer.mode == RendererMode::path_tracer;
         ImGui::PushStyleColor(ImGuiCol_Button, path_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
         if (ImGui::Button(ICON_MS_AUTO_AWESOME, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::path_tracer;
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("pbrt path tracer");
+        ImGui::SameLine(0.0f, 2.0f);
+
+        const bool overlay_mode = this->renderer.mode == RendererMode::debug_overlay;
+        ImGui::PushStyleColor(ImGuiCol_Button, overlay_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+        if (ImGui::Button(ICON_MS_IMAGE, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::debug_overlay;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Debug overlay");
 
         if (!document.has_selection() || !document.selected_element().visible) return;
         ImGui::SameLine();
@@ -1229,6 +1361,8 @@ namespace xayah {
         ImGui::DockBuilderDockWindow("Tonemapper", left_bottom_id);
         ImGui::DockBuilderDockWindow("Environment", left_bottom_id);
         ImGui::DockBuilderDockWindow("Scene Browser", right_id);
+        ImGui::DockBuilderDockWindow("Lights", right_id);
+        ImGui::DockBuilderDockWindow("Materials", right_id);
         ImGui::DockBuilderDockWindow("Inspector", inspector_id);
         ImGui::DockBuilderDockWindow("Render Output", bottom_id);
         ImGui::DockBuilderDockWindow("Statistics", bottom_id);
@@ -1262,7 +1396,7 @@ namespace xayah {
         ImGui::PopStyleVar();
     }
 
-    void Spectra::draw_camera_window() {
+    void Spectra::draw_camera_window(PbrtDocument& document) {
         if (!this->ui.camera_visible) return;
         if (!ImGui::Begin("Camera", &this->ui.camera_visible)) {
             ImGui::End();
@@ -1272,13 +1406,17 @@ namespace xayah {
         CameraState camera   = this->viewport.camera.state();
         bool changed         = false;
         bool instant_changed = false;
-        this->draw_camera_quick_actions(camera);
-        this->draw_camera_navigation();
-        ImGui::Separator();
-        instant_changed |= this->draw_camera_projection(camera);
-        changed |= this->draw_camera_position(camera);
-        changed |= this->draw_camera_other(camera);
+        if (ImGui::CollapsingHeader("Viewport Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+            this->draw_camera_quick_actions(camera);
+            this->draw_camera_navigation();
+            ImGui::Separator();
+            instant_changed |= this->draw_camera_projection(camera);
+            changed |= this->draw_camera_position(camera);
+            changed |= this->draw_camera_other(camera);
+        }
         if (changed || instant_changed) this->viewport.camera.set_camera(camera, instant_changed);
+        ImGui::Separator();
+        this->draw_pbrt_camera_section(document, !this->render_output_job_active());
 
         ImGui::End();
     }
@@ -1495,6 +1633,73 @@ namespace xayah {
         return changed;
     }
 
+    void Spectra::draw_pbrt_camera_section(PbrtDocument& document, const bool editing_enabled) {
+        if (!ImGui::CollapsingHeader("PBRT Camera", ImGuiTreeNodeFlags_DefaultOpen)) return;
+        const std::vector<std::uint64_t> camera_ids = document.element_ids(PbrtElementKind::camera);
+        if (camera_ids.empty()) {
+            ImGui::TextDisabled("No PBRT camera element");
+            return;
+        }
+
+        std::uint64_t camera_id = camera_ids.front();
+        if (document.has_selection() && document.selected_element().kind == PbrtElementKind::camera) camera_id = document.selected_element().id;
+        const PbrtElement& current_camera = document.element_by_id(camera_id);
+        const std::string current_label = pbrt_element_combo_label(current_camera);
+        if (ImGui::BeginCombo("Camera", current_label.c_str())) {
+            for (const std::uint64_t id : camera_ids) {
+                const PbrtElement& camera = document.element_by_id(id);
+                const std::string label = pbrt_element_combo_label(camera);
+                const bool selected = id == camera_id;
+                if (ImGui::Selectable(label.c_str(), selected)) {
+                    document.select_element(id);
+                    camera_id = id;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        const PbrtElement& camera = document.element_by_id(camera_id);
+        ImGui::TextDisabled("Type: %s", camera.detail.empty() ? camera.type.c_str() : camera.detail.c_str());
+        if (ImGui::Button(ICON_MS_PHOTO_CAMERA " Select PBRT Camera")) document.select_element(camera_id);
+        if (ImGui::Button(ICON_MS_ZOOM_IN " Fit Viewport From PBRT Camera")) this->fit_viewport_from_pbrt_camera(camera);
+        ImGui::BeginDisabled(!editing_enabled);
+        if (ImGui::Button(ICON_MS_EDIT " Write Viewport To PBRT Camera")) this->write_viewport_to_pbrt_camera(document, camera_id);
+        ImGui::EndDisabled();
+        if (!editing_enabled) ImGui::TextDisabled("PBRT camera editing is locked while final render is running");
+
+        if (ImGui::CollapsingHeader("PBRT Camera Transform", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_element_transform_ui(camera_id, editing_enabled);
+        if (ImGui::CollapsingHeader("PBRT Camera Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_element_parameters_ui(camera_id, editing_enabled);
+    }
+
+    void Spectra::fit_viewport_from_pbrt_camera(const PbrtElement& camera) {
+        if (camera.kind != PbrtElementKind::camera) throw std::runtime_error("Cannot fit viewport from a non-camera PBRT element");
+        CameraState state = this->viewport.camera.state();
+        const std::array<float, 3> eye{camera.transform[12], camera.transform[13], camera.transform[14]};
+        const std::array<float, 3> forward = normalize_vector({camera.transform[8], camera.transform[9], camera.transform[10]});
+        const std::array<float, 3> up = normalize_vector({camera.transform[4], camera.transform[5], camera.transform[6]});
+        const float distance = std::max(this->viewport.camera.distance_to_center(), 0.001f);
+        state.eye = eye;
+        state.center = add_vector(eye, multiply_vector(forward, distance));
+        state.up = up;
+        state.fov_degrees = std::clamp(pbrt_float_parameter(camera.parameters, "fov", state.fov_degrees), 1.0f, 179.0f);
+        state.projection = camera.detail == "orthographic" ? CameraProjection::orthographic : CameraProjection::perspective;
+        this->viewport.camera.set_camera(state, true);
+    }
+
+    void Spectra::write_viewport_to_pbrt_camera(PbrtDocument& document, const std::uint64_t camera_id) {
+        PbrtElement& camera = document.element_by_id(camera_id);
+        if (camera.kind != PbrtElementKind::camera) throw std::runtime_error("Cannot write viewport state to a non-camera PBRT element");
+        const CameraState& state = this->viewport.camera.state();
+        camera.transform = viewport_camera_to_pbrt_camera_transform(state);
+        document.mark_element_transform_edited(camera_id);
+        if (camera.detail == "perspective" || find_pbrt_parameter(camera.parameters, "fov") != nullptr) {
+            xayah::PbrtParameter& fov = ensure_pbrt_float_parameter(camera, "float", "fov", 1, state.fov_degrees);
+            fov.floats[0] = state.fov_degrees;
+            document.mark_element_parameters_edited(camera_id);
+        }
+    }
+
     void Spectra::draw_scene_browser(PbrtDocument& document) {
         if (!this->ui.scene_browser_visible) return;
         if (!ImGui::Begin("Scene Browser", &this->ui.scene_browser_visible)) {
@@ -1505,19 +1710,140 @@ namespace xayah {
         ImGui::End();
     }
 
+    void Spectra::draw_light_window(PbrtDocument& document) {
+        if (!this->ui.light_visible) return;
+        if (!ImGui::Begin("Lights", &this->ui.light_visible)) {
+            ImGui::End();
+            return;
+        }
+        const std::vector<std::uint64_t> light_ids = document.element_ids(PbrtElementKind::light);
+        if (light_ids.empty()) {
+            ImGui::TextDisabled("No PBRT light element");
+            ImGui::End();
+            return;
+        }
+
+        std::uint64_t light_id = light_ids.front();
+        if (document.has_selection() && document.selected_element().kind == PbrtElementKind::light) light_id = document.selected_element().id;
+        const PbrtElement& current_light = document.element_by_id(light_id);
+        const std::string current_label = pbrt_element_combo_label(current_light);
+        if (ImGui::BeginCombo("Light", current_label.c_str())) {
+            for (const std::uint64_t id : light_ids) {
+                const PbrtElement& light = document.element_by_id(id);
+                const std::string label = pbrt_element_combo_label(light);
+                const bool selected = id == light_id;
+                if (ImGui::Selectable(label.c_str(), selected)) {
+                    document.select_element(id);
+                    light_id = id;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        PbrtElement& light = document.element_by_id(light_id);
+        ImGui::TextDisabled("Type: %s", light.detail.empty() ? light.type.c_str() : light.detail.c_str());
+        if (ImGui::Button(ICON_MS_LIGHTBULB " Select Light")) document.select_element(light_id);
+        const bool editing_enabled = !this->render_output_job_active();
+        ImGui::BeginDisabled(!editing_enabled);
+        if (ImGui::Checkbox("Visible", &light.visible)) document.mark_element_visibility_edited(light_id);
+        ImGui::EndDisabled();
+        if (!editing_enabled) ImGui::TextDisabled("Light editing is locked while final render is running");
+        if (light.type == "Light") {
+            if (ImGui::CollapsingHeader("Light Transform", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_element_transform_ui(light_id, editing_enabled);
+        } else {
+            ImGui::TextDisabled("Area light transform follows its emitting shape");
+        }
+        if (ImGui::CollapsingHeader("Light Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_element_parameters_ui(light_id, editing_enabled);
+        ImGui::End();
+    }
+
+    void Spectra::draw_material_window(PbrtDocument& document) {
+        if (!this->ui.material_visible) return;
+        if (!ImGui::Begin("Materials", &this->ui.material_visible)) {
+            ImGui::End();
+            return;
+        }
+        const bool editing_enabled = !this->render_output_job_active();
+        if (!editing_enabled) ImGui::TextDisabled("Material editing is locked while final render is running");
+
+        if (ImGui::BeginTabBar("PBRTMaterialTextureTabs")) {
+            if (ImGui::BeginTabItem("Materials")) {
+                const std::vector<std::uint64_t> material_ids = document.element_ids(PbrtElementKind::material);
+                if (material_ids.empty()) {
+                    ImGui::TextDisabled("No PBRT material element");
+                } else {
+                    std::uint64_t material_id = material_ids.front();
+                    if (document.has_selection() && document.selected_element().kind == PbrtElementKind::material) material_id = document.selected_element().id;
+                    const PbrtElement& current_material = document.element_by_id(material_id);
+                    const std::string current_label = pbrt_element_combo_label(current_material);
+                    if (ImGui::BeginCombo("Material", current_label.c_str())) {
+                        for (const std::uint64_t id : material_ids) {
+                            const PbrtElement& material = document.element_by_id(id);
+                            const std::string label = pbrt_element_combo_label(material);
+                            const bool selected = id == material_id;
+                            if (ImGui::Selectable(label.c_str(), selected)) {
+                                document.select_element(id);
+                                material_id = id;
+                            }
+                            if (selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    const PbrtElement& material = document.element_by_id(material_id);
+                    ImGui::TextDisabled("Type: %s", material.detail.empty() ? material.type.c_str() : material.detail.c_str());
+                    if (ImGui::Button(ICON_MS_PALETTE " Select Material")) document.select_element(material_id);
+                    if (ImGui::CollapsingHeader("Material Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_element_parameters_ui(material_id, editing_enabled);
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Textures")) {
+                const std::vector<std::uint64_t> texture_ids = document.element_ids(PbrtElementKind::texture);
+                if (texture_ids.empty()) {
+                    ImGui::TextDisabled("No PBRT texture element");
+                } else {
+                    std::uint64_t texture_id = texture_ids.front();
+                    if (document.has_selection() && document.selected_element().kind == PbrtElementKind::texture) texture_id = document.selected_element().id;
+                    const PbrtElement& current_texture = document.element_by_id(texture_id);
+                    const std::string current_label = pbrt_element_combo_label(current_texture);
+                    if (ImGui::BeginCombo("Texture", current_label.c_str())) {
+                        for (const std::uint64_t id : texture_ids) {
+                            const PbrtElement& texture = document.element_by_id(id);
+                            const std::string label = pbrt_element_combo_label(texture);
+                            const bool selected = id == texture_id;
+                            if (ImGui::Selectable(label.c_str(), selected)) {
+                                document.select_element(id);
+                                texture_id = id;
+                            }
+                            if (selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    const PbrtElement& texture = document.element_by_id(texture_id);
+                    ImGui::TextDisabled("Type: %s", texture.detail.empty() ? texture.type.c_str() : texture.detail.c_str());
+                    if (ImGui::Button(ICON_MS_TEXTURE " Select Texture")) document.select_element(texture_id);
+                    if (ImGui::CollapsingHeader("Texture Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_element_parameters_ui(texture_id, editing_enabled);
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+        ImGui::End();
+    }
+
     void Spectra::draw_settings_window() {
         if (!this->ui.settings_visible) return;
         if (!ImGui::Begin("Settings", &this->ui.settings_visible)) {
             ImGui::End();
             return;
         }
-        const bool preview_selected = this->renderer.mode == RendererMode::preview;
         const bool path_selected    = this->renderer.mode == RendererMode::path_tracer;
-        if (ImGui::BeginCombo("Active Renderer", preview_selected ? "Preview" : "Path Tracer")) {
-            if (ImGui::Selectable("Preview", preview_selected)) this->renderer.mode = RendererMode::preview;
-            if (preview_selected) ImGui::SetItemDefaultFocus();
+        const bool overlay_selected = this->renderer.mode == RendererMode::debug_overlay;
+        if (ImGui::BeginCombo("Active Renderer", path_selected ? "Path Tracer" : "Debug Overlay")) {
             if (ImGui::Selectable("Path Tracer", path_selected)) this->renderer.mode = RendererMode::path_tracer;
             if (path_selected) ImGui::SetItemDefaultFocus();
+            if (ImGui::Selectable("Debug Overlay", overlay_selected)) this->renderer.mode = RendererMode::debug_overlay;
+            if (overlay_selected) ImGui::SetItemDefaultFocus();
             ImGui::EndCombo();
         }
         ImGui::Separator();
@@ -1546,13 +1872,299 @@ namespace xayah {
         ImGui::End();
     }
 
+    bool Spectra::render_output_job_active() const {
+        return this->render_output.job_thread.joinable();
+    }
+
+    Spectra::RenderOutputImageData Spectra::load_render_output_image(const std::string& output_path) {
+        const std::filesystem::path image_path{output_path};
+        if (output_path.empty()) throw std::runtime_error("Render output path is empty");
+        if (!std::filesystem::exists(image_path)) throw std::runtime_error(std::format("Render output image does not exist: {}", output_path));
+        if (!std::filesystem::is_regular_file(image_path)) throw std::runtime_error(std::format("Render output path is not a file: {}", output_path));
+        if (std::filesystem::file_size(image_path) == 0) throw std::runtime_error(std::format("Render output image is empty: {}", output_path));
+
+        const std::string extension = lowercase_ascii(image_path.extension().string());
+        if (!render_output_extension_supported(extension)) throw std::runtime_error(std::format("Render output preview requires .exr, .png, .pfm, .hdr, or .qoi: {}", output_path));
+
+        pbrt::ImageAndMetadata loaded = pbrt::Image::Read(image_path.string());
+        const pbrt::Point2i resolution = loaded.image.Resolution();
+        if (resolution.x <= 0 || resolution.y <= 0) throw std::runtime_error(std::format("Render output image has invalid resolution: {}", output_path));
+        const int channel_count = loaded.image.NChannels();
+        if (channel_count == 0) throw std::runtime_error(std::format("Render output image has no channels: {}", output_path));
+        if (channel_count != 1 && channel_count < 3) throw std::runtime_error(std::format("Render output image must have 1 or at least 3 channels: {}", output_path));
+        pbrt::ImageChannelDesc rgb_desc{};
+        if (channel_count != 1) {
+            rgb_desc = loaded.image.GetChannelDesc({"R", "G", "B"});
+            if (!rgb_desc) throw std::runtime_error(std::format("Render output image must provide R, G, B channels or a single grayscale channel: {}", output_path));
+        }
+        const pbrt::ImageChannelDesc alpha_desc = loaded.image.GetChannelDesc({"A"});
+
+        const std::size_t width       = static_cast<std::size_t>(resolution.x);
+        const std::size_t height      = static_cast<std::size_t>(resolution.y);
+        const std::size_t pixel_count = width * height;
+        if (width != 0 && pixel_count / width != height) throw std::runtime_error("Render output image size overflows size_t");
+        if (pixel_count > std::numeric_limits<std::size_t>::max() / 4u) throw std::runtime_error("Render output image RGBA buffer is too large");
+
+        RenderOutputImageData result{};
+        result.resolution = {resolution.x, resolution.y};
+        result.rgba.resize(pixel_count * 4u);
+        for (int y = 0; y < resolution.y; ++y) {
+            for (int x = 0; x < resolution.x; ++x) {
+                const pbrt::Point2i point{x, y};
+                const float gray   = channel_count == 1 ? static_cast<float>(loaded.image.GetChannel(point, 0)) : 0.0f;
+                const pbrt::ImageChannelValues rgb = channel_count == 1 ? pbrt::ImageChannelValues{3, gray} : loaded.image.GetChannels(point, rgb_desc);
+                const float alpha = alpha_desc ? static_cast<float>(loaded.image.GetChannels(point, alpha_desc)[0]) : 1.0f;
+                const std::size_t offset = (static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)) * 4u;
+                result.rgba[offset + 0u]  = linear_channel_to_byte(static_cast<float>(rgb[0]));
+                result.rgba[offset + 1u]  = linear_channel_to_byte(static_cast<float>(rgb[1]));
+                result.rgba[offset + 2u]  = linear_channel_to_byte(static_cast<float>(rgb[2]));
+                result.rgba[offset + 3u]  = alpha_channel_to_byte(alpha);
+            }
+        }
+        return result;
+    }
+
+    void Spectra::start_render_output_job(PbrtDocument& document) {
+        this->poll_render_output_job();
+        if (this->render_output_job_active()) {
+            this->render_output.status  = "Rendering";
+            this->render_output.message = "PBRT render job is already running";
+            return;
+        }
+
+        this->destroy_render_output_image();
+        PbrtRenderSettings settings{};
+        settings.resolution        = this->renderer.resolution;
+        settings.samples_per_pixel = this->renderer.samples_per_pixel;
+        settings.thread_count      = this->renderer.thread_count;
+        settings.backend           = this->renderer.backend;
+        settings.output_path       = this->renderer.output_path;
+
+        this->render_output.has_result             = true;
+        this->render_output.last_backend           = settings.backend;
+        this->render_output.last_resolution        = settings.resolution;
+        this->render_output.last_samples_per_pixel = settings.samples_per_pixel;
+        this->render_output.last_thread_count      = settings.thread_count;
+        this->render_output.last_seconds           = 0.0;
+        this->render_output.last_output_path       = settings.output_path.data();
+        this->render_output.status                 = "Rendering";
+        this->render_output.message                = "PBRT render is running";
+        this->render_output.job_state              = RenderOutputJobState::running;
+        this->render_output.cancel_requested.store(false, std::memory_order_release);
+        this->render_output.job_finished.store(false, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock{this->render_output.result_mutex};
+            this->render_output.pending_result.reset();
+        }
+
+        this->render_output.job_thread = std::jthread{[this, &document, settings] {
+            RenderOutputJobResult job_result{};
+            try {
+                PbrtRenderResult render_result = document.render_final(settings);
+                job_result.render_result       = render_result;
+                if (this->render_output.cancel_requested.load(std::memory_order_acquire)) {
+                    job_result.canceled = true;
+                    job_result.message  = "Render result was canceled";
+                } else {
+                    job_result.image   = Spectra::load_render_output_image(render_result.output_path);
+                    job_result.success = true;
+                    job_result.message = render_result.message;
+                    if (this->render_output.cancel_requested.load(std::memory_order_acquire)) {
+                        job_result.success  = false;
+                        job_result.canceled = true;
+                        job_result.image.rgba.clear();
+                        job_result.message = "Render result was canceled";
+                    }
+                }
+            } catch (const std::exception& error) {
+                job_result.success = false;
+                job_result.message = error.what();
+            }
+            {
+                std::lock_guard<std::mutex> lock{this->render_output.result_mutex};
+                this->render_output.pending_result = std::move(job_result);
+            }
+            this->render_output.job_finished.store(true, std::memory_order_release);
+        }};
+    }
+
+    void Spectra::poll_render_output_job() {
+        if (!this->render_output.job_thread.joinable()) return;
+        if (!this->render_output.job_finished.load(std::memory_order_acquire)) return;
+
+        this->render_output.job_thread.join();
+        std::optional<RenderOutputJobResult> result{};
+        {
+            std::lock_guard<std::mutex> lock{this->render_output.result_mutex};
+            result = std::move(this->render_output.pending_result);
+            this->render_output.pending_result.reset();
+        }
+        this->render_output.job_state = RenderOutputJobState::idle;
+        this->render_output.cancel_requested.store(false, std::memory_order_release);
+        if (!result.has_value()) {
+            this->render_output.status  = "Failed";
+            this->render_output.message = "PBRT render job finished without a result";
+            return;
+        }
+
+        if (!result->render_result.output_path.empty()) this->render_output.last_output_path = result->render_result.output_path;
+        if (result->render_result.seconds > 0.0) this->render_output.last_seconds = result->render_result.seconds;
+        if (result->canceled) {
+            this->render_output.status  = "Canceled";
+            this->render_output.message = result->message.empty() ? "Render canceled" : result->message;
+            return;
+        }
+        if (!result->success) {
+            this->render_output.status  = "Failed";
+            this->render_output.message = result->message;
+            return;
+        }
+
+        try {
+            this->upload_render_output_image(result->image);
+            this->render_output.status  = "Complete";
+            this->render_output.message = result->message.empty() ? "Render complete" : result->message;
+        } catch (const std::exception& error) {
+            this->destroy_render_output_image();
+            this->render_output.status  = "Failed";
+            this->render_output.message = error.what();
+        }
+    }
+
+    void Spectra::join_render_output_job() noexcept {
+        try {
+            this->render_output.cancel_requested.store(true, std::memory_order_release);
+            if (this->render_output.job_thread.joinable()) this->render_output.job_thread.join();
+            this->render_output.job_finished.store(true, std::memory_order_release);
+            this->render_output.job_state = RenderOutputJobState::idle;
+            std::lock_guard<std::mutex> lock{this->render_output.result_mutex};
+            this->render_output.pending_result.reset();
+        } catch (...) {
+        }
+    }
+
+    void Spectra::upload_render_output_image(const RenderOutputImageData& image) {
+        if (!this->imgui.initialized) throw std::runtime_error("Cannot upload render output image before ImGui is initialized");
+        if (image.resolution[0] <= 0 || image.resolution[1] <= 0) throw std::runtime_error("Render output image resolution must be positive");
+        const std::size_t expected_size = static_cast<std::size_t>(image.resolution[0]) * static_cast<std::size_t>(image.resolution[1]) * 4u;
+        if (image.rgba.size() != expected_size) throw std::runtime_error("Render output image RGBA buffer size does not match resolution");
+
+        this->destroy_render_output_image();
+
+        const vk::DeviceSize image_size = static_cast<vk::DeviceSize>(image.rgba.size());
+        const vk::BufferCreateInfo staging_buffer_create_info{{}, image_size, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive};
+        vk::raii::Buffer staging_buffer{this->context.device, staging_buffer_create_info};
+        const vk::MemoryRequirements staging_memory_requirements = staging_buffer.getMemoryRequirements();
+        const std::uint32_t staging_memory_type                  = find_memory_type_index(this->context.physical_device, staging_memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        const vk::MemoryAllocateInfo staging_memory_allocate_info{staging_memory_requirements.size, staging_memory_type};
+        vk::raii::DeviceMemory staging_memory{this->context.device, staging_memory_allocate_info};
+        staging_buffer.bindMemory(*staging_memory, 0);
+        void* mapped = staging_memory.mapMemory(0, image_size);
+        std::memcpy(mapped, image.rgba.data(), image.rgba.size());
+        staging_memory.unmapMemory();
+
+        RenderOutputImageResource next_image{};
+        const vk::ImageCreateInfo image_create_info{
+            {},
+            vk::ImageType::e2D,
+            vk::Format::eR8G8B8A8Unorm,
+            vk::Extent3D{static_cast<std::uint32_t>(image.resolution[0]), static_cast<std::uint32_t>(image.resolution[1]), 1u},
+            1u,
+            1u,
+            vk::SampleCountFlagBits::e1,
+            vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            vk::SharingMode::eExclusive,
+            0,
+            nullptr,
+            vk::ImageLayout::eUndefined,
+        };
+        next_image.image = vk::raii::Image{this->context.device, image_create_info};
+        const vk::MemoryRequirements image_memory_requirements = next_image.image.getMemoryRequirements();
+        const std::uint32_t image_memory_type                  = find_memory_type_index(this->context.physical_device, image_memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        const vk::MemoryAllocateInfo image_memory_allocate_info{image_memory_requirements.size, image_memory_type};
+        next_image.memory = vk::raii::DeviceMemory{this->context.device, image_memory_allocate_info};
+        next_image.image.bindMemory(*next_image.memory, 0);
+
+        const vk::CommandBufferAllocateInfo command_buffer_allocate_info{*this->context.command_pool, vk::CommandBufferLevel::ePrimary, 1u};
+        vk::raii::CommandBuffers command_buffers{this->context.device, command_buffer_allocate_info};
+        if (command_buffers.size() != 1u) throw std::runtime_error("Failed to allocate render output upload command buffer");
+        const vk::raii::CommandBuffer& command_buffer = command_buffers[0];
+        constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+        command_buffer.begin(command_buffer_begin_info);
+        transition_image_layout(command_buffer, *next_image.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTopOfPipe, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+        const vk::BufferImageCopy copy_region{
+            0,
+            0,
+            0,
+            {vk::ImageAspectFlagBits::eColor, 0u, 0u, 1u},
+            {0, 0, 0},
+            {static_cast<std::uint32_t>(image.resolution[0]), static_cast<std::uint32_t>(image.resolution[1]), 1u},
+        };
+        command_buffer.copyBufferToImage(*staging_buffer, *next_image.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
+        transition_image_layout(command_buffer, *next_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
+        command_buffer.end();
+        const vk::CommandBufferSubmitInfo command_buffer_submit_info{*command_buffer};
+        const vk::SubmitInfo2 submit_info{{}, 0u, nullptr, 1u, &command_buffer_submit_info, 0u, nullptr};
+        this->context.graphics_queue.submit2(submit_info, nullptr);
+        this->context.graphics_queue.waitIdle();
+
+        const vk::ImageViewCreateInfo image_view_create_info{
+            {},
+            *next_image.image,
+            vk::ImageViewType::e2D,
+            vk::Format::eR8G8B8A8Unorm,
+            {},
+            {vk::ImageAspectFlagBits::eColor, 0u, 1u, 0u, 1u},
+        };
+        next_image.view = vk::raii::ImageView{this->context.device, image_view_create_info};
+        vk::SamplerCreateInfo sampler_create_info{};
+        sampler_create_info.magFilter               = vk::Filter::eLinear;
+        sampler_create_info.minFilter               = vk::Filter::eLinear;
+        sampler_create_info.mipmapMode              = vk::SamplerMipmapMode::eNearest;
+        sampler_create_info.addressModeU            = vk::SamplerAddressMode::eClampToEdge;
+        sampler_create_info.addressModeV            = vk::SamplerAddressMode::eClampToEdge;
+        sampler_create_info.addressModeW            = vk::SamplerAddressMode::eClampToEdge;
+        sampler_create_info.mipLodBias              = 0.0f;
+        sampler_create_info.anisotropyEnable        = VK_FALSE;
+        sampler_create_info.maxAnisotropy           = 1.0f;
+        sampler_create_info.compareEnable           = VK_FALSE;
+        sampler_create_info.compareOp               = vk::CompareOp::eNever;
+        sampler_create_info.minLod                  = 0.0f;
+        sampler_create_info.maxLod                  = 1.0f;
+        sampler_create_info.borderColor             = vk::BorderColor::eFloatOpaqueBlack;
+        sampler_create_info.unnormalizedCoordinates = VK_FALSE;
+        next_image.sampler                          = vk::raii::Sampler{this->context.device, sampler_create_info};
+        next_image.descriptor                       = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*next_image.sampler), static_cast<VkImageView>(*next_image.view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (next_image.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to register render output image with ImGui");
+        next_image.resolution = image.resolution;
+        this->render_output.image = std::move(next_image);
+    }
+
+    void Spectra::destroy_render_output_image() noexcept {
+        try {
+            if (*this->context.device && (this->render_output.image.descriptor != VK_NULL_HANDLE || *this->render_output.image.image)) this->context.device.waitIdle();
+            if (this->render_output.image.descriptor != VK_NULL_HANDLE && this->imgui.initialized) ImGui_ImplVulkan_RemoveTexture(this->render_output.image.descriptor);
+            this->render_output.image.descriptor = VK_NULL_HANDLE;
+            this->render_output.image.sampler    = nullptr;
+            this->render_output.image.view       = nullptr;
+            this->render_output.image.image      = nullptr;
+            this->render_output.image.memory     = nullptr;
+            this->render_output.image.resolution = {0, 0};
+        } catch (...) {
+        }
+    }
+
     void Spectra::draw_render_output(PbrtDocument& document) {
         if (!this->ui.render_output_visible) return;
+        this->poll_render_output_job();
         if (!ImGui::Begin("Render Output", &this->ui.render_output_visible)) {
             ImGui::End();
             return;
         }
+        const bool render_active = this->render_output_job_active();
         if (ImGui::CollapsingHeader("PBRT Final Render", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::BeginDisabled(render_active);
             if (ImGui::BeginCombo("Backend", pbrt_backend_label(this->renderer.backend))) {
                 const bool cpu_selected = this->renderer.backend == PbrtPathTraceBackend::cpu;
                 if (ImGui::Selectable("CPU", cpu_selected)) this->renderer.backend = PbrtPathTraceBackend::cpu;
@@ -1569,34 +2181,23 @@ namespace xayah {
             ImGui::InputInt("SPP", &this->renderer.samples_per_pixel);
             ImGui::InputInt("Threads", &this->renderer.thread_count);
             ImGui::InputText("Output", this->renderer.output_path.data(), this->renderer.output_path.size());
+            ImGui::EndDisabled();
         }
         ImGui::Separator();
-        if (ImGui::Button(ICON_MS_AUTO_AWESOME " Render PBRT")) {
-            this->render_output.has_result             = true;
-            this->render_output.last_backend           = this->renderer.backend;
-            this->render_output.last_resolution        = this->renderer.resolution;
-            this->render_output.last_samples_per_pixel = this->renderer.samples_per_pixel;
-            this->render_output.last_thread_count      = this->renderer.thread_count;
-            this->render_output.last_seconds           = 0.0;
-            this->render_output.last_output_path       = this->renderer.output_path.data();
-            this->render_output.status                 = "Rendering";
-            this->render_output.message                = "PBRT render is running";
-            try {
-                PbrtRenderSettings settings{};
-                settings.resolution        = this->renderer.resolution;
-                settings.samples_per_pixel = this->renderer.samples_per_pixel;
-                settings.thread_count      = this->renderer.thread_count;
-                settings.backend           = this->renderer.backend;
-                settings.output_path       = this->renderer.output_path;
-                PbrtRenderResult result    = document.render_final(settings);
-                this->render_output.last_seconds     = result.seconds;
-                this->render_output.last_output_path = result.output_path;
-                this->render_output.status           = result.success ? "Complete" : "Failed";
-                this->render_output.message          = result.message;
-            } catch (const std::exception& error) {
-                this->render_output.status  = "Failed";
-                this->render_output.message = error.what();
+        ImGui::BeginDisabled(render_active);
+        if (ImGui::Button(ICON_MS_AUTO_AWESOME " Render PBRT")) this->start_render_output_job(document);
+        ImGui::EndDisabled();
+        if (render_active) {
+            ImGui::SameLine();
+            const bool cancel_requested = this->render_output.cancel_requested.load(std::memory_order_acquire);
+            ImGui::BeginDisabled(cancel_requested);
+            if (ImGui::Button(ICON_MS_CANCEL " Cancel")) {
+                this->render_output.cancel_requested.store(true, std::memory_order_release);
+                this->render_output.job_state = RenderOutputJobState::cancel_requested;
+                this->render_output.status    = "Cancel Requested";
+                this->render_output.message   = "Waiting for PBRT render to return";
             }
+            ImGui::EndDisabled();
         }
         ImGui::Separator();
         if (ImGui::BeginTable("RenderOutputTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
@@ -1646,6 +2247,16 @@ namespace xayah {
             ImGui::TextColored(message_color, "%s", this->render_output.message.c_str());
             ImGui::EndTable();
         }
+        if (this->render_output.image.descriptor != VK_NULL_HANDLE) {
+            ImGui::Separator();
+            ImGui::Text("Preview: %d x %d", this->render_output.image.resolution[0], this->render_output.image.resolution[1]);
+            const float available_width = ImGui::GetContentRegionAvail().x;
+            const float image_width     = std::max(1.0f, static_cast<float>(this->render_output.image.resolution[0]));
+            const float image_height    = std::max(1.0f, static_cast<float>(this->render_output.image.resolution[1]));
+            const float draw_width      = std::max(1.0f, std::min(available_width, image_width));
+            const float draw_height     = draw_width * image_height / image_width;
+            ImGui::Image((ImTextureID)this->render_output.image.descriptor, ImVec2{draw_width, draw_height});
+        }
         ImGui::End();
     }
 
@@ -1655,7 +2266,7 @@ namespace xayah {
             ImGui::End();
             return;
         }
-        document.draw_selected_inspector_ui();
+        document.draw_selected_inspector_ui(!this->render_output_job_active());
         ImGui::End();
     }
 
@@ -1736,6 +2347,12 @@ namespace xayah {
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Cameras");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", document.stats().cameras);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
             ImGui::TextUnformatted("Shapes");
             ImGui::TableNextColumn();
             ImGui::Text("%zu", document.stats().shapes);
@@ -1745,6 +2362,12 @@ namespace xayah {
             ImGui::TextUnformatted("Materials");
             ImGui::TableNextColumn();
             ImGui::Text("%zu", document.stats().materials);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Textures");
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", document.stats().textures);
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -1834,6 +2457,10 @@ namespace xayah {
             return;
         }
         if (!this->ui.viewport_known) {
+            this->gizmo.using_gizmo = false;
+            return;
+        }
+        if (this->render_output_job_active()) {
             this->gizmo.using_gizmo = false;
             return;
         }
@@ -1934,7 +2561,7 @@ namespace xayah {
                 throw;
         }
         if (frame.recreate_after_present) this->recreate_swapchain(document);
-        if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
+        if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime, document);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
@@ -2270,7 +2897,7 @@ namespace xayah {
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
-        const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
+        const RenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
         document.recreate_render_resources(render_create_context);
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
@@ -2278,6 +2905,7 @@ namespace xayah {
             if (this->imgui.color_format != this->swapchain.format || this->imgui.image_count != image_count) {
                 const bool docking   = this->imgui.docking;
                 const bool viewports = this->imgui.viewports;
+                this->destroy_render_output_image();
                 ImGui_ImplVulkan_Shutdown();
                 ImGui_ImplGlfw_Shutdown();
                 ImGui::DestroyContext();

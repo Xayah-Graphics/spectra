@@ -74,7 +74,7 @@ target_sources(
         spectra
         PRIVATE
         modules/spectra.cpp
-        modules/scene_object.cpp
+        modules/render_context.cpp
         modules/pbrt_document.cpp
 
         vendor/imgui/imgui.cpp
@@ -92,8 +92,8 @@ target_sources(
         vendor/ImNodeFlow/ImNodeFlow.cpp
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        modules/render_context.ixx
         modules/camera.ixx
-        modules/scene_object.ixx
         modules/pbrt_document.ixx
         modules/spectra.ixx
 )

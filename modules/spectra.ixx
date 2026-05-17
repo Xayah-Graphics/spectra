@@ -31,19 +31,26 @@ namespace xayah {
         void end_frame(FrameState& frame, PbrtDocument& document);
 
     private:
+        struct RenderOutputImageData;
+
         void render_loop(PbrtDocument& document);
-        void update_window_title(float delta_seconds);
+        void update_window_title(float delta_seconds, const PbrtDocument& document);
         void draw_main_menu(PbrtDocument& document);
         void draw_menu_toolbar(PbrtDocument& document);
         void draw_dockspace();
         void draw_viewport_window();
-        void draw_camera_window();
+        void draw_camera_window(PbrtDocument& document);
         void draw_camera_quick_actions(CameraState& camera);
         void draw_camera_navigation();
         bool draw_camera_projection(CameraState& camera);
         bool draw_camera_position(CameraState& camera);
         bool draw_camera_other(CameraState& camera);
+        void draw_pbrt_camera_section(PbrtDocument& document, bool editing_enabled);
+        void fit_viewport_from_pbrt_camera(const PbrtElement& camera);
+        void write_viewport_to_pbrt_camera(PbrtDocument& document, std::uint64_t camera_id);
         void draw_scene_browser(PbrtDocument& document);
+        void draw_light_window(PbrtDocument& document);
+        void draw_material_window(PbrtDocument& document);
         void draw_settings_window();
         void draw_grid_settings_window();
         void draw_render_output(PbrtDocument& document);
@@ -53,6 +60,13 @@ namespace xayah {
         void draw_statistics_window(PbrtDocument& document);
         void draw_timeline_window();
         void draw_transform_gizmo(PbrtDocument& document);
+        [[nodiscard]] bool render_output_job_active() const;
+        void start_render_output_job(PbrtDocument& document);
+        void poll_render_output_job();
+        void join_render_output_job() noexcept;
+        void upload_render_output_image(const RenderOutputImageData& image);
+        void destroy_render_output_image() noexcept;
+        [[nodiscard]] static RenderOutputImageData load_render_output_image(const std::string& output_path);
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
@@ -152,6 +166,8 @@ namespace xayah {
             bool dock_layout_initialized{false};
             bool camera_visible{true};
             bool scene_browser_visible{true};
+            bool light_visible{true};
+            bool material_visible{true};
             bool settings_visible{true};
             bool inspector_visible{true};
             bool environment_visible{true};
@@ -197,18 +213,46 @@ namespace xayah {
         } input;
 
         enum class RendererMode : std::uint32_t {
-            preview     = 0,
-            path_tracer = 1,
+            path_tracer   = 0,
+            debug_overlay = 1,
         };
 
         struct {
-            RendererMode mode{RendererMode::preview};
+            RendererMode mode{RendererMode::path_tracer};
             std::array<int, 2> resolution{1280, 720};
             int samples_per_pixel{64};
             int thread_count{30};
             PbrtPathTraceBackend backend{PbrtPathTraceBackend::cpu};
             std::array<char, 256> output_path{"render-output.exr"};
         } renderer;
+
+        enum class RenderOutputJobState : std::uint32_t {
+            idle             = 0,
+            running          = 1,
+            cancel_requested = 2,
+        };
+
+        struct RenderOutputImageData {
+            std::array<int, 2> resolution{0, 0};
+            std::vector<std::uint8_t> rgba{};
+        };
+
+        struct RenderOutputJobResult {
+            bool success{false};
+            bool canceled{false};
+            PbrtRenderResult render_result{};
+            RenderOutputImageData image{};
+            std::string message{};
+        };
+
+        struct RenderOutputImageResource {
+            vk::raii::Image image{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::raii::ImageView view{nullptr};
+            vk::raii::Sampler sampler{nullptr};
+            VkDescriptorSet descriptor{VK_NULL_HANDLE};
+            std::array<int, 2> resolution{0, 0};
+        };
 
         struct {
             std::string status{"Idle"};
@@ -220,6 +264,13 @@ namespace xayah {
             int last_thread_count{0};
             double last_seconds{0.0};
             std::string last_output_path{};
+            RenderOutputJobState job_state{RenderOutputJobState::idle};
+            std::jthread job_thread{};
+            std::atomic_bool job_finished{true};
+            std::atomic_bool cancel_requested{false};
+            std::mutex result_mutex{};
+            std::optional<RenderOutputJobResult> pending_result{};
+            RenderOutputImageResource image{};
         } render_output;
 
         struct {

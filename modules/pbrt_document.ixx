@@ -2,7 +2,7 @@ module;
 #include <vulkan/vulkan_raii.hpp>
 
 export module pbrt_document;
-export import scene_object;
+export import render_context;
 import std;
 
 namespace xayah {
@@ -113,9 +113,9 @@ namespace xayah {
         PbrtPreviewRenderer& operator=(const PbrtPreviewRenderer& other)     = delete;
         PbrtPreviewRenderer& operator=(PbrtPreviewRenderer&& other) noexcept = delete;
 
-        void create(const SceneRenderCreateContext& context);
+        void create(const RenderCreateContext& context);
         void destroy() noexcept;
-        void render(const SceneRenderFrameContext& context, std::span<const PbrtPreviewVertex> vertices, std::span<const PbrtPreviewOverlay> overlays);
+        void render(const RenderFrameContext& context, std::span<const PbrtPreviewVertex> vertices, std::span<const PbrtPreviewOverlay> overlays);
         [[nodiscard]] bool active() const;
 
     private:
@@ -147,10 +147,10 @@ namespace xayah {
         void load(const std::filesystem::path& path);
         void create_default();
         void validate() const;
-        void create_render_resources(const SceneRenderCreateContext& context);
+        void create_render_resources(const RenderCreateContext& context);
         void destroy_render_resources() noexcept;
-        void recreate_render_resources(const SceneRenderCreateContext& context);
-        void render(const SceneRenderFrameContext& context);
+        void recreate_render_resources(const RenderCreateContext& context);
+        void render(const RenderFrameContext& context);
         [[nodiscard]] PbrtRenderResult render_final(const PbrtRenderSettings& settings);
 
         [[nodiscard]] const std::filesystem::path& path() const;
@@ -162,11 +162,19 @@ namespace xayah {
         void select_element(std::uint64_t element_id);
         [[nodiscard]] PbrtElement& selected_element();
         [[nodiscard]] const PbrtElement& selected_element() const;
+        [[nodiscard]] std::vector<std::uint64_t> element_ids(PbrtElementKind kind) const;
+        [[nodiscard]] PbrtElement& element_by_id(std::uint64_t element_id);
+        [[nodiscard]] const PbrtElement& element_by_id(std::uint64_t element_id) const;
         [[nodiscard]] BoundingBoxBounds world_bounds() const;
         [[nodiscard]] BoundingBoxBounds selected_world_bounds() const;
+        void mark_element_transform_edited(std::uint64_t element_id);
+        void mark_element_parameters_edited(std::uint64_t element_id);
+        void mark_element_visibility_edited(std::uint64_t element_id);
 
         void draw_scene_browser_ui();
-        void draw_selected_inspector_ui();
+        void draw_selected_inspector_ui(bool editing_enabled);
+        void draw_element_transform_ui(std::uint64_t element_id, bool editing_enabled);
+        void draw_element_parameters_ui(std::uint64_t element_id, bool editing_enabled);
 
     private:
         friend class PbrtDocumentLoader;

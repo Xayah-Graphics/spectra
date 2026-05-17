@@ -119,12 +119,12 @@ namespace {
         return xayah::multiply_matrix(left, right);
     }
 
-    [[nodiscard]] float parameter_float(const std::vector<xayah::PbrtParameter>& parameters, const std::string_view name, const float fallback) {
+    [[nodiscard]] float parameter_float(const std::vector<xayah::PbrtParameter>& parameters, const std::string_view name, const float default_value) {
         for (const xayah::PbrtParameter& parameter : parameters) {
             if (parameter.name == name && !parameter.floats.empty()) return parameter.floats.front();
             if (parameter.name == name && !parameter.ints.empty()) return static_cast<float>(parameter.ints.front());
         }
-        return fallback;
+        return default_value;
     }
 
     [[nodiscard]] const xayah::PbrtParameter* find_parameter(const std::vector<xayah::PbrtParameter>& parameters, const std::string_view name) {
@@ -134,9 +134,9 @@ namespace {
         return nullptr;
     }
 
-    [[nodiscard]] std::string parameter_string(const std::vector<xayah::PbrtParameter>& parameters, const std::string_view name, const std::string_view fallback) {
+    [[nodiscard]] std::string parameter_string(const std::vector<xayah::PbrtParameter>& parameters, const std::string_view name, const std::string_view default_value) {
         const xayah::PbrtParameter* parameter = find_parameter(parameters, name);
-        if (parameter == nullptr || parameter->strings.empty()) return std::string{fallback};
+        if (parameter == nullptr || parameter->strings.empty()) return std::string{default_value};
         return parameter->strings.front();
     }
 
@@ -221,6 +221,36 @@ namespace {
             matrix[0] * vector[0] + matrix[4] * vector[1] + matrix[8] * vector[2],
             matrix[1] * vector[0] + matrix[5] * vector[1] + matrix[9] * vector[2],
             matrix[2] * vector[0] + matrix[6] * vector[1] + matrix[10] * vector[2],
+        };
+    }
+
+    [[nodiscard]] std::array<float, 16> camera_to_world_look_at_matrix(const float eye_x, const float eye_y, const float eye_z, const float look_x, const float look_y, const float look_z, const float up_x, const float up_y, const float up_z) {
+        const std::array<float, 3> eye{eye_x, eye_y, eye_z};
+        const std::array<float, 3> look{look_x, look_y, look_z};
+        const std::array<float, 3> up = normalize_vector({up_x, up_y, up_z});
+        const std::array<float, 3> direction = normalize_vector(subtract_vector(look, eye));
+        const std::array<float, 3> raw_right = cross_vector(up, direction);
+        const float right_length = std::sqrt(raw_right[0] * raw_right[0] + raw_right[1] * raw_right[1] + raw_right[2] * raw_right[2]);
+        if (right_length <= 0.000001f) throw std::runtime_error("PBRT LookAt up vector is parallel to the view direction");
+        const std::array<float, 3> right = {raw_right[0] / right_length, raw_right[1] / right_length, raw_right[2] / right_length};
+        const std::array<float, 3> corrected_up = cross_vector(direction, right);
+        return {
+            right[0],
+            right[1],
+            right[2],
+            0.0f,
+            corrected_up[0],
+            corrected_up[1],
+            corrected_up[2],
+            0.0f,
+            direction[0],
+            direction[1],
+            direction[2],
+            0.0f,
+            eye[0],
+            eye[1],
+            eye[2],
+            1.0f,
         };
     }
 
@@ -553,6 +583,12 @@ namespace {
         builder.AttributeBegin({});
         builder.Transform(row_major.data(), {});
     }
+
+    void replay_camera_transform_override(pbrt::BasicSceneBuilder& builder, const xayah::PbrtElement& element) {
+        const std::array<float, 16> camera_from_world = xayah::inverse_affine_matrix(element.transform);
+        std::array<float, 16> row_major               = spectra_matrix_to_pbrt_file_matrix(camera_from_world);
+        builder.Transform(row_major.data(), {});
+    }
 } // namespace
 
 namespace xayah {
@@ -597,6 +633,8 @@ namespace xayah {
         void LookAt(const pbrt::Float ex, const pbrt::Float ey, const pbrt::Float ez, const pbrt::Float lx, const pbrt::Float ly, const pbrt::Float lz, const pbrt::Float ux, const pbrt::Float uy, const pbrt::Float uz, pbrt::FileLoc) override {
             PbrtDocument::PbrtCommand command{PbrtDocument::PbrtCommandKind::look_at};
             command.values = {static_cast<float>(ex), static_cast<float>(ey), static_cast<float>(ez), static_cast<float>(lx), static_cast<float>(ly), static_cast<float>(lz), static_cast<float>(ux), static_cast<float>(uy), static_cast<float>(uz)};
+            const std::array<float, 16> camera_to_world = camera_to_world_look_at_matrix(command.values[0], command.values[1], command.values[2], command.values[3], command.values[4], command.values[5], command.values[6], command.values[7], command.values[8]);
+            this->matrix_stack.back() = multiply_preview_matrix(this->matrix_stack.back(), xayah::inverse_affine_matrix(camera_to_world));
             this->append_command(std::move(command));
         }
 
@@ -671,7 +709,17 @@ namespace xayah {
         }
 
         void Camera(const std::string& name, pbrt::ParsedParameterVector params, pbrt::FileLoc) override {
-            this->append_named_parameter_command(PbrtDocument::PbrtCommandKind::camera, PbrtElementKind::camera, "Camera", name, params);
+            PbrtDocument::PbrtCommand command{PbrtDocument::PbrtCommandKind::camera};
+            command.text[0] = "Camera";
+            command.text[1] = name;
+            copy_parameters(params, command.parameters);
+            delete_parsed_parameters(params);
+            const std::uint64_t element_id = this->append_element(PbrtElementKind::camera, "Camera", name, command.parameters);
+            PbrtElement* element = this->document.find_element(element_id);
+            if (element == nullptr) throw std::runtime_error("PBRT camera element was not created");
+            element->transform = xayah::inverse_affine_matrix(this->matrix_stack.back());
+            command.element_id = element_id;
+            this->append_command(std::move(command));
         }
 
         void MakeNamedMedium(const std::string& name, pbrt::ParsedParameterVector params, pbrt::FileLoc) override {
@@ -686,6 +734,8 @@ namespace xayah {
         }
 
         void WorldBegin(pbrt::FileLoc) override {
+            this->matrix_stack.back() = identity_matrix();
+            this->material_stack.back() = "";
             this->append_command({PbrtDocument::PbrtCommandKind::world_begin});
         }
 
@@ -835,7 +885,7 @@ namespace xayah {
 
     PbrtPreviewRenderer::~PbrtPreviewRenderer() noexcept = default;
 
-    void PbrtPreviewRenderer::create(const SceneRenderCreateContext& context) {
+    void PbrtPreviewRenderer::create(const RenderCreateContext& context) {
         if (this->active()) throw std::runtime_error("PBRT preview renderer is already initialized");
         if (context.device == nullptr || !**context.device) throw std::runtime_error("Cannot create PBRT preview renderer without a Vulkan device");
         if (context.color_format == vk::Format::eUndefined || context.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create PBRT preview renderer without swapchain formats");
@@ -957,7 +1007,7 @@ namespace xayah {
         this->surface_pipeline_layout = nullptr;
     }
 
-    void PbrtPreviewRenderer::render(const SceneRenderFrameContext& context, const std::span<const PbrtPreviewVertex> vertices, const std::span<const PbrtPreviewOverlay> overlays) {
+    void PbrtPreviewRenderer::render(const RenderFrameContext& context, const std::span<const PbrtPreviewVertex> vertices, const std::span<const PbrtPreviewOverlay> overlays) {
         if (context.physical_device == nullptr || context.device == nullptr || context.command_buffer == nullptr) throw std::runtime_error("PBRT preview render context is incomplete");
         if (context.frame_index >= context.frame_count || context.frame_count != this->frame_resources.size()) throw std::runtime_error("PBRT preview frame index is outside resource range");
         if (!*this->surface_pipeline_layout || !*this->surface_pipeline || !*this->overlay_pipeline_layout || !*this->overlay_pipeline) throw std::runtime_error("PBRT preview renderer is not initialized");
@@ -1155,7 +1205,7 @@ Shape "sphere" "float radius" [1]
         }
     }
 
-    void PbrtDocument::create_render_resources(const SceneRenderCreateContext& context) {
+    void PbrtDocument::create_render_resources(const RenderCreateContext& context) {
         this->preview_renderer.create(context);
     }
 
@@ -1163,12 +1213,12 @@ Shape "sphere" "float radius" [1]
         this->preview_renderer.destroy();
     }
 
-    void PbrtDocument::recreate_render_resources(const SceneRenderCreateContext& context) {
+    void PbrtDocument::recreate_render_resources(const RenderCreateContext& context) {
         this->destroy_render_resources();
         this->create_render_resources(context);
     }
 
-    void PbrtDocument::render(const SceneRenderFrameContext& context) {
+    void PbrtDocument::render(const RenderFrameContext& context) {
         constexpr std::array<float, 3> shape_surface_color{0.72f, 0.78f, 0.90f};
         constexpr std::array<float, 3> selected_surface_color{1.0f, 0.76f, 0.30f};
         constexpr std::array<float, 4> selected_color{1.0f, 0.76f, 0.30f, 0.98f};
@@ -1247,9 +1297,13 @@ Shape "sphere" "float radius" [1]
             pbrt::BasicSceneBuilder builder{&scene};
             for (const PbrtCommand& command : this->commands) {
                 PbrtElement* element                                = command.element_id == 0 ? nullptr : this->find_element(command.element_id);
+                const bool skip_invisible_element                   = element != nullptr && !element->visible && (command.kind == PbrtCommandKind::shape || command.kind == PbrtCommandKind::light_source || command.kind == PbrtCommandKind::area_light_source || command.kind == PbrtCommandKind::object_instance);
+                if (skip_invisible_element) continue;
                 const std::vector<PbrtParameter>& replay_parameters = element == nullptr ? command.parameters : element->parameters;
-                const bool transform_override                       = element != nullptr && element->transform_override && (command.kind == PbrtCommandKind::shape || command.kind == PbrtCommandKind::light_source || command.kind == PbrtCommandKind::object_instance);
-                if (transform_override) replay_transform_override(builder, *element);
+                const bool world_transform_override                 = element != nullptr && element->transform_override && (command.kind == PbrtCommandKind::shape || command.kind == PbrtCommandKind::light_source || command.kind == PbrtCommandKind::object_instance);
+                const bool camera_transform_override                = element != nullptr && element->transform_override && command.kind == PbrtCommandKind::camera;
+                if (camera_transform_override) replay_camera_transform_override(builder, *element);
+                if (world_transform_override) replay_transform_override(builder, *element);
                 switch (command.kind) {
                 case PbrtCommandKind::option: builder.Option(command.text[0], command.text[1], {}); break;
                 case PbrtCommandKind::identity: builder.Identity({}); break;
@@ -1302,7 +1356,7 @@ Shape "sphere" "float radius" [1]
                 case PbrtCommandKind::object_end: builder.ObjectEnd({}); break;
                 case PbrtCommandKind::object_instance: builder.ObjectInstance(command.text[0], {}); break;
                 }
-                if (transform_override) builder.AttributeEnd({});
+                if (world_transform_override) builder.AttributeEnd({});
             }
             builder.EndOfFiles();
             if (options.useGPU || options.wavefront)
@@ -1382,6 +1436,27 @@ Shape "sphere" "float radius" [1]
         return *element;
     }
 
+    std::vector<std::uint64_t> PbrtDocument::element_ids(const PbrtElementKind kind) const {
+        std::vector<std::uint64_t> ids{};
+        ids.reserve(this->elements.size());
+        for (const PbrtElement& element : this->elements) {
+            if (element.kind == kind) ids.push_back(element.id);
+        }
+        return ids;
+    }
+
+    PbrtElement& PbrtDocument::element_by_id(const std::uint64_t element_id) {
+        PbrtElement* element = this->find_element(element_id);
+        if (element == nullptr) throw std::runtime_error("PBRT element id does not exist");
+        return *element;
+    }
+
+    const PbrtElement& PbrtDocument::element_by_id(const std::uint64_t element_id) const {
+        const PbrtElement* element = this->find_element(element_id);
+        if (element == nullptr) throw std::runtime_error("PBRT element id does not exist");
+        return *element;
+    }
+
     BoundingBoxBounds PbrtDocument::world_bounds() const {
         bool initialized{};
         BoundingBoxBounds result{};
@@ -1419,6 +1494,19 @@ Shape "sphere" "float radius" [1]
         if (initialized) return result;
         if (element.kind == PbrtElementKind::light) return transformed_bounds(element.transform, element.local_bounds);
         throw std::runtime_error("Selected PBRT element has no previewable bounds");
+    }
+
+    void PbrtDocument::mark_element_transform_edited(const std::uint64_t element_id) {
+        this->mark_transform_edited(this->element_by_id(element_id));
+    }
+
+    void PbrtDocument::mark_element_parameters_edited(const std::uint64_t element_id) {
+        this->mark_parameters_edited(this->element_by_id(element_id));
+    }
+
+    void PbrtDocument::mark_element_visibility_edited(const std::uint64_t element_id) {
+        static_cast<void>(this->element_by_id(element_id));
+        this->mark_document_dirty();
     }
 
     std::array<float, 16> PbrtDocument::preview_instance_transform(const PbrtPreviewInstance& instance) const {
@@ -1490,12 +1578,12 @@ Shape "sphere" "float radius" [1]
         }
     }
 
-    void PbrtDocument::draw_selected_inspector_ui() {
+    void PbrtDocument::draw_selected_inspector_ui(const bool editing_enabled) {
         if (!this->has_selection()) {
             ImGui::TextDisabled("No selection");
             return;
         }
-        PbrtElement& element = this->selected_element();
+        const PbrtElement& element = this->selected_element();
         ImGui::Text("%s: %s", element_kind_label(element.kind), element.name.c_str());
         if (!element.detail.empty()) ImGui::TextDisabled("%s", element.detail.c_str());
         ImGui::Text("Preview: %s", preview_state_label(element.preview_state));
@@ -1503,61 +1591,81 @@ Shape "sphere" "float radius" [1]
         if (element.preview_triangle_count != 0) ImGui::TextDisabled("Triangles: %zu", element.preview_triangle_count);
         if (!element.preview_message.empty()) ImGui::TextDisabled("%s", element.preview_message.c_str());
         ImGui::Separator();
+        if (!editing_enabled) ImGui::TextDisabled("Editing is locked while PBRT final render is running");
 
-        if (element.kind == PbrtElementKind::shape || element.kind == PbrtElementKind::light || element.kind == PbrtElementKind::instance) {
-            if (ImGui::CollapsingHeader("Preview Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-                std::array<float, 3> translation{element.transform[12], element.transform[13], element.transform[14]};
-                if (ImGui::InputFloat3("Translation", translation.data(), "%.3f")) {
-                    element.transform[12]      = translation[0];
-                    element.transform[13]      = translation[1];
-                    element.transform[14]      = translation[2];
-                    this->mark_transform_edited(element);
-                }
-            }
+        if (element.kind == PbrtElementKind::shape || (element.kind == PbrtElementKind::light && element.type == "Light") || element.kind == PbrtElementKind::instance || element.kind == PbrtElementKind::camera) {
+            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) this->draw_element_transform_ui(element.id, editing_enabled);
         }
+        if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) this->draw_element_parameters_ui(element.id, editing_enabled);
+    }
 
-        if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (element.parameters.empty()) {
-                ImGui::TextDisabled("No parameters");
-            } else if (ImGui::BeginTable("PbrtParameterTable", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 160.0f);
-                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 96.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                for (PbrtParameter& parameter : element.parameters) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(parameter.name.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::TextDisabled("%s", parameter.type.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::PushID(&parameter);
-                    bool changed = false;
-                    for (std::size_t index = 0; index < parameter.floats.size(); ++index) {
-                        ImGui::SetNextItemWidth(-1.0f);
-                        changed |= ImGui::InputFloat(std::format("##float{}", index).c_str(), &parameter.floats[index], 0.0f, 0.0f, "%.6f");
-                    }
-                    for (std::size_t index = 0; index < parameter.ints.size(); ++index) {
-                        ImGui::SetNextItemWidth(-1.0f);
-                        changed |= ImGui::InputInt(std::format("##int{}", index).c_str(), &parameter.ints[index]);
-                    }
-                    for (std::size_t index = 0; index < parameter.strings.size(); ++index) {
-                        ImGui::SetNextItemWidth(-1.0f);
-                        changed |= input_text_string(std::format("##string{}", index).c_str(), parameter.strings[index]);
-                    }
-                    for (std::size_t index = 0; index < parameter.bools.size(); ++index) {
-                        bool value = parameter.bools[index];
-                        if (ImGui::Checkbox(std::format("##bool{}", index).c_str(), &value)) {
-                            parameter.bools[index] = value;
-                            changed                = true;
-                        }
-                    }
-                    if (parameter.floats.empty() && parameter.ints.empty() && parameter.strings.empty() && parameter.bools.empty()) ImGui::TextDisabled("Empty");
-                    if (changed) this->mark_parameters_edited(element);
-                    ImGui::PopID();
-                }
-                ImGui::EndTable();
-            }
+    void PbrtDocument::draw_element_transform_ui(const std::uint64_t element_id, const bool editing_enabled) {
+        PbrtElement& element = this->element_by_id(element_id);
+        if (element.kind != PbrtElementKind::shape && element.kind != PbrtElementKind::instance && element.kind != PbrtElementKind::camera && (element.kind != PbrtElementKind::light || element.type != "Light")) {
+            ImGui::TextDisabled("No editable transform");
+            return;
         }
+        ImGui::PushID(static_cast<int>(element.id));
+        ImGui::BeginDisabled(!editing_enabled);
+        std::array<float, 3> translation{element.transform[12], element.transform[13], element.transform[14]};
+        if (ImGui::InputFloat3("Translation", translation.data(), "%.3f")) {
+            element.transform[12] = translation[0];
+            element.transform[13] = translation[1];
+            element.transform[14] = translation[2];
+            this->mark_transform_edited(element);
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+
+    void PbrtDocument::draw_element_parameters_ui(const std::uint64_t element_id, const bool editing_enabled) {
+        PbrtElement& element = this->element_by_id(element_id);
+        if (element.parameters.empty()) {
+            ImGui::TextDisabled("No parameters");
+            return;
+        }
+        ImGui::PushID(static_cast<int>(element.id));
+        ImGui::BeginDisabled(!editing_enabled);
+        if (ImGui::BeginTable("PbrtParameterTable", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 96.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            for (PbrtParameter& parameter : element.parameters) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(parameter.name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", parameter.type.c_str());
+                ImGui::TableNextColumn();
+                ImGui::PushID(&parameter);
+                bool changed = false;
+                for (std::size_t index = 0; index < parameter.floats.size(); ++index) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    changed |= ImGui::InputFloat(std::format("##float{}", index).c_str(), &parameter.floats[index], 0.0f, 0.0f, "%.6f");
+                }
+                for (std::size_t index = 0; index < parameter.ints.size(); ++index) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    changed |= ImGui::InputInt(std::format("##int{}", index).c_str(), &parameter.ints[index]);
+                }
+                for (std::size_t index = 0; index < parameter.strings.size(); ++index) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    changed |= input_text_string(std::format("##string{}", index).c_str(), parameter.strings[index]);
+                }
+                for (std::size_t index = 0; index < parameter.bools.size(); ++index) {
+                    bool value = parameter.bools[index];
+                    if (ImGui::Checkbox(std::format("##bool{}", index).c_str(), &value)) {
+                        parameter.bools[index] = value;
+                        changed                = true;
+                    }
+                }
+                if (parameter.floats.empty() && parameter.ints.empty() && parameter.strings.empty() && parameter.bools.empty()) ImGui::TextDisabled("Empty");
+                if (changed) this->mark_parameters_edited(element);
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
     }
 
     PbrtElement* PbrtDocument::find_element(const std::uint64_t element_id) {
