@@ -494,6 +494,23 @@ namespace {
         throw std::runtime_error("Unknown PBRT preview state");
     }
 
+    int resize_input_text(ImGuiInputTextCallbackData* data) {
+        if (data->EventFlag != ImGuiInputTextFlags_CallbackResize) return 0;
+        std::string* value = static_cast<std::string*>(data->UserData);
+        value->resize(static_cast<std::size_t>(data->BufTextLen));
+        data->Buf = value->data();
+        return 0;
+    }
+
+    [[nodiscard]] bool input_text_string(const char* label, std::string& value) {
+        const std::size_t text_size = value.size();
+        value.resize(value.capacity());
+        value.data()[text_size] = '\0';
+        const bool changed = ImGui::InputText(label, value.data(), value.size() + 1u, ImGuiInputTextFlags_CallbackResize, resize_input_text, &value);
+        value.resize(std::strlen(value.c_str()));
+        return changed;
+    }
+
     void copy_parameters(const pbrt::ParsedParameterVector& source, std::vector<xayah::PbrtParameter>& destination) {
         destination.clear();
         destination.reserve(source.size());
@@ -1041,6 +1058,20 @@ Shape "sphere" "float radius" [1]
         if (this->selection.element_id != 0 && this->find_element(this->selection.element_id) == nullptr) throw std::runtime_error("PBRT selection points to a missing element");
     }
 
+    void PbrtDocument::mark_document_dirty() {
+        this->dirty = true;
+    }
+
+    void PbrtDocument::mark_transform_edited(PbrtElement& element) {
+        element.transform_override = true;
+        this->mark_document_dirty();
+    }
+
+    void PbrtDocument::mark_parameters_edited(PbrtElement& element) {
+        if (element.kind == PbrtElementKind::shape) this->rebuild_preview_cache();
+        this->mark_document_dirty();
+    }
+
     void PbrtDocument::rebuild_preview_cache() {
         this->preview_meshes.clear();
         this->preview_instances.clear();
@@ -1431,6 +1462,7 @@ Shape "sphere" "float radius" [1]
             ImGui::Separator();
             ImGui::TextDisabled("%s", this->source_path.string().c_str());
         }
+        ImGui::Text("Document: %s", this->dirty ? "Modified" : "Clean");
 
         ImGui::Separator();
         if (ImGui::BeginTabBar("PbrtSceneBrowserTabs")) {
@@ -1479,8 +1511,7 @@ Shape "sphere" "float radius" [1]
                     element.transform[12]      = translation[0];
                     element.transform[13]      = translation[1];
                     element.transform[14]      = translation[2];
-                    element.transform_override = true;
-                    this->dirty                = true;
+                    this->mark_transform_edited(element);
                 }
             }
         }
@@ -1510,14 +1541,8 @@ Shape "sphere" "float radius" [1]
                         changed |= ImGui::InputInt(std::format("##int{}", index).c_str(), &parameter.ints[index]);
                     }
                     for (std::size_t index = 0; index < parameter.strings.size(); ++index) {
-                        std::array<char, 512> buffer{};
-                        const std::size_t copy_size = std::min(buffer.size() - 1u, parameter.strings[index].size());
-                        std::memcpy(buffer.data(), parameter.strings[index].data(), copy_size);
                         ImGui::SetNextItemWidth(-1.0f);
-                        if (ImGui::InputText(std::format("##string{}", index).c_str(), buffer.data(), buffer.size())) {
-                            parameter.strings[index] = buffer.data();
-                            changed                  = true;
-                        }
+                        changed |= input_text_string(std::format("##string{}", index).c_str(), parameter.strings[index]);
                     }
                     for (std::size_t index = 0; index < parameter.bools.size(); ++index) {
                         bool value = parameter.bools[index];
@@ -1526,10 +1551,8 @@ Shape "sphere" "float radius" [1]
                             changed                = true;
                         }
                     }
-                    if (changed) {
-                        if (element.kind == PbrtElementKind::shape) this->rebuild_preview_cache();
-                        this->dirty = true;
-                    }
+                    if (parameter.floats.empty() && parameter.ints.empty() && parameter.strings.empty() && parameter.bools.empty()) ImGui::TextDisabled("Empty");
+                    if (changed) this->mark_parameters_edited(element);
                     ImGui::PopID();
                 }
                 ImGui::EndTable();

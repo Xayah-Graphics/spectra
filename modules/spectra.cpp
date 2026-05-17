@@ -7,12 +7,12 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <imgui_internal.h>
 #include <ImGuizmo.h>
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
-#include <imgui.h>
-#include <imgui_internal.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <material_symbols/material_symbols_rounded_regular.h>
 #include <roboto/roboto_mono.h>

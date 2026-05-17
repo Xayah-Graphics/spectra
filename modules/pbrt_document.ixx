@@ -245,6 +245,9 @@ namespace xayah {
 
         [[nodiscard]] PbrtElement* find_element(std::uint64_t element_id);
         [[nodiscard]] const PbrtElement* find_element(std::uint64_t element_id) const;
+        void mark_document_dirty();
+        void mark_transform_edited(PbrtElement& element);
+        void mark_parameters_edited(PbrtElement& element);
         void rebuild_preview_cache();
         [[nodiscard]] std::array<float, 16> preview_instance_transform(const PbrtPreviewInstance& instance) const;
         [[nodiscard]] BoundingBoxBounds preview_instance_world_bounds(const PbrtPreviewInstance& instance) const;
