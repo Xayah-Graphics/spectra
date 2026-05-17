@@ -124,12 +124,12 @@ namespace xayah {
                 if (maximum[axis] < minimum[axis]) throw std::runtime_error("Camera fit bounds are invalid");
             }
 
-            const std::array<float, 3> half_size = multiply(subtract(maximum, minimum), 0.5f);
+            const std::array<float, 3> half_size  = multiply(subtract(maximum, minimum), 0.5f);
             const std::array<float, 3> box_center = multiply(add(minimum, maximum), 0.5f);
             if (length(half_size) <= epsilon) throw std::runtime_error("Camera fit bounds must have non-zero extent");
             const float y_fov = std::tan(radians(this->current.fov_degrees * 0.5f));
             const float x_fov = y_fov * aspect;
-            float distance   = 0.0f;
+            float distance    = 0.0f;
 
             if (tight) {
                 const std::array<float, 16> fit_view = lookat_matrix(this->current.eye, box_center, effective_up(this->current.eye, box_center, this->current.up));
@@ -353,10 +353,22 @@ namespace xayah {
         std::optional<CameraState> snapshot{};
         std::array<std::array<float, 3>, 3> bezier_points{};
         std::array<float, 16> view{
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, 1.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
         };
         std::array<std::uint32_t, 2> window_size{1920, 1080};
         std::array<float, 2> mouse_position{0.0f, 0.0f};
@@ -386,11 +398,11 @@ namespace xayah {
         void pan(std::array<float, 2> displacement) {
             if (displacement[0] == 0.0f && displacement[1] == 0.0f) return;
             if (this->mode == CameraMode::fly) displacement = {-displacement[0], -displacement[1]};
-            const CameraFrame frame      = this->camera_frame();
-            const ViewDimensions viewbox = this->view_dimensions();
+            const CameraFrame frame           = this->camera_frame();
+            const ViewDimensions viewbox      = this->view_dimensions();
             const std::array<float, 3> offset = add(multiply(frame.right, -displacement[0] * viewbox.width), multiply(frame.up, displacement[1] * viewbox.height));
-            this->current.eye               = add(this->current.eye, offset);
-            this->current.center            = add(this->current.center, offset);
+            this->current.eye                 = add(this->current.eye, offset);
+            this->current.center              = add(this->current.center, offset);
         }
 
         void orbit(std::array<float, 2> displacement, const bool invert) {
@@ -404,24 +416,24 @@ namespace xayah {
             if (radius < epsilon) return;
             center_to_eye = normalize(center_to_eye);
 
-            constexpr float pole_padding = 0.001f;
-            const float cos_elevation    = dot(center_to_eye, this->current.up);
+            constexpr float pole_padding    = 0.001f;
+            const float cos_elevation       = dot(center_to_eye, this->current.up);
             std::array<float, 3> horizontal = subtract(center_to_eye, multiply(this->current.up, cos_elevation));
             const float sin_elevation       = length(horizontal);
             const float elevation           = std::atan2(sin_elevation, cos_elevation);
 
             if (sin_elevation < epsilon) {
                 const std::array<float, 3> reference = std::abs(this->current.up[0]) < 0.9f ? std::array<float, 3>{1.0f, 0.0f, 0.0f} : std::array<float, 3>{0.0f, 0.0f, 1.0f};
-                horizontal                          = normalize(subtract(reference, multiply(this->current.up, dot(reference, this->current.up))));
+                horizontal                           = normalize(subtract(reference, multiply(this->current.up, dot(reference, this->current.up))));
             } else {
                 horizontal = multiply(horizontal, 1.0f / sin_elevation);
             }
 
-            const float yaw_cos = std::cos(-displacement[0]);
-            const float yaw_sin = std::sin(-displacement[0]);
-            horizontal          = add(multiply(horizontal, yaw_cos), multiply(cross(this->current.up, horizontal), yaw_sin));
-            const float new_elevation = std::clamp(elevation - displacement[1], pole_padding, std::numbers::pi_v<float> - pole_padding);
-            center_to_eye             = multiply(add(multiply(this->current.up, std::cos(new_elevation)), multiply(horizontal, std::sin(new_elevation))), radius);
+            const float yaw_cos                     = std::cos(-displacement[0]);
+            const float yaw_sin                     = std::sin(-displacement[0]);
+            horizontal                              = add(multiply(horizontal, yaw_cos), multiply(cross(this->current.up, horizontal), yaw_sin));
+            const float new_elevation               = std::clamp(elevation - displacement[1], pole_padding, std::numbers::pi_v<float> - pole_padding);
+            center_to_eye                           = multiply(add(multiply(this->current.up, std::cos(new_elevation)), multiply(horizontal, std::sin(new_elevation))), radius);
             const std::array<float, 3> new_position = add(center_to_eye, origin);
 
             if (!invert)
@@ -479,12 +491,12 @@ namespace xayah {
 
         void find_bezier_points() {
             if (!this->snapshot) throw std::runtime_error("Camera bezier snapshot is missing");
-            const std::array<float, 3> p0         = this->current.eye;
-            const std::array<float, 3> p2         = this->goal.eye;
-            const std::array<float, 3> interest   = multiply(add(this->goal.center, this->snapshot->center), 0.5f);
-            const std::array<float, 3> midpoint   = multiply(add(p0, p2), 0.5f);
-            const float radius                    = 0.5f * (length(subtract(p0, interest)) + length(subtract(p2, interest)));
-            std::array<float, 3> to_midpoint      = subtract(midpoint, interest);
+            const std::array<float, 3> p0       = this->current.eye;
+            const std::array<float, 3> p2       = this->goal.eye;
+            const std::array<float, 3> interest = multiply(add(this->goal.center, this->snapshot->center), 0.5f);
+            const std::array<float, 3> midpoint = multiply(add(p0, p2), 0.5f);
+            const float radius                  = 0.5f * (length(subtract(p0, interest)) + length(subtract(p2, interest)));
+            std::array<float, 3> to_midpoint    = subtract(midpoint, interest);
             if (dot(to_midpoint, to_midpoint) < epsilon) to_midpoint = {0.0f, 0.0f, 1.0f};
             const std::array<float, 3> pass_point = add(interest, multiply(normalize(to_midpoint), radius));
             std::array<float, 3> p1               = subtract(multiply(pass_point, 2.0f), multiply(add(p0, p2), 0.5f));
@@ -518,20 +530,44 @@ namespace xayah {
                 const float half_height = this->current.orthographic_magnitudes[1];
                 const float y_scale     = vulkan_y_flip ? -1.0f / half_height : 1.0f / half_height;
                 return {
-                    1.0f / half_width, 0.0f, 0.0f, 0.0f,
-                    0.0f, y_scale, 0.0f, 0.0f,
-                    0.0f, 0.0f, -1.0f / (far_clip - this->current.near_far[0]), 0.0f,
-                    0.0f, 0.0f, -this->current.near_far[0] / (far_clip - this->current.near_far[0]), 1.0f,
+                    1.0f / half_width,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    y_scale,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    -1.0f / (far_clip - this->current.near_far[0]),
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    -this->current.near_far[0] / (far_clip - this->current.near_far[0]),
+                    1.0f,
                 };
             }
 
             const float focal  = 1.0f / std::tan(radians(this->current.fov_degrees * 0.5f));
             const float y_axis = vulkan_y_flip ? -focal : focal;
             return {
-                focal / aspect, 0.0f, 0.0f, 0.0f,
-                0.0f, y_axis, 0.0f, 0.0f,
-                0.0f, 0.0f, far_clip / (this->current.near_far[0] - far_clip), -1.0f,
-                0.0f, 0.0f, (far_clip * this->current.near_far[0]) / (this->current.near_far[0] - far_clip), 0.0f,
+                focal / aspect,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                y_axis,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                far_clip / (this->current.near_far[0] - far_clip),
+                -1.0f,
+                0.0f,
+                0.0f,
+                (far_clip * this->current.near_far[0]) / (this->current.near_far[0] - far_clip),
+                0.0f,
             };
         }
 
@@ -587,10 +623,22 @@ namespace xayah {
             const std::array<float, 3> right   = normalize(cross(forward, up));
             const std::array<float, 3> view_up = cross(right, forward);
             return {
-                right[0], view_up[0], -forward[0], 0.0f,
-                right[1], view_up[1], -forward[1], 0.0f,
-                right[2], view_up[2], -forward[2], 0.0f,
-                -dot(right, eye), -dot(view_up, eye), dot(forward, eye), 1.0f,
+                right[0],
+                view_up[0],
+                -forward[0],
+                0.0f,
+                right[1],
+                view_up[1],
+                -forward[1],
+                0.0f,
+                right[2],
+                view_up[2],
+                -forward[2],
+                0.0f,
+                -dot(right, eye),
+                -dot(view_up, eye),
+                dot(forward, eye),
+                1.0f,
             };
         }
 

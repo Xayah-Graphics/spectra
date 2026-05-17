@@ -47,18 +47,29 @@ namespace xayah {
         std::vector<bool> bools{};
     };
 
+    export enum class PbrtPreviewState : std::uint32_t {
+        supported   = 0,
+        unsupported = 1,
+        prototype   = 2,
+        none        = 3,
+    };
+
     export struct PbrtElement {
         std::uint64_t id{0};
         PbrtElementKind kind{PbrtElementKind::shape};
         std::string type{};
         std::string name{};
         std::string detail{};
+        std::string prototype_name{};
         std::size_t command_index{0};
         std::vector<PbrtParameter> parameters{};
         std::array<float, 16> transform{};
         bool transform_override{false};
         bool visible{true};
         BoundingBoxBounds local_bounds{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+        PbrtPreviewState preview_state{PbrtPreviewState::none};
+        std::string preview_message{};
+        std::size_t preview_triangle_count{0};
     };
 
     export struct PbrtSelection {
@@ -75,6 +86,21 @@ namespace xayah {
         std::size_t instances{0};
         std::size_t render_settings{0};
         std::size_t commands{0};
+        std::size_t preview_instances{0};
+        std::size_t preview_triangles{0};
+        std::size_t unsupported_preview{0};
+    };
+
+    export struct PbrtPreviewVertex {
+        std::array<float, 3> position{};
+        std::array<float, 3> normal{};
+        std::array<float, 3> color{};
+    };
+
+    export struct PbrtPreviewOverlay {
+        std::array<float, 16> transform{};
+        BoundingBoxBounds bounds{};
+        std::array<float, 4> color{};
     };
 
     export class PbrtPreviewRenderer {
@@ -89,12 +115,21 @@ namespace xayah {
 
         void create(const SceneRenderCreateContext& context);
         void destroy() noexcept;
-        void render(const SceneRenderFrameContext& context, const std::array<float, 16>& transform, const BoundingBoxBounds& bounds, const std::array<float, 4>& color);
+        void render(const SceneRenderFrameContext& context, std::span<const PbrtPreviewVertex> vertices, std::span<const PbrtPreviewOverlay> overlays);
         [[nodiscard]] bool active() const;
 
     private:
-        vk::raii::PipelineLayout pipeline_layout{nullptr};
-        vk::raii::Pipeline pipeline{nullptr};
+        struct FrameResources {
+            vk::raii::Buffer vertex_buffer{nullptr};
+            vk::raii::DeviceMemory vertex_memory{nullptr};
+            vk::DeviceSize vertex_size{0};
+        };
+
+        vk::raii::PipelineLayout surface_pipeline_layout{nullptr};
+        vk::raii::Pipeline surface_pipeline{nullptr};
+        vk::raii::PipelineLayout overlay_pipeline_layout{nullptr};
+        vk::raii::Pipeline overlay_pipeline{nullptr};
+        std::vector<FrameResources> frame_resources{};
     };
 
     export class PbrtDocument {
@@ -185,14 +220,33 @@ namespace xayah {
             std::uint64_t element_id{0};
         };
 
+        struct PbrtPreviewMesh {
+            std::uint64_t source_element_id{0};
+            std::vector<PbrtPreviewVertex> vertices{};
+            BoundingBoxBounds local_bounds{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+        };
+
+        struct PbrtPreviewInstance {
+            std::uint64_t element_id{0};
+            std::uint64_t source_element_id{0};
+            std::size_t mesh_index{0};
+            bool unsupported{false};
+            BoundingBoxBounds local_bounds{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+        };
+
         std::filesystem::path source_path{};
         std::vector<PbrtElement> elements{};
         PbrtPreviewRenderer preview_renderer{};
         std::vector<PbrtCommand> commands{};
+        std::vector<PbrtPreviewMesh> preview_meshes{};
+        std::vector<PbrtPreviewInstance> preview_instances{};
         std::uint64_t next_element_id{1};
         bool dirty{false};
 
         [[nodiscard]] PbrtElement* find_element(std::uint64_t element_id);
         [[nodiscard]] const PbrtElement* find_element(std::uint64_t element_id) const;
+        void rebuild_preview_cache();
+        [[nodiscard]] std::array<float, 16> preview_instance_transform(const PbrtPreviewInstance& instance) const;
+        [[nodiscard]] BoundingBoxBounds preview_instance_world_bounds(const PbrtPreviewInstance& instance) const;
     };
 } // namespace xayah

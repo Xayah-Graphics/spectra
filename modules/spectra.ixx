@@ -166,6 +166,7 @@ namespace xayah {
             bool viewport_known{false};
             bool viewport_hovered{false};
             bool viewport_focused{false};
+            bool auto_fit_pending{true};
             std::array<float, 2> viewport_position{0.0f, 0.0f};
             std::array<float, 2> viewport_size{1280.0f, 720.0f};
             int environment_type{0};

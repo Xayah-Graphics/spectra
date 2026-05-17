@@ -31,7 +31,7 @@ namespace {
 
     xayah::BoundingBoxBounds transformed_bounds(const xayah::Transform& transform, const xayah::BoundingBoxBounds& bounds) {
         const std::array<float, 16> matrix = xayah::transform_matrix(transform);
-        bool initialized                  = false;
+        bool initialized                   = false;
         xayah::BoundingBoxBounds result{};
         for (std::uint32_t corner = 0; corner < 8; ++corner) {
             const std::array<float, 3> local_point{

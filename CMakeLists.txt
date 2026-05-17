@@ -40,12 +40,15 @@ add_subdirectory(vendor/glfw)
 set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
 set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
+set(SPECTRA_PBRT_PREVIEW_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/pbrt_preview.slang)
 set(
         SPECTRA_SHADER_OUTPUTS
         ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.frag.spv
 )
 add_custom_command(
         OUTPUT ${SPECTRA_SHADER_OUTPUTS}
@@ -54,7 +57,9 @@ add_custom_command(
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER}
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PBRT_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PBRT_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.frag.spv
+        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER} ${SPECTRA_PBRT_PREVIEW_SHADER}
         VERBATIM
 )
 add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})

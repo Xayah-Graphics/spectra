@@ -7,11 +7,11 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 #include <ImGuizmo.h>
 #include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
 #include <imgui_internal.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <material_symbols/material_symbols_rounded_regular.h>
@@ -784,7 +784,7 @@ namespace xayah {
             camera_inputs.alt          = alt;
 
             if (!alt) {
-                float key_motion = io.DeltaTime;
+                float key_motion            = io.DeltaTime;
                 bool keyboard_camera_motion = false;
                 if (shift) key_motion *= 5.0f;
                 if (ctrl) key_motion *= 0.1f;
@@ -941,7 +941,14 @@ namespace xayah {
         const vk::Viewport vulkan_viewport{static_cast<float>(viewport_x), static_cast<float>(viewport_y), static_cast<float>(scene_viewport_width), static_cast<float>(scene_viewport_height), 0.0f, 1.0f};
         const vk::Rect2D scissor{{viewport_x, viewport_y}, {scene_viewport_width, scene_viewport_height}};
         this->viewport.camera.set_window_size({scene_viewport_width, scene_viewport_height});
-        const float aspect                          = static_cast<float>(scene_viewport_width) / static_cast<float>(scene_viewport_height);
+        const float aspect = static_cast<float>(scene_viewport_width) / static_cast<float>(scene_viewport_height);
+        if (this->ui.auto_fit_pending) {
+            if (document.object_count() != 0) {
+                const BoundingBoxBounds bounds = document.world_bounds();
+                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, aspect);
+            }
+            this->ui.auto_fit_pending = false;
+        }
         const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
 
         const std::array<float, 3> camera_position = this->viewport.camera.position();
@@ -1255,9 +1262,9 @@ namespace xayah {
             return;
         }
 
-        CameraState camera       = this->viewport.camera.state();
-        bool changed             = false;
-        bool instant_changed     = false;
+        CameraState camera   = this->viewport.camera.state();
+        bool changed         = false;
+        bool instant_changed = false;
         this->draw_camera_quick_actions(camera);
         this->draw_camera_navigation();
         ImGui::Separator();
@@ -1374,8 +1381,8 @@ namespace xayah {
                     camera_tooltip("Field of view of the camera in degrees");
                 } else {
                     begin_camera_property_row("View");
-                    const float distance               = this->viewport.camera.distance_to_center();
-                    const std::array<float, 3> center  = camera.center;
+                    const float distance              = this->viewport.camera.distance_to_center();
+                    const std::array<float, 3> center = camera.center;
                     struct AxisView {
                         const char* label;
                         const char* tooltip;
@@ -1877,8 +1884,7 @@ namespace xayah {
             else if (present_result == vk::Result::eErrorSurfaceLostKHR) {
                 frame.recreate_after_present = true;
                 frame_presented              = false;
-            }
-            else if (present_result != vk::Result::eSuccess)
+            } else if (present_result != vk::Result::eSuccess)
                 throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
         } catch (const vk::OutOfDateKHRError&) {
             frame.recreate_after_present = true;
@@ -1887,14 +1893,12 @@ namespace xayah {
             if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR)) {
                 frame.recreate_after_present = true;
                 frame_presented              = false;
-            }
-            else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
+            } else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
                 frame.recreate_after_present = true;
             else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR)) {
                 frame.recreate_after_present = true;
                 frame_presented              = false;
-            }
-            else
+            } else
                 throw;
         }
         if (frame.recreate_after_present) this->recreate_swapchain(document);
