@@ -185,9 +185,6 @@ add_subdirectory(vendor/pbrt/openexr ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/ope
 set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate OFF CACHE BOOL "" FORCE)
 set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig OFF CACHE BOOL "" FORCE)
 
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-add_subdirectory(vendor/pbrt/double-conversion ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/double-conversion)
-
 set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
 set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(vendor/pbrt/utf8proc ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/utf8proc)
@@ -273,9 +270,7 @@ set(PBRT_INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/zlib
         ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/zlib
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/libdeflate
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/filesystem
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/ptex/src/ptex
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/double-conversion
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/openvdb/nanovdb
         ${PBRT_GENERATED_DIR}
         ${PBRT_OPTIX_PATH}/include
@@ -497,7 +492,6 @@ target_link_libraries(
         Ptex_static
         ZLIB::ZLIB
         deflate::deflate
-        double-conversion
         utf8proc
         CUDA::cudart
         CUDA::cuda_driver
