@@ -3,7 +3,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 export module spectra;
-export import scene_frame;
+export import pbrt_document;
 import camera;
 import std;
 
@@ -12,13 +12,7 @@ namespace xayah {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
-        void render(Scene& scene);
-
-        template <SceneFrameProducer Producer>
-        void render(Scene& scene, Producer&& producer) {
-            std::function<SceneFrameSnapshot(const SceneFrameRequest&)> frame_producer = [producer = std::forward<Producer>(producer)](const SceneFrameRequest& request) mutable { return producer(request); };
-            this->render_loop(scene, frame_producer);
-        }
+        void render(PbrtDocument& document);
 
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
@@ -32,24 +26,15 @@ namespace xayah {
             bool recreate_after_present{false};
         };
 
-        bool begin_frame(FrameState& frame, Scene& scene);
-        void record_frame(const FrameState& frame, Scene& scene);
-        void end_frame(FrameState& frame, Scene& scene);
+        bool begin_frame(FrameState& frame, PbrtDocument& document);
+        void record_frame(const FrameState& frame, PbrtDocument& document);
+        void end_frame(FrameState& frame, PbrtDocument& document);
 
     private:
-        enum class SceneFrameSessionMode : std::uint32_t {
-            idle            = 0,
-            preview_running = 1,
-            record_running  = 2,
-            record_stopping = 3,
-            playback        = 4,
-        };
-
-        void render_loop(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer);
-        void update_scene_frame_session(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer, float delta_seconds);
+        void render_loop(PbrtDocument& document);
         void update_window_title(float delta_seconds);
-        void draw_main_menu(Scene& scene);
-        void draw_menu_toolbar(Scene& scene);
+        void draw_main_menu(PbrtDocument& document);
+        void draw_menu_toolbar(PbrtDocument& document);
         void draw_dockspace();
         void draw_viewport_window();
         void draw_camera_window();
@@ -58,20 +43,20 @@ namespace xayah {
         bool draw_camera_projection(CameraState& camera);
         bool draw_camera_position(CameraState& camera);
         bool draw_camera_other(CameraState& camera);
-        void draw_scene_browser(Scene& scene);
+        void draw_scene_browser(PbrtDocument& document);
         void draw_settings_window();
         void draw_grid_settings_window();
-        void draw_render_output();
-        void draw_object_inspector(Scene& scene);
+        void draw_render_output(PbrtDocument& document);
+        void draw_object_inspector(PbrtDocument& document);
         void draw_environment_window();
         void draw_tonemapper_window();
-        void draw_statistics_window(Scene& scene);
+        void draw_statistics_window(PbrtDocument& document);
         void draw_timeline_window();
-        void draw_transform_gizmo(Scene& scene);
+        void draw_transform_gizmo(PbrtDocument& document);
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
-        void recreate_swapchain(Scene& scene);
+        void recreate_swapchain(PbrtDocument& document);
 
         struct {
             vk::raii::Context context;
@@ -215,38 +200,23 @@ namespace xayah {
             path_tracer = 1,
         };
 
-        enum class PathTraceBackend : std::uint32_t {
-            cpu       = 0,
-            wavefront = 1,
-            gpu       = 2,
-        };
-
         struct {
             RendererMode mode{RendererMode::preview};
             std::array<int, 2> resolution{1280, 720};
             int samples_per_pixel{64};
             int thread_count{30};
-            PathTraceBackend backend{PathTraceBackend::cpu};
-            std::array<char, 256> output_path{"render-output.png"};
+            PbrtPathTraceBackend backend{PbrtPathTraceBackend::cpu};
+            std::array<char, 256> output_path{"render-output.exr"};
         } renderer;
 
         struct {
             std::string status{"Idle"};
-            std::string error{"pbrt backend is not connected in stage 2"};
+            std::string error{"Ready"};
         } render_output;
 
         struct {
             std::string mode_label{"Idle"};
-            SceneFrameSessionMode mode{SceneFrameSessionMode::idle};
-            int next_frame_index{0};
-            int simulated_frames{0};
-            int written_frames{0};
-            std::uint64_t cache_bytes{0};
-            std::uint64_t max_cache_bytes{0};
         } session;
-
-        SceneFrameRecorder recorder{};
-        int applied_record_frame{-1};
 
         struct {
             std::uint32_t frame_count{2};

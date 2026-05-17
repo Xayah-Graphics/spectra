@@ -39,20 +39,11 @@ add_subdirectory(vendor/glfw)
 # ============================================================================
 set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
-set(SPECTRA_VOLUME_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/volume.slang)
-set(SPECTRA_MESH_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/mesh.slang)
-set(SPECTRA_PARTICLES_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/particles.slang)
 set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
 set(
         SPECTRA_SHADER_OUTPUTS
         ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/volume.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/volume.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/mesh.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/mesh.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/particles.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/particles.frag.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
 )
@@ -61,15 +52,9 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_SHADER_OUTPUT_DIR}
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VOLUME_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/volume.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_VOLUME_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/volume.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_MESH_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/mesh.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_MESH_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/mesh.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PARTICLES_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/particles.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PARTICLES_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/particles.frag.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_VOLUME_SHADER} ${SPECTRA_MESH_SHADER} ${SPECTRA_PARTICLES_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER}
+        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER}
         VERBATIM
 )
 add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})
@@ -85,11 +70,7 @@ target_sources(
         PRIVATE
         modules/spectra.cpp
         modules/scene_object.cpp
-        modules/volume.cpp
-        modules/mesh.cpp
-        modules/particles.cpp
-        modules/scene.cpp
-        modules/scene_frame.cpp
+        modules/pbrt_document.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -108,11 +89,7 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/camera.ixx
         modules/scene_object.ixx
-        modules/volume.ixx
-        modules/mesh.ixx
-        modules/particles.ixx
-        modules/scene.ixx
-        modules/scene_frame.ixx
+        modules/pbrt_document.ixx
         modules/spectra.ixx
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
@@ -503,6 +480,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif ()
 set_property(TARGET pbrt_core PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET pbrt_core PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+target_include_directories(spectra PRIVATE ${PBRT_INCLUDE_DIRS})
+target_compile_definitions(spectra PRIVATE ${PBRT_DEFINITIONS})
+target_link_libraries(spectra PRIVATE pbrt_core)
 
 add_executable(pbrt_exe pbrt/cmd/pbrt.cpp)
 add_executable(pbrt::exe ALIAS pbrt_exe)
@@ -514,54 +494,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(pbrt_exe PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
 
-add_library(pyro)
-target_sources(
-        pyro
-        PRIVATE
-        ext/pyro.cpp
-        ext/pyro.cu
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        ext/pyro.ixx
-)
-target_link_libraries(pyro PUBLIC CUDA::cudart CUDA::cublas CUDA::cusparse)
-set_property(TARGET pyro PROPERTY CXX_MODULE_STD ON)
-
-add_library(bouncingball)
-target_sources(
-        bouncingball
-        PRIVATE
-        ext/bouncingball.cpp
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        ext/bouncingball.ixx
-)
-set_property(TARGET bouncingball PROPERTY CXX_MODULE_STD ON)
-
-add_library(cloth)
-target_sources(
-        cloth
-        PRIVATE
-        ext/cloth.cpp
-        ext/cloth.cu
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        ext/cloth.ixx
-)
-target_link_libraries(cloth PRIVATE CUDA::cudart)
-set_property(TARGET cloth PROPERTY CXX_MODULE_STD ON)
-
-add_library(sparkles)
-target_sources(
-        sparkles
-        PRIVATE
-        ext/sparkles.cpp
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        ext/sparkles.ixx
-)
-set_property(TARGET sparkles PROPERTY CXX_MODULE_STD ON)
-
 add_executable(test main.cpp)
-target_link_libraries(test PRIVATE spectra pyro bouncingball cloth sparkles)
+target_link_libraries(test PRIVATE spectra)
 set_property(TARGET test PROPERTY CXX_MODULE_STD ON)

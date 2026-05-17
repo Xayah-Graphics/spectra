@@ -1,0 +1,198 @@
+module;
+#include <vulkan/vulkan_raii.hpp>
+
+export module pbrt_document;
+export import scene_object;
+import std;
+
+namespace xayah {
+    export enum class PbrtElementKind : std::uint32_t {
+        camera         = 0,
+        shape          = 1,
+        material       = 2,
+        texture        = 3,
+        light          = 4,
+        medium         = 5,
+        render_setting = 6,
+        instance       = 7,
+    };
+
+    export enum class PbrtPathTraceBackend : std::uint32_t {
+        cpu       = 0,
+        wavefront = 1,
+        gpu       = 2,
+    };
+
+    export struct PbrtRenderSettings {
+        std::array<int, 2> resolution{1280, 720};
+        int samples_per_pixel{64};
+        int thread_count{30};
+        PbrtPathTraceBackend backend{PbrtPathTraceBackend::cpu};
+        std::array<char, 256> output_path{"render-output.exr"};
+    };
+
+    export struct PbrtRenderResult {
+        bool success{false};
+        double seconds{0.0};
+        std::string output_path{};
+        std::string message{};
+    };
+
+    export struct PbrtParameter {
+        std::string type{};
+        std::string name{};
+        std::vector<float> floats{};
+        std::vector<int> ints{};
+        std::vector<std::string> strings{};
+        std::vector<bool> bools{};
+    };
+
+    export struct PbrtElement {
+        std::uint64_t id{0};
+        PbrtElementKind kind{PbrtElementKind::shape};
+        std::string type{};
+        std::string name{};
+        std::string detail{};
+        std::size_t command_index{0};
+        std::vector<PbrtParameter> parameters{};
+        std::array<float, 16> transform{};
+        bool transform_override{false};
+        bool visible{true};
+        BoundingBoxBounds local_bounds{{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
+    };
+
+    export struct PbrtSelection {
+        std::uint64_t element_id{0};
+    };
+
+    export struct PbrtDocumentStats {
+        std::size_t cameras{0};
+        std::size_t shapes{0};
+        std::size_t materials{0};
+        std::size_t textures{0};
+        std::size_t lights{0};
+        std::size_t media{0};
+        std::size_t instances{0};
+        std::size_t render_settings{0};
+        std::size_t commands{0};
+    };
+
+    export class PbrtPreviewRenderer {
+    public:
+        PbrtPreviewRenderer();
+        ~PbrtPreviewRenderer() noexcept;
+
+        PbrtPreviewRenderer(const PbrtPreviewRenderer& other)                = delete;
+        PbrtPreviewRenderer(PbrtPreviewRenderer&& other) noexcept            = delete;
+        PbrtPreviewRenderer& operator=(const PbrtPreviewRenderer& other)     = delete;
+        PbrtPreviewRenderer& operator=(PbrtPreviewRenderer&& other) noexcept = delete;
+
+        void create(const SceneRenderCreateContext& context);
+        void destroy() noexcept;
+        void render(const SceneRenderFrameContext& context, const std::array<float, 16>& transform, const BoundingBoxBounds& bounds, const std::array<float, 4>& color);
+        [[nodiscard]] bool active() const;
+
+    private:
+        vk::raii::PipelineLayout pipeline_layout{nullptr};
+        vk::raii::Pipeline pipeline{nullptr};
+    };
+
+    export class PbrtDocument {
+    public:
+        PbrtDocument();
+        ~PbrtDocument() noexcept;
+
+        PbrtDocument(const PbrtDocument& other)                = delete;
+        PbrtDocument(PbrtDocument&& other) noexcept            = delete;
+        PbrtDocument& operator=(const PbrtDocument& other)     = delete;
+        PbrtDocument& operator=(PbrtDocument&& other) noexcept = delete;
+
+        PbrtSelection selection{};
+
+        void load(const std::filesystem::path& path);
+        void create_default();
+        void validate() const;
+        void create_render_resources(const SceneRenderCreateContext& context);
+        void destroy_render_resources() noexcept;
+        void recreate_render_resources(const SceneRenderCreateContext& context);
+        void render(const SceneRenderFrameContext& context);
+        [[nodiscard]] PbrtRenderResult render_final(const PbrtRenderSettings& settings);
+
+        [[nodiscard]] const std::filesystem::path& path() const;
+        [[nodiscard]] std::size_t element_count() const;
+        [[nodiscard]] std::size_t object_count() const;
+        [[nodiscard]] PbrtDocumentStats stats() const;
+        [[nodiscard]] bool has_selection() const;
+        void clear_selection();
+        void select_element(std::uint64_t element_id);
+        [[nodiscard]] PbrtElement& selected_element();
+        [[nodiscard]] const PbrtElement& selected_element() const;
+        [[nodiscard]] BoundingBoxBounds world_bounds() const;
+        [[nodiscard]] BoundingBoxBounds selected_world_bounds() const;
+
+        void draw_scene_browser_ui();
+        void draw_selected_inspector_ui();
+
+    private:
+        friend class PbrtDocumentLoader;
+
+        enum class PbrtCommandKind : std::uint32_t {
+            option,
+            identity,
+            translate,
+            rotate,
+            scale,
+            look_at,
+            concat_transform,
+            transform,
+            coordinate_system,
+            coord_sys_transform,
+            active_transform_all,
+            active_transform_end_time,
+            active_transform_start_time,
+            transform_times,
+            color_space,
+            pixel_filter,
+            film,
+            sampler,
+            accelerator,
+            integrator,
+            camera,
+            make_named_medium,
+            medium_interface,
+            world_begin,
+            attribute_begin,
+            attribute_end,
+            attribute,
+            texture,
+            material,
+            make_named_material,
+            named_material,
+            light_source,
+            area_light_source,
+            reverse_orientation,
+            shape,
+            object_begin,
+            object_end,
+            object_instance,
+        };
+
+        struct PbrtCommand {
+            PbrtCommandKind kind{PbrtCommandKind::identity};
+            std::array<std::string, 3> text{};
+            std::vector<float> values{};
+            std::vector<PbrtParameter> parameters{};
+            std::uint64_t element_id{0};
+        };
+
+        std::filesystem::path source_path{};
+        std::vector<PbrtElement> elements{};
+        PbrtPreviewRenderer preview_renderer{};
+        std::vector<PbrtCommand> commands{};
+        std::uint64_t next_element_id{1};
+        bool dirty{false};
+
+        [[nodiscard]] PbrtElement* find_element(std::uint64_t element_id);
+        [[nodiscard]] const PbrtElement* find_element(std::uint64_t element_id) const;
+    };
+} // namespace xayah

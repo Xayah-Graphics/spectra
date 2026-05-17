@@ -1,7 +1,9 @@
 module;
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -19,7 +21,7 @@ module;
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import camera;
-import scene_frame;
+import pbrt_document;
 import std;
 
 #if !defined(SPECTRA_SHADER_DIR)
@@ -47,26 +49,6 @@ namespace {
     VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
         if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
         return VK_FALSE;
-    }
-
-    [[nodiscard]] std::array<float, 16> imguizmo_matrix(const xayah::Transform& transform) {
-        std::array<float, 16> matrix{};
-        std::array translation{transform.translation[0], transform.translation[1], transform.translation[2]};
-        std::array rotation{transform.rotation_degrees[0], transform.rotation_degrees[1], transform.rotation_degrees[2]};
-        std::array scale{transform.scale[0], transform.scale[1], transform.scale[2]};
-        ImGuizmo::RecomposeMatrixFromComponents(translation.data(), rotation.data(), scale.data(), matrix.data());
-        return matrix;
-    }
-
-    void update_transform_from_imguizmo_matrix(xayah::Transform& transform, const std::array<float, 16>& matrix) {
-        std::array<float, 3> translation{};
-        std::array<float, 3> rotation{};
-        std::array<float, 3> scale{};
-        ImGuizmo::DecomposeMatrixToComponents(matrix.data(), translation.data(), rotation.data(), scale.data());
-        if (scale[0] <= 0.000001f || scale[1] <= 0.000001f || scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
-        transform.translation      = translation;
-        transform.rotation_degrees = rotation;
-        transform.scale            = scale;
     }
 
     constexpr std::uint32_t viewport_grid_flag_show_grid = 1u << 0u;
@@ -646,7 +628,6 @@ namespace xayah {
     }
 
     Spectra::~Spectra() noexcept {
-        this->recorder.stop_noexcept();
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
@@ -687,130 +668,32 @@ namespace xayah {
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::render(Scene& scene) {
-        this->render_loop(scene, {});
+    void Spectra::render(PbrtDocument& document) {
+        this->render_loop(document);
     }
 
-    void Spectra::render_loop(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer) {
-        scene.initialize_objects();
-        scene.validate();
+    void Spectra::render_loop(PbrtDocument& document) {
+        document.validate();
 
         const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
-        scene.create_render_resources(render_create_context);
+        document.create_render_resources(render_create_context);
         try {
             while (!glfwWindowShouldClose(this->surface.window.get())) {
                 FrameState frame{};
-                if (!this->begin_frame(frame, scene)) continue;
-                if (frame_producer) this->update_scene_frame_session(scene, frame_producer, ImGui::GetIO().DeltaTime);
-                this->record_frame(frame, scene);
-                this->end_frame(frame, scene);
+                if (!this->begin_frame(frame, document)) continue;
+                this->record_frame(frame, document);
+                this->end_frame(frame, document);
             }
 
-            this->recorder.stop();
             this->context.device.waitIdle();
-            scene.destroy_render_resources();
+            document.destroy_render_resources();
         } catch (...) {
-            this->recorder.stop_noexcept();
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
-            scene.destroy_render_resources();
+            document.destroy_render_resources();
             throw;
-        }
-    }
-
-    void Spectra::update_scene_frame_session(Scene& scene, const std::function<SceneFrameSnapshot(const SceneFrameRequest&)>& frame_producer, const float delta_seconds) {
-        if (this->input.space_pressed && this->session.mode == SceneFrameSessionMode::preview_running) {
-            this->timeline.visible          = false;
-            this->session.mode_label        = "Preview Stopped";
-            this->session.mode              = SceneFrameSessionMode::idle;
-        } else if (this->input.space_pressed && this->session.mode == SceneFrameSessionMode::record_running) {
-            this->recorder.request_stop();
-            this->session.mode_label = "Record Stopping";
-            this->session.mode       = SceneFrameSessionMode::record_stopping;
-        } else if (this->input.space_pressed && this->session.mode != SceneFrameSessionMode::record_stopping) {
-            this->recorder.stop();
-            this->recorder.reset();
-            this->applied_record_frame = -1;
-            if (this->input.shift_down) {
-                const SceneFrameRecordConfig record_config{};
-                this->recorder.start(record_config, frame_producer);
-                this->session.mode_label           = "Record";
-                this->session.mode                 = SceneFrameSessionMode::record_running;
-                this->session.next_frame_index     = 0;
-                this->session.simulated_frames     = 0;
-                this->session.written_frames       = 0;
-                this->session.cache_bytes          = 0;
-                this->session.max_cache_bytes      = record_config.max_host_cache_bytes;
-                this->timeline.visible             = true;
-                this->timeline.frame_min           = 0;
-                this->timeline.frame_max           = 0;
-                this->timeline.available_frame_max = 0;
-                this->timeline.current_frame       = 0;
-                this->timeline.first_frame         = 0;
-            } else {
-                this->timeline.visible          = false;
-                this->session.mode_label        = "Preview";
-                this->session.mode              = SceneFrameSessionMode::preview_running;
-                this->session.next_frame_index  = 0;
-                this->session.simulated_frames  = 0;
-                this->session.written_frames    = 0;
-                this->session.cache_bytes       = 0;
-                this->session.max_cache_bytes   = 0;
-            }
-        }
-
-        if (this->session.mode == SceneFrameSessionMode::preview_running) {
-            const SceneFrameRequest request{this->session.next_frame_index, delta_seconds, this->session.next_frame_index == 0};
-            SceneFrameSnapshot snapshot = frame_producer(request);
-            if (snapshot.frame_index != request.frame_index) throw std::runtime_error("Scene frame producer returned an unexpected frame index");
-            scene.apply_snapshot(snapshot);
-            ++this->session.next_frame_index;
-            this->session.simulated_frames = this->session.next_frame_index;
-            this->session.mode_label       = "Preview";
-            this->timeline.visible         = false;
-            return;
-        }
-
-        if (this->session.mode != SceneFrameSessionMode::record_running && this->session.mode != SceneFrameSessionMode::record_stopping && this->session.mode != SceneFrameSessionMode::playback) {
-            this->timeline.visible = false;
-            return;
-        }
-
-        if (this->recorder.finish_if_ready() && (this->session.mode == SceneFrameSessionMode::record_running || this->session.mode == SceneFrameSessionMode::record_stopping)) {
-            this->session.mode_label = "Playback";
-            this->session.mode       = SceneFrameSessionMode::playback;
-        }
-        const SceneFrameRecordStats stats = this->recorder.stats();
-        const int available_source_frame  = std::max(stats.latest_ready_frame, stats.written_frame_max);
-        const int visible_frame_max       = std::max(0, available_source_frame);
-        const bool follow_latest          = (this->session.mode == SceneFrameSessionMode::record_running || this->session.mode == SceneFrameSessionMode::record_stopping) && this->timeline.current_frame >= this->timeline.available_frame_max;
-
-        this->timeline.visible             = true;
-        this->timeline.frame_min           = 0;
-        this->timeline.frame_max           = visible_frame_max;
-        this->timeline.available_frame_max = visible_frame_max;
-        this->timeline.first_frame         = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
-        if (follow_latest)
-            this->timeline.current_frame = visible_frame_max;
-        else
-            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-
-        this->session.simulated_frames  = stats.produced_frames;
-        this->session.written_frames    = stats.written_frames;
-        this->session.cache_bytes       = stats.host_cache_bytes;
-        this->session.max_cache_bytes   = stats.max_host_cache_bytes;
-        if (this->session.mode == SceneFrameSessionMode::record_running) this->session.mode_label = "Record";
-        if (this->session.mode == SceneFrameSessionMode::record_stopping) this->session.mode_label = "Record Stopping";
-        if (this->session.mode == SceneFrameSessionMode::playback) this->session.mode_label = "Playback";
-
-        if (available_source_frame >= 0 && this->applied_record_frame != this->timeline.current_frame) {
-            SceneFrameSnapshot snapshot;
-            if (this->recorder.read(this->timeline.current_frame, snapshot)) {
-                scene.apply_snapshot(snapshot);
-                this->applied_record_frame = this->timeline.current_frame;
-            }
         }
     }
 
@@ -837,10 +720,10 @@ namespace xayah {
         this->window_title.refresh_timer = 0.0f;
     }
 
-    bool Spectra::begin_frame(FrameState& frame, Scene& scene) {
+    bool Spectra::begin_frame(FrameState& frame, PbrtDocument& document) {
         glfwPollEvents();
         if (this->surface.resize_requested) {
-            this->recreate_swapchain(scene);
+            this->recreate_swapchain(document);
             return false;
         }
 
@@ -854,7 +737,7 @@ namespace xayah {
             frame.recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
             frame.image_index            = acquired_image.value;
         } catch (const vk::OutOfDateKHRError&) {
-            this->recreate_swapchain(scene);
+            this->recreate_swapchain(document);
             return false;
         }
 
@@ -942,7 +825,7 @@ namespace xayah {
         return true;
     }
 
-    void Spectra::record_frame(const FrameState& frame, Scene& scene) {
+    void Spectra::record_frame(const FrameState& frame, PbrtDocument& document) {
         if (this->timeline.visible) {
             if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
             if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
@@ -950,20 +833,20 @@ namespace xayah {
             this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
         }
 
-        this->draw_main_menu(scene);
+        this->draw_main_menu(document);
         this->draw_dockspace();
         this->draw_viewport_window();
         this->draw_camera_window();
-        this->draw_scene_browser(scene);
+        this->draw_scene_browser(document);
         this->draw_settings_window();
         this->draw_grid_settings_window();
-        this->draw_render_output();
-        this->draw_object_inspector(scene);
+        this->draw_render_output(document);
+        this->draw_object_inspector(document);
         this->draw_environment_window();
         this->draw_tonemapper_window();
-        this->draw_statistics_window(scene);
+        this->draw_statistics_window(document);
         this->draw_timeline_window();
-        this->draw_transform_gizmo(scene);
+        this->draw_transform_gizmo(document);
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
         command_buffer.reset();
@@ -1068,7 +951,7 @@ namespace xayah {
         command_buffer.setViewport(0, vulkan_viewport);
         command_buffer.setScissor(0, scissor);
         const SceneRenderFrameContext scene_render_context{&this->context.physical_device, &this->context.device, &command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up};
-        scene.render(scene_render_context);
+        document.render(scene_render_context);
 
         if (this->viewport.show_grid) {
             if (!*this->viewport.pipeline_layout || !*this->viewport.grid_pipeline || !*this->viewport.axis_pipeline) throw std::runtime_error("Viewport grid pipeline is not initialized");
@@ -1124,7 +1007,7 @@ namespace xayah {
         command_buffer.end();
     }
 
-    void Spectra::draw_main_menu(Scene& scene) {
+    void Spectra::draw_main_menu(PbrtDocument& document) {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
@@ -1133,16 +1016,16 @@ namespace xayah {
             if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.inspector_visible = !this->ui.inspector_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.environment_visible = !this->ui.environment_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) scene.selection.object_id = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) document.clear_selection();
         }
 
         float fit_aspect = this->viewport.camera.aspect_ratio();
         if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) fit_aspect = this->ui.viewport_size[0] / this->ui.viewport_size[1];
-        if (!io.WantTextInput && io.KeyCtrl && io.KeyShift && scene.object_count() != 0 && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-            const BoundingBoxBounds bounds = scene.world_bounds();
+        if (!io.WantTextInput && io.KeyCtrl && io.KeyShift && document.object_count() != 0 && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            const BoundingBoxBounds bounds = document.world_bounds();
             this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
-        } else if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && scene.has_selection() && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-            const BoundingBoxBounds bounds = scene.selected_world_bounds();
+        } else if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && document.has_selection() && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+            const BoundingBoxBounds bounds = document.selected_world_bounds();
             this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
         }
 
@@ -1154,23 +1037,23 @@ namespace xayah {
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            ImGui::BeginDisabled(!scene.has_selection());
-            if (ImGui::MenuItem(ICON_MS_CLOSE " Clear Selection", "Esc")) scene.selection.object_id = 0;
+            ImGui::BeginDisabled(!document.has_selection());
+            if (ImGui::MenuItem(ICON_MS_CLOSE " Clear Selection", "Esc")) document.clear_selection();
             ImGui::EndDisabled();
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("View")) {
             if (ImGui::MenuItem(ICON_MS_HOME " Reset Camera", "H")) this->viewport.camera.reset_home();
-            ImGui::BeginDisabled(scene.object_count() == 0);
+            ImGui::BeginDisabled(document.object_count() == 0);
             if (ImGui::MenuItem(ICON_MS_ZOOM_OUT " Fit Scene", "Ctrl+Shift+F")) {
-                const BoundingBoxBounds bounds = scene.world_bounds();
+                const BoundingBoxBounds bounds = document.world_bounds();
                 this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
             }
             ImGui::EndDisabled();
-            ImGui::BeginDisabled(!scene.has_selection());
+            ImGui::BeginDisabled(!document.has_selection());
             if (ImGui::MenuItem(ICON_MS_ZOOM_IN " Fit Object", "Ctrl+F")) {
-                const BoundingBoxBounds bounds = scene.selected_world_bounds();
+                const BoundingBoxBounds bounds = document.selected_world_bounds();
                 this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
             }
             ImGui::EndDisabled();
@@ -1207,11 +1090,11 @@ namespace xayah {
             ImGui::EndMenu();
         }
 
-        this->draw_menu_toolbar(scene);
+        this->draw_menu_toolbar(document);
         ImGui::EndMainMenuBar();
     }
 
-    void Spectra::draw_menu_toolbar(Scene& scene) {
+    void Spectra::draw_menu_toolbar(PbrtDocument& document) {
         struct ToggleButton {
             const char* icon;
             const char* shortcut;
@@ -1280,7 +1163,7 @@ namespace xayah {
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("pbrt path tracer");
 
-        if (!scene.has_selection() || !scene.selected_object_visible()) return;
+        if (!document.has_selection() || !document.selected_element().visible) return;
         ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
@@ -1598,43 +1481,13 @@ namespace xayah {
         return changed;
     }
 
-    void Spectra::draw_scene_browser(Scene& scene) {
+    void Spectra::draw_scene_browser(PbrtDocument& document) {
         if (!this->ui.scene_browser_visible) return;
         if (!ImGui::Begin("Scene Browser", &this->ui.scene_browser_visible)) {
             ImGui::End();
             return;
         }
-        const std::size_t volume_count    = scene.volume_count();
-        const std::size_t mesh_count      = scene.mesh_count();
-        const std::size_t particles_count = scene.particles_count();
-        const std::size_t object_count    = scene.object_count();
-        if (ImGui::BeginTable("SceneSummary", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthFixed, 64.0f);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Objects");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", object_count);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Volumes");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", volume_count);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Meshes");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", mesh_count);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Particles");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", particles_count);
-            ImGui::EndTable();
-        }
-        ImGui::Separator();
-        scene.draw_hierarchy_ui();
+        document.draw_scene_browser_ui();
         ImGui::End();
     }
 
@@ -1658,18 +1511,18 @@ namespace xayah {
         ImGui::Checkbox("3D Axis", &this->ui.axis_visible);
         ImGui::Separator();
         const char* backend_label = "CPU";
-        if (this->renderer.backend == PathTraceBackend::wavefront) backend_label = "Wavefront";
-        if (this->renderer.backend == PathTraceBackend::gpu) backend_label = "GPU";
+        if (this->renderer.backend == PbrtPathTraceBackend::wavefront) backend_label = "Wavefront";
+        if (this->renderer.backend == PbrtPathTraceBackend::gpu) backend_label = "GPU";
         if (ImGui::CollapsingHeader("Path Tracer", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::BeginCombo("Backend", backend_label)) {
-                const bool cpu_selected = this->renderer.backend == PathTraceBackend::cpu;
-                if (ImGui::Selectable("CPU", cpu_selected)) this->renderer.backend = PathTraceBackend::cpu;
+                const bool cpu_selected = this->renderer.backend == PbrtPathTraceBackend::cpu;
+                if (ImGui::Selectable("CPU", cpu_selected)) this->renderer.backend = PbrtPathTraceBackend::cpu;
                 if (cpu_selected) ImGui::SetItemDefaultFocus();
-                const bool wavefront_selected = this->renderer.backend == PathTraceBackend::wavefront;
-                if (ImGui::Selectable("Wavefront", wavefront_selected)) this->renderer.backend = PathTraceBackend::wavefront;
+                const bool wavefront_selected = this->renderer.backend == PbrtPathTraceBackend::wavefront;
+                if (ImGui::Selectable("Wavefront", wavefront_selected)) this->renderer.backend = PbrtPathTraceBackend::wavefront;
                 if (wavefront_selected) ImGui::SetItemDefaultFocus();
-                const bool gpu_selected = this->renderer.backend == PathTraceBackend::gpu;
-                if (ImGui::Selectable("GPU", gpu_selected)) this->renderer.backend = PathTraceBackend::gpu;
+                const bool gpu_selected = this->renderer.backend == PbrtPathTraceBackend::gpu;
+                if (ImGui::Selectable("GPU", gpu_selected)) this->renderer.backend = PbrtPathTraceBackend::gpu;
                 if (gpu_selected) ImGui::SetItemDefaultFocus();
                 ImGui::EndCombo();
             }
@@ -1704,12 +1557,30 @@ namespace xayah {
         ImGui::End();
     }
 
-    void Spectra::draw_render_output() {
+    void Spectra::draw_render_output(PbrtDocument& document) {
         if (!this->ui.render_output_visible) return;
         if (!ImGui::Begin("Render Output", &this->ui.render_output_visible)) {
             ImGui::End();
             return;
         }
+        if (ImGui::Button(ICON_MS_AUTO_AWESOME " Render PBRT")) {
+            try {
+                PbrtRenderSettings settings{};
+                settings.resolution        = this->renderer.resolution;
+                settings.samples_per_pixel = this->renderer.samples_per_pixel;
+                settings.thread_count      = this->renderer.thread_count;
+                settings.backend           = this->renderer.backend;
+                settings.output_path       = this->renderer.output_path;
+                this->render_output.status = "Rendering";
+                PbrtRenderResult result    = document.render_final(settings);
+                this->render_output.status = result.success ? "Complete" : "Failed";
+                this->render_output.error  = std::format("{} ({:.3f}s)", result.message, result.seconds);
+            } catch (const std::exception& error) {
+                this->render_output.status = "Failed";
+                this->render_output.error  = error.what();
+            }
+        }
+        ImGui::Separator();
         const char* mode_label = this->renderer.mode == RendererMode::preview ? "Vulkan preview" : "pbrt path tracer";
         if (ImGui::BeginTable("RenderOutputTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 112.0f);
@@ -1739,28 +1610,13 @@ namespace xayah {
         ImGui::End();
     }
 
-    void Spectra::draw_object_inspector(Scene& scene) {
+    void Spectra::draw_object_inspector(PbrtDocument& document) {
         if (!this->ui.inspector_visible) return;
         if (!ImGui::Begin("Inspector", &this->ui.inspector_visible)) {
             ImGui::End();
             return;
         }
-        if (!scene.has_selection()) {
-            ImGui::TextDisabled("No selection");
-            ImGui::End();
-            return;
-        }
-        Transform& active_transform = scene.selected_transform();
-        ImGui::Text("%s", scene.selected_kind_label());
-        ImGui::Separator();
-        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::InputFloat3("Translation", active_transform.translation.data(), "%.3f");
-            ImGui::InputFloat3("Rotation", active_transform.rotation_degrees.data(), "%.3f");
-            ImGui::InputFloat3("Scale", active_transform.scale.data(), "%.3f");
-            if (active_transform.scale[0] <= 0.000001f || active_transform.scale[1] <= 0.000001f || active_transform.scale[2] <= 0.000001f) throw std::runtime_error("Scene object transform scale must stay positive");
-        }
-        ImGui::Separator();
-        scene.draw_selected_inspector_ui();
+        document.draw_selected_inspector_ui();
         ImGui::End();
     }
 
@@ -1802,7 +1658,7 @@ namespace xayah {
         ImGui::End();
     }
 
-    void Spectra::draw_statistics_window(Scene& scene) {
+    void Spectra::draw_statistics_window(PbrtDocument& document) {
         if (!this->ui.statistics_visible) return;
         if (!ImGui::Begin("Statistics", &this->ui.statistics_visible)) {
             ImGui::End();
@@ -1835,27 +1691,27 @@ namespace xayah {
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Scene Objects");
+            ImGui::TextUnformatted("PBRT Objects");
             ImGui::TableNextColumn();
-            ImGui::Text("%zu", scene.object_count());
+            ImGui::Text("%zu", document.object_count());
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Volumes");
+            ImGui::TextUnformatted("Shapes");
             ImGui::TableNextColumn();
-            ImGui::Text("%zu", scene.volume_count());
+            ImGui::Text("%zu", document.stats().shapes);
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Meshes");
+            ImGui::TextUnformatted("Materials");
             ImGui::TableNextColumn();
-            ImGui::Text("%zu", scene.mesh_count());
+            ImGui::Text("%zu", document.stats().materials);
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Particles");
+            ImGui::TextUnformatted("Lights");
             ImGui::TableNextColumn();
-            ImGui::Text("%zu", scene.particles_count());
+            ImGui::Text("%zu", document.stats().lights);
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -1933,7 +1789,7 @@ namespace xayah {
         ImGui::End();
     }
 
-    void Spectra::draw_transform_gizmo(Scene& scene) {
+    void Spectra::draw_transform_gizmo(PbrtDocument& document) {
         if (!this->ui.gizmo_visible) {
             this->gizmo.using_gizmo = false;
             return;
@@ -1942,11 +1798,12 @@ namespace xayah {
             this->gizmo.using_gizmo = false;
             return;
         }
-        if (scene.selection.object_id == 0) {
+        if (!document.has_selection()) {
             this->gizmo.using_gizmo = false;
             return;
         }
-        if (!scene.selected_object_visible()) {
+        PbrtElement& selected_element = document.selected_element();
+        if (!selected_element.visible || (selected_element.kind != PbrtElementKind::shape && selected_element.kind != PbrtElementKind::light)) {
             this->gizmo.using_gizmo = false;
             return;
         }
@@ -1979,7 +1836,7 @@ namespace xayah {
         const float aspect                     = gizmo_width / gizmo_height;
         const std::array<float, 16> view       = this->viewport.camera.view_matrix();
         const std::array<float, 16> projection = this->viewport.camera.gizmo_projection_matrix(aspect);
-        std::array<float, 16> matrix           = imguizmo_matrix(scene.selected_transform());
+        std::array<float, 16> matrix           = selected_element.transform;
         std::array<float, 3> snap_values{};
         const float* snap = nullptr;
         if (this->ui.snap_enabled) {
@@ -1988,14 +1845,17 @@ namespace xayah {
             if (this->gizmo.operation == GizmoOperation::scale) snap_values = {this->ui.snap_scale, this->ui.snap_scale, this->ui.snap_scale};
             snap = snap_values.data();
         }
-        if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data(), nullptr, snap)) update_transform_from_imguizmo_matrix(scene.selected_transform(), matrix);
+        if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data(), nullptr, snap)) {
+            selected_element.transform          = matrix;
+            selected_element.transform_override = true;
+        }
         this->gizmo.using_gizmo = ImGuizmo::IsUsingAny() || ImGuizmo::IsOver();
 
         ImGui::End();
         ImGui::PopStyleVar(2);
     }
 
-    void Spectra::end_frame(FrameState& frame, Scene& scene) {
+    void Spectra::end_frame(FrameState& frame, PbrtDocument& document) {
         if (this->imgui.viewports) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
@@ -2037,7 +1897,7 @@ namespace xayah {
             else
                 throw;
         }
-        if (frame.recreate_after_present) this->recreate_swapchain(scene);
+        if (frame.recreate_after_present) this->recreate_swapchain(document);
         if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
@@ -2346,7 +2206,7 @@ namespace xayah {
         }
     }
 
-    void Spectra::recreate_swapchain(Scene& scene) {
+    void Spectra::recreate_swapchain(PbrtDocument& document) {
         {
             int width  = 0;
             int height = 0;
@@ -2375,7 +2235,7 @@ namespace xayah {
         this->create_swapchain(std::move(old_swapchain));
         this->create_viewport_pipeline();
         const SceneRenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
-        scene.recreate_render_resources(render_create_context);
+        document.recreate_render_resources(render_create_context);
         {
             const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");
