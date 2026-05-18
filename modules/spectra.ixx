@@ -3,7 +3,7 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 export module spectra;
-export import pbrt_document;
+export import spectra_scene;
 import camera;
 import std;
 
@@ -12,7 +12,7 @@ namespace xayah {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
-        void render(PbrtDocument& document);
+        void render(SpectraScene& document);
 
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
@@ -26,51 +26,43 @@ namespace xayah {
             bool recreate_after_present{false};
         };
 
-        bool begin_frame(FrameState& frame, PbrtDocument& document);
-        void record_frame(const FrameState& frame, PbrtDocument& document);
-        void end_frame(FrameState& frame, PbrtDocument& document);
+        bool begin_frame(FrameState& frame, SpectraScene& document);
+        void record_frame(const FrameState& frame, SpectraScene& document);
+        void end_frame(FrameState& frame, SpectraScene& document);
 
     private:
-        struct RenderOutputImageData;
-
-        void render_loop(PbrtDocument& document);
-        void update_window_title(float delta_seconds, const PbrtDocument& document);
-        void draw_main_menu(PbrtDocument& document);
-        void draw_menu_toolbar(PbrtDocument& document);
+        void render_loop(SpectraScene& document);
+        void update_window_title(float delta_seconds, const SpectraScene& document);
+        void draw_main_menu(SpectraScene& document);
+        void draw_menu_toolbar(SpectraScene& document);
         void draw_dockspace();
         void draw_viewport_window();
-        void draw_camera_window(PbrtDocument& document);
+        void draw_camera_window(SpectraScene& document);
         void draw_camera_quick_actions(CameraState& camera);
         void draw_camera_navigation();
         bool draw_camera_projection(CameraState& camera);
         bool draw_camera_position(CameraState& camera);
         bool draw_camera_other(CameraState& camera);
-        void draw_pbrt_camera_section(PbrtDocument& document, bool editing_enabled);
-        void fit_viewport_from_pbrt_camera(const PbrtElement& camera);
-        void write_viewport_to_pbrt_camera(PbrtDocument& document, std::uint64_t camera_id);
-        void draw_scene_browser(PbrtDocument& document);
-        void draw_light_window(PbrtDocument& document);
-        void draw_material_window(PbrtDocument& document);
+        void draw_scene_camera_section(SpectraScene& document, bool editing_enabled);
+        void fit_viewport_from_scene_camera(const SpectraScene& document, std::uint64_t camera_id);
+        void write_viewport_to_scene_camera(SpectraScene& document, std::uint64_t camera_id);
+        void draw_scene_browser(SpectraScene& document);
+        void draw_light_window(SpectraScene& document);
+        void draw_material_window(SpectraScene& document);
         void draw_settings_window();
         void draw_grid_settings_window();
-        void draw_render_output(PbrtDocument& document);
-        void draw_object_inspector(PbrtDocument& document);
+        void draw_render_output(SpectraScene& document);
+        void draw_object_inspector(SpectraScene& document);
         void draw_environment_window();
         void draw_tonemapper_window();
-        void draw_statistics_window(PbrtDocument& document);
+        void draw_statistics_window(SpectraScene& document);
         void draw_timeline_window();
-        void draw_transform_gizmo(PbrtDocument& document);
-        [[nodiscard]] bool render_output_job_active() const;
-        void start_render_output_job(PbrtDocument& document);
-        void poll_render_output_job();
-        void join_render_output_job() noexcept;
-        void upload_render_output_image(const RenderOutputImageData& image);
-        void destroy_render_output_image() noexcept;
-        [[nodiscard]] static RenderOutputImageData load_render_output_image(const std::string& output_path);
+        void draw_transform_gizmo(SpectraScene& document);
+        void start_render_output_job(SpectraScene& document);
         void create_viewport_pipeline();
         void destroy_viewport_pipeline() noexcept;
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
-        void recreate_swapchain(PbrtDocument& document);
+        void recreate_swapchain(SpectraScene& document);
 
         struct {
             vk::raii::Context context;
@@ -213,64 +205,29 @@ namespace xayah {
         } input;
 
         enum class RendererMode : std::uint32_t {
-            path_tracer   = 0,
+            spectra_preview = 0,
             debug_overlay = 1,
         };
 
         struct {
-            RendererMode mode{RendererMode::path_tracer};
+            RendererMode mode{RendererMode::spectra_preview};
             std::array<int, 2> resolution{1280, 720};
             int samples_per_pixel{64};
             int thread_count{30};
-            PbrtPathTraceBackend backend{PbrtPathTraceBackend::cpu};
+            SpectraPathTraceBackend backend{SpectraPathTraceBackend::optix};
             std::array<char, 256> output_path{"render-output.exr"};
         } renderer;
-
-        enum class RenderOutputJobState : std::uint32_t {
-            idle             = 0,
-            running          = 1,
-            cancel_requested = 2,
-        };
-
-        struct RenderOutputImageData {
-            std::array<int, 2> resolution{0, 0};
-            std::vector<std::uint8_t> rgba{};
-        };
-
-        struct RenderOutputJobResult {
-            bool success{false};
-            bool canceled{false};
-            PbrtRenderResult render_result{};
-            RenderOutputImageData image{};
-            std::string message{};
-        };
-
-        struct RenderOutputImageResource {
-            vk::raii::Image image{nullptr};
-            vk::raii::DeviceMemory memory{nullptr};
-            vk::raii::ImageView view{nullptr};
-            vk::raii::Sampler sampler{nullptr};
-            VkDescriptorSet descriptor{VK_NULL_HANDLE};
-            std::array<int, 2> resolution{0, 0};
-        };
 
         struct {
             std::string status{"Idle"};
             std::string message{"Ready"};
             bool has_result{false};
-            PbrtPathTraceBackend last_backend{PbrtPathTraceBackend::cpu};
+            SpectraPathTraceBackend last_backend{SpectraPathTraceBackend::optix};
             std::array<int, 2> last_resolution{0, 0};
             int last_samples_per_pixel{0};
             int last_thread_count{0};
             double last_seconds{0.0};
             std::string last_output_path{};
-            RenderOutputJobState job_state{RenderOutputJobState::idle};
-            std::jthread job_thread{};
-            std::atomic_bool job_finished{true};
-            std::atomic_bool cancel_requested{false};
-            std::mutex result_mutex{};
-            std::optional<RenderOutputJobResult> pending_result{};
-            RenderOutputImageResource image{};
         } render_output;
 
         struct {

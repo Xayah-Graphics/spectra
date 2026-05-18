@@ -1,4 +1,4 @@
-struct PbrtPreviewParameters {
+struct SpectraPreviewParameters {
     float4x4 view_projection;
     float4 light_direction;
 };
@@ -10,7 +10,7 @@ struct VertexInput {
 };
 
 [[vk::push_constant]]
-PbrtPreviewParameters parameters;
+SpectraPreviewParameters parameters;
 
 struct VertexOutput {
     float4 position : SV_Position;

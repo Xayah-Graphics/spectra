@@ -3,9 +3,9 @@ import std;
 
 int main(const int argc, char** argv) {
     try {
-        xayah::PbrtDocument document;
+        xayah::SpectraScene document;
         if (argc > 1)
-            document.load(std::filesystem::path{argv[1]});
+            throw std::runtime_error(std::format("PBRT import into SpectraScene is planned for stage 2: {}", std::filesystem::path{argv[1]}.string()));
         else
             document.create_default();
 

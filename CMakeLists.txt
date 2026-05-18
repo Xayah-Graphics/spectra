@@ -40,15 +40,15 @@ add_subdirectory(vendor/glfw)
 set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
 set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
-set(SPECTRA_PBRT_PREVIEW_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/pbrt_preview.slang)
+set(SPECTRA_PREVIEW_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_preview.slang)
 set(
         SPECTRA_SHADER_OUTPUTS
         ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.frag.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
 )
 add_custom_command(
         OUTPUT ${SPECTRA_SHADER_OUTPUTS}
@@ -57,9 +57,9 @@ add_custom_command(
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
         COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PBRT_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PBRT_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/pbrt_preview.frag.spv
-        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER} ${SPECTRA_PBRT_PREVIEW_SHADER}
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
+        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER} ${SPECTRA_PREVIEW_SHADER}
         VERBATIM
 )
 add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})
@@ -75,7 +75,7 @@ target_sources(
         PRIVATE
         modules/spectra.cpp
         modules/render_context.cpp
-        modules/pbrt_document.cpp
+        modules/spectra_scene.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -94,7 +94,7 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/render_context.ixx
         modules/camera.ixx
-        modules/pbrt_document.ixx
+        modules/spectra_scene.ixx
         modules/spectra.ixx
 )
 target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
@@ -485,9 +485,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif ()
 set_property(TARGET pbrt_core PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET pbrt_core PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-target_include_directories(spectra PRIVATE ${PBRT_INCLUDE_DIRS})
-target_compile_definitions(spectra PRIVATE ${PBRT_DEFINITIONS})
-target_link_libraries(spectra PRIVATE pbrt_core)
 
 add_executable(pbrt_exe pbrt/cmd/pbrt.cpp)
 add_executable(pbrt::exe ALIAS pbrt_exe)
