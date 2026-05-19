@@ -27,90 +27,42 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ============================================================================
 # Dependencies
 # ============================================================================
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pbrt/pbrt.cpp")
+    message(FATAL_ERROR "Expected local PBRT source at '${CMAKE_CURRENT_SOURCE_DIR}/pbrt'.")
+endif ()
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/CMakeLists.txt")
+    message(FATAL_ERROR "Expected local PBRT dependencies at '${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt'.")
+endif ()
+
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenGL REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
-add_subdirectory(vendor/glfw)
 
+add_subdirectory(vendor/pbrt)
+if (NOT TARGET glfw)
+    message(FATAL_ERROR "PBRT vendor dependencies did not define the glfw target.")
+endif ()
 
-# ============================================================================
-# Shaders
-# ============================================================================
-set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
-set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
-set(SPECTRA_PREVIEW_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_preview.slang)
-set(
-        SPECTRA_SHADER_OUTPUTS
-        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
-)
-add_custom_command(
-        OUTPUT ${SPECTRA_SHADER_OUTPUTS}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_SHADER_OUTPUT_DIR}
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
-        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER} ${SPECTRA_PREVIEW_SHADER}
-        VERBATIM
-)
-add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})
-
-
-# ============================================================================
-# Libraries
-# ============================================================================
-add_library(spectra)
-add_dependencies(spectra spectra_shaders)
-target_sources(
-        spectra
-        PRIVATE
-        modules/spectra.cpp
-        modules/render_context.cpp
-        modules/spectra_scene.cpp
-
-        vendor/imgui/imgui.cpp
-        vendor/imgui/imgui_draw.cpp
-        vendor/imgui/imgui_tables.cpp
-        vendor/imgui/imgui_widgets.cpp
-        vendor/imgui/backends/imgui_impl_glfw.cpp
-        vendor/imgui/backends/imgui_impl_vulkan.cpp
-        vendor/ImGuizmo/ImGuizmo.cpp
-        vendor/ImGuizmo/GraphEditor.cpp
-        vendor/ImGuizmo/ImCurveEdit.cpp
-        vendor/ImGuizmo/ImGradient.cpp
-        vendor/ImGuizmo/ImSequencer.cpp
-        vendor/ImGuizmo/ImVectorEditor.cpp
-        vendor/ImNodeFlow/ImNodeFlow.cpp
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        modules/render_context.ixx
-        modules/camera.ixx
-        modules/spectra_scene.ixx
-        modules/spectra.ixx
-)
-target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
-target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS SPECTRA_SHADER_DIR="${SPECTRA_SHADER_OUTPUT_DIR}")
-target_include_directories(spectra PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImGuizmo ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include)
-set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================
 # PBRT
 # ============================================================================
-set(PBRT_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK")
+option(PBRT_FLOAT_AS_DOUBLE "Use 64-bit floats" OFF)
+option(PBRT_DBG_LOGGING "Enable verbose debug logging" OFF)
+option(PBRT_NVTX "Insert NVTX annotations for NVIDIA profiling tools" OFF)
+option(PBRT_NVML "Use NVML for GPU performance measurement" OFF)
+set(PBRT_OPTIX_PATH "$ENV{PBRT_OPTIX_PATH}" CACHE PATH "Path to OptiX 9.1 SDK")
+set(PBRT_OPTIX_SHADER_MODEL "sm_80" CACHE STRING "CUDA architecture used when compiling OptiX PTX")
 
-if (PBRT_OPTIX_PATH STREQUAL "")
-    message(FATAL_ERROR "PBRT_OPTIX_PATH must point to the OptiX SDK root.")
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type" FORCE)
 endif ()
 
+if (PBRT_OPTIX_PATH STREQUAL "")
+    message(FATAL_ERROR "PBRT_OPTIX_PATH must point to the OptiX 9.1 SDK root for the full GPU build.")
+endif ()
 if (NOT EXISTS "${PBRT_OPTIX_PATH}/include/optix.h")
     message(FATAL_ERROR "PBRT_OPTIX_PATH='${PBRT_OPTIX_PATH}' does not contain include/optix.h.")
 endif ()
@@ -126,68 +78,20 @@ if (NOT PBRT_BIN2C)
     message(FATAL_ERROR "CUDA bin2c was not found next to '${CMAKE_CUDA_COMPILER}'.")
 endif ()
 
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-
-set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
-add_subdirectory(vendor/pbrt/zlib ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/zlib)
-if (NOT TARGET ZLIB::ZLIB AND TARGET zlibstatic)
-    add_library(ZLIB::ZLIB ALIAS zlibstatic)
+set(PBRT_DEFINITIONS PBRT_BUILD_GPU_RENDERER PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:PBRT_DEBUG_BUILD>")
+if (PBRT_FLOAT_AS_DOUBLE)
+    list(APPEND PBRT_DEFINITIONS PBRT_FLOAT_AS_DOUBLE)
+endif ()
+if (PBRT_DBG_LOGGING)
+    list(APPEND PBRT_DEFINITIONS PBRT_DBG_LOGGING)
+endif ()
+if (PBRT_NVTX)
+    list(APPEND PBRT_DEFINITIONS NVTX)
+endif ()
+if (PBRT_NVML)
+    list(APPEND PBRT_DEFINITIONS PBRT_USE_NVML)
 endif ()
 
-set(DEFLATE_BUILD_TEST_PROGRAMS OFF CACHE BOOL "" FORCE)
-add_subdirectory(vendor/pbrt/libdeflate ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/libdeflate)
-
-set(IMATH_INSTALL OFF CACHE BOOL "" FORCE)
-set(IMATH_INSTALL_PKG_CONFIG OFF CACHE BOOL "" FORCE)
-set(IMATH_USE_CLANG_TIDY OFF CACHE BOOL "" FORCE)
-set(PYTHON OFF CACHE BOOL "" FORCE)
-set(BUILD_WEBSITE OFF CACHE BOOL "" FORCE)
-add_subdirectory(vendor/pbrt/imath ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/imath)
-
-set(OPENEXR_INSTALL OFF CACHE BOOL "" FORCE)
-set(OPENEXR_INSTALL_PKG_CONFIG OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_INSTALL_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(OPENEXR_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
-set(OPENEXR_TEST_LIBRARIES OFF CACHE BOOL "" FORCE)
-set(OPENEXR_TEST_TOOLS OFF CACHE BOOL "" FORCE)
-set(OPENEXR_TEST_PYTHON OFF CACHE BOOL "" FORCE)
-set(OPENEXR_FORCE_INTERNAL_DEFLATE OFF CACHE BOOL "" FORCE)
-set(OPENEXR_FORCE_INTERNAL_IMATH OFF CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate ON CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig ON CACHE BOOL "" FORCE)
-set(EXR_DEFLATE_LIB deflate::deflate CACHE STRING "" FORCE)
-set(EXR_DEFLATE_VERSION 1.0 CACHE STRING "" FORCE)
-add_subdirectory(vendor/pbrt/openexr ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/openexr)
-set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate OFF CACHE BOOL "" FORCE)
-set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig OFF CACHE BOOL "" FORCE)
-
-set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
-set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-add_subdirectory(vendor/pbrt/utf8proc ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/utf8proc)
-
-add_library(Ptex_static STATIC
-        vendor/pbrt/ptex/src/ptex/PtexCache.cpp
-        vendor/pbrt/ptex/src/ptex/PtexFilters.cpp
-        vendor/pbrt/ptex/src/ptex/PtexHalf.cpp
-        vendor/pbrt/ptex/src/ptex/PtexReader.cpp
-        vendor/pbrt/ptex/src/ptex/PtexSeparableFilter.cpp
-        vendor/pbrt/ptex/src/ptex/PtexSeparableKernel.cpp
-        vendor/pbrt/ptex/src/ptex/PtexTriangleFilter.cpp
-        vendor/pbrt/ptex/src/ptex/PtexTriangleKernel.cpp
-        vendor/pbrt/ptex/src/ptex/PtexUtils.cpp
-        vendor/pbrt/ptex/src/ptex/PtexWriter.cpp
-)
-target_compile_definitions(Ptex_static PUBLIC PTEX_STATIC)
-target_include_directories(Ptex_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/ptex/src/ptex)
-target_link_libraries(Ptex_static PUBLIC Threads::Threads ZLIB::ZLIB)
-
-set(PBRT_DEFINITIONS PBRT_BUILD_GPU_RENDERER PTEX_STATIC "$<$<CONFIG:Debug>:PBRT_DEBUG_BUILD>")
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     if (NOT MSVC)
         message(FATAL_ERROR "Windows builds require MSVC.")
@@ -212,7 +116,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             PBRT_HAVE_POSIX_MEMALIGN
     )
 else ()
-    message(FATAL_ERROR "Only Windows/MSVC and Linux/Arch WSL builds are supported.")
+    message(FATAL_ERROR "Only Linux/WSL and Windows/MSVC are supported by this modernized build baseline.")
 endif ()
 
 set(PBRT_CUDA_WARNING_OPTIONS
@@ -247,34 +151,66 @@ set(PBRT_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/pbrt-generated)
 set(PBRT_INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/stb
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/qoi
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/zlib
-        ${CMAKE_CURRENT_BINARY_DIR}/vendor/pbrt/zlib
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/libdeflate
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/ptex/src/ptex
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/openvdb/nanovdb
+        ${STB_INCLUDE}
+        ${QOI_INCLUDE}
+        ${ZLIB_INCLUDE_DIRS}
+        ${LIBDEFLATE_INCLUDE_DIRS}
+        ${PTEX_INCLUDE}
+        ${DOUBLE_CONVERSION_INCLUDE}
+        ${NANOVDB_INCLUDE}
+        ${CMAKE_CURRENT_BINARY_DIR}
         ${PBRT_GENERATED_DIR}
+        ${GLFW_INCLUDE}
+        ${GLAD_INCLUDE}
         ${PBRT_OPTIX_PATH}/include
         ${CUDAToolkit_INCLUDE_DIRS}
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
 
-add_executable(pbrt_soac pbrt/cmd/soac.cpp)
-target_compile_definitions(pbrt_soac PRIVATE ${PBRT_DEFINITIONS})
-target_include_directories(pbrt_soac PRIVATE ${PBRT_INCLUDE_DIRS})
+set(PBRT_BIN2C_SCRIPT ${PBRT_GENERATED_DIR}/pbrt_bin2c_embed.cmake)
+file(MAKE_DIRECTORY "${PBRT_GENERATED_DIR}")
+file(WRITE "${PBRT_BIN2C_SCRIPT}" [=[
+set(file_contents)
+foreach(obj IN LISTS OBJECTS)
+    get_filename_component(obj_ext "${obj}" EXT)
+    get_filename_component(obj_dir "${obj}" DIRECTORY)
+    if(obj_ext MATCHES "\\.ptx$")
+        execute_process(
+                COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
+                WORKING_DIRECTORY "${obj_dir}"
+                RESULT_VARIABLE result
+                OUTPUT_VARIABLE output
+                ERROR_VARIABLE error_var
+        )
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "bin2c failed for ${obj}: ${error_var}")
+        endif()
+        string(APPEND file_contents " \n${output}")
+    endif()
+endforeach()
+if(file_contents STREQUAL "")
+    message(FATAL_ERROR "No PTX input was passed to bin2c: ${OBJECTS}")
+endif()
+file(WRITE "${OUTPUT}" "${file_contents}")
+]=])
+
+add_executable(soac pbrt/cmd/soac.cpp)
+add_executable(pbrt::soac ALIAS soac)
+target_compile_definitions(soac PRIVATE ${PBRT_DEFINITIONS})
+target_include_directories(soac PRIVATE ${PBRT_INCLUDE_DIRS})
 
 add_custom_command(
         OUTPUT ${PBRT_GENERATED_DIR}/pbrt_soa.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${PBRT_GENERATED_DIR}
-        COMMAND pbrt_soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/pbrt.soa > ${PBRT_GENERATED_DIR}/pbrt_soa.h
-        DEPENDS pbrt_soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/pbrt.soa
+        COMMAND soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/pbrt.soa > ${PBRT_GENERATED_DIR}/pbrt_soa.h
+        DEPENDS soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/pbrt.soa
         VERBATIM
 )
 add_custom_command(
         OUTPUT ${PBRT_GENERATED_DIR}/wavefront_workitems_soa.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${PBRT_GENERATED_DIR}
-        COMMAND pbrt_soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/wavefront/workitems.soa > ${PBRT_GENERATED_DIR}/wavefront_workitems_soa.h
-        DEPENDS pbrt_soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/wavefront/workitems.soa
+        COMMAND soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/wavefront/workitems.soa > ${PBRT_GENERATED_DIR}/wavefront_workitems_soa.h
+        DEPENDS soac ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/wavefront/workitems.soa
         VERBATIM
 )
 set(PBRT_SOA_GENERATED
@@ -283,11 +219,45 @@ set(PBRT_SOA_GENERATED
 )
 add_custom_target(pbrt_soa_generated DEPENDS ${PBRT_SOA_GENERATED})
 
+add_executable(rgb2spec_opt pbrt/cmd/rgb2spec_opt.cpp)
+add_executable(pbrt::rgb2spec_opt ALIAS rgb2spec_opt)
+target_compile_definitions(rgb2spec_opt PRIVATE ${PBRT_DEFINITIONS})
+target_include_directories(rgb2spec_opt PRIVATE ${PBRT_INCLUDE_DIRS})
+target_link_libraries(rgb2spec_opt PRIVATE Threads::Threads)
+
 set(PBRT_RGB_TO_SPECTRUM_SOURCES
-        pbrt/rgb2spectrum/rgbspectrum_aces.cpp
-        pbrt/rgb2spectrum/rgbspectrum_dci_p3.cpp
-        pbrt/rgb2spectrum/rgbspectrum_rec2020.cpp
-        pbrt/rgb2spectrum/rgbspectrum_srgb.cpp
+        ${PBRT_GENERATED_DIR}/rgbspectrum_aces.cpp
+        ${PBRT_GENERATED_DIR}/rgbspectrum_dci_p3.cpp
+        ${PBRT_GENERATED_DIR}/rgbspectrum_rec2020.cpp
+        ${PBRT_GENERATED_DIR}/rgbspectrum_srgb.cpp
+)
+add_custom_command(
+        OUTPUT ${PBRT_GENERATED_DIR}/rgbspectrum_aces.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PBRT_GENERATED_DIR}
+        COMMAND rgb2spec_opt 64 ${PBRT_GENERATED_DIR}/rgbspectrum_aces.cpp ACES2065_1
+        DEPENDS rgb2spec_opt
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${PBRT_GENERATED_DIR}/rgbspectrum_dci_p3.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PBRT_GENERATED_DIR}
+        COMMAND rgb2spec_opt 64 ${PBRT_GENERATED_DIR}/rgbspectrum_dci_p3.cpp DCI_P3
+        DEPENDS rgb2spec_opt
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${PBRT_GENERATED_DIR}/rgbspectrum_rec2020.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PBRT_GENERATED_DIR}
+        COMMAND rgb2spec_opt 64 ${PBRT_GENERATED_DIR}/rgbspectrum_rec2020.cpp REC2020
+        DEPENDS rgb2spec_opt
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${PBRT_GENERATED_DIR}/rgbspectrum_srgb.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PBRT_GENERATED_DIR}
+        COMMAND rgb2spec_opt 64 ${PBRT_GENERATED_DIR}/rgbspectrum_srgb.cpp sRGB
+        DEPENDS rgb2spec_opt
+        VERBATIM
 )
 
 set(PBRT_SOURCE
@@ -311,6 +281,7 @@ set(PBRT_SOURCE
         pbrt/scene.cpp
         pbrt/shapes.cpp
         pbrt/textures.cpp
+        pbrt/cmd/pspec_gpu.cpp
 )
 set(PBRT_CPU_SOURCE
         pbrt/cpu/aggregates.cpp
@@ -340,6 +311,7 @@ set(PBRT_UTIL_SOURCE
         pbrt/util/error.cpp
         pbrt/util/file.cpp
         pbrt/util/float.cpp
+        pbrt/util/gui.cpp
         pbrt/util/image.cpp
         pbrt/util/log.cpp
         pbrt/util/loopsubdiv.cpp
@@ -368,10 +340,11 @@ set(PBRT_UTIL_SOURCE
 )
 set(PBRT_GPU_SOURCE
         pbrt/gpu/optix/aggregate.cpp
+        pbrt/gpu/optix/denoiser.cpp
+        pbrt/gpu/optix/scaler.cpp
         pbrt/gpu/memory.cpp
         pbrt/gpu/util.cpp
 )
-
 set_source_files_properties(
         pbrt/bsdf.cpp
         pbrt/bssrdf.cpp
@@ -411,6 +384,7 @@ set_source_files_properties(
         pbrt/util/vecmath.cpp
         ${PBRT_WAVEFRONT_SOURCE}
         ${PBRT_GPU_SOURCE}
+        pbrt/cmd/pspec_gpu.cpp
         PROPERTIES LANGUAGE CUDA
 )
 
@@ -423,7 +397,7 @@ target_compile_options(
         PRIVATE
         ${PBRT_CUDA_COMPILE_OPTIONS}
         ${PBRT_CUDA_WARNING_OPTIONS}
-        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=sm_80>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${PBRT_OPTIX_SHADER_MODEL}>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=20044>"
 )
@@ -439,13 +413,13 @@ add_custom_command(
         "-DOBJECTS=$<TARGET_OBJECTS:pbrt_optix_ptx>"
         "-DVAR_NAME=PBRT_EMBEDDED_PTX"
         "-DOUTPUT=${PBRT_EMBEDDED_PTX}"
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/pbrt/cmake/bin2c_wrapper.cmake
+        -P ${PBRT_BIN2C_SCRIPT}
         DEPENDS pbrt_optix_ptx $<TARGET_OBJECTS:pbrt_optix_ptx>
         VERBATIM
 )
 add_library(pbrt_embedded_ptx STATIC ${PBRT_EMBEDDED_PTX})
 
-add_library(pbrt_core STATIC
+add_library(pbrt_lib STATIC
         ${PBRT_RGB_TO_SPECTRUM_SOURCES}
         ${PBRT_SOA_GENERATED}
         ${PBRT_SOURCE}
@@ -456,46 +430,134 @@ add_library(pbrt_core STATIC
         vendor/pbrt/lodepng/lodepng.cpp
         vendor/pbrt/rply/rply.cpp
 )
-add_library(pbrt::core ALIAS pbrt_core)
-add_dependencies(pbrt_core pbrt_soa_generated)
-target_compile_definitions(pbrt_core PRIVATE ${PBRT_DEFINITIONS})
-target_include_directories(pbrt_core PUBLIC ${PBRT_INCLUDE_DIRS})
+add_library(pbrt::pbrt_lib ALIAS pbrt_lib)
+add_dependencies(pbrt_lib pbrt_soa_generated)
+target_compile_definitions(pbrt_lib PUBLIC ${PBRT_DEFINITIONS})
+target_include_directories(pbrt_lib PUBLIC ${PBRT_INCLUDE_DIRS})
 target_compile_options(
-        pbrt_core
+        pbrt_lib
         PUBLIC
         "$<$<COMPILE_LANG_AND_ID:CXX,Clang>:-ffp-contract=off>"
         ${PBRT_CUDA_COMPILE_OPTIONS}
         ${PBRT_CUDA_WARNING_OPTIONS}
 )
 target_link_libraries(
-        pbrt_core
+        pbrt_lib
         PRIVATE
         OpenEXR::OpenEXR
         Ptex_static
-        ZLIB::ZLIB
+        ${ZLIB_LIBRARIES}
         deflate::deflate
+        double-conversion
         utf8proc
+        glfw
+        glad
+        OpenGL::GL
         CUDA::cudart
         CUDA::cuda_driver
         Threads::Threads
         pbrt_embedded_ptx
 )
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(pbrt_core PRIVATE dbghelp wsock32 ws2_32)
+if (PBRT_NVML)
+    target_link_libraries(pbrt_lib PRIVATE nvidia-ml)
 endif ()
-set_property(TARGET pbrt_core PROPERTY CUDA_SEPARABLE_COMPILATION ON)
-set_property(TARGET pbrt_core PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    target_link_libraries(pbrt_lib PRIVATE dbghelp wsock32 ws2_32)
+endif ()
+set_property(TARGET pbrt_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+set_property(TARGET pbrt_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 add_executable(pbrt_exe pbrt/cmd/pbrt.cpp)
-add_executable(pbrt::exe ALIAS pbrt_exe)
+add_executable(pbrt::pbrt_exe ALIAS pbrt_exe)
 target_compile_definitions(pbrt_exe PRIVATE ${PBRT_DEFINITIONS})
 target_include_directories(pbrt_exe PRIVATE ${PBRT_INCLUDE_DIRS})
-target_link_libraries(pbrt_exe PRIVATE pbrt_core)
+target_link_libraries(pbrt_exe PRIVATE pbrt_lib Threads::Threads)
 set_target_properties(pbrt_exe PROPERTIES OUTPUT_NAME pbrt)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(pbrt_exe PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
 
+
+# ============================================================================
+# Shaders
+# ============================================================================
+set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
+set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
+set(SPECTRA_PREVIEW_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_preview.slang)
+set(
+        SPECTRA_SHADER_OUTPUTS
+        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
+        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_SHADER_OUTPUTS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_SHADER_OUTPUT_DIR}
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
+        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
+        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER} ${SPECTRA_PREVIEW_SHADER}
+        VERBATIM
+)
+add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})
+
+
+# ============================================================================
+# Spectra
+# ============================================================================
+add_library(spectra)
+add_dependencies(spectra spectra_shaders)
+target_sources(
+        spectra
+        PRIVATE
+        modules/spectra.cpp
+        modules/render_context.cpp
+        modules/spectra_scene.cpp
+
+        vendor/imgui/imgui.cpp
+        vendor/imgui/imgui_draw.cpp
+        vendor/imgui/imgui_tables.cpp
+        vendor/imgui/imgui_widgets.cpp
+        vendor/imgui/backends/imgui_impl_glfw.cpp
+        vendor/imgui/backends/imgui_impl_vulkan.cpp
+        vendor/ImGuizmo/ImGuizmo.cpp
+        vendor/ImGuizmo/GraphEditor.cpp
+        vendor/ImGuizmo/ImCurveEdit.cpp
+        vendor/ImGuizmo/ImGradient.cpp
+        vendor/ImGuizmo/ImSequencer.cpp
+        vendor/ImGuizmo/ImVectorEditor.cpp
+        vendor/ImNodeFlow/ImNodeFlow.cpp
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        modules/render_context.ixx
+        modules/camera.ixx
+        modules/spectra_scene.ixx
+        modules/spectra.ixx
+)
+target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
+target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS SPECTRA_SHADER_DIR="${SPECTRA_SHADER_OUTPUT_DIR}")
+target_include_directories(
+        spectra
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImGuizmo
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/glfw/include
+)
+set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
+
+
+# ============================================================================
+# Application
+# ============================================================================
 add_executable(test main.cpp)
 target_link_libraries(test PRIVATE spectra)
 set_property(TARGET test PROPERTY CXX_MODULE_STD ON)
