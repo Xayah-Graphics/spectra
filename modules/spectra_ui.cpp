@@ -23,6 +23,14 @@ import std;
 #include "spectra_internal.h"
 
 namespace {
+    void draw_statistics_row(const char* label, const char* value) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(value);
+    }
+
     void draw_statistics_row(const char* label, const std::string& value) {
         draw_statistics_row(label, value.c_str());
     }
