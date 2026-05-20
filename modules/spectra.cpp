@@ -101,6 +101,23 @@ namespace {
 #endif
     }
 
+    void draw_statistics_row(const char* label, const char* value) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(value);
+    }
+
+    void draw_statistics_row(const char* label, const std::string& value) {
+        draw_statistics_row(label, value.c_str());
+    }
+
+    [[nodiscard]] std::string format_device_bytes(const vk::DeviceSize bytes) {
+        const double megabytes = static_cast<double>(bytes) / (1024.0 * 1024.0);
+        return std::format("{} bytes ({:.2f} MiB)", static_cast<unsigned long long>(bytes), megabytes);
+    }
+
     [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
         return ImVec4{red, green, blue, alpha};
     }
@@ -219,12 +236,19 @@ namespace xayah {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
+        struct RenderFrameResult {
+            std::uint64_t sample_pixels{0};
+            bool rendered_sample{false};
+            bool reset_accumulation{false};
+        };
+
         std::filesystem::path scene_path{};
         pbrt::PBRTOptions options{};
         pbrt::BasicScene scene{};
         std::unique_ptr<pbrt::WavefrontPathIntegrator> integrator{};
         pbrt::Bounds2i pixel_bounds{};
         pbrt::Vector2i resolution{};
+        vk::Format display_format{vk::Format::eR32G32B32A32Sfloat};
         pbrt::Transform render_from_camera{};
         pbrt::Transform camera_from_render{};
         pbrt::Transform camera_from_world{};
@@ -328,6 +352,7 @@ namespace xayah {
         }
 
         [[nodiscard]] int current_sample() const {
+            if (this->reset_requested) return 0;
             return this->sample_index;
         }
 
@@ -341,6 +366,47 @@ namespace xayah {
 
         [[nodiscard]] float current_exposure() const {
             return static_cast<float>(this->exposure);
+        }
+
+        [[nodiscard]] std::uint64_t film_pixel_count() const {
+            if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive before statistics are queried");
+            return static_cast<std::uint64_t>(this->resolution.x) * static_cast<std::uint64_t>(this->resolution.y);
+        }
+
+        [[nodiscard]] float completion_ratio() const {
+            if (this->target_samples <= 0) throw std::runtime_error("PBRT target sample count must be positive before statistics are queried");
+            const int visible_sample = this->current_sample();
+            if (visible_sample < 0 || visible_sample > this->target_samples) throw std::runtime_error("PBRT visible sample count is outside the target sample range");
+            return static_cast<float>(visible_sample) / static_cast<float>(this->target_samples);
+        }
+
+        [[nodiscard]] std::uint32_t active_frame() const {
+            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
+            return this->active_frame_index;
+        }
+
+        [[nodiscard]] vk::Format active_display_format() const {
+            return this->display_format;
+        }
+
+        [[nodiscard]] vk::DeviceSize active_external_buffer_size() const {
+            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
+            return this->frames.at(this->active_frame_index).external_buffer_size;
+        }
+
+        [[nodiscard]] vk::ImageLayout active_image_layout() const {
+            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
+            return this->frames.at(this->active_frame_index).image_layout;
+        }
+
+        [[nodiscard]] bool active_external_semaphore_imported() const {
+            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
+            return this->frames.at(this->active_frame_index).cuda_external_semaphore != nullptr;
+        }
+
+        [[nodiscard]] bool active_external_buffer_mapped() const {
+            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
+            return this->frames.at(this->active_frame_index).cuda_pixels != nullptr;
         }
 
         [[nodiscard]] VkDescriptorSet active_descriptor() const {
@@ -460,25 +526,30 @@ namespace xayah {
             if (needs_reset) this->reset_requested = true;
         }
 
-        void render_frame(const std::uint32_t frame_index) {
+        [[nodiscard]] RenderFrameResult render_frame(const std::uint32_t frame_index) {
             if (frame_index >= this->frames.size()) throw std::runtime_error("PBRT interactive frame index is out of range");
             this->active_frame_index = frame_index;
             FrameResource& frame     = this->frames.at(frame_index);
+            RenderFrameResult result{};
             if (this->reset_requested) {
                 this->integrator->ResetFilm(this->pixel_bounds);
                 pbrt::GPUWait();
                 this->sample_index     = 0;
                 this->reset_requested = false;
+                result.reset_accumulation = true;
             }
             if (this->sample_index < this->target_samples) {
                 const pbrt::Transform camera_motion = this->render_from_camera * this->moving_from_camera * this->camera_from_render;
                 this->integrator->RenderSample(this->pixel_bounds, camera_motion, this->sample_index);
                 ++this->sample_index;
+                result.rendered_sample = true;
+                result.sample_pixels   = this->film_pixel_count();
             }
             this->integrator->UpdateFramebufferFromFilm(this->pixel_bounds, this->exposure, frame.cuda_pixels);
 
             cudaExternalSemaphoreSignalParams signal_params{};
             CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&frame.cuda_external_semaphore, &signal_params, 1, 0));
+            return result;
         }
 
         void record_copy(const vk::raii::CommandBuffer& command_buffer) {
@@ -537,8 +608,7 @@ namespace xayah {
         }
 
         void create_frame_resources(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
-            constexpr vk::Format display_format = vk::Format::eR32G32B32A32Sfloat;
-            const vk::FormatProperties format_properties = physical_device.getFormatProperties(display_format);
+            const vk::FormatProperties format_properties = physical_device.getFormatProperties(this->display_format);
             constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst;
             if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
 
@@ -548,7 +618,7 @@ namespace xayah {
             for (FrameResource& frame : this->frames) {
                 this->create_external_buffer(physical_device, device, frame, rgba_bytes);
                 this->create_external_semaphore(device, frame);
-                this->create_display_image(physical_device, device, frame, display_format);
+                this->create_display_image(physical_device, device, frame, this->display_format);
             }
         }
 
@@ -996,6 +1066,35 @@ namespace xayah {
         this->window_title.refresh_timer = 0.0f;
     }
 
+    void Spectra::clear_pathtracer_throughput_statistics() {
+        this->statistics.throughput_mspp.clear();
+        this->statistics.last_valid_throughput_mspp = 0.0f;
+        this->statistics.has_throughput             = false;
+    }
+
+    void Spectra::update_frame_statistics(const FrameState& frame, const bool rendered_sample, const bool reset_accumulation, const std::uint64_t sample_pixels) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!std::isfinite(io.DeltaTime) || !(io.DeltaTime > 0.0f)) throw std::runtime_error("ImGui frame delta time must be finite and positive for statistics");
+        if (!rendered_sample && sample_pixels != 0) throw std::runtime_error("PBRT frame statistics reported sample-pixels without rendering a sample");
+        if (rendered_sample && sample_pixels == 0) throw std::runtime_error("PBRT frame statistics rendered a sample without sample-pixels");
+
+        const float frame_milliseconds = io.DeltaTime * 1000.0f;
+        this->statistics.current_frame_id             = this->window_title.frame_count + 1;
+        this->statistics.active_frame_index           = frame.frame_index;
+        this->statistics.active_swapchain_image_index = frame.image_index;
+        this->statistics.last_frame_milliseconds      = frame_milliseconds;
+        this->statistics.last_frame_rendered_sample   = rendered_sample;
+        this->statistics.frame_milliseconds.add(frame_milliseconds);
+
+        if (reset_accumulation) this->clear_pathtracer_throughput_statistics();
+        if (rendered_sample) {
+            const float throughput = (static_cast<float>(sample_pixels) / 1000000.0f) / io.DeltaTime;
+            this->statistics.throughput_mspp.add(throughput);
+            this->statistics.last_valid_throughput_mspp = throughput;
+            this->statistics.has_throughput             = true;
+        }
+    }
+
     bool Spectra::begin_frame(FrameState& frame) {
         glfwPollEvents();
         if (this->surface.resize_requested) {
@@ -1033,10 +1132,10 @@ namespace xayah {
         const ImVec2 mouse_position = io.MousePos;
         const bool in_viewport_rect = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
         const bool in_viewport      = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused);
-        if (this->pbrt_interactive != nullptr) {
-            this->pbrt_interactive->process_input(in_viewport, this->surface.window.get());
-            this->pbrt_interactive->render_frame(frame.frame_index);
-        }
+        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot update PBRT interactive frame without an active PBRT session");
+        this->pbrt_interactive->process_input(in_viewport, this->surface.window.get());
+        const SpectraPbrtInteractiveSession::RenderFrameResult render_result = this->pbrt_interactive->render_frame(frame.frame_index);
+        this->update_frame_statistics(frame, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
         return true;
     }
 
@@ -1355,9 +1454,13 @@ namespace xayah {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Max Iterations");
                 ImGui::TableSetColumnIndex(1);
-                int target_sample_count = this->pbrt_interactive->target_sample_count();
+                const int previous_target_sample_count = this->pbrt_interactive->target_sample_count();
+                int target_sample_count                = previous_target_sample_count;
                 ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->pbrt_interactive->sampler_sample_count())) this->pbrt_interactive->set_target_sample_count(target_sample_count);
+                if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->pbrt_interactive->sampler_sample_count())) {
+                    this->pbrt_interactive->set_target_sample_count(target_sample_count);
+                    if (target_sample_count != previous_target_sample_count) this->clear_pathtracer_throughput_statistics();
+                }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
 
                 ImGui::TableNextRow();
@@ -1373,7 +1476,10 @@ namespace xayah {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Accumulation");
                 ImGui::TableSetColumnIndex(1);
-                if (ImGui::Button("Reset Accumulation")) this->pbrt_interactive->request_reset_accumulation();
+                if (ImGui::Button("Reset Accumulation")) {
+                    this->pbrt_interactive->request_reset_accumulation();
+                    this->clear_pathtracer_throughput_statistics();
+                }
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -1396,12 +1502,89 @@ namespace xayah {
             ImGui::End();
             return;
         }
-        const ImGuiIO& io = ImGui::GetIO();
-        ImGui::Text("FPS: %.1f", io.Framerate);
-        ImGui::Text("Frame time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
-        ImGui::Text("Swapchain: %u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
-        ImGui::Text("Viewport: %.0f x %.0f", this->ui.viewport_size[0], this->ui.viewport_size[1]);
-        ImGui::Text("Frames in flight: %u", this->sync.frame_count);
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        if (this->pbrt_interactive == nullptr) {
+            ImGui::TextDisabled("No active PBRT interactive session");
+            ImGui::End();
+            return;
+        }
+
+        const std::array<int, 2> film_resolution = this->pbrt_interactive->film_resolution();
+        const int current_sample                 = this->pbrt_interactive->current_sample();
+        const int target_sample                  = this->pbrt_interactive->target_sample_count();
+        const float completion_ratio             = this->pbrt_interactive->completion_ratio();
+        const float completion_percent           = completion_ratio * 100.0f;
+        const bool sampling_completed            = current_sample >= target_sample;
+        const std::string sampling_state         = sampling_completed ? "Completed" : "Sampling";
+        const std::string viewport_resolution    = this->ui.viewport_known ? std::format("{:.0f} x {:.0f}", this->ui.viewport_size[0], this->ui.viewport_size[1]) : "Unknown";
+
+        ImGui::SeparatorText("Sampling");
+        if (ImGui::BeginTable("SpectraSamplingStatistics", 2, table_flags)) {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("State", sampling_state);
+            draw_statistics_row("Sample", std::format("{} / {}", current_sample, target_sample));
+            draw_statistics_row("Completion", std::format("{:.1f}%", completion_percent));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Progress");
+            ImGui::TableSetColumnIndex(1);
+            const std::string progress_label = std::format("{:.1f}%", completion_percent);
+            ImGui::ProgressBar(completion_ratio, ImVec2{-1.0f, 0.0f}, progress_label.c_str());
+
+            draw_statistics_row("Film Resolution", std::format("{} x {}", film_resolution[0], film_resolution[1]));
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("Performance");
+        if (ImGui::BeginTable("SpectraPerformanceStatistics", 2, table_flags)) {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Frame Time", std::format("{:.3f} ms", this->statistics.last_frame_milliseconds));
+            if (this->statistics.frame_milliseconds.has_value()) {
+                const float average_frame_milliseconds = this->statistics.frame_milliseconds.average();
+                if (!(average_frame_milliseconds > 0.0f)) throw std::runtime_error("Average frame time must be positive after statistics are collected");
+                draw_statistics_row("Frame Time Avg", std::format("{:.3f} ms over {} frames", average_frame_milliseconds, this->statistics.frame_milliseconds.count));
+                draw_statistics_row("FPS Avg", std::format("{:.1f}", 1000.0f / average_frame_milliseconds));
+            } else {
+                draw_statistics_row("Frame Time Avg", "Collecting");
+                draw_statistics_row("FPS Avg", "Collecting");
+            }
+            if (this->statistics.throughput_mspp.has_value())
+                draw_statistics_row("Throughput Avg", std::format("{:.2f} MSPP/s over {} sample frames", this->statistics.throughput_mspp.average(), this->statistics.throughput_mspp.count));
+            else
+                draw_statistics_row("Throughput Avg", sampling_completed ? "Completed" : "Collecting");
+            draw_statistics_row("Last Sample Throughput", this->statistics.has_throughput ? std::format("{:.2f} MSPP/s", this->statistics.last_valid_throughput_mspp) : "No sample yet");
+            draw_statistics_row("Current Frame Work", this->statistics.last_frame_rendered_sample ? "Rendered sample" : "No PBRT sample");
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("Runtime");
+        if (ImGui::BeginTable("SpectraRuntimeStatistics", 2, table_flags)) {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Frame ID", std::format("{}", this->statistics.current_frame_id));
+            draw_statistics_row("Frame Slot", std::format("{}", this->statistics.active_frame_index));
+            draw_statistics_row("Swapchain Image", std::format("{}", this->statistics.active_swapchain_image_index));
+            draw_statistics_row("Frames In Flight", std::format("{}", this->sync.frame_count));
+            draw_statistics_row("Swapchain Resolution", std::format("{} x {}", this->swapchain.extent.width, this->swapchain.extent.height));
+            draw_statistics_row("Viewport Resolution", viewport_resolution);
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("CUDA/Vulkan Interop");
+        if (ImGui::BeginTable("SpectraInteropStatistics", 2, table_flags)) {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Active PBRT Frame", std::format("{} / {}", this->pbrt_interactive->active_frame(), this->sync.frame_count));
+            draw_statistics_row("Display Format", vk::to_string(this->pbrt_interactive->active_display_format()));
+            draw_statistics_row("External Buffer", format_device_bytes(this->pbrt_interactive->active_external_buffer_size()));
+            draw_statistics_row("Image Layout", vk::to_string(this->pbrt_interactive->active_image_layout()));
+            draw_statistics_row("CUDA Semaphore", this->pbrt_interactive->active_external_semaphore_imported() ? "Imported" : "Missing");
+            draw_statistics_row("CUDA Pixel Buffer", this->pbrt_interactive->active_external_buffer_mapped() ? "Mapped" : "Missing");
+            ImGui::EndTable();
+        }
         ImGui::End();
     }
 

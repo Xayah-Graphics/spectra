@@ -39,6 +39,8 @@ namespace xayah {
         void end_frame(FrameState& frame);
         void render_loop();
         void update_window_title(float delta_seconds);
+        void update_frame_statistics(const FrameState& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
+        void clear_pathtracer_throughput_statistics();
         void draw_main_menu();
         void draw_menu_toolbar();
         void draw_dockspace();
@@ -118,6 +120,57 @@ namespace xayah {
         } session;
 
         std::unique_ptr<SpectraPbrtInteractiveSession> pbrt_interactive{};
+
+        struct RollingFloatAverage {
+            static constexpr std::size_t sample_count{100};
+
+            std::array<float, sample_count> values{};
+            std::size_t count{0};
+            std::size_t cursor{0};
+            float sum{0.0f};
+
+            void clear() {
+                this->values.fill(0.0f);
+                this->count  = 0;
+                this->cursor = 0;
+                this->sum    = 0.0f;
+            }
+
+            void add(const float value) {
+                if (!std::isfinite(value) || value < 0.0f) throw std::runtime_error("Rolling statistic value must be finite and non-negative");
+                if (this->count < sample_count) {
+                    this->values[this->cursor] = value;
+                    this->sum += value;
+                    ++this->count;
+                } else {
+                    this->sum -= this->values[this->cursor];
+                    this->values[this->cursor] = value;
+                    this->sum += value;
+                }
+                this->cursor = (this->cursor + 1) % sample_count;
+            }
+
+            [[nodiscard]] bool has_value() const {
+                return this->count > 0;
+            }
+
+            [[nodiscard]] float average() const {
+                if (this->count == 0) return 0.0f;
+                return this->sum / static_cast<float>(this->count);
+            }
+        };
+
+        struct {
+            RollingFloatAverage frame_milliseconds{};
+            RollingFloatAverage throughput_mspp{};
+            std::uint64_t current_frame_id{0};
+            std::uint32_t active_frame_index{0};
+            std::uint32_t active_swapchain_image_index{0};
+            float last_frame_milliseconds{0.0f};
+            float last_valid_throughput_mspp{0.0f};
+            bool has_throughput{false};
+            bool last_frame_rendered_sample{false};
+        } statistics;
 
         struct {
             std::uint32_t frame_count{2};
