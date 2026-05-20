@@ -13,6 +13,7 @@ module;
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <cstring>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <material_symbols/IconsMaterialSymbols.h>
@@ -32,6 +33,7 @@ module;
 #include <pbrt/wavefront/integrator.h>
 
 #include <vulkan/vulkan_raii.hpp>
+#include "spectra_raster_spirv.h"
 module spectra;
 import std;
 
@@ -112,6 +114,91 @@ namespace {
         draw_statistics_row(label, value.c_str());
     }
 
+    [[nodiscard]] std::string scene_file_location_text(const xayah::SpectraPbrtFileLocation& location);
+
+    [[nodiscard]] std::string optional_scene_text(const std::string& value) {
+        if (value.empty()) return "None";
+        return value;
+    }
+
+    [[nodiscard]] std::string pbrt_parameter_count_text(const std::vector<xayah::SpectraPbrtParameter>& parameters) {
+        if (parameters.empty()) return "None";
+        if (parameters.size() == 1u) return "1 parameter";
+        return std::format("{} parameters", parameters.size());
+    }
+
+    [[nodiscard]] std::string scene_render_setting_text(const xayah::SpectraSceneRenderSetting& setting) {
+        if (!setting.present) return "Not specified";
+        if (!setting.type.empty() && !setting.name.empty()) return std::format("{} {}", setting.type, setting.name);
+        if (!setting.type.empty()) return setting.type;
+        if (!setting.name.empty()) return setting.name;
+        return "Present";
+    }
+
+    void draw_scene_render_setting_row(const char* label, const xayah::SpectraSceneRenderSetting& setting) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+        ImGui::TableSetColumnIndex(1);
+        const std::string setting_text = scene_render_setting_text(setting);
+        if (setting.present) ImGui::TextWrapped("%s", setting_text.c_str());
+        else ImGui::TextDisabled("%s", setting_text.c_str());
+        ImGui::TableSetColumnIndex(2);
+        if (setting.present) ImGui::TextWrapped("%s", scene_file_location_text(setting.location).c_str());
+        else ImGui::TextDisabled("None");
+        ImGui::TableSetColumnIndex(3);
+        ImGui::TextUnformatted(pbrt_parameter_count_text(setting.parameters).c_str());
+    }
+
+    [[nodiscard]] const char* scene_unsupported_kind_label(const xayah::SpectraSceneUnsupportedFeatureKind kind) {
+        switch (kind) {
+            case xayah::SpectraSceneUnsupportedFeatureKind::AnimatedTransform:
+                return "Animated Transform";
+            case xayah::SpectraSceneUnsupportedFeatureKind::ParticipatingMedium:
+                return "Participating Medium";
+            case xayah::SpectraSceneUnsupportedFeatureKind::VdbMedium:
+                return "VDB Medium";
+            case xayah::SpectraSceneUnsupportedFeatureKind::ProceduralTexture:
+                return "Procedural Texture";
+            case xayah::SpectraSceneUnsupportedFeatureKind::AreaLightInObjectDefinition:
+                return "Area Light Instance Policy";
+            case xayah::SpectraSceneUnsupportedFeatureKind::ParserAttribute:
+                return "Parser Attribute";
+        }
+        throw std::runtime_error("Unknown Spectra scene unsupported feature kind");
+    }
+
+    [[nodiscard]] const char* raster_diagnostic_kind_label(const xayah::SpectraRasterDiagnosticKind kind) {
+        switch (kind) {
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedShape: return "Unsupported Shape";
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedMaterial: return "Unsupported Material";
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedTexture: return "Unsupported Texture";
+            case xayah::SpectraRasterDiagnosticKind::MissingMaterial: return "Missing Material";
+            case xayah::SpectraRasterDiagnosticKind::InvalidMesh: return "Invalid Mesh";
+            case xayah::SpectraRasterDiagnosticKind::MissingPlyFile: return "Missing PLY File";
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedAnimatedTransform: return "Unsupported Animated Transform";
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedObjectInstance: return "Unsupported Object Instance";
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedAreaLight: return "Unsupported Area Light";
+            case xayah::SpectraRasterDiagnosticKind::UnsupportedMediumBinding: return "Unsupported Medium Binding";
+        }
+        throw std::runtime_error("Unknown Spectra raster diagnostic kind");
+    }
+
+    [[nodiscard]] std::string scene_file_location_text(const xayah::SpectraPbrtFileLocation& location) {
+        if (location.filename.empty()) return "<unknown>";
+        return std::format("{}:{}:{}", location.filename, location.line, location.column);
+    }
+
+    [[nodiscard]] std::string scene_unsupported_source_text(const xayah::SpectraSceneUnsupportedFeature& feature) {
+        if (feature.source_name.empty()) return feature.source_type;
+        return std::format("{} {}", feature.source_type, feature.source_name);
+    }
+
+    [[nodiscard]] std::string raster_diagnostic_source_text(const xayah::SpectraRasterDiagnostic& diagnostic) {
+        if (diagnostic.source_name.empty()) return diagnostic.source_type;
+        return std::format("{} {}", diagnostic.source_type, diagnostic.source_name);
+    }
+
     [[nodiscard]] std::array<float, 16> identity_matrix_array() {
         return {
             1.0f, 0.0f, 0.0f, 0.0f,
@@ -119,6 +206,64 @@ namespace {
             0.0f, 0.0f, 1.0f, 0.0f,
             0.0f, 0.0f, 0.0f, 1.0f,
         };
+    }
+
+    void validate_matrix_array(const std::array<float, 16>& values) {
+        for (const float value : values) {
+            if (!std::isfinite(value)) throw std::runtime_error("Camera matrix contains a non-finite value");
+        }
+    }
+
+    [[nodiscard]] std::array<float, 16> multiply_matrix_arrays(const std::array<float, 16>& lhs, const std::array<float, 16>& rhs) {
+        validate_matrix_array(lhs);
+        validate_matrix_array(rhs);
+        std::array<float, 16> result{};
+        for (std::size_t row = 0; row < 4; ++row) {
+            for (std::size_t column = 0; column < 4; ++column) {
+                float value = 0.0f;
+                for (std::size_t index = 0; index < 4; ++index) value += lhs[row * 4 + index] * rhs[index * 4 + column];
+                result[row * 4 + column] = value;
+            }
+        }
+        validate_matrix_array(result);
+        return result;
+    }
+
+    [[nodiscard]] std::array<float, 16> translation_matrix_array(const float x, const float y, const float z) {
+        std::array<float, 16> matrix = identity_matrix_array();
+        matrix[3]  = x;
+        matrix[7]  = y;
+        matrix[11] = z;
+        validate_matrix_array(matrix);
+        return matrix;
+    }
+
+    [[nodiscard]] std::array<float, 16> rotation_x_matrix_array(const float degrees) {
+        constexpr float radians_per_degree = 0.017453292519943295769f;
+        const float radians                = degrees * radians_per_degree;
+        const float sin_theta              = std::sin(radians);
+        const float cos_theta              = std::cos(radians);
+        std::array<float, 16> matrix       = identity_matrix_array();
+        matrix[5]                          = cos_theta;
+        matrix[6]                          = -sin_theta;
+        matrix[9]                          = sin_theta;
+        matrix[10]                         = cos_theta;
+        validate_matrix_array(matrix);
+        return matrix;
+    }
+
+    [[nodiscard]] std::array<float, 16> rotation_y_matrix_array(const float degrees) {
+        constexpr float radians_per_degree = 0.017453292519943295769f;
+        const float radians                = degrees * radians_per_degree;
+        const float sin_theta              = std::sin(radians);
+        const float cos_theta              = std::cos(radians);
+        std::array<float, 16> matrix       = identity_matrix_array();
+        matrix[0]                          = cos_theta;
+        matrix[2]                          = sin_theta;
+        matrix[8]                          = -sin_theta;
+        matrix[10]                         = cos_theta;
+        validate_matrix_array(matrix);
+        return matrix;
     }
 
     [[nodiscard]] std::array<float, 16> matrix_array_from_transform(const pbrt::Transform& transform) {
@@ -144,6 +289,103 @@ namespace {
             }
         }
         return pbrt::Transform{matrix};
+    }
+
+    [[nodiscard]] std::array<float, 16> transpose_matrix_array(const std::array<float, 16>& matrix) {
+        validate_matrix_array(matrix);
+        std::array<float, 16> result{};
+        for (std::size_t row = 0; row < 4; ++row) {
+            for (std::size_t column = 0; column < 4; ++column) result[row * 4 + column] = matrix[column * 4 + row];
+        }
+        validate_matrix_array(result);
+        return result;
+    }
+
+    [[nodiscard]] std::array<float, 16> inverse_matrix_array(const std::array<float, 16>& matrix) {
+        validate_matrix_array(matrix);
+        std::array<float, 16> inverse{};
+        inverse[0]  = matrix[5] * matrix[10] * matrix[15] - matrix[5] * matrix[11] * matrix[14] - matrix[9] * matrix[6] * matrix[15] + matrix[9] * matrix[7] * matrix[14] + matrix[13] * matrix[6] * matrix[11] - matrix[13] * matrix[7] * matrix[10];
+        inverse[4]  = -matrix[4] * matrix[10] * matrix[15] + matrix[4] * matrix[11] * matrix[14] + matrix[8] * matrix[6] * matrix[15] - matrix[8] * matrix[7] * matrix[14] - matrix[12] * matrix[6] * matrix[11] + matrix[12] * matrix[7] * matrix[10];
+        inverse[8]  = matrix[4] * matrix[9] * matrix[15] - matrix[4] * matrix[11] * matrix[13] - matrix[8] * matrix[5] * matrix[15] + matrix[8] * matrix[7] * matrix[13] + matrix[12] * matrix[5] * matrix[11] - matrix[12] * matrix[7] * matrix[9];
+        inverse[12] = -matrix[4] * matrix[9] * matrix[14] + matrix[4] * matrix[10] * matrix[13] + matrix[8] * matrix[5] * matrix[14] - matrix[8] * matrix[6] * matrix[13] - matrix[12] * matrix[5] * matrix[10] + matrix[12] * matrix[6] * matrix[9];
+        inverse[1]  = -matrix[1] * matrix[10] * matrix[15] + matrix[1] * matrix[11] * matrix[14] + matrix[9] * matrix[2] * matrix[15] - matrix[9] * matrix[3] * matrix[14] - matrix[13] * matrix[2] * matrix[11] + matrix[13] * matrix[3] * matrix[10];
+        inverse[5]  = matrix[0] * matrix[10] * matrix[15] - matrix[0] * matrix[11] * matrix[14] - matrix[8] * matrix[2] * matrix[15] + matrix[8] * matrix[3] * matrix[14] + matrix[12] * matrix[2] * matrix[11] - matrix[12] * matrix[3] * matrix[10];
+        inverse[9]  = -matrix[0] * matrix[9] * matrix[15] + matrix[0] * matrix[11] * matrix[13] + matrix[8] * matrix[1] * matrix[15] - matrix[8] * matrix[3] * matrix[13] - matrix[12] * matrix[1] * matrix[11] + matrix[12] * matrix[3] * matrix[9];
+        inverse[13] = matrix[0] * matrix[9] * matrix[14] - matrix[0] * matrix[10] * matrix[13] - matrix[8] * matrix[1] * matrix[14] + matrix[8] * matrix[2] * matrix[13] + matrix[12] * matrix[1] * matrix[10] - matrix[12] * matrix[2] * matrix[9];
+        inverse[2]  = matrix[1] * matrix[6] * matrix[15] - matrix[1] * matrix[7] * matrix[14] - matrix[5] * matrix[2] * matrix[15] + matrix[5] * matrix[3] * matrix[14] + matrix[13] * matrix[2] * matrix[7] - matrix[13] * matrix[3] * matrix[6];
+        inverse[6]  = -matrix[0] * matrix[6] * matrix[15] + matrix[0] * matrix[7] * matrix[14] + matrix[4] * matrix[2] * matrix[15] - matrix[4] * matrix[3] * matrix[14] - matrix[12] * matrix[2] * matrix[7] + matrix[12] * matrix[3] * matrix[6];
+        inverse[10] = matrix[0] * matrix[5] * matrix[15] - matrix[0] * matrix[7] * matrix[13] - matrix[4] * matrix[1] * matrix[15] + matrix[4] * matrix[3] * matrix[13] + matrix[12] * matrix[1] * matrix[7] - matrix[12] * matrix[3] * matrix[5];
+        inverse[14] = -matrix[0] * matrix[5] * matrix[14] + matrix[0] * matrix[6] * matrix[13] + matrix[4] * matrix[1] * matrix[14] - matrix[4] * matrix[2] * matrix[13] - matrix[12] * matrix[1] * matrix[6] + matrix[12] * matrix[2] * matrix[5];
+        inverse[3]  = -matrix[1] * matrix[6] * matrix[11] + matrix[1] * matrix[7] * matrix[10] + matrix[5] * matrix[2] * matrix[11] - matrix[5] * matrix[3] * matrix[10] - matrix[9] * matrix[2] * matrix[7] + matrix[9] * matrix[3] * matrix[6];
+        inverse[7]  = matrix[0] * matrix[6] * matrix[11] - matrix[0] * matrix[7] * matrix[10] - matrix[4] * matrix[2] * matrix[11] + matrix[4] * matrix[3] * matrix[10] + matrix[8] * matrix[2] * matrix[7] - matrix[8] * matrix[3] * matrix[6];
+        inverse[11] = -matrix[0] * matrix[5] * matrix[11] + matrix[0] * matrix[7] * matrix[9] + matrix[4] * matrix[1] * matrix[11] - matrix[4] * matrix[3] * matrix[9] - matrix[8] * matrix[1] * matrix[7] + matrix[8] * matrix[3] * matrix[5];
+        inverse[15] = matrix[0] * matrix[5] * matrix[10] - matrix[0] * matrix[6] * matrix[9] - matrix[4] * matrix[1] * matrix[10] + matrix[4] * matrix[2] * matrix[9] + matrix[8] * matrix[1] * matrix[6] - matrix[8] * matrix[2] * matrix[5];
+
+        const float determinant = matrix[0] * inverse[0] + matrix[1] * inverse[4] + matrix[2] * inverse[8] + matrix[3] * inverse[12];
+        if (!std::isfinite(determinant) || std::abs(determinant) <= 1.0e-20f) throw std::runtime_error("Raster transform matrix is not invertible");
+        for (float& value : inverse) value /= determinant;
+        validate_matrix_array(inverse);
+        return inverse;
+    }
+
+    [[nodiscard]] std::array<float, 16> normal_from_local_matrix_array(const std::array<float, 16>& object_from_local) {
+        std::array<float, 16> normal_from_local = transpose_matrix_array(inverse_matrix_array(object_from_local));
+        normal_from_local[3]                    = 0.0f;
+        normal_from_local[7]                    = 0.0f;
+        normal_from_local[11]                   = 0.0f;
+        normal_from_local[12]                   = 0.0f;
+        normal_from_local[13]                   = 0.0f;
+        normal_from_local[14]                   = 0.0f;
+        normal_from_local[15]                   = 1.0f;
+        validate_matrix_array(normal_from_local);
+        return normal_from_local;
+    }
+
+    [[nodiscard]] std::array<float, 3> transform_point_array(const std::array<float, 16>& matrix, const std::array<float, 3>& point) {
+        validate_matrix_array(matrix);
+        const float x = matrix[0] * point[0] + matrix[1] * point[1] + matrix[2] * point[2] + matrix[3];
+        const float y = matrix[4] * point[0] + matrix[5] * point[1] + matrix[6] * point[2] + matrix[7];
+        const float z = matrix[8] * point[0] + matrix[9] * point[1] + matrix[10] * point[2] + matrix[11];
+        const float w = matrix[12] * point[0] + matrix[13] * point[1] + matrix[14] * point[2] + matrix[15];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w) || std::abs(w) <= 1.0e-20f) throw std::runtime_error("Raster transformed point is invalid");
+        return {x / w, y / w, z / w};
+    }
+
+    [[nodiscard]] std::array<float, 16> raster_perspective_matrix(const float fov_degrees, const float aspect) {
+        if (!std::isfinite(fov_degrees) || !(fov_degrees > 0.0f) || !(fov_degrees < 180.0f)) throw std::runtime_error("Raster perspective fov must be finite and inside (0, 180)");
+        if (!std::isfinite(aspect) || !(aspect > 0.0f)) throw std::runtime_error("Raster perspective aspect ratio must be finite and positive");
+        constexpr float radians_per_degree = 0.017453292519943295769f;
+        constexpr float near_plane         = 0.01f;
+        constexpr float far_plane          = 1000000.0f;
+        const float focal                  = 1.0f / std::tan(fov_degrees * radians_per_degree * 0.5f);
+        std::array<float, 16> matrix{};
+        matrix[0]  = focal / aspect;
+        matrix[5]  = -focal;
+        matrix[10] = far_plane / (far_plane - near_plane);
+        matrix[11] = -(far_plane * near_plane) / (far_plane - near_plane);
+        matrix[14] = 1.0f;
+        validate_matrix_array(matrix);
+        return matrix;
+    }
+
+    [[nodiscard]] float raster_camera_fov_degrees(const xayah::SpectraScene& scene) {
+        if (!scene.camera.present) throw std::runtime_error("Rasterizer requires an explicit PBRT perspective camera");
+        if (scene.camera.name != "perspective") throw std::runtime_error(std::format("Rasterizer v1 requires a PBRT perspective camera, not \"{}\"", scene.camera.name));
+        constexpr float pbrt_perspective_default_fov = 90.0f;
+        for (const xayah::SpectraPbrtParameter& parameter : scene.camera.parameters) {
+            if (parameter.name != "fov") continue;
+            if (parameter.floats.size() != 1) throw std::runtime_error("PBRT perspective camera fov must have exactly one float value");
+            return parameter.floats.front();
+        }
+        return pbrt_perspective_default_fov;
+    }
+
+    [[nodiscard]] std::array<float, 16> raster_view_projection_matrix(const xayah::SpectraScene& scene, const std::array<float, 16>& camera_from_world, const std::array<float, 16>& moving_from_camera) {
+        if (scene.film_resolution[0] <= 0 || scene.film_resolution[1] <= 0) throw std::runtime_error("Rasterizer requires positive PBRT film resolution metadata");
+        const float aspect = static_cast<float>(scene.film_resolution[0]) / static_cast<float>(scene.film_resolution[1]);
+        const std::array<float, 16> projection = raster_perspective_matrix(raster_camera_fov_degrees(scene), aspect);
+        const std::array<float, 16> moved_camera_from_world = multiply_matrix_arrays(moving_from_camera, camera_from_world);
+        return multiply_matrix_arrays(projection, moved_camera_from_world);
     }
 
     [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
@@ -245,42 +487,6 @@ namespace {
 } // namespace
 
 namespace xayah {
-    struct SpectraPbrtScene {
-        std::filesystem::path scene_path{};
-        std::string scene_label{"No Scene"};
-        std::string scene_path_text{};
-        std::array<int, 2> film_resolution{0, 0};
-        std::array<float, 16> camera_from_world{};
-        int sampler_sample_count{0};
-
-        void load(const std::filesystem::path& path) {
-            if (!this->scene_path.empty()) throw std::runtime_error("PBRT scene metadata is already loaded");
-            if (path.empty()) throw std::runtime_error("PBRT scene path is empty");
-            if (!std::filesystem::exists(path)) throw std::runtime_error(std::string{"PBRT scene does not exist: "} + path.string());
-
-            this->scene_path      = path;
-            this->scene_label     = path.filename().string();
-            this->scene_path_text = path.string();
-        }
-
-        void set_runtime_metadata(const std::array<int, 2>& resolution, const int samples_per_pixel, const std::array<float, 16>& camera_transform) {
-            if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("PBRT film resolution must be positive");
-            this->film_resolution = resolution;
-            this->sampler_sample_count = samples_per_pixel;
-            if (this->sampler_sample_count <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
-            this->camera_from_world = camera_transform;
-        }
-
-        void unload_noexcept() noexcept {
-            this->scene_path.clear();
-            this->scene_label = "No Scene";
-            this->scene_path_text.clear();
-            this->film_resolution = {0, 0};
-            this->camera_from_world = identity_matrix_array();
-            this->sampler_sample_count = 0;
-        }
-    };
-
     struct SpectraPbrtInteractiveSession {
         struct FrameResource {
             vk::raii::Buffer interop_buffer{nullptr};
@@ -307,8 +513,6 @@ namespace xayah {
         };
 
         std::filesystem::path scene_path{};
-        pbrt::PBRTOptions options{};
-        pbrt::BasicScene scene{};
         std::unique_ptr<pbrt::WavefrontPathIntegrator> integrator{};
         pbrt::Bounds2i pixel_bounds{};
         pbrt::Vector2i resolution{};
@@ -322,56 +526,45 @@ namespace xayah {
         int max_samples{0};
         int target_samples{0};
         bool reset_requested{false};
-        bool pbrt_initialized{false};
         std::uint32_t active_frame_index{0};
         const vk::raii::PhysicalDevice* physical_device{nullptr};
         const vk::raii::Device* device{nullptr};
         std::uint32_t frame_count{0};
         std::vector<FrameResource> frames{};
 
-        SpectraPbrtInteractiveSession(const std::filesystem::path& path, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path{path} {
+        SpectraPbrtInteractiveSession(const SpectraScene& spectra_scene, pbrt::BasicScene& backend_scene, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path{spectra_scene.scene_path} {
             try {
-            if (this->scene_path.empty()) throw std::runtime_error("PBRT scene path is empty");
-            if (!std::filesystem::exists(this->scene_path)) throw std::runtime_error(std::string{"PBRT scene does not exist: "} + this->scene_path.string());
-            if (frame_count == 0) throw std::runtime_error("PBRT interactive requires at least one frame in flight");
-            this->physical_device = &physical_device;
-            this->device          = &device;
-            this->frame_count     = frame_count;
+                if (this->scene_path.empty()) throw std::runtime_error("PBRT scene path is empty");
+                if (!std::filesystem::exists(this->scene_path)) throw std::runtime_error(std::string{"PBRT scene does not exist: "} + this->scene_path.string());
+                if (spectra_scene.pbrt_directives.empty()) throw std::runtime_error("Spectra scene has no PBRT parser directives");
+                if (frame_count == 0) throw std::runtime_error("PBRT interactive requires at least one frame in flight");
+                this->physical_device = &physical_device;
+                this->device          = &device;
+                this->frame_count     = frame_count;
 
-            this->options.useGPU         = true;
-            this->options.wavefront      = false;
-            this->options.nThreads       = 30;
-            this->options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
-            pbrt::InitPBRT(this->options);
-            this->pbrt_initialized = true;
-
-            std::vector<std::string> filenames{this->scene_path.string()};
-            pbrt::BasicSceneBuilder builder{&this->scene};
-            pbrt::ParseFiles(&builder, filenames);
-
-            this->integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, this->scene);
+                this->integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, backend_scene);
 #ifdef PBRT_BUILD_GPU_RENDERER
-            if (this->options.useGPU) this->integrator->PrefetchGPUAllocations();
+                if (pbrt::Options != nullptr && pbrt::Options->useGPU) this->integrator->PrefetchGPUAllocations();
 #endif
-            this->pixel_bounds = this->integrator->film.PixelBounds();
-            this->resolution   = this->pixel_bounds.Diagonal();
-            if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
-            this->max_samples = this->integrator->sampler.SamplesPerPixel();
-            if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
-            this->target_samples = this->max_samples;
-            this->render_one_sample(pbrt::Transform{});
-            pbrt::GPUWait();
+                this->pixel_bounds = this->integrator->film.PixelBounds();
+                this->resolution   = this->pixel_bounds.Diagonal();
+                if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
+                this->max_samples = this->integrator->sampler.SamplesPerPixel();
+                if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
+                this->target_samples = this->max_samples;
+                this->render_one_sample(pbrt::Transform{});
+                pbrt::GPUWait();
 
-            this->render_from_camera = this->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
-            this->camera_from_render = pbrt::Inverse(this->render_from_camera);
-            this->camera_from_world  = this->integrator->camera.GetCameraTransform().CameraFromWorld(this->integrator->camera.SampleTime(0.0f));
-            const pbrt::Bounds3f scene_bounds = this->integrator->aggregate->Bounds();
-            this->initial_move_scale          = pbrt::Length(scene_bounds.Diagonal()) / 1000.0f;
-            if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("PBRT scene bounds must define a positive interactive move scale");
+                this->render_from_camera = this->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
+                this->camera_from_render = pbrt::Inverse(this->render_from_camera);
+                this->camera_from_world  = this->integrator->camera.GetCameraTransform().CameraFromWorld(this->integrator->camera.SampleTime(0.0f));
+                const pbrt::Bounds3f scene_bounds = this->integrator->aggregate->Bounds();
+                this->initial_move_scale          = pbrt::Length(scene_bounds.Diagonal()) / 1000.0f;
+                if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("PBRT scene bounds must define a positive interactive move scale");
 
-            this->validate_cuda_vulkan_device(physical_device);
-            this->create_frame_resources(physical_device, device, frame_count);
-            this->create_imgui_descriptors();
+                this->validate_cuda_vulkan_device(physical_device);
+                this->create_frame_resources(physical_device, device, frame_count);
+                this->create_imgui_descriptors();
             } catch (...) {
                 this->destroy_resources_noexcept();
                 throw;
@@ -385,18 +578,11 @@ namespace xayah {
         void destroy_resources_noexcept() noexcept {
             try {
                 if (this->device != nullptr) this->device->waitIdle();
-                if (this->pbrt_initialized && pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
+                if (pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
             } catch (...) {
             }
             this->destroy_frame_resources_noexcept();
             this->integrator.reset();
-            if (this->pbrt_initialized) {
-                try {
-                    pbrt::CleanupPBRT();
-                } catch (...) {
-                }
-                this->pbrt_initialized = false;
-            }
         }
 
         SpectraPbrtInteractiveSession(const SpectraPbrtInteractiveSession& other)                = delete;
@@ -531,10 +717,11 @@ namespace xayah {
             this->active_frame_index = frame_index;
         }
 
-        [[nodiscard]] RenderFrameResult render_frame(const std::uint32_t frame_index, const pbrt::Transform& moving_from_camera) {
+        [[nodiscard]] RenderFrameResult render_frame(const std::uint32_t frame_index, const std::array<float, 16>& moving_from_camera_matrix) {
             if (frame_index >= this->frames.size()) throw std::runtime_error("PBRT interactive frame index is out of range");
             this->active_frame_index = frame_index;
             RenderFrameResult result{};
+            const pbrt::Transform moving_from_camera = transform_from_matrix_array(moving_from_camera_matrix);
             const pbrt::Transform camera_motion = this->render_from_camera * moving_from_camera * this->camera_from_render;
             if (this->reset_requested) {
                 this->rerender_after_reset(frame_index, camera_motion);
@@ -745,6 +932,510 @@ namespace xayah {
         }
     };
 
+    struct SpectraVulkanRasterizer {
+        struct FrameResource {
+            vk::raii::DeviceMemory color_memory{nullptr};
+            vk::raii::Image color_image{nullptr};
+            vk::raii::ImageView color_image_view{nullptr};
+            vk::raii::Sampler color_sampler{nullptr};
+            vk::ImageLayout color_layout{vk::ImageLayout::eUndefined};
+            vk::raii::DeviceMemory depth_memory{nullptr};
+            vk::raii::Image depth_image{nullptr};
+            vk::raii::ImageView depth_image_view{nullptr};
+            vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
+            VkDescriptorSet imgui_descriptor{VK_NULL_HANDLE};
+        };
+
+        struct BufferResource {
+            vk::raii::Buffer buffer{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::DeviceSize size{0};
+        };
+
+        struct SpectraRasterDrawGpu {
+            std::array<float, 16> object_from_local{};
+            std::array<float, 16> normal_from_local{};
+            std::uint32_t material_index{0};
+            std::array<std::uint32_t, 7> padding{};
+        };
+
+        struct SpectraRasterMaterialGpu {
+            std::array<float, 4> base_color_roughness{};
+        };
+
+        struct SpectraRasterPushConstants {
+            std::array<float, 16> view_projection{};
+            std::uint32_t draw_index{0};
+            std::array<std::uint32_t, 7> padding{};
+        };
+        static_assert(sizeof(SpectraRasterDrawGpu) == 160);
+        static_assert(sizeof(SpectraRasterPushConstants) == 96);
+
+        const SpectraScene* scene{nullptr};
+        const SpectraRasterScene* raster_scene{nullptr};
+        const vk::raii::PhysicalDevice* physical_device{nullptr};
+        const vk::raii::Device* device{nullptr};
+        const vk::raii::Queue* graphics_queue{nullptr};
+        const vk::raii::CommandPool* command_pool{nullptr};
+        vk::Extent2D extent{};
+        vk::Format color_format{vk::Format::eR8G8B8A8Unorm};
+        vk::Format depth_format{vk::Format::eD32Sfloat};
+        std::uint32_t active_frame_index{0};
+        std::size_t draw_count{0};
+        std::size_t triangle_count{0};
+        float initial_move_scale{1.0f};
+        BufferResource vertex_buffer{};
+        BufferResource index_buffer{};
+        BufferResource draw_buffer{};
+        BufferResource material_buffer{};
+        vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
+        vk::raii::DescriptorPool descriptor_pool{nullptr};
+        vk::raii::DescriptorSets descriptor_sets{nullptr};
+        vk::raii::PipelineLayout pipeline_layout{nullptr};
+        vk::raii::ShaderModule vertex_shader{nullptr};
+        vk::raii::ShaderModule fragment_shader{nullptr};
+        vk::raii::Pipeline pipeline{nullptr};
+        std::vector<FrameResource> frames{};
+
+        SpectraVulkanRasterizer(const SpectraScene& scene, const SpectraRasterScene& raster_scene, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const vk::raii::Queue& graphics_queue, const vk::raii::CommandPool& command_pool, const std::uint32_t frame_count) : scene{&scene}, raster_scene{&raster_scene}, physical_device{&physical_device}, device{&device}, graphics_queue{&graphics_queue}, command_pool{&command_pool} {
+            try {
+                if (frame_count == 0) throw std::runtime_error("Vulkan rasterizer requires at least one frame in flight");
+                if (scene.film_resolution[0] <= 0 || scene.film_resolution[1] <= 0) throw std::runtime_error("Vulkan rasterizer requires positive PBRT film resolution metadata");
+                this->extent = vk::Extent2D{static_cast<std::uint32_t>(scene.film_resolution[0]), static_cast<std::uint32_t>(scene.film_resolution[1])};
+                this->validate_formats();
+                this->create_scene_buffers();
+                this->create_frame_resources(frame_count);
+                this->create_descriptors();
+                this->create_pipeline();
+                this->create_imgui_descriptors();
+            } catch (...) {
+                this->destroy_resources_noexcept();
+                throw;
+            }
+        }
+
+        ~SpectraVulkanRasterizer() noexcept {
+            this->destroy_resources_noexcept();
+        }
+
+        SpectraVulkanRasterizer(const SpectraVulkanRasterizer& other)                = delete;
+        SpectraVulkanRasterizer(SpectraVulkanRasterizer&& other) noexcept            = delete;
+        SpectraVulkanRasterizer& operator=(const SpectraVulkanRasterizer& other)     = delete;
+        SpectraVulkanRasterizer& operator=(SpectraVulkanRasterizer&& other) noexcept = delete;
+
+        [[nodiscard]] VkDescriptorSet active_descriptor() const {
+            if (this->frames.empty()) return VK_NULL_HANDLE;
+            return this->frames.at(this->active_frame_index).imgui_descriptor;
+        }
+
+        [[nodiscard]] float camera_initial_move_scale() const {
+            if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("Vulkan rasterizer camera initial move scale must be positive");
+            return this->initial_move_scale;
+        }
+
+        void render_frame(const std::uint32_t frame_index) {
+            if (frame_index >= this->frames.size()) throw std::runtime_error("Vulkan rasterizer frame index is out of range");
+            this->active_frame_index = frame_index;
+        }
+
+        void record_draw(const vk::raii::CommandBuffer& command_buffer, const std::array<float, 16>& camera_from_world, const std::array<float, 16>& moving_from_camera) {
+            if (this->scene == nullptr || this->raster_scene == nullptr) throw std::runtime_error("Vulkan rasterizer cannot record without scene data");
+            FrameResource& frame = this->frames.at(this->active_frame_index);
+            const vk::PipelineStageFlags2 color_src_stage = frame.color_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader;
+            const vk::AccessFlags2 color_src_access       = frame.color_layout == vk::ImageLayout::eUndefined ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead;
+            transition_image_layout(command_buffer, *frame.color_image, frame.color_layout, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageAspectFlagBits::eColor, color_src_stage, color_src_access, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
+            frame.color_layout = vk::ImageLayout::eColorAttachmentOptimal;
+            if (frame.depth_layout == vk::ImageLayout::eUndefined) {
+                transition_image_layout(command_buffer, *frame.depth_image, frame.depth_layout, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageAspectFlagBits::eDepth, vk::PipelineStageFlagBits2::eNone, {}, vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite);
+                frame.depth_layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+            }
+
+            constexpr std::array<float, 4> clear_color{0.025f, 0.025f, 0.028f, 1.0f};
+            const vk::ClearValue color_clear_value{vk::ClearColorValue{clear_color}};
+            const vk::RenderingAttachmentInfo color_attachment{
+                *frame.color_image_view,
+                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::ResolveModeFlagBits::eNone,
+                {},
+                vk::ImageLayout::eUndefined,
+                vk::AttachmentLoadOp::eClear,
+                vk::AttachmentStoreOp::eStore,
+                color_clear_value,
+            };
+            const vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
+            const vk::RenderingAttachmentInfo depth_attachment{
+                *frame.depth_image_view,
+                vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                vk::ResolveModeFlagBits::eNone,
+                {},
+                vk::ImageLayout::eUndefined,
+                vk::AttachmentLoadOp::eClear,
+                vk::AttachmentStoreOp::eStore,
+                depth_clear_value,
+            };
+            const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->extent}, 1, 0, 1, &color_attachment, &depth_attachment, nullptr};
+            command_buffer.beginRendering(rendering_info);
+            if (this->draw_count > 0) this->record_geometry(command_buffer, camera_from_world, moving_from_camera);
+            command_buffer.endRendering();
+
+            transition_image_layout(command_buffer, *frame.color_image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            frame.color_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+
+        void release_imgui_descriptors() noexcept {
+            for (FrameResource& frame : this->frames) {
+                if (frame.imgui_descriptor != VK_NULL_HANDLE) {
+                    ImGui_ImplVulkan_RemoveTexture(frame.imgui_descriptor);
+                    frame.imgui_descriptor = VK_NULL_HANDLE;
+                }
+            }
+        }
+
+        void create_imgui_descriptors() {
+            for (FrameResource& frame : this->frames) {
+                if (frame.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Vulkan rasterizer ImGui descriptor is already allocated");
+                frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.color_sampler), static_cast<VkImageView>(*frame.color_image_view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                if (frame.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate ImGui descriptor for Vulkan rasterizer image");
+            }
+        }
+
+        void destroy_resources_noexcept() noexcept {
+            try {
+                if (this->device != nullptr) this->device->waitIdle();
+            } catch (...) {
+            }
+            this->release_imgui_descriptors();
+            this->frames.clear();
+            this->pipeline = nullptr;
+            this->fragment_shader = nullptr;
+            this->vertex_shader = nullptr;
+            this->pipeline_layout = nullptr;
+            this->descriptor_sets.clear();
+            this->descriptor_pool = nullptr;
+            this->descriptor_set_layout = nullptr;
+            this->material_buffer = {};
+            this->draw_buffer = {};
+            this->index_buffer = {};
+            this->vertex_buffer = {};
+            this->active_frame_index = 0;
+        }
+
+        [[nodiscard]] std::size_t vertex_count() const {
+            if (this->raster_scene == nullptr) return 0;
+            return this->raster_scene->vertices.size();
+        }
+
+        [[nodiscard]] std::size_t index_count() const {
+            if (this->raster_scene == nullptr) return 0;
+            return this->raster_scene->indices.size();
+        }
+
+        [[nodiscard]] std::size_t material_count() const {
+            if (this->raster_scene == nullptr) return 0;
+            return this->raster_scene->materials.size();
+        }
+
+        [[nodiscard]] std::size_t diagnostic_count() const {
+            if (this->raster_scene == nullptr) return 0;
+            return this->raster_scene->diagnostics.size();
+        }
+
+    private:
+        void validate_formats() const {
+            const vk::FormatProperties color_properties = this->physical_device->getFormatProperties(this->color_format);
+            constexpr vk::FormatFeatureFlags color_required = vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
+            if ((color_properties.optimalTilingFeatures & color_required) != color_required) throw std::runtime_error("Vulkan device does not support sampled color attachment R8G8B8A8_UNORM images");
+            const vk::FormatProperties depth_properties = this->physical_device->getFormatProperties(this->depth_format);
+            if ((depth_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) != vk::FormatFeatureFlagBits::eDepthStencilAttachment) throw std::runtime_error("Vulkan device does not support D32_SFLOAT depth attachment images");
+        }
+
+        [[nodiscard]] BufferResource create_buffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage, const vk::MemoryPropertyFlags memory_properties) const {
+            if (size == 0) throw std::runtime_error("Vulkan rasterizer cannot create a zero-sized buffer");
+            BufferResource resource{};
+            const vk::BufferCreateInfo buffer_create_info{{}, size, usage, vk::SharingMode::eExclusive};
+            resource.buffer = vk::raii::Buffer{*this->device, buffer_create_info};
+            const vk::MemoryRequirements memory_requirements = resource.buffer.getMemoryRequirements();
+            const std::uint32_t memory_type = find_memory_type_index(*this->physical_device, memory_requirements.memoryTypeBits, memory_properties);
+            const vk::MemoryAllocateInfo allocate_info{memory_requirements.size, memory_type};
+            resource.memory = vk::raii::DeviceMemory{*this->device, allocate_info};
+            resource.buffer.bindMemory(*resource.memory, 0);
+            resource.size = size;
+            return resource;
+        }
+
+        void submit_upload(const vk::raii::Buffer& staging_buffer, const vk::raii::Buffer& destination_buffer, const vk::DeviceSize size) const {
+            const vk::CommandBufferAllocateInfo allocate_info{**this->command_pool, vk::CommandBufferLevel::ePrimary, 1};
+            vk::raii::CommandBuffers command_buffers{*this->device, allocate_info};
+            const vk::raii::CommandBuffer& command_buffer = command_buffers.front();
+            constexpr vk::CommandBufferBeginInfo begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+            command_buffer.begin(begin_info);
+            const vk::BufferCopy copy_region{0, 0, size};
+            command_buffer.copyBuffer(*staging_buffer, *destination_buffer, copy_region);
+            const vk::BufferMemoryBarrier2 buffer_barrier{
+                vk::PipelineStageFlagBits2::eTransfer,
+                vk::AccessFlagBits2::eTransferWrite,
+                vk::PipelineStageFlagBits2::eVertexInput | vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eFragmentShader,
+                vk::AccessFlagBits2::eVertexAttributeRead | vk::AccessFlagBits2::eIndexRead | vk::AccessFlagBits2::eShaderStorageRead,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                *destination_buffer,
+                0,
+                size,
+            };
+            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 1, &buffer_barrier, 0, nullptr};
+            command_buffer.pipelineBarrier2(dependency_info);
+            command_buffer.end();
+
+            const vk::CommandBufferSubmitInfo command_buffer_submit_info{*command_buffer};
+            const vk::SubmitInfo2 submit_info{{}, 0, nullptr, 1, &command_buffer_submit_info, 0, nullptr};
+            this->graphics_queue->submit2(submit_info, nullptr);
+            this->graphics_queue->waitIdle();
+        }
+
+        template <typename T>
+        [[nodiscard]] BufferResource upload_vector_buffer(const std::vector<T>& values, const vk::BufferUsageFlags usage) const {
+            if (values.empty()) throw std::runtime_error("Vulkan rasterizer cannot upload an empty typed buffer");
+            const vk::DeviceSize byte_size = static_cast<vk::DeviceSize>(sizeof(T)) * static_cast<vk::DeviceSize>(values.size());
+            BufferResource staging = this->create_buffer(byte_size, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+            void* mapped = staging.memory.mapMemory(0, byte_size);
+            std::memcpy(mapped, values.data(), static_cast<std::size_t>(byte_size));
+            staging.memory.unmapMemory();
+            BufferResource destination = this->create_buffer(byte_size, usage | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            this->submit_upload(staging.buffer, destination.buffer, byte_size);
+            return destination;
+        }
+
+        [[nodiscard]] std::vector<SpectraRasterMaterialGpu> build_gpu_materials() const {
+            std::vector<SpectraRasterMaterialGpu> materials{};
+            materials.reserve(std::max<std::size_t>(this->raster_scene->materials.size(), 1));
+            for (const SpectraRasterMaterial& material : this->raster_scene->materials) {
+                SpectraRasterMaterialGpu gpu_material{};
+                gpu_material.base_color_roughness = {material.base_color[0], material.base_color[1], material.base_color[2], material.roughness};
+                materials.push_back(gpu_material);
+            }
+            if (materials.empty()) materials.push_back(SpectraRasterMaterialGpu{{1.0f, 1.0f, 1.0f, 1.0f}});
+            return materials;
+        }
+
+        [[nodiscard]] std::vector<SpectraRasterDrawGpu> build_gpu_draws() {
+            std::vector<SpectraRasterDrawGpu> draws{};
+            draws.reserve(std::max<std::size_t>(this->raster_scene->draws.size(), 1));
+            bool has_bounds = false;
+            std::array<float, 3> bounds_min{};
+            std::array<float, 3> bounds_max{};
+            this->draw_count = this->raster_scene->draws.size();
+            this->triangle_count = 0;
+            for (const SpectraRasterDraw& draw : this->raster_scene->draws) {
+                if (draw.geometry_index >= this->raster_scene->geometries.size()) throw std::runtime_error("Raster draw references a geometry index outside SpectraRasterScene");
+                if (draw.material_index >= this->raster_scene->materials.size()) throw std::runtime_error("Raster draw references a material index outside SpectraRasterScene");
+                const SpectraRasterGeometry& geometry = this->raster_scene->geometries[draw.geometry_index];
+                if (geometry.first_index + geometry.index_count > this->raster_scene->indices.size()) throw std::runtime_error("Raster geometry index range is outside SpectraRasterScene");
+                if (geometry.first_vertex + geometry.vertex_count > this->raster_scene->vertices.size()) throw std::runtime_error("Raster geometry vertex range is outside SpectraRasterScene");
+
+                SpectraRasterDrawGpu gpu_draw{};
+                gpu_draw.object_from_local = draw.transform;
+                gpu_draw.normal_from_local = normal_from_local_matrix_array(draw.transform);
+                if (draw.reverse_orientation) {
+                    for (const std::size_t offset : std::array<std::size_t, 9>{0, 1, 2, 4, 5, 6, 8, 9, 10}) gpu_draw.normal_from_local[offset] = -gpu_draw.normal_from_local[offset];
+                }
+                gpu_draw.material_index = static_cast<std::uint32_t>(draw.material_index);
+                draws.push_back(gpu_draw);
+                this->triangle_count += geometry.index_count / 3u;
+
+                for (std::size_t vertex_index = geometry.first_vertex; vertex_index < geometry.first_vertex + geometry.vertex_count; ++vertex_index) {
+                    const std::array<float, 3> point = transform_point_array(draw.transform, this->raster_scene->vertices[vertex_index].position);
+                    if (!has_bounds) {
+                        bounds_min = point;
+                        bounds_max = point;
+                        has_bounds = true;
+                    } else {
+                        for (std::size_t axis = 0; axis < 3; ++axis) {
+                            bounds_min[axis] = std::min(bounds_min[axis], point[axis]);
+                            bounds_max[axis] = std::max(bounds_max[axis], point[axis]);
+                        }
+                    }
+                }
+            }
+            if (draws.empty()) draws.push_back(SpectraRasterDrawGpu{identity_matrix_array(), identity_matrix_array(), 0, {}});
+            if (has_bounds) {
+                const float dx = bounds_max[0] - bounds_min[0];
+                const float dy = bounds_max[1] - bounds_min[1];
+                const float dz = bounds_max[2] - bounds_min[2];
+                this->initial_move_scale = std::sqrt(dx * dx + dy * dy + dz * dz) / 1000.0f;
+                if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("Raster scene bounds must define a positive interactive move scale");
+            }
+            return draws;
+        }
+
+        void create_scene_buffers() {
+            if (this->raster_scene == nullptr) throw std::runtime_error("Cannot create Vulkan rasterizer buffers without SpectraRasterScene");
+            const std::vector<SpectraRasterMaterialGpu> gpu_materials = this->build_gpu_materials();
+            const std::vector<SpectraRasterDrawGpu> gpu_draws = this->build_gpu_draws();
+            this->material_buffer = this->upload_vector_buffer(gpu_materials, vk::BufferUsageFlagBits::eStorageBuffer);
+            this->draw_buffer = this->upload_vector_buffer(gpu_draws, vk::BufferUsageFlagBits::eStorageBuffer);
+            if (!this->raster_scene->vertices.empty()) this->vertex_buffer = this->upload_vector_buffer(this->raster_scene->vertices, vk::BufferUsageFlagBits::eVertexBuffer);
+            if (!this->raster_scene->indices.empty()) this->index_buffer = this->upload_vector_buffer(this->raster_scene->indices, vk::BufferUsageFlagBits::eIndexBuffer);
+        }
+
+        void create_image_resource(FrameResource& frame, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect, vk::raii::DeviceMemory& memory, vk::raii::Image& image, vk::raii::ImageView& image_view) const {
+            const vk::ImageCreateInfo image_create_info{
+                {},
+                vk::ImageType::e2D,
+                format,
+                vk::Extent3D{this->extent.width, this->extent.height, 1},
+                1,
+                1,
+                vk::SampleCountFlagBits::e1,
+                vk::ImageTiling::eOptimal,
+                usage,
+                vk::SharingMode::eExclusive,
+                0,
+                nullptr,
+                vk::ImageLayout::eUndefined,
+            };
+            image = vk::raii::Image{*this->device, image_create_info};
+            const vk::MemoryRequirements memory_requirements = image.getMemoryRequirements();
+            const std::uint32_t memory_type = find_memory_type_index(*this->physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            const vk::MemoryAllocateInfo allocate_info{memory_requirements.size, memory_type};
+            memory = vk::raii::DeviceMemory{*this->device, allocate_info};
+            image.bindMemory(*memory, 0);
+
+            const vk::ImageViewCreateInfo image_view_create_info{{}, *image, vk::ImageViewType::e2D, format, {}, {aspect, 0, 1, 0, 1}};
+            image_view = vk::raii::ImageView{*this->device, image_view_create_info};
+        }
+
+        void create_frame_resources(const std::uint32_t frame_count) {
+            this->frames.resize(frame_count);
+            for (FrameResource& frame : this->frames) {
+                this->create_image_resource(frame, this->color_format, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::ImageAspectFlagBits::eColor, frame.color_memory, frame.color_image, frame.color_image_view);
+                this->create_image_resource(frame, this->depth_format, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageAspectFlagBits::eDepth, frame.depth_memory, frame.depth_image, frame.depth_image_view);
+                const vk::SamplerCreateInfo sampler_create_info{
+                    {},
+                    vk::Filter::eLinear,
+                    vk::Filter::eLinear,
+                    vk::SamplerMipmapMode::eNearest,
+                    vk::SamplerAddressMode::eClampToEdge,
+                    vk::SamplerAddressMode::eClampToEdge,
+                    vk::SamplerAddressMode::eClampToEdge,
+                    0.0f,
+                    VK_FALSE,
+                    1.0f,
+                    VK_FALSE,
+                    vk::CompareOp::eNever,
+                    0.0f,
+                    0.0f,
+                    vk::BorderColor::eFloatOpaqueBlack,
+                    VK_FALSE,
+                };
+                frame.color_sampler = vk::raii::Sampler{*this->device, sampler_create_info};
+            }
+        }
+
+        void create_descriptors() {
+            const std::array descriptor_bindings{
+                vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex},
+                vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment},
+            };
+            const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(descriptor_bindings.size()), descriptor_bindings.data()};
+            this->descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->device, descriptor_set_layout_create_info};
+
+            const std::array descriptor_pool_sizes{
+                vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 2},
+            };
+            const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+            this->descriptor_pool = vk::raii::DescriptorPool{*this->device, descriptor_pool_create_info};
+            const vk::DescriptorSetLayout descriptor_set_layout_handle = *this->descriptor_set_layout;
+            const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->descriptor_pool, 1, &descriptor_set_layout_handle};
+            this->descriptor_sets = vk::raii::DescriptorSets{*this->device, descriptor_set_allocate_info};
+            if (this->descriptor_sets.size() != 1) throw std::runtime_error("Vulkan rasterizer failed to allocate descriptor set");
+
+            const vk::DescriptorBufferInfo draw_buffer_info{*this->draw_buffer.buffer, 0, this->draw_buffer.size};
+            const vk::DescriptorBufferInfo material_buffer_info{*this->material_buffer.buffer, 0, this->material_buffer.size};
+            const std::array descriptor_writes{
+                vk::WriteDescriptorSet{*this->descriptor_sets.front(), 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &draw_buffer_info},
+                vk::WriteDescriptorSet{*this->descriptor_sets.front(), 1, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &material_buffer_info},
+            };
+            this->device->updateDescriptorSets(descriptor_writes, {});
+        }
+
+        void create_pipeline() {
+            const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, xayah::generated::spectra_raster_vertex_spirv_size, xayah::generated::spectra_raster_vertex_spirv.data()};
+            const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, xayah::generated::spectra_raster_fragment_spirv_size, xayah::generated::spectra_raster_fragment_spirv.data()};
+            this->vertex_shader = vk::raii::ShaderModule{*this->device, vertex_shader_create_info};
+            this->fragment_shader = vk::raii::ShaderModule{*this->device, fragment_shader_create_info};
+
+            const vk::DescriptorSetLayout descriptor_set_layout_handle = *this->descriptor_set_layout;
+            const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex, 0, static_cast<std::uint32_t>(sizeof(SpectraRasterPushConstants))};
+            const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_set_layout_handle, 1, &push_constant_range};
+            this->pipeline_layout = vk::raii::PipelineLayout{*this->device, pipeline_layout_create_info};
+
+            const std::array shader_stages{
+                vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *this->vertex_shader, "main"},
+                vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *this->fragment_shader, "main"},
+            };
+            const vk::VertexInputBindingDescription vertex_binding{0, static_cast<std::uint32_t>(sizeof(SpectraRasterVertex)), vk::VertexInputRate::eVertex};
+            const std::array vertex_attributes{
+                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+            };
+            const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
+            const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+            const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1, nullptr, 1, nullptr};
+            const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
+            const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
+            const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLess, VK_FALSE, VK_FALSE};
+            vk::PipelineColorBlendAttachmentState color_blend_attachment{};
+            color_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+            const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &color_blend_attachment};
+            constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+            const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+            const vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{0, 1, &this->color_format, this->depth_format, vk::Format::eUndefined};
+
+            vk::GraphicsPipelineCreateInfo pipeline_create_info{};
+            pipeline_create_info.setPNext(&pipeline_rendering_create_info);
+            pipeline_create_info.setStages(shader_stages);
+            pipeline_create_info.setPVertexInputState(&vertex_input_state);
+            pipeline_create_info.setPInputAssemblyState(&input_assembly_state);
+            pipeline_create_info.setPViewportState(&viewport_state);
+            pipeline_create_info.setPRasterizationState(&rasterization_state);
+            pipeline_create_info.setPMultisampleState(&multisample_state);
+            pipeline_create_info.setPDepthStencilState(&depth_stencil_state);
+            pipeline_create_info.setPColorBlendState(&color_blend_state);
+            pipeline_create_info.setPDynamicState(&dynamic_state);
+            pipeline_create_info.setLayout(*this->pipeline_layout);
+            this->pipeline = vk::raii::Pipeline{*this->device, nullptr, pipeline_create_info};
+        }
+
+        void record_geometry(const vk::raii::CommandBuffer& command_buffer, const std::array<float, 16>& camera_from_world, const std::array<float, 16>& moving_from_camera) const {
+            if (!*this->pipeline || !*this->pipeline_layout || this->descriptor_sets.empty()) throw std::runtime_error("Vulkan rasterizer pipeline is not ready");
+            if (!*this->vertex_buffer.buffer || !*this->index_buffer.buffer) throw std::runtime_error("Vulkan rasterizer draw list is non-empty but vertex/index buffers are missing");
+            const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->extent.width), static_cast<float>(this->extent.height), 0.0f, 1.0f};
+            const vk::Rect2D scissor{{0, 0}, this->extent};
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->pipeline);
+            command_buffer.setViewport(0, viewport);
+            command_buffer.setScissor(0, scissor);
+            const vk::DescriptorSet descriptor_set = *this->descriptor_sets.front();
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->pipeline_layout, 0, descriptor_set, {});
+            const std::array vertex_buffers{*this->vertex_buffer.buffer};
+            constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
+            command_buffer.bindVertexBuffers(0, vertex_buffers, vertex_offsets);
+            command_buffer.bindIndexBuffer(*this->index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+            SpectraRasterPushConstants push_constants{};
+            push_constants.view_projection = raster_view_projection_matrix(*this->scene, camera_from_world, moving_from_camera);
+            for (std::size_t draw_index = 0; draw_index < this->raster_scene->draws.size(); ++draw_index) {
+                const SpectraRasterDraw& draw = this->raster_scene->draws[draw_index];
+                if (draw.geometry_index >= this->raster_scene->geometries.size()) throw std::runtime_error("Raster draw references a geometry index outside SpectraRasterScene while recording");
+                const SpectraRasterGeometry& geometry = this->raster_scene->geometries[draw.geometry_index];
+                if (draw_index > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Raster draw index exceeds uint32 push-constant range");
+                if (geometry.first_index > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) || geometry.index_count > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Raster geometry index range exceeds Vulkan uint32 draw range");
+                push_constants.draw_index = static_cast<std::uint32_t>(draw_index);
+                command_buffer.pushConstants(*this->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, static_cast<std::uint32_t>(sizeof(push_constants)), &push_constants);
+                command_buffer.drawIndexed(static_cast<std::uint32_t>(geometry.index_count), 1, static_cast<std::uint32_t>(geometry.first_index), 0, 0);
+            }
+        }
+    };
+
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
@@ -891,8 +1582,11 @@ namespace xayah {
         } catch (...) {
         }
 
+        this->unload_vulkan_rasterizer_noexcept();
         this->pbrt_interactive.reset();
-        this->unload_pbrt_scene_noexcept();
+        this->unload_raster_scene_noexcept();
+        this->unload_pbrt_backend_scene_noexcept();
+        this->unload_spectra_scene_noexcept();
         this->destroy_imgui();
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
@@ -993,6 +1687,7 @@ namespace xayah {
     }
 
     void Spectra::destroy_imgui() noexcept {
+        if (this->vulkan_rasterizer != nullptr) this->vulkan_rasterizer->release_imgui_descriptors();
         if (this->pbrt_interactive != nullptr) this->pbrt_interactive->release_imgui_descriptors();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
@@ -1007,49 +1702,114 @@ namespace xayah {
         this->ui.dock_layout_initialized = false;
     }
 
-    void Spectra::load_pbrt_scene(const std::filesystem::path& scene_path) {
-        if (this->pbrt_scene != nullptr) throw std::runtime_error("PBRT shared scene is already loaded");
-        std::unique_ptr<SpectraPbrtScene> loaded_scene = std::make_unique<SpectraPbrtScene>();
+    void Spectra::load_spectra_scene(const std::filesystem::path& scene_path) {
+        if (this->spectra_scene != nullptr) throw std::runtime_error("Spectra scene is already loaded");
+        std::unique_ptr<SpectraScene> loaded_scene = std::make_unique<SpectraScene>();
         try {
             loaded_scene->load(scene_path);
-            this->pbrt_scene = std::move(loaded_scene);
+            this->spectra_scene = std::move(loaded_scene);
         } catch (...) {
             loaded_scene->unload_noexcept();
             throw;
         }
     }
 
-    void Spectra::unload_pbrt_scene_noexcept() noexcept {
-        if (this->pbrt_scene == nullptr) return;
-        this->pbrt_scene->unload_noexcept();
-        this->pbrt_scene.reset();
+    void Spectra::unload_spectra_scene_noexcept() noexcept {
+        if (this->spectra_scene != nullptr) {
+            this->spectra_scene->unload_noexcept();
+            this->spectra_scene.reset();
+        }
     }
 
-    void Spectra::render_pbrt_interactive(const std::filesystem::path& scene_path) {
-        if (this->pbrt_scene != nullptr) throw std::runtime_error("PBRT shared scene is already active");
-        if (this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT interactive session is already active");
+    void Spectra::load_pbrt_backend_scene() {
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot load PBRT backend scene without a loaded Spectra scene");
+        if (this->pbrt_backend_scene != nullptr) throw std::runtime_error("PBRT backend scene is already loaded");
+        std::unique_ptr<SpectraPbrtBackendScene> loaded_backend_scene = std::make_unique<SpectraPbrtBackendScene>();
         try {
-            this->load_pbrt_scene(scene_path);
-            this->pbrt_interactive = std::make_unique<SpectraPbrtInteractiveSession>(scene_path, this->context.physical_device, this->context.device, this->sync.frame_count);
-            this->pbrt_scene->set_runtime_metadata(this->pbrt_interactive->film_resolution(), this->pbrt_interactive->sampler_sample_count(), this->pbrt_interactive->camera_from_world_matrix());
+            loaded_backend_scene->load(*this->spectra_scene);
+            this->pbrt_backend_scene = std::move(loaded_backend_scene);
+        } catch (...) {
+            loaded_backend_scene->unload_noexcept();
+            throw;
+        }
+    }
+
+    void Spectra::unload_pbrt_backend_scene_noexcept() noexcept {
+        if (this->pbrt_backend_scene != nullptr) {
+            this->pbrt_backend_scene->unload_noexcept();
+            this->pbrt_backend_scene.reset();
+        }
+    }
+
+    void Spectra::load_raster_scene() {
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot build raster scene without a loaded Spectra scene");
+        if (this->raster_scene != nullptr) throw std::runtime_error("Spectra raster scene is already loaded");
+        std::unique_ptr<SpectraRasterScene> loaded_raster_scene = std::make_unique<SpectraRasterScene>();
+        try {
+            loaded_raster_scene->build(*this->spectra_scene);
+            this->raster_scene = std::move(loaded_raster_scene);
+        } catch (...) {
+            loaded_raster_scene->unload_noexcept();
+            throw;
+        }
+    }
+
+    void Spectra::unload_raster_scene_noexcept() noexcept {
+        if (this->raster_scene != nullptr) {
+            this->raster_scene->unload_noexcept();
+            this->raster_scene.reset();
+        }
+    }
+
+    void Spectra::load_vulkan_rasterizer() {
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot create Vulkan rasterizer without a loaded Spectra scene");
+        if (this->raster_scene == nullptr) throw std::runtime_error("Cannot create Vulkan rasterizer without a built Spectra raster scene");
+        if (this->vulkan_rasterizer != nullptr) throw std::runtime_error("Vulkan rasterizer is already loaded");
+        this->vulkan_rasterizer = std::make_unique<SpectraVulkanRasterizer>(*this->spectra_scene, *this->raster_scene, this->context.physical_device, this->context.device, this->context.graphics_queue, this->context.command_pool, this->sync.frame_count);
+    }
+
+    void Spectra::unload_vulkan_rasterizer_noexcept() noexcept {
+        this->vulkan_rasterizer.reset();
+    }
+
+    void Spectra::run_interactive_scene(const std::filesystem::path& scene_path) {
+        if (this->spectra_scene != nullptr) throw std::runtime_error("Spectra scene is already active");
+        if (this->raster_scene != nullptr) throw std::runtime_error("Spectra raster scene is already active");
+        if (this->pbrt_backend_scene != nullptr) throw std::runtime_error("PBRT backend scene is already active");
+        if (this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT interactive session is already active");
+        if (this->vulkan_rasterizer != nullptr) throw std::runtime_error("Vulkan rasterizer is already active");
+        try {
+            this->load_spectra_scene(scene_path);
+            this->load_pbrt_backend_scene();
+            if (this->spectra_scene == nullptr || this->pbrt_backend_scene == nullptr) throw std::runtime_error("Spectra scene load did not produce both shared and PBRT backend scene resources");
+            this->pbrt_interactive = std::make_unique<SpectraPbrtInteractiveSession>(*this->spectra_scene, this->pbrt_backend_scene->basic_scene(), this->context.physical_device, this->context.device, this->sync.frame_count);
+            this->spectra_scene->set_runtime_metadata(this->pbrt_interactive->film_resolution(), this->pbrt_interactive->sampler_sample_count(), this->pbrt_interactive->camera_from_world_matrix());
+            this->load_raster_scene();
+            this->load_vulkan_rasterizer();
             this->initialize_camera_state();
             this->render_loop();
             this->context.device.waitIdle();
+            this->unload_vulkan_rasterizer_noexcept();
+            this->unload_raster_scene_noexcept();
             this->pbrt_interactive.reset();
-            this->unload_pbrt_scene_noexcept();
+            this->unload_pbrt_backend_scene_noexcept();
+            this->unload_spectra_scene_noexcept();
         } catch (...) {
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
+            this->unload_vulkan_rasterizer_noexcept();
+            this->unload_raster_scene_noexcept();
             this->pbrt_interactive.reset();
-            this->unload_pbrt_scene_noexcept();
+            this->unload_pbrt_backend_scene_noexcept();
+            this->unload_spectra_scene_noexcept();
             throw;
         }
     }
 
     void Spectra::render_loop() {
-        if (this->pbrt_scene == nullptr) throw std::runtime_error("Cannot enter Spectra render loop without an active PBRT scene");
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot enter Spectra render loop without an active Spectra scene");
         while (!glfwWindowShouldClose(this->surface.window.get())) {
             FrameState frame{};
             if (!this->begin_frame(frame)) continue;
@@ -1076,8 +1836,8 @@ namespace xayah {
             height = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[1])));
         }
 
-        const std::string scene_label = this->pbrt_scene == nullptr ? "No Scene" : this->pbrt_scene->scene_label;
-        const std::array<int, 2> sample_range = this->pbrt_scene == nullptr ? std::array<int, 2>{0, 0} : this->active_renderer_sample_range();
+        const std::string scene_label = this->spectra_scene == nullptr ? "No Scene" : this->spectra_scene->scene_label;
+        const std::array<int, 2> sample_range = this->spectra_scene == nullptr ? std::array<int, 2>{0, 0} : this->active_renderer_sample_range();
         const std::string title       = std::format("{} - {} | {} | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, this->active_renderer_label(), width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
@@ -1092,8 +1852,8 @@ namespace xayah {
     void Spectra::update_frame_statistics(const FrameState& frame, const bool rendered_sample, const bool reset_accumulation, const std::uint64_t sample_pixels) {
         const ImGuiIO& io = ImGui::GetIO();
         if (!std::isfinite(io.DeltaTime) || !(io.DeltaTime > 0.0f)) throw std::runtime_error("ImGui frame delta time must be finite and positive for statistics");
-        if (!rendered_sample && sample_pixels != 0) throw std::runtime_error("PBRT frame statistics reported sample-pixels without rendering a sample");
-        if (rendered_sample && sample_pixels == 0) throw std::runtime_error("PBRT frame statistics rendered a sample without sample-pixels");
+        if (!rendered_sample && sample_pixels != 0) throw std::runtime_error("Renderer frame statistics reported sample-pixels without rendering a sample");
+        if (rendered_sample && sample_pixels == 0) throw std::runtime_error("Renderer frame statistics rendered a sample without sample-pixels");
 
         const float frame_milliseconds = io.DeltaTime * 1000.0f;
         this->statistics.current_frame_id             = this->window_title.frame_count + 1;
@@ -1122,13 +1882,46 @@ namespace xayah {
         throw std::runtime_error("Unknown Spectra render mode");
     }
 
+    [[nodiscard]] Spectra::ActiveRendererStatus Spectra::active_renderer_status() const {
+        ActiveRendererStatus status{};
+        status.label                              = this->active_renderer_label();
+        status.sample_range                       = this->active_renderer_sample_range();
+        status.pathtracer_accumulation_dirty      = this->camera.pathtracer_accumulation_dirty;
+        switch (this->ui.active_render_mode) {
+            case SpectraRenderMode::PbrtPathtracer:
+                status.has_accumulation = true;
+                status.uses_external_completion = this->pbrt_interactive != nullptr;
+                if (this->pbrt_interactive == nullptr) {
+                    status.state = "Unavailable";
+                    return status;
+                }
+                if (status.pathtracer_accumulation_dirty) {
+                    status.state = "Camera Dirty";
+                    return status;
+                }
+                status.state = status.sample_range[0] >= status.sample_range[1] ? "Completed" : "Sampling";
+                return status;
+            case SpectraRenderMode::VulkanRasterizer:
+                status.has_accumulation = false;
+                status.uses_external_completion = false;
+                if (this->vulkan_rasterizer == nullptr) {
+                    status.state = "Unavailable";
+                    return status;
+                }
+                status.state = this->vulkan_rasterizer->draw_count == 0 ? "Clear Only" : "Rasterizing";
+                return status;
+        }
+        throw std::runtime_error("Unknown Spectra render mode");
+    }
+
     [[nodiscard]] VkDescriptorSet Spectra::active_viewport_descriptor() const {
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT pathtracer viewport descriptor requested without an active PBRT session");
                 return this->pbrt_interactive->active_descriptor();
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer viewport output is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Vulkan rasterizer viewport descriptor requested without an active rasterizer session");
+                return this->vulkan_rasterizer->active_descriptor();
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
@@ -1139,7 +1932,7 @@ namespace xayah {
                 if (this->pbrt_interactive == nullptr) return {0, 0};
                 return {this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count()};
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer sampling state is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                return {1, 1};
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
@@ -1150,7 +1943,8 @@ namespace xayah {
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT camera move scale requested without an active PBRT session");
                 return this->pbrt_interactive->camera_initial_move_scale();
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer camera scale is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Vulkan rasterizer camera move scale requested without an active rasterizer session");
+                return this->vulkan_rasterizer->camera_initial_move_scale();
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
@@ -1161,7 +1955,7 @@ namespace xayah {
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT completion semaphore requested without an active PBRT session");
                 return true;
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer completion semaphore path is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                return false;
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
@@ -1172,7 +1966,7 @@ namespace xayah {
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT completion semaphore requested without an active PBRT session");
                 return this->pbrt_interactive->active_cuda_complete_semaphore();
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer completion semaphore is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                throw std::runtime_error("Vulkan rasterizer does not use an external completion semaphore");
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
@@ -1181,24 +1975,27 @@ namespace xayah {
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer: {
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot render PBRT pathtracer without an active PBRT session");
-                const pbrt::Transform moving_from_camera = transform_from_matrix_array(this->camera.moving_from_camera);
-                const SpectraPbrtInteractiveSession::RenderFrameResult render_result = this->pbrt_interactive->render_frame(frame.frame_index, moving_from_camera);
+                const SpectraPbrtInteractiveSession::RenderFrameResult render_result = this->pbrt_interactive->render_frame(frame.frame_index, this->camera.moving_from_camera);
                 return {render_result.sample_pixels, render_result.rendered_sample, render_result.reset_accumulation};
             }
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer render step is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Cannot render Vulkan rasterizer without an active rasterizer session");
+                this->vulkan_rasterizer->render_frame(frame.frame_index);
+                return {};
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
 
-    void Spectra::record_active_renderer_output(const vk::raii::CommandBuffer& command_buffer) {
-        switch (this->ui.active_render_mode) {
+    void Spectra::record_renderer_output(const SpectraRenderMode render_mode, const vk::raii::CommandBuffer& command_buffer) {
+        switch (render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot record PBRT pathtracer output without an active PBRT session");
                 this->pbrt_interactive->record_copy(command_buffer);
                 return;
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer output recording is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Cannot record Vulkan rasterizer output without an active rasterizer session");
+                this->vulkan_rasterizer->record_draw(command_buffer, this->camera.camera_from_world, this->camera.moving_from_camera);
+                return;
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
@@ -1206,23 +2003,55 @@ namespace xayah {
     void Spectra::reset_active_renderer_accumulation() {
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
-                if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot reset PBRT accumulation without an active PBRT session");
-                this->pbrt_interactive->request_reset_accumulation();
-                this->clear_pathtracer_throughput_statistics();
+                this->request_pathtracer_accumulation_reset();
                 return;
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer reset is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                return;
         }
         throw std::runtime_error("Unknown Spectra render mode");
     }
 
+    void Spectra::request_pathtracer_accumulation_reset() {
+        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot reset PBRT accumulation without an active PBRT session");
+        this->pbrt_interactive->request_reset_accumulation();
+        this->camera.pathtracer_accumulation_dirty = false;
+        this->clear_pathtracer_throughput_statistics();
+    }
+
+    void Spectra::mark_pathtracer_accumulation_dirty() {
+        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot mark PBRT accumulation dirty without an active PBRT session");
+        if (this->ui.active_render_mode == SpectraRenderMode::PbrtPathtracer) {
+            this->request_pathtracer_accumulation_reset();
+            return;
+        }
+        this->camera.pathtracer_accumulation_dirty = true;
+        this->clear_pathtracer_throughput_statistics();
+    }
+
+    void Spectra::set_active_render_mode(const SpectraRenderMode render_mode) {
+        if (render_mode == this->ui.active_render_mode) return;
+        switch (render_mode) {
+            case SpectraRenderMode::PbrtPathtracer:
+                if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot switch to PBRT Pathtracer without an active PBRT session");
+                if (this->camera.pathtracer_accumulation_dirty) this->request_pathtracer_accumulation_reset();
+                break;
+            case SpectraRenderMode::VulkanRasterizer:
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Cannot switch to Vulkan Rasterizer without an active rasterizer session");
+                break;
+        }
+        this->context.device.waitIdle();
+        this->ui.active_render_mode = render_mode;
+        this->clear_pathtracer_throughput_statistics();
+    }
+
     void Spectra::initialize_camera_state() {
-        if (this->pbrt_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active PBRT scene");
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
         this->camera.initialized        = true;
         this->camera.input_enabled      = false;
         this->camera.move_scale         = this->active_renderer_initial_move_scale();
         this->camera.moving_from_camera = identity_matrix_array();
-        this->camera.camera_from_world  = this->pbrt_scene->camera_from_world;
+        this->camera.camera_from_world  = this->spectra_scene->camera_from_world;
+        this->camera.pathtracer_accumulation_dirty = false;
     }
 
     void Spectra::set_camera_move_scale(const float move_scale) {
@@ -1233,7 +2062,7 @@ namespace xayah {
     void Spectra::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         this->camera.moving_from_camera = identity_matrix_array();
-        this->reset_active_renderer_accumulation();
+        this->mark_pathtracer_accumulation_dirty();
     }
 
     void Spectra::process_camera_input(GLFWwindow* window) {
@@ -1247,65 +2076,66 @@ namespace xayah {
         if (!this->camera.input_enabled) return;
         if (!this->camera.initialized) throw std::runtime_error("Cannot process camera input before camera state is initialized");
 
-        pbrt::Transform moving_from_camera = transform_from_matrix_array(this->camera.moving_from_camera);
-        bool needs_reset                   = false;
+        std::array<float, 16> moving_from_camera = this->camera.moving_from_camera;
+        bool needs_reset                         = false;
         if (ImGui::IsKeyDown(ImGuiKey_A)) {
-            moving_from_camera = moving_from_camera * pbrt::Translate(pbrt::Vector3f(-this->camera.move_scale, 0.0f, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(-this->camera.move_scale, 0.0f, 0.0f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_D)) {
-            moving_from_camera = moving_from_camera * pbrt::Translate(pbrt::Vector3f(this->camera.move_scale, 0.0f, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(this->camera.move_scale, 0.0f, 0.0f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_S)) {
-            moving_from_camera = moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, 0.0f, -this->camera.move_scale));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, 0.0f, -this->camera.move_scale));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_W)) {
-            moving_from_camera = moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, 0.0f, this->camera.move_scale));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, 0.0f, this->camera.move_scale));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_Q)) {
-            moving_from_camera = moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, -this->camera.move_scale, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, -this->camera.move_scale, 0.0f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_E)) {
-            moving_from_camera = moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, this->camera.move_scale, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, this->camera.move_scale, 0.0f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
-            moving_from_camera = moving_from_camera * pbrt::Rotate(-0.5f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(-0.5f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
-            moving_from_camera = moving_from_camera * pbrt::Rotate(0.5f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(0.5f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
-            moving_from_camera = moving_from_camera * pbrt::Rotate(-0.5f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(-0.5f));
             needs_reset        = true;
         }
         if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
-            moving_from_camera = moving_from_camera * pbrt::Rotate(0.5f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(0.5f));
             needs_reset        = true;
         }
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
-            if (io.MouseDelta.x < 0.0f) moving_from_camera = moving_from_camera * pbrt::Rotate(-1.0f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
-            if (io.MouseDelta.x > 0.0f) moving_from_camera = moving_from_camera * pbrt::Rotate(1.0f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
-            if (io.MouseDelta.y > 0.0f) moving_from_camera = moving_from_camera * pbrt::Rotate(-1.0f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
-            if (io.MouseDelta.y < 0.0f) moving_from_camera = moving_from_camera * pbrt::Rotate(1.0f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+            if (io.MouseDelta.x < 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(-1.0f));
+            if (io.MouseDelta.x > 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(1.0f));
+            if (io.MouseDelta.y > 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(-1.0f));
+            if (io.MouseDelta.y < 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(1.0f));
             needs_reset = needs_reset || io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
-            moving_from_camera = pbrt::Transform{};
+            moving_from_camera = identity_matrix_array();
             needs_reset        = true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Equal, false)) this->set_camera_move_scale(this->camera.move_scale * 2.0f);
         if (ImGui::IsKeyPressed(ImGuiKey_Minus, false)) this->set_camera_move_scale(this->camera.move_scale * 0.5f);
 
         if (needs_reset) {
-            this->camera.moving_from_camera = matrix_array_from_transform(moving_from_camera);
-            this->reset_active_renderer_accumulation();
+            validate_matrix_array(moving_from_camera);
+            this->camera.moving_from_camera = moving_from_camera;
+            this->mark_pathtracer_accumulation_dirty();
         }
     }
 
@@ -1341,9 +2171,12 @@ namespace xayah {
         ImGui::NewFrame();
 
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (this->pbrt_scene == nullptr) throw std::runtime_error("Cannot update renderer frame without an active PBRT scene");
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot update renderer frame without an active Spectra scene");
+        frame.render_mode = this->ui.active_render_mode;
         this->process_camera_input(this->surface.window.get());
         const ActiveRendererFrameResult render_result = this->render_active_renderer_frame(frame);
+        frame.wait_for_external_completion = this->active_renderer_uses_external_completion_semaphore();
+        if (frame.wait_for_external_completion) frame.external_completion_semaphore = this->active_renderer_complete_semaphore();
         this->update_frame_statistics(frame, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
         return true;
     }
@@ -1353,7 +2186,9 @@ namespace xayah {
         this->draw_dockspace();
         this->draw_viewport_window();
         this->draw_camera_window();
+        this->draw_scene_diagnostics_window();
         this->draw_settings_window();
+        this->draw_environment_window();
         this->draw_tonemapper_window();
         this->draw_statistics_window();
 
@@ -1361,7 +2196,7 @@ namespace xayah {
         command_buffer.reset();
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
-        if (this->pbrt_scene != nullptr) this->record_active_renderer_output(command_buffer);
+        if (this->spectra_scene != nullptr) this->record_renderer_output(frame.render_mode, command_buffer);
 
         {
             const vk::ImageMemoryBarrier2 color_barrier{
@@ -1429,8 +2264,8 @@ namespace xayah {
             vk::SemaphoreSubmitInfo{},
         };
         std::uint32_t wait_semaphore_count = 1;
-        if (this->active_renderer_uses_external_completion_semaphore()) {
-            wait_semaphore_infos[1] = vk::SemaphoreSubmitInfo{this->active_renderer_complete_semaphore(), 0, vk::PipelineStageFlagBits2::eTransfer};
+        if (frame.wait_for_external_completion) {
+            wait_semaphore_infos[1] = vk::SemaphoreSubmitInfo{frame.external_completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer};
             wait_semaphore_count    = 2;
         }
         const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
@@ -1475,9 +2310,11 @@ namespace xayah {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.settings_visible = !this->ui.settings_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.statistics_visible = !this->ui.statistics_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.scene_diagnostics_visible = !this->ui.scene_diagnostics_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.settings_visible = !this->ui.settings_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.statistics_visible = !this->ui.statistics_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.environment_visible = !this->ui.environment_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
         }
 
         if (!ImGui::BeginMainMenuBar()) return;
@@ -1487,9 +2324,11 @@ namespace xayah {
         }
         if (ImGui::BeginMenu("Windows")) {
             ImGui::MenuItem(ICON_MS_PHOTO_CAMERA " Camera", "F1", &this->ui.camera_visible);
-            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F2", &this->ui.settings_visible);
-            ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", "F3", &this->ui.statistics_visible);
-            ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F5", &this->ui.tonemapper_visible);
+            ImGui::MenuItem(ICON_MS_DIAGNOSIS " Scene Diagnostics", "F2", &this->ui.scene_diagnostics_visible);
+            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F3", &this->ui.settings_visible);
+            ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", "F4", &this->ui.statistics_visible);
+            ImGui::MenuItem(ICON_MS_PUBLIC " Environment", "F5", &this->ui.environment_visible);
+            ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F6", &this->ui.tonemapper_visible);
             ImGui::EndMenu();
         }
         this->draw_menu_toolbar();
@@ -1504,11 +2343,13 @@ namespace xayah {
             const char* tooltip;
         };
 
-        const std::array<ToggleButton, 4> toggles{{
+        const std::array<ToggleButton, 6> toggles{{
             {ICON_MS_PHOTO_CAMERA, "F1", &this->ui.camera_visible, "Camera"},
-            {ICON_MS_SETTINGS, "F2", &this->ui.settings_visible, "Settings"},
-            {ICON_MS_ANALYTICS, "F3", &this->ui.statistics_visible, "Statistics"},
-            {ICON_MS_TONALITY, "F5", &this->ui.tonemapper_visible, "Tonemapper"},
+            {ICON_MS_DIAGNOSIS, "F2", &this->ui.scene_diagnostics_visible, "Scene Diagnostics"},
+            {ICON_MS_SETTINGS, "F3", &this->ui.settings_visible, "Settings"},
+            {ICON_MS_ANALYTICS, "F4", &this->ui.statistics_visible, "Statistics"},
+            {ICON_MS_PUBLIC, "F5", &this->ui.environment_visible, "Environment"},
+            {ICON_MS_TONALITY, "F6", &this->ui.tonemapper_visible, "Tonemapper"},
         }};
 
         const float button_size  = ImGui::GetFrameHeight();
@@ -1554,7 +2395,9 @@ namespace xayah {
 
         ImGui::DockBuilderDockWindow("Viewport", center_id);
         ImGui::DockBuilderDockWindow("Camera", right_id);
+        ImGui::DockBuilderDockWindow("Scene Diagnostics", right_id);
         ImGui::DockBuilderDockWindow("Settings", right_id);
+        ImGui::DockBuilderDockWindow("Environment", right_id);
         ImGui::DockBuilderDockWindow("Tonemapper", right_id);
         ImGui::DockBuilderDockWindow("Statistics", bottom_id);
         ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
@@ -1576,7 +2419,7 @@ namespace xayah {
             this->ui.viewport_size     = {viewport_size.x, viewport_size.y};
             this->ui.viewport_hovered  = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow);
             this->ui.viewport_focused  = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
-            if (this->pbrt_scene != nullptr) {
+            if (this->spectra_scene != nullptr) {
                 const VkDescriptorSet descriptor = this->active_viewport_descriptor();
                 if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("Active renderer viewport descriptor is null");
                 const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
@@ -1603,6 +2446,11 @@ namespace xayah {
         if (ImGui::BeginTable("SpectraCameraControls", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            const ActiveRendererStatus renderer_status = this->active_renderer_status();
+
+            draw_statistics_row("Active Renderer", renderer_status.label);
+            draw_statistics_row("Renderer State", renderer_status.state);
+            draw_statistics_row("PBRT Dirty", renderer_status.pathtracer_accumulation_dirty ? "Yes" : "No");
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
@@ -1618,7 +2466,7 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Actions");
             ImGui::TableSetColumnIndex(1);
-            ImGui::BeginDisabled(!this->camera.initialized || this->pbrt_scene == nullptr);
+            ImGui::BeginDisabled(!this->camera.initialized || this->spectra_scene == nullptr);
             if (ImGui::Button(ICON_MS_RESTART_ALT)) this->reset_camera();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Camera");
             ImGui::EndDisabled();
@@ -1628,12 +2476,144 @@ namespace xayah {
         ImGui::End();
     }
 
+    void Spectra::draw_scene_diagnostics_window() {
+        if (!this->ui.scene_diagnostics_visible) return;
+        if (!ImGui::Begin("Scene Diagnostics", &this->ui.scene_diagnostics_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        if (this->spectra_scene == nullptr) {
+            ImGui::TextDisabled("No active Spectra scene");
+            ImGui::End();
+            return;
+        }
+
+        constexpr ImGuiTableFlags summary_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        ImGui::SeparatorText("Summary");
+        if (ImGui::BeginTable("SpectraSceneSummary", 2, summary_table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Scene", this->spectra_scene->scene_label);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Path");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", this->spectra_scene->scene_path_text.c_str());
+
+            draw_statistics_row("Active Renderer", this->active_renderer_label());
+            draw_statistics_row("Film Resolution", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
+            draw_statistics_row("Sampler SPP", std::format("{}", this->spectra_scene->sampler_sample_count));
+            draw_statistics_row("Directives", std::format("{}", this->spectra_scene->pbrt_directives.size()));
+            draw_statistics_row("Shapes", std::format("{}", this->spectra_scene->shapes.size()));
+            draw_statistics_row("Materials", std::format("{}", this->spectra_scene->materials.size()));
+            draw_statistics_row("Textures", std::format("{}", this->spectra_scene->textures.size()));
+            draw_statistics_row("Media", std::format("{}", this->spectra_scene->mediums.size()));
+            draw_statistics_row("Medium Bindings", std::format("{}", this->spectra_scene->medium_bindings.size()));
+            draw_statistics_row("Lights", std::format("{}", this->spectra_scene->lights.size()));
+            draw_statistics_row("Object Definitions", std::format("{}", this->spectra_scene->object_definitions.size()));
+            draw_statistics_row("Object Instances", std::format("{}", this->spectra_scene->object_instances.size()));
+            draw_statistics_row("Unsupported Features", std::format("{}", this->spectra_scene->unsupported_features.size()));
+            ImGui::EndTable();
+        }
+
+        constexpr ImGuiTableFlags render_settings_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable;
+        ImGui::SeparatorText("Render Settings");
+        if (ImGui::BeginTable("SpectraSceneRenderSettings", 4, render_settings_table_flags)) {
+            ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+            ImGui::TableHeadersRow();
+            draw_scene_render_setting_row("Pixel Filter", this->spectra_scene->pixel_filter);
+            draw_scene_render_setting_row("Film", this->spectra_scene->film);
+            draw_scene_render_setting_row("Sampler", this->spectra_scene->sampler);
+            draw_scene_render_setting_row("Accelerator", this->spectra_scene->accelerator);
+            draw_scene_render_setting_row("Integrator", this->spectra_scene->integrator);
+            draw_scene_render_setting_row("Camera", this->spectra_scene->camera);
+            ImGui::EndTable();
+        }
+
+        if (this->raster_scene != nullptr) {
+            ImGui::SeparatorText("Raster Scene");
+            if (ImGui::BeginTable("SpectraRasterSceneSummary", 2, summary_table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_statistics_row("Vertices", std::format("{}", this->raster_scene->vertices.size()));
+                draw_statistics_row("Indices", std::format("{}", this->raster_scene->indices.size()));
+                draw_statistics_row("Triangles", std::format("{}", this->raster_scene->indices.size() / 3u));
+                draw_statistics_row("Geometries", std::format("{}", this->raster_scene->geometries.size()));
+                draw_statistics_row("Draws", std::format("{}", this->raster_scene->draws.size()));
+                draw_statistics_row("Materials", std::format("{}", this->raster_scene->materials.size()));
+                draw_statistics_row("Diagnostics", std::format("{}", this->raster_scene->diagnostics.size()));
+                ImGui::EndTable();
+            }
+        }
+
+        constexpr ImGuiTableFlags diagnostics_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable;
+        ImGui::SeparatorText("PBRT Diagnostics");
+        if (this->spectra_scene->unsupported_features.empty()) {
+            ImGui::TextDisabled("No unsupported PBRT features recorded");
+        } else if (ImGui::BeginTable("SpectraSceneDiagnostics", 4, diagnostics_table_flags)) {
+            ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Reason", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const SpectraSceneUnsupportedFeature& feature : this->spectra_scene->unsupported_features) {
+                const std::string source_text   = scene_unsupported_source_text(feature);
+                const std::string location_text = scene_file_location_text(feature.location);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(scene_unsupported_kind_label(feature.kind));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", source_text.c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", location_text.c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextWrapped("%s", feature.message.c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("Raster Diagnostics");
+        if (this->raster_scene == nullptr) {
+            ImGui::TextDisabled("No active Spectra raster scene");
+        } else if (this->raster_scene->diagnostics.empty()) {
+            ImGui::TextDisabled("No raster diagnostics recorded");
+        } else if (ImGui::BeginTable("SpectraRasterSceneDiagnostics", 4, diagnostics_table_flags)) {
+            ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Reason", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const SpectraRasterDiagnostic& diagnostic : this->raster_scene->diagnostics) {
+                const std::string source_text   = raster_diagnostic_source_text(diagnostic);
+                const std::string location_text = scene_file_location_text(diagnostic.location);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(raster_diagnostic_kind_label(diagnostic.kind));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", source_text.c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", location_text.c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextWrapped("%s", diagnostic.message.c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::End();
+    }
+
     void Spectra::draw_settings_window() {
         if (!this->ui.settings_visible) return;
         if (!ImGui::Begin("Settings", &this->ui.settings_visible)) {
             ImGui::End();
             return;
         }
+        ActiveRendererStatus renderer_status = this->active_renderer_status();
         if (ImGui::BeginTable("SpectraRendererSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
@@ -1641,7 +2621,18 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Active Renderer");
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(this->active_renderer_label());
+            const char* renderer_items[]{"PBRT Pathtracer", "Vulkan Rasterizer"};
+            int active_renderer_item = static_cast<int>(this->ui.active_render_mode);
+            if (active_renderer_item < 0 || active_renderer_item > 1) throw std::runtime_error("Unknown Spectra render mode item");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::Combo("##ActiveRenderer", &active_renderer_item, renderer_items, static_cast<int>(std::size(renderer_items)))) {
+                if (active_renderer_item == 0) this->set_active_render_mode(SpectraRenderMode::PbrtPathtracer);
+                else if (active_renderer_item == 1) this->set_active_render_mode(SpectraRenderMode::VulkanRasterizer);
+                else throw std::runtime_error("Unknown Spectra render mode item selected");
+                renderer_status = this->active_renderer_status();
+            }
+            draw_statistics_row("Renderer State", renderer_status.state);
+            draw_statistics_row("External Completion", renderer_status.uses_external_completion ? "Yes" : "No");
             ImGui::EndTable();
         }
         ImGui::Separator();
@@ -1651,12 +2642,14 @@ namespace xayah {
             } else if (ImGui::BeginTable("SpectraPathTracerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_statistics_row("State", this->ui.active_render_mode == SpectraRenderMode::PbrtPathtracer ? renderer_status.state : "Inactive");
+                draw_statistics_row("Camera Dirty", this->camera.pathtracer_accumulation_dirty ? "Yes" : "No");
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("PBRT Sampler SPP");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%d", this->pbrt_scene->sampler_sample_count);
+                ImGui::Text("%d", this->spectra_scene->sampler_sample_count);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -1671,7 +2664,7 @@ namespace xayah {
                 const int previous_target_sample_count = this->pbrt_interactive->target_sample_count();
                 int target_sample_count                = previous_target_sample_count;
                 ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->pbrt_scene->sampler_sample_count)) {
+                if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->spectra_scene->sampler_sample_count)) {
                     this->pbrt_interactive->set_target_sample_count(target_sample_count);
                     if (target_sample_count != previous_target_sample_count) this->clear_pathtracer_throughput_statistics();
                 }
@@ -1682,18 +2675,147 @@ namespace xayah {
                 ImGui::TextUnformatted("Accumulation");
                 ImGui::TableSetColumnIndex(1);
                 if (ImGui::Button("Reset Accumulation")) {
-                    this->reset_active_renderer_accumulation();
+                    this->pbrt_interactive->request_reset_accumulation();
+                    this->clear_pathtracer_throughput_statistics();
                 }
 
+                ImGui::EndTable();
+            }
+        }
+        if (ImGui::CollapsingHeader("Rasterizer", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (this->vulkan_rasterizer == nullptr || this->raster_scene == nullptr) {
+                ImGui::TextDisabled("No active Vulkan rasterizer session");
+            } else if (ImGui::BeginTable("SpectraRasterizerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_statistics_row("State", this->ui.active_render_mode == SpectraRenderMode::VulkanRasterizer ? renderer_status.state : "Inactive");
+                draw_statistics_row("Output", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
+                draw_statistics_row("Vertices", std::format("{}", this->vulkan_rasterizer->vertex_count()));
+                draw_statistics_row("Indices", std::format("{}", this->vulkan_rasterizer->index_count()));
+                draw_statistics_row("Triangles", std::format("{}", this->vulkan_rasterizer->triangle_count));
+                draw_statistics_row("Draws", std::format("{}", this->vulkan_rasterizer->draw_count));
+                draw_statistics_row("Materials", std::format("{}", this->vulkan_rasterizer->material_count()));
+                draw_statistics_row("Diagnostics", std::format("{}", this->vulkan_rasterizer->diagnostic_count()));
                 ImGui::EndTable();
             }
         }
         ImGui::End();
     }
 
+    void Spectra::draw_environment_window() {
+        if (!this->ui.environment_visible) return;
+        if (!ImGui::Begin("Environment", &this->ui.environment_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        if (this->spectra_scene == nullptr) {
+            ImGui::TextDisabled("No active PBRT scene");
+            ImGui::End();
+            return;
+        }
+
+        std::size_t area_light_count = 0;
+        std::size_t infinite_light_count = 0;
+        for (const SpectraSceneLight& light : this->spectra_scene->lights) {
+            if (light.area) ++area_light_count;
+            if (light.type == "infinite") ++infinite_light_count;
+        }
+
+        constexpr ImGuiTableFlags summary_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        ImGui::SeparatorText("Summary");
+        if (ImGui::BeginTable("SpectraEnvironmentSummary", 2, summary_table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Lights", std::format("{}", this->spectra_scene->lights.size()));
+            draw_statistics_row("Area Lights", std::format("{}", area_light_count));
+            draw_statistics_row("Infinite Lights", std::format("{}", infinite_light_count));
+            draw_statistics_row("Media", std::format("{}", this->spectra_scene->mediums.size()));
+            draw_statistics_row("Medium Bindings", std::format("{}", this->spectra_scene->medium_bindings.size()));
+            ImGui::EndTable();
+        }
+
+        constexpr ImGuiTableFlags detail_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable;
+        ImGui::SeparatorText("Lights");
+        if (this->spectra_scene->lights.empty()) {
+            ImGui::TextDisabled("No PBRT lights recorded");
+        } else if (ImGui::BeginTable("SpectraEnvironmentLights", 5, detail_table_flags)) {
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Outside Medium", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+            ImGui::TableHeadersRow();
+            for (const SpectraSceneLight& light : this->spectra_scene->lights) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextWrapped("%s", light.type.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(light.area ? "Area" : "Light");
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", optional_scene_text(light.outside_medium).c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextWrapped("%s", scene_file_location_text(light.location).c_str());
+                ImGui::TableSetColumnIndex(4);
+                ImGui::TextUnformatted(pbrt_parameter_count_text(light.parameters).c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("Media");
+        if (this->spectra_scene->mediums.empty()) {
+            ImGui::TextDisabled("No PBRT media recorded");
+        } else if (ImGui::BeginTable("SpectraEnvironmentMedia", 4, detail_table_flags)) {
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+            ImGui::TableHeadersRow();
+            for (const SpectraSceneMedium& medium : this->spectra_scene->mediums) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextWrapped("%s", optional_scene_text(medium.name).c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", optional_scene_text(medium.type).c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", scene_file_location_text(medium.location).c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextUnformatted(pbrt_parameter_count_text(medium.parameters).c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("Medium Interfaces");
+        if (this->spectra_scene->medium_bindings.empty()) {
+            ImGui::TextDisabled("No PBRT medium interfaces recorded");
+        } else if (ImGui::BeginTable("SpectraEnvironmentMediumInterfaces", 3, detail_table_flags)) {
+            ImGui::TableSetupColumn("Inside", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Outside", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const SpectraSceneMediumBinding& binding : this->spectra_scene->medium_bindings) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextWrapped("%s", optional_scene_text(binding.inside).c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", optional_scene_text(binding.outside).c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", scene_file_location_text(binding.location).c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::End();
+    }
+
     void Spectra::draw_tonemapper_window() {
         if (!this->ui.tonemapper_visible) return;
         if (!ImGui::Begin("Tonemapper", &this->ui.tonemapper_visible)) {
+            ImGui::End();
+            return;
+        }
+        if (this->ui.active_render_mode == SpectraRenderMode::VulkanRasterizer) {
+            ImGui::TextDisabled("Tonemapper applies to PBRT Pathtracer only");
             ImGui::End();
             return;
         }
@@ -1729,12 +2851,16 @@ namespace xayah {
         }
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const std::string viewport_resolution    = this->ui.viewport_known ? std::format("{:.0f} x {:.0f}", this->ui.viewport_size[0], this->ui.viewport_size[1]) : "Unknown";
+        const ActiveRendererStatus renderer_status = this->active_renderer_status();
 
         ImGui::SeparatorText("Runtime");
         if (ImGui::BeginTable("SpectraRuntimeStatistics", 2, table_flags)) {
             ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Active Renderer", this->active_renderer_label());
+            draw_statistics_row("Active Renderer", renderer_status.label);
+            draw_statistics_row("Renderer State", renderer_status.state);
+            draw_statistics_row("Accumulation", renderer_status.has_accumulation ? "Yes" : "No");
+            draw_statistics_row("Scene", this->spectra_scene == nullptr ? "No Scene" : this->spectra_scene->scene_label);
             draw_statistics_row("Frame ID", std::format("{}", this->statistics.current_frame_id));
             draw_statistics_row("Frame Slot", std::format("{}", this->statistics.active_frame_index));
             draw_statistics_row("Swapchain Image", std::format("{}", this->statistics.active_swapchain_image_index));
@@ -1761,17 +2887,42 @@ namespace xayah {
             ImGui::EndTable();
         }
 
-        if (this->pbrt_scene == nullptr) {
+        if (this->spectra_scene == nullptr) {
             ImGui::TextDisabled("No active PBRT scene");
             ImGui::End();
             return;
+        }
+
+        ImGui::SeparatorText("Scene");
+        if (ImGui::BeginTable("SpectraSceneStatistics", 2, table_flags)) {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Unsupported Features", std::format("{}", this->spectra_scene->unsupported_features.size()));
+            draw_statistics_row("Raster Diagnostics", this->raster_scene == nullptr ? "No raster scene" : std::format("{}", this->raster_scene->diagnostics.size()));
+            ImGui::EndTable();
         }
 
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
                 break;
             case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer statistics are not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Cannot show Vulkan rasterizer statistics without an active rasterizer session");
+                ImGui::SeparatorText("Rasterizer");
+                if (ImGui::BeginTable("SpectraRasterizerStatistics", 2, table_flags)) {
+                    ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+                    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                    draw_statistics_row("State", renderer_status.state);
+                    draw_statistics_row("Output Resolution", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
+                    draw_statistics_row("Vertices", std::format("{}", this->vulkan_rasterizer->vertex_count()));
+                    draw_statistics_row("Indices", std::format("{}", this->vulkan_rasterizer->index_count()));
+                    draw_statistics_row("Triangles", std::format("{}", this->vulkan_rasterizer->triangle_count));
+                    draw_statistics_row("Draws", std::format("{}", this->vulkan_rasterizer->draw_count));
+                    draw_statistics_row("Materials", std::format("{}", this->vulkan_rasterizer->material_count()));
+                    draw_statistics_row("Diagnostics", std::format("{}", this->vulkan_rasterizer->diagnostic_count()));
+                    ImGui::EndTable();
+                }
+                ImGui::End();
+                return;
         }
 
         if (this->pbrt_interactive == nullptr) {
@@ -1780,7 +2931,7 @@ namespace xayah {
             return;
         }
 
-        const std::array<int, 2> film_resolution = this->pbrt_scene->film_resolution;
+        const std::array<int, 2> film_resolution = this->spectra_scene->film_resolution;
         const int current_sample                 = this->pbrt_interactive->current_sample();
         const int target_sample                  = this->pbrt_interactive->target_sample_count();
         const float completion_ratio             = this->pbrt_interactive->completion_ratio();
@@ -1792,7 +2943,8 @@ namespace xayah {
         if (ImGui::BeginTable("SpectraPathTracerStatistics", 2, table_flags)) {
             ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("State", sampling_state);
+            draw_statistics_row("State", this->camera.pathtracer_accumulation_dirty ? "Camera Dirty" : sampling_state);
+            draw_statistics_row("Camera Dirty", this->camera.pathtracer_accumulation_dirty ? "Yes" : "No");
             draw_statistics_row("Sample", std::format("{} / {}", current_sample, target_sample));
             draw_statistics_row("Completion", std::format("{:.1f}%", completion_percent));
 
@@ -1939,6 +3091,7 @@ namespace xayah {
             this->imgui.viewports = viewports;
             this->create_imgui();
             if (this->pbrt_interactive != nullptr) this->pbrt_interactive->create_imgui_descriptors();
+            if (this->vulkan_rasterizer != nullptr) this->vulkan_rasterizer->create_imgui_descriptors();
         }
         this->surface.resize_requested = false;
     }

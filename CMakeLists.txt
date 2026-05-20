@@ -37,6 +37,7 @@ endif ()
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CUDAToolkit REQUIRED)
+find_program(SLANGC_EXECUTABLE NAMES slangc REQUIRED)
 
 set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -478,11 +479,38 @@ endif ()
 # ============================================================================
 # Spectra
 # ============================================================================
+set(SPECTRA_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/spectra-generated)
+set(SPECTRA_RASTER_VERTEX_SPIRV ${SPECTRA_GENERATED_DIR}/spectra_raster.vert.spv)
+set(SPECTRA_RASTER_FRAGMENT_SPIRV ${SPECTRA_GENERATED_DIR}/spectra_raster.frag.spv)
+set(SPECTRA_RASTER_SPIRV_HEADER ${SPECTRA_GENERATED_DIR}/spectra_raster_spirv.h)
+add_custom_command(
+        OUTPUT ${SPECTRA_RASTER_VERTEX_SPIRV}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GENERATED_DIR}
+        COMMAND ${SLANGC_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_raster.slang -target spirv -profile spirv_1_6 -entry vertex_main -stage vertex -matrix-layout-row-major -o ${SPECTRA_RASTER_VERTEX_SPIRV}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_raster.slang
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_RASTER_FRAGMENT_SPIRV}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GENERATED_DIR}
+        COMMAND ${SLANGC_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_raster.slang -target spirv -profile spirv_1_6 -entry fragment_main -stage fragment -matrix-layout-row-major -o ${SPECTRA_RASTER_FRAGMENT_SPIRV}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_raster.slang
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_RASTER_SPIRV_HEADER}
+        COMMAND ${CMAKE_COMMAND} -DVERTEX_INPUT=${SPECTRA_RASTER_VERTEX_SPIRV} -DFRAGMENT_INPUT=${SPECTRA_RASTER_FRAGMENT_SPIRV} -DOUTPUT=${SPECTRA_RASTER_SPIRV_HEADER} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spirv.cmake
+        DEPENDS ${SPECTRA_RASTER_VERTEX_SPIRV} ${SPECTRA_RASTER_FRAGMENT_SPIRV} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spirv.cmake
+        VERBATIM
+)
+
 add_library(spectra)
 target_sources(
         spectra
         PRIVATE
+        ${SPECTRA_RASTER_SPIRV_HEADER}
         modules/spectra.cpp
+        modules/spectra_scene.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -502,6 +530,7 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
+        ${SPECTRA_GENERATED_DIR}
 )
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 
@@ -512,3 +541,7 @@ set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 add_executable(test main.cpp)
 target_link_libraries(test PRIVATE spectra)
 set_property(TARGET test PROPERTY CXX_MODULE_STD ON)
+
+add_executable(spectra_scene_probe scene_probe.cpp)
+target_link_libraries(spectra_scene_probe PRIVATE spectra)
+set_property(TARGET spectra_scene_probe PROPERTY CXX_MODULE_STD ON)
