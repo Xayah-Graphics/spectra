@@ -54,16 +54,12 @@ namespace xayah {
         void process_camera_input(GLFWwindow* window);
         void set_camera_move_scale(float move_scale);
         void reset_camera();
-        void copy_camera_transform();
-        void print_camera_transform();
-        [[nodiscard]] std::string camera_transform_text() const;
         [[nodiscard]] const char* active_renderer_label() const;
         [[nodiscard]] VkDescriptorSet active_viewport_descriptor() const;
         [[nodiscard]] std::array<int, 2> active_renderer_sample_range() const;
         [[nodiscard]] float active_renderer_initial_move_scale() const;
         [[nodiscard]] bool active_renderer_uses_external_completion_semaphore() const;
         [[nodiscard]] vk::Semaphore active_renderer_complete_semaphore() const;
-        void process_active_renderer_input();
         [[nodiscard]] ActiveRendererFrameResult render_active_renderer_frame(const FrameState& frame);
         void record_active_renderer_output(const vk::raii::CommandBuffer& command_buffer);
         void reset_active_renderer_accumulation();
@@ -72,9 +68,7 @@ namespace xayah {
         void draw_dockspace();
         void draw_viewport_window();
         void draw_camera_window();
-        void draw_session_window();
         void draw_settings_window();
-        void draw_environment_window();
         void draw_tonemapper_window();
         void draw_statistics_window();
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
@@ -131,9 +125,7 @@ namespace xayah {
         struct {
             bool dock_layout_initialized{false};
             bool camera_visible{true};
-            bool session_visible{true};
             bool settings_visible{false};
-            bool environment_visible{true};
             bool tonemapper_visible{true};
             bool statistics_visible{true};
             bool viewport_known{false};
@@ -142,14 +134,7 @@ namespace xayah {
             SpectraRenderMode active_render_mode{SpectraRenderMode::PbrtPathtracer};
             std::array<float, 2> viewport_position{0.0f, 0.0f};
             std::array<float, 2> viewport_size{1280.0f, 720.0f};
-            std::array<float, 3> background_color{0.02f, 0.02f, 0.025f};
         } ui;
-
-        struct {
-            std::string mode_label{"Idle"};
-            std::string status{"Idle"};
-            std::string message{"Ready"};
-        } session;
 
         std::unique_ptr<SpectraPbrtScene> pbrt_scene{};
         std::unique_ptr<SpectraPbrtInteractiveSession> pbrt_interactive{};
@@ -157,7 +142,6 @@ namespace xayah {
         struct {
             bool initialized{false};
             bool input_enabled{false};
-            bool changed_this_frame{false};
             float move_scale{1.0f};
             std::array<float, 16> moving_from_camera{
                 1.0f, 0.0f, 0.0f, 0.0f,

@@ -28,7 +28,6 @@ module;
 #include <pbrt/parser.h>
 #include <pbrt/scene.h>
 #include <pbrt/util/color.h>
-#include <pbrt/util/print.h>
 #include <pbrt/util/transform.h>
 #include <pbrt/wavefront/integrator.h>
 
@@ -113,11 +112,6 @@ namespace {
         draw_statistics_row(label, value.c_str());
     }
 
-    [[nodiscard]] std::string format_device_bytes(const vk::DeviceSize bytes) {
-        const double megabytes = static_cast<double>(bytes) / (1024.0 * 1024.0);
-        return std::format("{} bytes ({:.2f} MiB)", static_cast<unsigned long long>(bytes), megabytes);
-    }
-
     [[nodiscard]] std::array<float, 16> identity_matrix_array() {
         return {
             1.0f, 0.0f, 0.0f, 0.0f,
@@ -150,18 +144,6 @@ namespace {
             }
         }
         return pbrt::Transform{matrix};
-    }
-
-    [[nodiscard]] std::string pbrt_transform_text(const pbrt::Transform& transform) {
-        const pbrt::SquareMatrix<4>& matrix = transform.GetMatrix();
-        std::string text{"Transform [ "};
-        for (int index = 0; index < 16; ++index) {
-            const float value = static_cast<float>(matrix[index % 4][index / 4]);
-            if (!std::isfinite(value)) throw std::runtime_error("Camera transform text contains a non-finite value");
-            text += std::format("{:.9g} ", value);
-        }
-        text += "]";
-        return text;
     }
 
     [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
@@ -465,35 +447,6 @@ namespace xayah {
             return static_cast<float>(visible_sample) / static_cast<float>(this->target_samples);
         }
 
-        [[nodiscard]] std::uint32_t active_frame() const {
-            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
-            return this->active_frame_index;
-        }
-
-        [[nodiscard]] vk::Format active_display_format() const {
-            return this->display_format;
-        }
-
-        [[nodiscard]] vk::DeviceSize active_interop_buffer_size() const {
-            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
-            return this->frames.at(this->active_frame_index).interop_buffer_size;
-        }
-
-        [[nodiscard]] vk::ImageLayout active_image_layout() const {
-            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
-            return this->frames.at(this->active_frame_index).image_layout;
-        }
-
-        [[nodiscard]] bool active_cuda_semaphore_imported() const {
-            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
-            return this->frames.at(this->active_frame_index).cuda_external_semaphore != nullptr;
-        }
-
-        [[nodiscard]] bool active_cuda_pixel_buffer_mapped() const {
-            if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
-            return this->frames.at(this->active_frame_index).cuda_pixels != nullptr;
-        }
-
         [[nodiscard]] VkDescriptorSet active_descriptor() const {
             if (this->frames.empty()) return VK_NULL_HANDLE;
             return this->frames.at(this->active_frame_index).imgui_descriptor;
@@ -576,17 +529,6 @@ namespace xayah {
             this->create_frame_resources(*this->physical_device, *this->device, this->frame_count);
             this->create_imgui_descriptors();
             this->active_frame_index = frame_index;
-        }
-
-        void process_pathtracer_input(const bool input_enabled) {
-            ImGuiIO& io = ImGui::GetIO();
-            if (!input_enabled) return;
-            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-                if (io.KeyShift)
-                    this->set_exposure(std::clamp(static_cast<float>(this->exposure / 1.125f), 0.001f, 1000.0f));
-                else
-                    this->set_exposure(std::clamp(static_cast<float>(this->exposure * 1.125f), 0.001f, 1000.0f));
-            }
         }
 
         [[nodiscard]] RenderFrameResult render_frame(const std::uint32_t frame_index, const pbrt::Transform& moving_from_camera) {
@@ -1086,22 +1028,15 @@ namespace xayah {
     void Spectra::render_pbrt_interactive(const std::filesystem::path& scene_path) {
         if (this->pbrt_scene != nullptr) throw std::runtime_error("PBRT shared scene is already active");
         if (this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT interactive session is already active");
-        this->session.mode_label       = "PBRT GPU Interactive";
-        this->session.status           = "Initializing";
-        this->session.message          = scene_path.filename().string();
         try {
             this->load_pbrt_scene(scene_path);
             this->pbrt_interactive = std::make_unique<SpectraPbrtInteractiveSession>(scene_path, this->context.physical_device, this->context.device, this->sync.frame_count);
             this->pbrt_scene->set_runtime_metadata(this->pbrt_interactive->film_resolution(), this->pbrt_interactive->sampler_sample_count(), this->pbrt_interactive->camera_from_world_matrix());
             this->initialize_camera_state();
-            this->session.status  = "Rendering";
-            this->session.message = this->pbrt_scene->scene_label;
             this->render_loop();
             this->context.device.waitIdle();
             this->pbrt_interactive.reset();
             this->unload_pbrt_scene_noexcept();
-            this->session.mode_label = "Idle";
-            this->session.status     = "Idle";
         } catch (...) {
             try {
                 if (*this->context.device) this->context.device.waitIdle();
@@ -1109,8 +1044,6 @@ namespace xayah {
             }
             this->pbrt_interactive.reset();
             this->unload_pbrt_scene_noexcept();
-            this->session.mode_label = "Idle";
-            this->session.status     = "Failed";
             throw;
         }
     }
@@ -1145,7 +1078,7 @@ namespace xayah {
 
         const std::string scene_label = this->pbrt_scene == nullptr ? "No Scene" : this->pbrt_scene->scene_label;
         const std::array<int, 2> sample_range = this->pbrt_scene == nullptr ? std::array<int, 2>{0, 0} : this->active_renderer_sample_range();
-        const std::string title       = std::format("{} - {} | {} | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, this->session.mode_label, width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
+        const std::string title       = std::format("{} - {} | {} | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, this->active_renderer_label(), width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
     }
@@ -1244,18 +1177,6 @@ namespace xayah {
         throw std::runtime_error("Unknown Spectra render mode");
     }
 
-    void Spectra::process_active_renderer_input() {
-        switch (this->ui.active_render_mode) {
-            case SpectraRenderMode::PbrtPathtracer:
-                if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot process PBRT pathtracer input without an active PBRT session");
-                this->pbrt_interactive->process_pathtracer_input(this->camera.input_enabled);
-                return;
-            case SpectraRenderMode::VulkanRasterizer:
-                throw std::runtime_error("Vulkan rasterizer input is not implemented; first rasterizer version must consume a PBRT-derived Vulkan raster scene, not external scene formats");
-        }
-        throw std::runtime_error("Unknown Spectra render mode");
-    }
-
     [[nodiscard]] Spectra::ActiveRendererFrameResult Spectra::render_active_renderer_frame(const FrameState& frame) {
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer: {
@@ -1299,7 +1220,6 @@ namespace xayah {
         if (this->pbrt_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active PBRT scene");
         this->camera.initialized        = true;
         this->camera.input_enabled      = false;
-        this->camera.changed_this_frame = false;
         this->camera.move_scale         = this->active_renderer_initial_move_scale();
         this->camera.moving_from_camera = identity_matrix_array();
         this->camera.camera_from_world  = this->pbrt_scene->camera_from_world;
@@ -1313,26 +1233,7 @@ namespace xayah {
     void Spectra::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         this->camera.moving_from_camera = identity_matrix_array();
-        this->camera.changed_this_frame = true;
         this->reset_active_renderer_accumulation();
-    }
-
-    [[nodiscard]] std::string Spectra::camera_transform_text() const {
-        if (!this->camera.initialized) throw std::runtime_error("Cannot format camera transform before camera state is initialized");
-        const pbrt::Transform moving_from_camera = transform_from_matrix_array(this->camera.moving_from_camera);
-        const pbrt::Transform camera_from_world  = transform_from_matrix_array(this->camera.camera_from_world);
-        return pbrt_transform_text(pbrt::Inverse(moving_from_camera) * camera_from_world);
-    }
-
-    void Spectra::copy_camera_transform() {
-        const std::string text = this->camera_transform_text();
-        ImGui::SetClipboardText(text.c_str());
-    }
-
-    void Spectra::print_camera_transform() {
-        const std::string text = this->camera_transform_text();
-        pbrt::Printf("Current camera transform:\n%s\n", text.c_str());
-        std::fflush(stdout);
     }
 
     void Spectra::process_camera_input(GLFWwindow* window) {
@@ -1343,7 +1244,6 @@ namespace xayah {
         const ImVec2 mouse_position = io.MousePos;
         const bool in_viewport_rect = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
         this->camera.input_enabled  = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused) && !io.WantTextInput;
-        this->camera.changed_this_frame = false;
         if (!this->camera.input_enabled) return;
         if (!this->camera.initialized) throw std::runtime_error("Cannot process camera input before camera state is initialized");
 
@@ -1405,10 +1305,8 @@ namespace xayah {
 
         if (needs_reset) {
             this->camera.moving_from_camera = matrix_array_from_transform(moving_from_camera);
-            this->camera.changed_this_frame = true;
             this->reset_active_renderer_accumulation();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_C, false)) this->print_camera_transform();
     }
 
     bool Spectra::begin_frame(FrameState& frame) {
@@ -1445,7 +1343,6 @@ namespace xayah {
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (this->pbrt_scene == nullptr) throw std::runtime_error("Cannot update renderer frame without an active PBRT scene");
         this->process_camera_input(this->surface.window.get());
-        this->process_active_renderer_input();
         const ActiveRendererFrameResult render_result = this->render_active_renderer_frame(frame);
         this->update_frame_statistics(frame, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
         return true;
@@ -1457,9 +1354,7 @@ namespace xayah {
         this->draw_viewport_window();
         this->draw_camera_window();
         this->draw_settings_window();
-        this->draw_environment_window();
         this->draw_tonemapper_window();
-        this->draw_session_window();
         this->draw_statistics_window();
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
@@ -1486,7 +1381,7 @@ namespace xayah {
         }
         this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::eColorAttachmentOptimal;
 
-        const std::array<float, 4> clear_color{this->ui.background_color[0], this->ui.background_color[1], this->ui.background_color[2], 1.0f};
+        constexpr std::array<float, 4> clear_color{0.02f, 0.02f, 0.025f, 1.0f};
         const vk::ClearValue color_clear_value{vk::ClearColorValue{clear_color}};
         const vk::RenderingAttachmentInfo color_attachment{
             *this->swapchain.image_views[frame.image_index],
@@ -1582,7 +1477,6 @@ namespace xayah {
             if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.settings_visible = !this->ui.settings_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.statistics_visible = !this->ui.statistics_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.environment_visible = !this->ui.environment_visible;
             if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
         }
 
@@ -1595,9 +1489,7 @@ namespace xayah {
             ImGui::MenuItem(ICON_MS_PHOTO_CAMERA " Camera", "F1", &this->ui.camera_visible);
             ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F2", &this->ui.settings_visible);
             ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", "F3", &this->ui.statistics_visible);
-            ImGui::MenuItem(ICON_MS_PUBLIC " Environment", "F4", &this->ui.environment_visible);
             ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F5", &this->ui.tonemapper_visible);
-            ImGui::MenuItem(ICON_MS_TUNE " PBRT Session", nullptr, &this->ui.session_visible);
             ImGui::EndMenu();
         }
         this->draw_menu_toolbar();
@@ -1612,13 +1504,11 @@ namespace xayah {
             const char* tooltip;
         };
 
-        const std::array<ToggleButton, 6> toggles{{
+        const std::array<ToggleButton, 4> toggles{{
             {ICON_MS_PHOTO_CAMERA, "F1", &this->ui.camera_visible, "Camera"},
             {ICON_MS_SETTINGS, "F2", &this->ui.settings_visible, "Settings"},
             {ICON_MS_ANALYTICS, "F3", &this->ui.statistics_visible, "Statistics"},
-            {ICON_MS_PUBLIC, "F4", &this->ui.environment_visible, "Environment"},
             {ICON_MS_TONALITY, "F5", &this->ui.tonemapper_visible, "Tonemapper"},
-            {ICON_MS_TUNE, nullptr, &this->ui.session_visible, "PBRT Session"},
         }};
 
         const float button_size  = ImGui::GetFrameHeight();
@@ -1665,9 +1555,7 @@ namespace xayah {
         ImGui::DockBuilderDockWindow("Viewport", center_id);
         ImGui::DockBuilderDockWindow("Camera", right_id);
         ImGui::DockBuilderDockWindow("Settings", right_id);
-        ImGui::DockBuilderDockWindow("Environment", right_id);
         ImGui::DockBuilderDockWindow("Tonemapper", right_id);
-        ImGui::DockBuilderDockWindow("PBRT Session", right_id);
         ImGui::DockBuilderDockWindow("Statistics", bottom_id);
         ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
         if (central_node == nullptr) throw std::runtime_error("Failed to find Spectra central dock node");
@@ -1726,11 +1614,6 @@ namespace xayah {
             if (ImGui::DragFloat("##CameraMoveScale", &move_scale, drag_speed, 0.0f, 0.0f, "%.6g")) this->set_camera_move_scale(move_scale);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera movement distance per key step. Changing this does not reset accumulation.");
 
-            draw_statistics_row("Input", this->camera.input_enabled ? "Enabled" : "Disabled");
-            draw_statistics_row("Viewport Known", this->ui.viewport_known ? "Yes" : "No");
-            draw_statistics_row("Viewport Hovered", this->ui.viewport_hovered ? "Yes" : "No");
-            draw_statistics_row("Viewport Focused", this->ui.viewport_focused ? "Yes" : "No");
-
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Actions");
@@ -1738,46 +1621,10 @@ namespace xayah {
             ImGui::BeginDisabled(!this->camera.initialized || this->pbrt_scene == nullptr);
             if (ImGui::Button(ICON_MS_RESTART_ALT)) this->reset_camera();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Camera");
-            ImGui::SameLine();
-            if (ImGui::Button(ICON_MS_CONTENT_COPY)) this->copy_camera_transform();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy Camera Transform");
-            ImGui::SameLine();
-            if (ImGui::Button(ICON_MS_PRINT)) this->print_camera_transform();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Print Camera Transform");
             ImGui::EndDisabled();
-
-            draw_statistics_row("Changed This Frame", this->camera.changed_this_frame ? "Yes" : "No");
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Controls");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextDisabled(ICON_MS_KEYBOARD);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD/QE move\nArrow keys or left-drag rotate\n+ / - speed\nR reset camera\nC print camera transform");
 
             ImGui::EndTable();
         }
-        ImGui::End();
-    }
-
-    void Spectra::draw_session_window() {
-        if (!this->ui.session_visible) return;
-        if (!ImGui::Begin("PBRT Session", &this->ui.session_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        ImGui::TextUnformatted(this->session.mode_label.c_str());
-        ImGui::Separator();
-        if (this->pbrt_scene == nullptr) {
-            ImGui::TextDisabled("No active PBRT scene");
-            ImGui::End();
-            return;
-        }
-
-        ImGui::Text("Status: %s", this->session.status.c_str());
-        ImGui::Text("Message: %s", this->session.message.c_str());
-        ImGui::TextWrapped("Scene: %s", this->pbrt_scene->scene_path_text.c_str());
         ImGui::End();
     }
 
@@ -1794,20 +1641,7 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Active Renderer");
             ImGui::TableSetColumnIndex(1);
-            const char* active_renderer_label = this->active_renderer_label();
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::BeginCombo("##ActiveRenderer", active_renderer_label)) {
-                const bool pbrt_selected = this->ui.active_render_mode == SpectraRenderMode::PbrtPathtracer;
-                if (ImGui::Selectable("PBRT Pathtracer", pbrt_selected)) this->ui.active_render_mode = SpectraRenderMode::PbrtPathtracer;
-                if (pbrt_selected) ImGui::SetItemDefaultFocus();
-                // Rasterizer v1 will consume a Vulkan raster scene derived from PBRT, never external scene formats.
-                ImGui::BeginDisabled();
-                const bool rasterizer_selected = this->ui.active_render_mode == SpectraRenderMode::VulkanRasterizer;
-                ImGui::Selectable("Vulkan Rasterizer", rasterizer_selected);
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Vulkan Rasterizer is reserved for the next milestone");
-                ImGui::EndCombo();
-            }
+            ImGui::TextUnformatted(this->active_renderer_label());
             ImGui::EndTable();
         }
         ImGui::Separator();
@@ -1851,39 +1685,8 @@ namespace xayah {
                     this->reset_active_renderer_accumulation();
                 }
 
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Controls");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextDisabled(ICON_MS_KEYBOARD);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD/QE move\nArrow keys or left-drag rotate\nB / Shift+B exposure\n+ / - speed\nR reset camera\nC print camera transform");
-
                 ImGui::EndTable();
             }
-        }
-        ImGui::End();
-    }
-
-    void Spectra::draw_environment_window() {
-        if (!this->ui.environment_visible) return;
-        if (!ImGui::Begin("Environment", &this->ui.environment_visible)) {
-            ImGui::End();
-            return;
-        }
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg;
-        if (ImGui::BeginTable("SpectraEnvironmentSettings", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Background Color");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::ColorEdit3("##BackgroundColor", this->ui.background_color.data(), ImGuiColorEditFlags_Float);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vulkan viewport clear color. This does not change PBRT scene lighting.");
-
-            ImGui::EndTable();
         }
         ImGui::End();
     }
@@ -1912,13 +1715,6 @@ namespace xayah {
             ImGui::SetNextItemWidth(-1.0f);
             if (ImGui::DragFloat("##TonemapperExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->pbrt_interactive->set_exposure(exposure);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Viewport exposure multiplier. This does not reset accumulation.");
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Actions");
-            ImGui::TableSetColumnIndex(1);
-            if (ImGui::Button(ICON_MS_RESTART_ALT " Reset Exposure")) this->pbrt_interactive->set_exposure(1.0f);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset exposure to 1.0 without resetting accumulation.");
 
             ImGui::EndTable();
         }
@@ -2017,18 +1813,6 @@ namespace xayah {
             ImGui::EndTable();
         }
 
-        ImGui::SeparatorText("CUDA/Vulkan Interop");
-        if (ImGui::BeginTable("SpectraInteropStatistics", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Active PBRT Frame", std::format("{} / {}", this->pbrt_interactive->active_frame(), this->sync.frame_count));
-            draw_statistics_row("Display Format", vk::to_string(this->pbrt_interactive->active_display_format()));
-            draw_statistics_row("Interop Buffer", format_device_bytes(this->pbrt_interactive->active_interop_buffer_size()));
-            draw_statistics_row("Image Layout", vk::to_string(this->pbrt_interactive->active_image_layout()));
-            draw_statistics_row("CUDA Semaphore", this->pbrt_interactive->active_cuda_semaphore_imported() ? "Imported" : "Missing");
-            draw_statistics_row("CUDA Pixel Buffer", this->pbrt_interactive->active_cuda_pixel_buffer_mapped() ? "Mapped" : "Missing");
-            ImGui::EndTable();
-        }
         ImGui::End();
     }
 
