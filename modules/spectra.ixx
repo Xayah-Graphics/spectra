@@ -319,39 +319,6 @@ namespace xayah {
         [[nodiscard]] pbrt::BasicScene& basic_scene();
     };
 
-    export struct SpectraSceneInspection {
-        std::filesystem::path scene_path{};
-        std::string scene_label{};
-        std::size_t directive_count{0};
-        std::size_t shape_count{0};
-        std::size_t material_count{0};
-        std::size_t texture_count{0};
-        std::size_t medium_count{0};
-        std::size_t medium_binding_count{0};
-        std::size_t light_count{0};
-        std::size_t object_definition_count{0};
-        std::size_t object_instance_count{0};
-        std::size_t unsupported_feature_count{0};
-        std::string detail{};
-    };
-
-    export [[nodiscard]] SpectraSceneInspection inspect_pbrt_scene(const std::filesystem::path& scene_path, bool include_detail = false);
-
-    export struct SpectraRasterSceneInspection {
-        std::filesystem::path scene_path{};
-        std::string scene_label{};
-        std::size_t vertex_count{0};
-        std::size_t index_count{0};
-        std::size_t triangle_count{0};
-        std::size_t material_count{0};
-        std::size_t geometry_count{0};
-        std::size_t draw_count{0};
-        std::size_t diagnostic_count{0};
-        std::string detail{};
-    };
-
-    export [[nodiscard]] SpectraRasterSceneInspection inspect_pbrt_raster_scene(const std::filesystem::path& scene_path, bool include_detail = false);
-
     struct SpectraPbrtInteractiveSession;
     struct SpectraVulkanRasterizer;
 

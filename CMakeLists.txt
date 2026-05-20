@@ -504,13 +504,16 @@ add_custom_command(
         VERBATIM
 )
 
-add_library(spectra)
+add_library(spectra_core)
 target_sources(
-        spectra
+        spectra_core
         PRIVATE
         ${SPECTRA_RASTER_SPIRV_HEADER}
-        modules/spectra.cpp
+        modules/spectra_pathtracer.cpp
+        modules/spectra_rasterizer.cpp
+        modules/spectra_runtime.cpp
         modules/spectra_scene.cpp
+        modules/spectra_ui.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -522,26 +525,22 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/spectra.ixx
 )
-target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw pbrt_lib CUDA::cudart)
-target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw pbrt_lib CUDA::cudart)
+target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(
-        spectra
+        spectra_core
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
         ${SPECTRA_GENERATED_DIR}
 )
-set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
+set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
 
 # ============================================================================
 # Application
 # ============================================================================
-add_executable(test main.cpp)
-target_link_libraries(test PRIVATE spectra)
-set_property(TARGET test PROPERTY CXX_MODULE_STD ON)
-
-add_executable(spectra_scene_probe scene_probe.cpp)
-target_link_libraries(spectra_scene_probe PRIVATE spectra)
-set_property(TARGET spectra_scene_probe PROPERTY CXX_MODULE_STD ON)
+add_executable(spectra main.cpp)
+target_link_libraries(spectra PRIVATE spectra_core)
+set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
