@@ -301,17 +301,17 @@ namespace xayah {
 
     struct SpectraPbrtInteractiveSession {
         struct FrameResource {
-            vk::raii::Buffer external_buffer{nullptr};
-            vk::raii::DeviceMemory external_memory{nullptr};
-            vk::DeviceSize external_allocation_size{0};
-            vk::DeviceSize external_buffer_size{0};
+            vk::raii::Buffer interop_buffer{nullptr};
+            vk::raii::DeviceMemory interop_memory{nullptr};
+            vk::DeviceSize interop_allocation_size{0};
+            vk::DeviceSize interop_buffer_size{0};
             vk::raii::Semaphore cuda_complete_semaphore{nullptr};
             cudaExternalMemory_t cuda_external_memory{};
             cudaExternalSemaphore_t cuda_external_semaphore{};
             float* cuda_pixels{nullptr};
 
-            vk::raii::Image image{nullptr};
             vk::raii::DeviceMemory image_memory{nullptr};
+            vk::raii::Image image{nullptr};
             vk::raii::ImageView image_view{nullptr};
             vk::raii::Sampler sampler{nullptr};
             VkDescriptorSet imgui_descriptor{VK_NULL_HANDLE};
@@ -342,6 +342,9 @@ namespace xayah {
         bool reset_requested{false};
         bool pbrt_initialized{false};
         std::uint32_t active_frame_index{0};
+        const vk::raii::PhysicalDevice* physical_device{nullptr};
+        const vk::raii::Device* device{nullptr};
+        std::uint32_t frame_count{0};
         std::vector<FrameResource> frames{};
 
         SpectraPbrtInteractiveSession(const std::filesystem::path& path, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path{path} {
@@ -349,6 +352,9 @@ namespace xayah {
             if (this->scene_path.empty()) throw std::runtime_error("PBRT scene path is empty");
             if (!std::filesystem::exists(this->scene_path)) throw std::runtime_error(std::string{"PBRT scene does not exist: "} + this->scene_path.string());
             if (frame_count == 0) throw std::runtime_error("PBRT interactive requires at least one frame in flight");
+            this->physical_device = &physical_device;
+            this->device          = &device;
+            this->frame_count     = frame_count;
 
             this->options.useGPU         = true;
             this->options.wavefront      = false;
@@ -361,13 +367,18 @@ namespace xayah {
             pbrt::BasicSceneBuilder builder{&this->scene};
             pbrt::ParseFiles(&builder, filenames);
 
-            this->integrator   = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, this->scene);
+            this->integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, this->scene);
+#ifdef PBRT_BUILD_GPU_RENDERER
+            if (this->options.useGPU) this->integrator->PrefetchGPUAllocations();
+#endif
             this->pixel_bounds = this->integrator->film.PixelBounds();
             this->resolution   = this->pixel_bounds.Diagonal();
             if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
             this->max_samples = this->integrator->sampler.SamplesPerPixel();
             if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
             this->target_samples = this->max_samples;
+            this->render_one_sample(pbrt::Transform{});
+            pbrt::GPUWait();
 
             this->render_from_camera = this->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
             this->camera_from_render = pbrt::Inverse(this->render_from_camera);
@@ -391,24 +402,11 @@ namespace xayah {
 
         void destroy_resources_noexcept() noexcept {
             try {
-                this->release_imgui_descriptors();
+                if (this->device != nullptr) this->device->waitIdle();
                 if (this->pbrt_initialized && pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
             } catch (...) {
             }
-            for (FrameResource& frame : this->frames) {
-                if (frame.cuda_pixels != nullptr) {
-                    cudaFree(frame.cuda_pixels);
-                    frame.cuda_pixels = nullptr;
-                }
-                if (frame.cuda_external_semaphore != nullptr) {
-                    cudaDestroyExternalSemaphore(frame.cuda_external_semaphore);
-                    frame.cuda_external_semaphore = nullptr;
-                }
-                if (frame.cuda_external_memory != nullptr) {
-                    cudaDestroyExternalMemory(frame.cuda_external_memory);
-                    frame.cuda_external_memory = nullptr;
-                }
-            }
+            this->destroy_frame_resources_noexcept();
             this->integrator.reset();
             if (this->pbrt_initialized) {
                 try {
@@ -476,9 +474,9 @@ namespace xayah {
             return this->display_format;
         }
 
-        [[nodiscard]] vk::DeviceSize active_external_buffer_size() const {
+        [[nodiscard]] vk::DeviceSize active_interop_buffer_size() const {
             if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
-            return this->frames.at(this->active_frame_index).external_buffer_size;
+            return this->frames.at(this->active_frame_index).interop_buffer_size;
         }
 
         [[nodiscard]] vk::ImageLayout active_image_layout() const {
@@ -486,12 +484,12 @@ namespace xayah {
             return this->frames.at(this->active_frame_index).image_layout;
         }
 
-        [[nodiscard]] bool active_external_semaphore_imported() const {
+        [[nodiscard]] bool active_cuda_semaphore_imported() const {
             if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
             return this->frames.at(this->active_frame_index).cuda_external_semaphore != nullptr;
         }
 
-        [[nodiscard]] bool active_external_buffer_mapped() const {
+        [[nodiscard]] bool active_cuda_pixel_buffer_mapped() const {
             if (this->frames.empty()) throw std::runtime_error("PBRT interactive statistics require frame resources");
             return this->frames.at(this->active_frame_index).cuda_pixels != nullptr;
         }
@@ -502,6 +500,7 @@ namespace xayah {
         }
 
         [[nodiscard]] vk::Semaphore active_cuda_complete_semaphore() const {
+            if (this->frames.empty()) throw std::runtime_error("PBRT completion semaphore requested without frame resources");
             return *this->frames.at(this->active_frame_index).cuda_complete_semaphore;
         }
 
@@ -538,6 +537,47 @@ namespace xayah {
             }
         }
 
+        void destroy_frame_resources_noexcept() noexcept {
+            this->release_imgui_descriptors();
+            for (FrameResource& frame : this->frames) {
+                if (frame.cuda_pixels != nullptr) {
+                    cudaFree(frame.cuda_pixels);
+                    frame.cuda_pixels = nullptr;
+                }
+                if (frame.cuda_external_semaphore != nullptr) {
+                    cudaDestroyExternalSemaphore(frame.cuda_external_semaphore);
+                    frame.cuda_external_semaphore = nullptr;
+                }
+                if (frame.cuda_external_memory != nullptr) {
+                    cudaDestroyExternalMemory(frame.cuda_external_memory);
+                    frame.cuda_external_memory = nullptr;
+                }
+            }
+            this->frames.clear();
+            this->active_frame_index = 0;
+        }
+
+        void render_one_sample(const pbrt::Transform& camera_motion) {
+            if (this->sample_index >= this->target_samples) throw std::runtime_error("PBRT sample index is already at the target sample count");
+            this->integrator->RenderSample(this->pixel_bounds, camera_motion, this->sample_index);
+            ++this->sample_index;
+        }
+
+        void rerender_after_reset(const std::uint32_t frame_index, const pbrt::Transform& camera_motion) {
+            if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("PBRT interactive Vulkan handles are not available for reset");
+            this->device->waitIdle();
+            this->destroy_frame_resources_noexcept();
+            this->integrator->ResetFilm(this->pixel_bounds);
+            pbrt::GPUWait();
+            this->sample_index     = 0;
+            this->reset_requested  = false;
+            this->render_one_sample(camera_motion);
+            pbrt::GPUWait();
+            this->create_frame_resources(*this->physical_device, *this->device, this->frame_count);
+            this->create_imgui_descriptors();
+            this->active_frame_index = frame_index;
+        }
+
         void process_pathtracer_input(const bool input_enabled) {
             ImGuiIO& io = ImGui::GetIO();
             if (!input_enabled) return;
@@ -552,26 +592,23 @@ namespace xayah {
         [[nodiscard]] RenderFrameResult render_frame(const std::uint32_t frame_index, const pbrt::Transform& moving_from_camera) {
             if (frame_index >= this->frames.size()) throw std::runtime_error("PBRT interactive frame index is out of range");
             this->active_frame_index = frame_index;
-            FrameResource& frame     = this->frames.at(frame_index);
             RenderFrameResult result{};
+            const pbrt::Transform camera_motion = this->render_from_camera * moving_from_camera * this->camera_from_render;
             if (this->reset_requested) {
-                this->integrator->ResetFilm(this->pixel_bounds);
-                pbrt::GPUWait();
-                this->sample_index     = 0;
-                this->reset_requested = false;
+                this->rerender_after_reset(frame_index, camera_motion);
+                result.rendered_sample    = true;
+                result.sample_pixels      = this->film_pixel_count() * static_cast<std::uint64_t>(this->sample_index);
                 result.reset_accumulation = true;
-            }
-            if (this->sample_index < this->target_samples) {
-                const pbrt::Transform camera_motion = this->render_from_camera * moving_from_camera * this->camera_from_render;
-                this->integrator->RenderSample(this->pixel_bounds, camera_motion, this->sample_index);
-                ++this->sample_index;
+            } else if (this->sample_index < this->target_samples) {
+                this->render_one_sample(camera_motion);
                 result.rendered_sample = true;
                 result.sample_pixels   = this->film_pixel_count();
             }
-            this->integrator->UpdateFramebufferFromFilm(this->pixel_bounds, this->exposure, frame.cuda_pixels);
+            FrameResource& output_frame = this->frames.at(frame_index);
+            this->integrator->UpdateFramebufferFromFilm(this->pixel_bounds, this->exposure, output_frame.cuda_pixels);
 
             cudaExternalSemaphoreSignalParams signal_params{};
-            CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&frame.cuda_external_semaphore, &signal_params, 1, 0));
+            CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&output_frame.cuda_external_semaphore, &signal_params, 1, 0));
             return result;
         }
 
@@ -589,9 +626,9 @@ namespace xayah {
                 vk::AccessFlagBits2::eTransferRead,
                 VK_QUEUE_FAMILY_IGNORED,
                 VK_QUEUE_FAMILY_IGNORED,
-                *frame.external_buffer,
+                *frame.interop_buffer,
                 0,
-                frame.external_buffer_size,
+                frame.interop_buffer_size,
             };
             const vk::DependencyInfo dependency_info{{}, 0, nullptr, 1, &buffer_barrier, 0, nullptr};
             command_buffer.pipelineBarrier2(dependency_info);
@@ -604,7 +641,7 @@ namespace xayah {
                 {0, 0, 0},
                 {static_cast<std::uint32_t>(this->resolution.x), static_cast<std::uint32_t>(this->resolution.y), 1},
             };
-            command_buffer.copyBufferToImage(*frame.external_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
+            command_buffer.copyBufferToImage(*frame.interop_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
 
             transition_image_layout(command_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
             frame.image_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
@@ -636,41 +673,41 @@ namespace xayah {
             if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
 
             const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(this->resolution.x) * static_cast<vk::DeviceSize>(this->resolution.y);
-            if (rgba_bytes == 0) throw std::runtime_error("PBRT interactive external buffer cannot be zero bytes");
+            if (rgba_bytes == 0) throw std::runtime_error("PBRT interactive interop buffer cannot be zero bytes");
             this->frames.resize(frame_count);
             for (FrameResource& frame : this->frames) {
-                this->create_external_buffer(physical_device, device, frame, rgba_bytes);
-                this->create_external_semaphore(device, frame);
+                this->create_interop_buffer(physical_device, device, frame, rgba_bytes);
+                this->create_cuda_complete_semaphore(device, frame);
                 this->create_display_image(physical_device, device, frame, this->display_format);
             }
         }
 
-        void create_external_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, FrameResource& frame, const vk::DeviceSize rgba_bytes) {
+        void create_interop_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, FrameResource& frame, const vk::DeviceSize rgba_bytes) {
             const vk::ExternalMemoryBufferCreateInfo external_buffer_info{pbrt_external_memory_handle_type()};
             const vk::BufferCreateInfo buffer_create_info{{}, rgba_bytes, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive, 0, nullptr, &external_buffer_info};
-            frame.external_buffer = vk::raii::Buffer{device, buffer_create_info};
+            frame.interop_buffer = vk::raii::Buffer{device, buffer_create_info};
 
-            const vk::MemoryRequirements memory_requirements = frame.external_buffer.getMemoryRequirements();
+            const vk::MemoryRequirements memory_requirements = frame.interop_buffer.getMemoryRequirements();
             const std::uint32_t memory_type                  = find_memory_type_index(physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
             const vk::ExportMemoryAllocateInfo export_allocate_info{pbrt_external_memory_handle_type()};
             const vk::MemoryAllocateInfo allocate_info{memory_requirements.size, memory_type, &export_allocate_info};
-            frame.external_memory = vk::raii::DeviceMemory{device, allocate_info};
-            frame.external_buffer.bindMemory(*frame.external_memory, 0);
-            frame.external_allocation_size = memory_requirements.size;
-            frame.external_buffer_size     = rgba_bytes;
+            frame.interop_memory = vk::raii::DeviceMemory{device, allocate_info};
+            frame.interop_buffer.bindMemory(*frame.interop_memory, 0);
+            frame.interop_allocation_size = memory_requirements.size;
+            frame.interop_buffer_size     = rgba_bytes;
 
             cudaExternalMemoryHandleDesc memory_handle_desc{};
             memory_handle_desc.type = pbrt_cuda_external_memory_handle_type();
-            memory_handle_desc.size = static_cast<unsigned long long>(frame.external_allocation_size);
+            memory_handle_desc.size = static_cast<unsigned long long>(frame.interop_allocation_size);
 #if defined(_WIN32)
-            const vk::MemoryGetWin32HandleInfoKHR memory_handle_info{*frame.external_memory, pbrt_external_memory_handle_type()};
+            const vk::MemoryGetWin32HandleInfoKHR memory_handle_info{*frame.interop_memory, pbrt_external_memory_handle_type()};
             HANDLE memory_handle = device.getMemoryWin32HandleKHR(memory_handle_info);
             if (memory_handle == nullptr) throw std::runtime_error("Failed to export Vulkan memory Win32 handle for CUDA");
             memory_handle_desc.handle.win32.handle = memory_handle;
             CUDA_CHECK(cudaImportExternalMemory(&frame.cuda_external_memory, &memory_handle_desc));
             CloseHandle(memory_handle);
 #else
-            const vk::MemoryGetFdInfoKHR memory_handle_info{*frame.external_memory, pbrt_external_memory_handle_type()};
+            const vk::MemoryGetFdInfoKHR memory_handle_info{*frame.interop_memory, pbrt_external_memory_handle_type()};
             int memory_fd = device.getMemoryFdKHR(memory_handle_info);
             if (memory_fd < 0) throw std::runtime_error("Failed to export Vulkan memory FD for CUDA");
             memory_handle_desc.handle.fd = memory_fd;
@@ -680,12 +717,12 @@ namespace xayah {
 
             cudaExternalMemoryBufferDesc buffer_desc{};
             buffer_desc.offset = 0;
-            buffer_desc.size   = static_cast<unsigned long long>(frame.external_buffer_size);
+            buffer_desc.size   = static_cast<unsigned long long>(frame.interop_buffer_size);
             CUDA_CHECK(cudaExternalMemoryGetMappedBuffer(reinterpret_cast<void**>(&frame.cuda_pixels), frame.cuda_external_memory, &buffer_desc));
             if (frame.cuda_pixels == nullptr) throw std::runtime_error("CUDA external memory mapped to a null PBRT RGBA pointer");
         }
 
-        void create_external_semaphore(const vk::raii::Device& device, FrameResource& frame) {
+        void create_cuda_complete_semaphore(const vk::raii::Device& device, FrameResource& frame) {
             const vk::ExportSemaphoreCreateInfo export_semaphore_info{pbrt_external_semaphore_handle_type()};
             const vk::SemaphoreCreateInfo semaphore_create_info{{}, &export_semaphore_info};
             frame.cuda_complete_semaphore = vk::raii::Semaphore{device, semaphore_create_info};
@@ -1986,10 +2023,10 @@ namespace xayah {
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_statistics_row("Active PBRT Frame", std::format("{} / {}", this->pbrt_interactive->active_frame(), this->sync.frame_count));
             draw_statistics_row("Display Format", vk::to_string(this->pbrt_interactive->active_display_format()));
-            draw_statistics_row("External Buffer", format_device_bytes(this->pbrt_interactive->active_external_buffer_size()));
+            draw_statistics_row("Interop Buffer", format_device_bytes(this->pbrt_interactive->active_interop_buffer_size()));
             draw_statistics_row("Image Layout", vk::to_string(this->pbrt_interactive->active_image_layout()));
-            draw_statistics_row("CUDA Semaphore", this->pbrt_interactive->active_external_semaphore_imported() ? "Imported" : "Missing");
-            draw_statistics_row("CUDA Pixel Buffer", this->pbrt_interactive->active_external_buffer_mapped() ? "Mapped" : "Missing");
+            draw_statistics_row("CUDA Semaphore", this->pbrt_interactive->active_cuda_semaphore_imported() ? "Imported" : "Missing");
+            draw_statistics_row("CUDA Pixel Buffer", this->pbrt_interactive->active_cuda_pixel_buffer_mapped() ? "Mapped" : "Missing");
             ImGui::EndTable();
         }
         ImGui::End();
