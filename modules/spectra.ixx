@@ -6,6 +6,7 @@ export module spectra;
 import std;
 
 namespace xayah {
+    struct SpectraPbrtScene;
     struct SpectraPbrtInteractiveSession;
 
     export class Spectra {
@@ -32,21 +33,49 @@ namespace xayah {
             bool recreate_after_present{false};
         };
 
+        struct ActiveRendererFrameResult {
+            std::uint64_t sample_pixels{0};
+            bool rendered_sample{false};
+            bool reset_accumulation{false};
+        };
+
         void create_imgui();
         void destroy_imgui() noexcept;
         bool begin_frame(FrameState& frame);
         void record_frame(const FrameState& frame);
         void end_frame(FrameState& frame);
         void render_loop();
+        void load_pbrt_scene(const std::filesystem::path& scene_path);
+        void unload_pbrt_scene_noexcept() noexcept;
         void update_window_title(float delta_seconds);
         void update_frame_statistics(const FrameState& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
         void clear_pathtracer_throughput_statistics();
+        void initialize_camera_state();
+        void process_camera_input(GLFWwindow* window);
+        void set_camera_move_scale(float move_scale);
+        void reset_camera();
+        void copy_camera_transform();
+        void print_camera_transform();
+        [[nodiscard]] std::string camera_transform_text() const;
+        [[nodiscard]] const char* active_renderer_label() const;
+        [[nodiscard]] VkDescriptorSet active_viewport_descriptor() const;
+        [[nodiscard]] std::array<int, 2> active_renderer_sample_range() const;
+        [[nodiscard]] float active_renderer_initial_move_scale() const;
+        [[nodiscard]] bool active_renderer_uses_external_completion_semaphore() const;
+        [[nodiscard]] vk::Semaphore active_renderer_complete_semaphore() const;
+        void process_active_renderer_input();
+        [[nodiscard]] ActiveRendererFrameResult render_active_renderer_frame(const FrameState& frame);
+        void record_active_renderer_output(const vk::raii::CommandBuffer& command_buffer);
+        void reset_active_renderer_accumulation();
         void draw_main_menu();
         void draw_menu_toolbar();
         void draw_dockspace();
         void draw_viewport_window();
+        void draw_camera_window();
         void draw_session_window();
         void draw_settings_window();
+        void draw_environment_window();
+        void draw_tonemapper_window();
         void draw_statistics_window();
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
@@ -101,8 +130,11 @@ namespace xayah {
 
         struct {
             bool dock_layout_initialized{false};
+            bool camera_visible{true};
             bool session_visible{true};
             bool settings_visible{false};
+            bool environment_visible{true};
+            bool tonemapper_visible{true};
             bool statistics_visible{true};
             bool viewport_known{false};
             bool viewport_hovered{false};
@@ -119,7 +151,27 @@ namespace xayah {
             std::string message{"Ready"};
         } session;
 
+        std::unique_ptr<SpectraPbrtScene> pbrt_scene{};
         std::unique_ptr<SpectraPbrtInteractiveSession> pbrt_interactive{};
+
+        struct {
+            bool initialized{false};
+            bool input_enabled{false};
+            bool changed_this_frame{false};
+            float move_scale{1.0f};
+            std::array<float, 16> moving_from_camera{
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f,
+            };
+            std::array<float, 16> camera_from_world{
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f,
+            };
+        } camera;
 
         struct RollingFloatAverage {
             static constexpr std::size_t sample_count{100};
