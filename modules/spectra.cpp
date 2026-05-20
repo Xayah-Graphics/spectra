@@ -4,13 +4,15 @@ module;
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <windows.h>
+#else
+#include <unistd.h>
 #endif
 #define GLFW_INCLUDE_VULKAN
+#include <cuda_runtime_api.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <ImGuizmo.h>
-#include <ImSequencer.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <material_symbols/IconsMaterialSymbols.h>
@@ -18,15 +20,21 @@ module;
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
 
+#include <pbrt/base/film.h>
+#include <pbrt/base/sampler.h>
+#include <pbrt/gpu/memory.h>
+#include <pbrt/gpu/util.h>
+#include <pbrt/options.h>
+#include <pbrt/parser.h>
+#include <pbrt/scene.h>
+#include <pbrt/util/color.h>
+#include <pbrt/util/print.h>
+#include <pbrt/util/transform.h>
+#include <pbrt/wavefront/integrator.h>
+
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
-import camera;
-import spectra_scene;
 import std;
-
-#if !defined(SPECTRA_SHADER_DIR)
-#error "SPECTRA_SHADER_DIR must be defined by CMake"
-#endif
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -51,38 +59,6 @@ namespace {
         return VK_FALSE;
     }
 
-    constexpr std::uint32_t viewport_grid_flag_show_grid = 1u << 0u;
-    constexpr std::uint32_t viewport_grid_flag_axis_x    = 1u << 1u;
-    constexpr std::uint32_t viewport_grid_flag_axis_y    = 1u << 2u;
-    constexpr std::uint32_t viewport_grid_flag_axis_z    = 1u << 3u;
-    constexpr float viewport_grid_line_width             = 1.5f;
-    constexpr float viewport_grid_far_clip               = 100000.0f;
-    constexpr float camera_button_spacing                = 4.0f;
-
-    [[nodiscard]] bool begin_camera_property_table(const char* id) {
-        if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit)) return false;
-        ImGui::TableSetupColumn("Property");
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        return true;
-    }
-
-    void begin_camera_property_row(const char* label) {
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(label);
-        ImGui::TableNextColumn();
-        ImGui::SetNextItemWidth(-1.0f);
-    }
-
-    void camera_tooltip(const char* text) {
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
-    }
-
-    [[nodiscard]] const char* spectra_backend_label(const xayah::SpectraPathTraceBackend backend) {
-        if (backend == xayah::SpectraPathTraceBackend::optix) return "OptiX";
-        throw std::runtime_error("Unknown Spectra backend");
-    }
-
     [[nodiscard]] std::uint32_t find_memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
         const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
@@ -93,118 +69,36 @@ namespace {
         throw std::runtime_error("No matching Vulkan memory type");
     }
 
-    struct ViewportGridPushConstants {
-        std::uint32_t grid_flag{0};
-    };
-
-    struct ViewportGridParameters {
-        std::array<float, 16> view_projection{};
-        std::array<float, 4> camera_position_far_clip{};
-        std::array<float, 4> viewport_size_perspective{};
-        std::array<float, 4> steps{};
-        std::array<float, 4> offset_clip_rect{};
-        std::array<float, 4> level_num_lines{};
-        std::array<float, 4> minor_color{};
-        std::array<float, 4> major_color{};
-        std::array<float, 4> axis_color_x{};
-        std::array<float, 4> axis_color_y{};
-        std::array<float, 4> axis_color_z{};
-    };
-
-    [[nodiscard]] std::array<float, 3> subtract_vector(const std::array<float, 3>& left, const std::array<float, 3>& right) {
-        return {left[0] - right[0], left[1] - right[1], left[2] - right[2]};
+    [[nodiscard]] vk::ExternalMemoryHandleTypeFlagBits pbrt_external_memory_handle_type() {
+#if defined(_WIN32)
+        return vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+#else
+        return vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
     }
 
-    [[nodiscard]] std::array<float, 3> multiply_vector(const std::array<float, 3>& vector, const float value) {
-        return {vector[0] * value, vector[1] * value, vector[2] * value};
+    [[nodiscard]] vk::ExternalSemaphoreHandleTypeFlagBits pbrt_external_semaphore_handle_type() {
+#if defined(_WIN32)
+        return vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+#else
+        return vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
+#endif
     }
 
-    [[nodiscard]] std::array<float, 3> add_vector(const std::array<float, 3>& left, const std::array<float, 3>& right) {
-        return {left[0] + right[0], left[1] + right[1], left[2] + right[2]};
+    [[nodiscard]] cudaExternalMemoryHandleType pbrt_cuda_external_memory_handle_type() {
+#if defined(_WIN32)
+        return cudaExternalMemoryHandleTypeOpaqueWin32;
+#else
+        return cudaExternalMemoryHandleTypeOpaqueFd;
+#endif
     }
 
-    [[nodiscard]] std::array<float, 3> cross_vector(const std::array<float, 3>& left, const std::array<float, 3>& right) {
-        return {
-            left[1] * right[2] - left[2] * right[1],
-            left[2] * right[0] - left[0] * right[2],
-            left[0] * right[1] - left[1] * right[0],
-        };
-    }
-
-    [[nodiscard]] std::array<float, 3> normalize_vector(const std::array<float, 3>& value) {
-        const float length = std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
-        if (length <= 0.000001f) throw std::runtime_error("Cannot normalize a zero-length vector");
-        return {value[0] / length, value[1] / length, value[2] / length};
-    }
-
-    [[nodiscard]] std::array<float, 16> viewport_camera_to_scene_camera_transform(const xayah::CameraState& camera) {
-        const std::array<float, 3> eye = camera.eye;
-        const std::array<float, 3> forward = normalize_vector(subtract_vector(camera.center, camera.eye));
-        const std::array<float, 3> right = normalize_vector(cross_vector(normalize_vector(camera.up), forward));
-        const std::array<float, 3> up = cross_vector(forward, right);
-        return {
-            right[0],
-            right[1],
-            right[2],
-            0.0f,
-            up[0],
-            up[1],
-            up[2],
-            0.0f,
-            forward[0],
-            forward[1],
-            forward[2],
-            0.0f,
-            eye[0],
-            eye[1],
-            eye[2],
-            1.0f,
-        };
-    }
-
-    [[nodiscard]] std::string scene_entity_combo_label(const xayah::SpectraSceneEntity& element) {
-        if (element.detail.empty()) return std::format("{} #{}", element.name, element.id);
-        return std::format("{}  {}  #{}", element.name, element.detail, element.id);
-    }
-
-    [[nodiscard]] float viewport_grid_distance_to_floor(const std::array<float, 3>& camera_position, const std::array<float, 3>& view_forward) {
-        const float ray_distance_to_floor = std::abs(view_forward[1]) >= 0.000001f ? std::abs(camera_position[1] / view_forward[1]) : std::abs(camera_position[1]);
-        const float height_above_floor    = std::abs(camera_position[1]);
-        const float blend                 = 1.0f - std::min(1.0f, std::abs(view_forward[1]));
-        return std::max(0.001f, (1.0f - blend) * ray_distance_to_floor + blend * height_above_floor);
-    }
-
-    [[nodiscard]] float viewport_grid_level(const float distance_to_floor, const float grid_unit) {
-        return std::clamp(std::log10(std::max(distance_to_floor / grid_unit, 0.001f)), 0.0f, 3.999f);
-    }
-
-    [[nodiscard]] ViewportGridParameters viewport_grid_parameters(const xayah::Camera& camera, const float aspect, const std::array<float, 2>& viewport_size, const float grid_unit, const std::uint32_t num_lines) {
-        if (grid_unit <= 0.0f) throw std::runtime_error("Grid unit must be positive");
-        if (num_lines < 11 || (num_lines % 2u) == 0u) throw std::runtime_error("Grid line count must be an odd value >= 11");
-        if (viewport_size[0] <= 0.0f || viewport_size[1] <= 0.0f) throw std::runtime_error("Grid viewport size must be positive");
-
-        const std::array<float, 3> camera_position = camera.position();
-        const std::array<float, 3> view_forward    = camera.forward();
-        const float distance_to_floor              = viewport_grid_distance_to_floor(camera_position, view_forward);
-        const float level                          = viewport_grid_level(distance_to_floor, grid_unit);
-        const std::array<float, 3> floor_point     = subtract_vector(camera_position, multiply_vector(view_forward, distance_to_floor));
-        const std::uint32_t coarsest_index         = std::min(static_cast<std::uint32_t>(std::floor(level)) + 1u, 3u);
-        const std::array<float, 4> steps{std::pow(10.0f, 0.0f) * grid_unit, std::pow(10.0f, 1.0f) * grid_unit, std::pow(10.0f, 2.0f) * grid_unit, std::pow(10.0f, 3.0f) * grid_unit};
-        const float clip_extent = steps[coarsest_index] * static_cast<float>(num_lines / 2u);
-
-        ViewportGridParameters parameters{};
-        parameters.view_projection           = camera.view_projection(aspect, viewport_grid_far_clip);
-        parameters.camera_position_far_clip  = {camera_position[0], camera_position[1], camera_position[2], viewport_grid_far_clip};
-        parameters.viewport_size_perspective = {viewport_size[0], viewport_size[1], camera.projection() == xayah::CameraProjection::perspective ? 1.0f : 0.0f, 0.0f};
-        parameters.steps                     = steps;
-        parameters.offset_clip_rect          = {floor_point[0], floor_point[2], clip_extent, clip_extent};
-        parameters.level_num_lines           = {level, static_cast<float>(num_lines), 0.0f, 0.0f};
-        parameters.minor_color               = {0.5f, 0.5f, 0.5f, 1.0f};
-        parameters.major_color               = {0.5f, 0.5f, 0.5f, 1.0f};
-        parameters.axis_color_x              = {0.619f, 0.235f, 0.290f, 1.0f};
-        parameters.axis_color_y              = {0.357f, 0.482f, 0.185f, 1.0f};
-        parameters.axis_color_z              = {0.231f, 0.357f, 0.518f, 1.0f};
-        return parameters;
+    [[nodiscard]] cudaExternalSemaphoreHandleType pbrt_cuda_external_semaphore_handle_type() {
+#if defined(_WIN32)
+        return cudaExternalSemaphoreHandleTypeOpaqueWin32;
+#else
+        return cudaExternalSemaphoreHandleTypeOpaqueFd;
+#endif
     }
 
     [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
@@ -303,10 +197,464 @@ namespace {
             style.Colors[ImGuiCol_WindowBg].w = 1.0f;
         }
     }
-
 } // namespace
 
 namespace xayah {
+    struct SpectraPbrtInteractiveSession {
+        struct FrameResource {
+            vk::raii::Buffer external_buffer{nullptr};
+            vk::raii::DeviceMemory external_memory{nullptr};
+            vk::DeviceSize external_allocation_size{0};
+            vk::DeviceSize external_buffer_size{0};
+            vk::raii::Semaphore cuda_complete_semaphore{nullptr};
+            cudaExternalMemory_t cuda_external_memory{};
+            cudaExternalSemaphore_t cuda_external_semaphore{};
+            float* cuda_pixels{nullptr};
+
+            vk::raii::Image image{nullptr};
+            vk::raii::DeviceMemory image_memory{nullptr};
+            vk::raii::ImageView image_view{nullptr};
+            vk::raii::Sampler sampler{nullptr};
+            VkDescriptorSet imgui_descriptor{VK_NULL_HANDLE};
+            vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
+        };
+
+        std::filesystem::path scene_path{};
+        pbrt::PBRTOptions options{};
+        pbrt::BasicScene scene{};
+        std::unique_ptr<pbrt::WavefrontPathIntegrator> integrator{};
+        pbrt::Bounds2i pixel_bounds{};
+        pbrt::Vector2i resolution{};
+        pbrt::Transform render_from_camera{};
+        pbrt::Transform camera_from_render{};
+        pbrt::Transform camera_from_world{};
+        pbrt::Transform moving_from_camera{};
+        pbrt::Float exposure{1.0f};
+        pbrt::Float move_scale{1.0f};
+        int sample_index{0};
+        int max_samples{0};
+        bool reset_requested{false};
+        bool pbrt_initialized{false};
+        std::uint32_t active_frame_index{0};
+        std::vector<FrameResource> frames{};
+
+        SpectraPbrtInteractiveSession(const std::filesystem::path& path, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path{path} {
+            try {
+            if (this->scene_path.empty()) throw std::runtime_error("PBRT scene path is empty");
+            if (!std::filesystem::exists(this->scene_path)) throw std::runtime_error(std::string{"PBRT scene does not exist: "} + this->scene_path.string());
+            if (frame_count == 0) throw std::runtime_error("PBRT interactive requires at least one frame in flight");
+
+            this->options.useGPU         = true;
+            this->options.wavefront      = false;
+            this->options.nThreads       = 30;
+            this->options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
+            pbrt::InitPBRT(this->options);
+            this->pbrt_initialized = true;
+
+            std::vector<std::string> filenames{this->scene_path.string()};
+            pbrt::BasicSceneBuilder builder{&this->scene};
+            pbrt::ParseFiles(&builder, filenames);
+
+            this->integrator   = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, this->scene);
+            this->pixel_bounds = this->integrator->film.PixelBounds();
+            this->resolution   = this->pixel_bounds.Diagonal();
+            if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
+            this->max_samples = this->integrator->sampler.SamplesPerPixel();
+            if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
+
+            this->render_from_camera = this->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
+            this->camera_from_render = pbrt::Inverse(this->render_from_camera);
+            this->camera_from_world  = this->integrator->camera.GetCameraTransform().CameraFromWorld(this->integrator->camera.SampleTime(0.0f));
+            const pbrt::Bounds3f scene_bounds = this->integrator->aggregate->Bounds();
+            this->move_scale                  = pbrt::Length(scene_bounds.Diagonal()) / 1000.0f;
+            if (!(this->move_scale > 0.0f)) throw std::runtime_error("PBRT scene bounds must define a positive interactive move scale");
+
+            this->validate_cuda_vulkan_device(physical_device);
+            this->create_frame_resources(physical_device, device, frame_count);
+            this->create_imgui_descriptors();
+            } catch (...) {
+                this->destroy_resources_noexcept();
+                throw;
+            }
+        }
+
+        ~SpectraPbrtInteractiveSession() noexcept {
+            this->destroy_resources_noexcept();
+        }
+
+        void destroy_resources_noexcept() noexcept {
+            try {
+                this->release_imgui_descriptors();
+                if (this->pbrt_initialized && pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
+            } catch (...) {
+            }
+            for (FrameResource& frame : this->frames) {
+                if (frame.cuda_pixels != nullptr) {
+                    cudaFree(frame.cuda_pixels);
+                    frame.cuda_pixels = nullptr;
+                }
+                if (frame.cuda_external_semaphore != nullptr) {
+                    cudaDestroyExternalSemaphore(frame.cuda_external_semaphore);
+                    frame.cuda_external_semaphore = nullptr;
+                }
+                if (frame.cuda_external_memory != nullptr) {
+                    cudaDestroyExternalMemory(frame.cuda_external_memory);
+                    frame.cuda_external_memory = nullptr;
+                }
+            }
+            this->integrator.reset();
+            if (this->pbrt_initialized) {
+                try {
+                    pbrt::CleanupPBRT();
+                } catch (...) {
+                }
+                this->pbrt_initialized = false;
+            }
+        }
+
+        SpectraPbrtInteractiveSession(const SpectraPbrtInteractiveSession& other)                = delete;
+        SpectraPbrtInteractiveSession(SpectraPbrtInteractiveSession&& other) noexcept            = delete;
+        SpectraPbrtInteractiveSession& operator=(const SpectraPbrtInteractiveSession& other)     = delete;
+        SpectraPbrtInteractiveSession& operator=(SpectraPbrtInteractiveSession&& other) noexcept = delete;
+
+        [[nodiscard]] std::array<int, 2> film_resolution() const {
+            return {this->resolution.x, this->resolution.y};
+        }
+
+        [[nodiscard]] std::string scene_label() const {
+            return this->scene_path.filename().string();
+        }
+
+        [[nodiscard]] int current_sample() const {
+            return this->sample_index;
+        }
+
+        [[nodiscard]] int sample_count() const {
+            return this->max_samples;
+        }
+
+        [[nodiscard]] float current_exposure() const {
+            return static_cast<float>(this->exposure);
+        }
+
+        [[nodiscard]] float current_move_scale() const {
+            return static_cast<float>(this->move_scale);
+        }
+
+        [[nodiscard]] VkDescriptorSet active_descriptor() const {
+            if (this->frames.empty()) return VK_NULL_HANDLE;
+            return this->frames.at(this->active_frame_index).imgui_descriptor;
+        }
+
+        [[nodiscard]] vk::Semaphore active_cuda_complete_semaphore() const {
+            return *this->frames.at(this->active_frame_index).cuda_complete_semaphore;
+        }
+
+        void release_imgui_descriptors() noexcept {
+            for (FrameResource& frame : this->frames) {
+                if (frame.imgui_descriptor != VK_NULL_HANDLE) {
+                    ImGui_ImplVulkan_RemoveTexture(frame.imgui_descriptor);
+                    frame.imgui_descriptor = VK_NULL_HANDLE;
+                }
+            }
+        }
+
+        void create_imgui_descriptors() {
+            for (FrameResource& frame : this->frames) {
+                if (frame.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("PBRT interactive ImGui descriptor is already allocated");
+                frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.sampler), static_cast<VkImageView>(*frame.image_view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                if (frame.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate ImGui descriptor for PBRT interactive image");
+            }
+        }
+
+        void process_input(const bool in_viewport, GLFWwindow* window) {
+            ImGuiIO& io = ImGui::GetIO();
+            if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(window, GLFW_TRUE);
+            if (!in_viewport || io.WantTextInput) return;
+
+            bool needs_reset = false;
+            if (ImGui::IsKeyDown(ImGuiKey_A)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Translate(pbrt::Vector3f(-this->move_scale, 0.0f, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_D)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Translate(pbrt::Vector3f(this->move_scale, 0.0f, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_S)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, 0.0f, -this->move_scale));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_W)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, 0.0f, this->move_scale));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_Q)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, -this->move_scale, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_E)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Translate(pbrt::Vector3f(0.0f, this->move_scale, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(-0.5f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(0.5f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(-0.5f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
+                this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(0.5f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+                needs_reset              = true;
+            }
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+                if (io.MouseDelta.x < 0.0f) this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(-1.0f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
+                if (io.MouseDelta.x > 0.0f) this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(1.0f, pbrt::Vector3f(0.0f, 1.0f, 0.0f));
+                if (io.MouseDelta.y > 0.0f) this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(-1.0f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+                if (io.MouseDelta.y < 0.0f) this->moving_from_camera = this->moving_from_camera * pbrt::Rotate(1.0f, pbrt::Vector3f(1.0f, 0.0f, 0.0f));
+                needs_reset = needs_reset || io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+                this->moving_from_camera = pbrt::Transform{};
+                needs_reset              = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+                if (io.KeyShift)
+                    this->exposure /= 1.125f;
+                else
+                    this->exposure *= 1.125f;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Equal, false)) this->move_scale *= 2.0f;
+            if (ImGui::IsKeyPressed(ImGuiKey_Minus, false)) this->move_scale *= 0.5f;
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+                pbrt::SquareMatrix<4> cfw = (pbrt::Inverse(this->moving_from_camera) * this->camera_from_world).GetMatrix();
+                pbrt::Printf("Current camera transform:\nTransform [ ");
+                for (int index = 0; index < 16; ++index) pbrt::Printf("%f ", cfw[index % 4][index / 4]);
+                pbrt::Printf("]\n");
+                std::fflush(stdout);
+            }
+            if (needs_reset) this->reset_requested = true;
+        }
+
+        void render_frame(const std::uint32_t frame_index) {
+            if (frame_index >= this->frames.size()) throw std::runtime_error("PBRT interactive frame index is out of range");
+            this->active_frame_index = frame_index;
+            FrameResource& frame     = this->frames.at(frame_index);
+            if (this->reset_requested) {
+                this->integrator->ResetFilm(this->pixel_bounds);
+                pbrt::GPUWait();
+                this->sample_index     = 0;
+                this->reset_requested = false;
+            }
+            if (this->sample_index < this->max_samples) {
+                const pbrt::Transform camera_motion = this->render_from_camera * this->moving_from_camera * this->camera_from_render;
+                this->integrator->RenderSample(this->pixel_bounds, camera_motion, this->sample_index);
+                ++this->sample_index;
+            }
+            this->integrator->UpdateFramebufferFromFilm(this->pixel_bounds, this->exposure, frame.cuda_pixels);
+
+            cudaExternalSemaphoreSignalParams signal_params{};
+            CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&frame.cuda_external_semaphore, &signal_params, 1, 0));
+        }
+
+        void record_copy(const vk::raii::CommandBuffer& command_buffer) {
+            FrameResource& frame = this->frames.at(this->active_frame_index);
+            const vk::PipelineStageFlags2 src_image_stage = frame.image_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader;
+            const vk::AccessFlags2 src_image_access       = frame.image_layout == vk::ImageLayout::eUndefined ? vk::AccessFlagBits2::eNone : vk::AccessFlagBits2::eShaderSampledRead;
+            transition_image_layout(command_buffer, *frame.image, frame.image_layout, vk::ImageLayout::eTransferDstOptimal, vk::ImageAspectFlagBits::eColor, src_image_stage, src_image_access, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+            frame.image_layout = vk::ImageLayout::eTransferDstOptimal;
+
+            const vk::BufferMemoryBarrier2 buffer_barrier{
+                vk::PipelineStageFlagBits2::eAllCommands,
+                vk::AccessFlagBits2::eMemoryWrite,
+                vk::PipelineStageFlagBits2::eTransfer,
+                vk::AccessFlagBits2::eTransferRead,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                *frame.external_buffer,
+                0,
+                frame.external_buffer_size,
+            };
+            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 1, &buffer_barrier, 0, nullptr};
+            command_buffer.pipelineBarrier2(dependency_info);
+
+            const vk::BufferImageCopy copy_region{
+                0,
+                0,
+                0,
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                {0, 0, 0},
+                {static_cast<std::uint32_t>(this->resolution.x), static_cast<std::uint32_t>(this->resolution.y), 1},
+            };
+            command_buffer.copyBufferToImage(*frame.external_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
+
+            transition_image_layout(command_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            frame.image_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+
+    private:
+        void validate_cuda_vulkan_device(const vk::raii::PhysicalDevice& physical_device) const {
+            int cuda_device = 0;
+            CUDA_CHECK(cudaGetDevice(&cuda_device));
+            cudaDeviceProp cuda_properties{};
+            CUDA_CHECK(cudaGetDeviceProperties(&cuda_properties, cuda_device));
+            const auto vulkan_properties = physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
+            const vk::PhysicalDeviceIDProperties& vulkan_id = vulkan_properties.get<vk::PhysicalDeviceIDProperties>();
+#if defined(_WIN32)
+            if (!vulkan_id.deviceLUIDValid) throw std::runtime_error("Selected Vulkan device does not expose a valid LUID for CUDA interop");
+            for (std::size_t index = 0; index < VK_LUID_SIZE; ++index) {
+                if (static_cast<unsigned char>(cuda_properties.luid[index]) != vulkan_id.deviceLUID[index]) throw std::runtime_error("CUDA device LUID does not match selected Vulkan device LUID");
+            }
+#else
+            for (std::size_t index = 0; index < VK_UUID_SIZE; ++index) {
+                if (static_cast<unsigned char>(cuda_properties.uuid.bytes[index]) != vulkan_id.deviceUUID[index]) throw std::runtime_error("CUDA device UUID does not match selected Vulkan device UUID");
+            }
+#endif
+        }
+
+        void create_frame_resources(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+            constexpr vk::Format display_format = vk::Format::eR32G32B32A32Sfloat;
+            const vk::FormatProperties format_properties = physical_device.getFormatProperties(display_format);
+            constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst;
+            if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
+
+            const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(this->resolution.x) * static_cast<vk::DeviceSize>(this->resolution.y);
+            if (rgba_bytes == 0) throw std::runtime_error("PBRT interactive external buffer cannot be zero bytes");
+            this->frames.resize(frame_count);
+            for (FrameResource& frame : this->frames) {
+                this->create_external_buffer(physical_device, device, frame, rgba_bytes);
+                this->create_external_semaphore(device, frame);
+                this->create_display_image(physical_device, device, frame, display_format);
+            }
+        }
+
+        void create_external_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, FrameResource& frame, const vk::DeviceSize rgba_bytes) {
+            const vk::ExternalMemoryBufferCreateInfo external_buffer_info{pbrt_external_memory_handle_type()};
+            const vk::BufferCreateInfo buffer_create_info{{}, rgba_bytes, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive, 0, nullptr, &external_buffer_info};
+            frame.external_buffer = vk::raii::Buffer{device, buffer_create_info};
+
+            const vk::MemoryRequirements memory_requirements = frame.external_buffer.getMemoryRequirements();
+            const std::uint32_t memory_type                  = find_memory_type_index(physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            const vk::ExportMemoryAllocateInfo export_allocate_info{pbrt_external_memory_handle_type()};
+            const vk::MemoryAllocateInfo allocate_info{memory_requirements.size, memory_type, &export_allocate_info};
+            frame.external_memory = vk::raii::DeviceMemory{device, allocate_info};
+            frame.external_buffer.bindMemory(*frame.external_memory, 0);
+            frame.external_allocation_size = memory_requirements.size;
+            frame.external_buffer_size     = rgba_bytes;
+
+            cudaExternalMemoryHandleDesc memory_handle_desc{};
+            memory_handle_desc.type = pbrt_cuda_external_memory_handle_type();
+            memory_handle_desc.size = static_cast<unsigned long long>(frame.external_allocation_size);
+#if defined(_WIN32)
+            const vk::MemoryGetWin32HandleInfoKHR memory_handle_info{*frame.external_memory, pbrt_external_memory_handle_type()};
+            HANDLE memory_handle = device.getMemoryWin32HandleKHR(memory_handle_info);
+            if (memory_handle == nullptr) throw std::runtime_error("Failed to export Vulkan memory Win32 handle for CUDA");
+            memory_handle_desc.handle.win32.handle = memory_handle;
+            CUDA_CHECK(cudaImportExternalMemory(&frame.cuda_external_memory, &memory_handle_desc));
+            CloseHandle(memory_handle);
+#else
+            const vk::MemoryGetFdInfoKHR memory_handle_info{*frame.external_memory, pbrt_external_memory_handle_type()};
+            int memory_fd = device.getMemoryFdKHR(memory_handle_info);
+            if (memory_fd < 0) throw std::runtime_error("Failed to export Vulkan memory FD for CUDA");
+            memory_handle_desc.handle.fd = memory_fd;
+            CUDA_CHECK(cudaImportExternalMemory(&frame.cuda_external_memory, &memory_handle_desc));
+            close(memory_fd);
+#endif
+
+            cudaExternalMemoryBufferDesc buffer_desc{};
+            buffer_desc.offset = 0;
+            buffer_desc.size   = static_cast<unsigned long long>(frame.external_buffer_size);
+            CUDA_CHECK(cudaExternalMemoryGetMappedBuffer(reinterpret_cast<void**>(&frame.cuda_pixels), frame.cuda_external_memory, &buffer_desc));
+            if (frame.cuda_pixels == nullptr) throw std::runtime_error("CUDA external memory mapped to a null PBRT RGBA pointer");
+        }
+
+        void create_external_semaphore(const vk::raii::Device& device, FrameResource& frame) {
+            const vk::ExportSemaphoreCreateInfo export_semaphore_info{pbrt_external_semaphore_handle_type()};
+            const vk::SemaphoreCreateInfo semaphore_create_info{{}, &export_semaphore_info};
+            frame.cuda_complete_semaphore = vk::raii::Semaphore{device, semaphore_create_info};
+
+            cudaExternalSemaphoreHandleDesc semaphore_handle_desc{};
+            semaphore_handle_desc.type = pbrt_cuda_external_semaphore_handle_type();
+#if defined(_WIN32)
+            const vk::SemaphoreGetWin32HandleInfoKHR semaphore_handle_info{*frame.cuda_complete_semaphore, pbrt_external_semaphore_handle_type()};
+            HANDLE semaphore_handle = device.getSemaphoreWin32HandleKHR(semaphore_handle_info);
+            if (semaphore_handle == nullptr) throw std::runtime_error("Failed to export Vulkan semaphore Win32 handle for CUDA");
+            semaphore_handle_desc.handle.win32.handle = semaphore_handle;
+            CUDA_CHECK(cudaImportExternalSemaphore(&frame.cuda_external_semaphore, &semaphore_handle_desc));
+            CloseHandle(semaphore_handle);
+#else
+            const vk::SemaphoreGetFdInfoKHR semaphore_handle_info{*frame.cuda_complete_semaphore, pbrt_external_semaphore_handle_type()};
+            int semaphore_fd = device.getSemaphoreFdKHR(semaphore_handle_info);
+            if (semaphore_fd < 0) throw std::runtime_error("Failed to export Vulkan semaphore FD for CUDA");
+            semaphore_handle_desc.handle.fd = semaphore_fd;
+            CUDA_CHECK(cudaImportExternalSemaphore(&frame.cuda_external_semaphore, &semaphore_handle_desc));
+            close(semaphore_fd);
+#endif
+            if (frame.cuda_external_semaphore == nullptr) throw std::runtime_error("CUDA external semaphore import returned null");
+        }
+
+        void create_display_image(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, FrameResource& frame, const vk::Format display_format) {
+            const vk::ImageCreateInfo image_create_info{
+                {},
+                vk::ImageType::e2D,
+                display_format,
+                vk::Extent3D{static_cast<std::uint32_t>(this->resolution.x), static_cast<std::uint32_t>(this->resolution.y), 1},
+                1,
+                1,
+                vk::SampleCountFlagBits::e1,
+                vk::ImageTiling::eOptimal,
+                vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                vk::SharingMode::eExclusive,
+                0,
+                nullptr,
+                vk::ImageLayout::eUndefined,
+            };
+            frame.image = vk::raii::Image{device, image_create_info};
+
+            const vk::MemoryRequirements memory_requirements = frame.image.getMemoryRequirements();
+            const std::uint32_t memory_type                  = find_memory_type_index(physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            const vk::MemoryAllocateInfo allocate_info{memory_requirements.size, memory_type};
+            frame.image_memory = vk::raii::DeviceMemory{device, allocate_info};
+            frame.image.bindMemory(*frame.image_memory, 0);
+
+            const vk::ImageViewCreateInfo image_view_create_info{
+                {},
+                *frame.image,
+                vk::ImageViewType::e2D,
+                display_format,
+                {},
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            };
+            frame.image_view = vk::raii::ImageView{device, image_view_create_info};
+
+            const vk::SamplerCreateInfo sampler_create_info{
+                {},
+                vk::Filter::eNearest,
+                vk::Filter::eNearest,
+                vk::SamplerMipmapMode::eNearest,
+                vk::SamplerAddressMode::eClampToEdge,
+                vk::SamplerAddressMode::eClampToEdge,
+                vk::SamplerAddressMode::eClampToEdge,
+                0.0f,
+                VK_FALSE,
+                1.0f,
+                VK_FALSE,
+                vk::CompareOp::eNever,
+                0.0f,
+                0.0f,
+                vk::BorderColor::eFloatOpaqueBlack,
+                VK_FALSE,
+            };
+            frame.sampler = vk::raii::Sampler{device, sampler_create_info};
+        }
+    };
+
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
@@ -315,7 +663,14 @@ namespace xayah {
         this->window_title.base = app_name_string;
 
         constexpr std::array<const char*, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
-        constexpr std::array enabled_device_extensions{vk::KHRSwapchainExtensionName, vk::KHRLineRasterizationExtensionName};
+        std::vector<const char*> enabled_device_extensions{vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName};
+#if defined(_WIN32)
+        enabled_device_extensions.push_back(vk::KHRExternalMemoryWin32ExtensionName);
+        enabled_device_extensions.push_back(vk::KHRExternalSemaphoreWin32ExtensionName);
+#else
+        enabled_device_extensions.push_back(vk::KHRExternalMemoryFdExtensionName);
+        enabled_device_extensions.push_back(vk::KHRExternalSemaphoreFdExtensionName);
+#endif
         std::vector<const char*> enabled_instance_extensions{};
 
         {
@@ -334,21 +689,8 @@ namespace xayah {
                 if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) throw std::runtime_error(std::string{"Required Vulkan instance extension not supported: "} + required_extension);
             }
 
-            const vk::ApplicationInfo application_info{
-                app_name_string.c_str(),
-                VK_MAKE_VERSION(1, 0, 0),
-                engine_name_string.c_str(),
-                VK_MAKE_VERSION(1, 0, 0),
-                vk::ApiVersion14,
-            };
-            const vk::InstanceCreateInfo instance_create_info{
-                {},
-                &application_info,
-                static_cast<std::uint32_t>(enabled_instance_layers.size()),
-                enabled_instance_layers.data(),
-                static_cast<std::uint32_t>(enabled_instance_extensions.size()),
-                enabled_instance_extensions.data(),
-            };
+            const vk::ApplicationInfo application_info{app_name_string.c_str(), VK_MAKE_VERSION(1, 0, 0), engine_name_string.c_str(), VK_MAKE_VERSION(1, 0, 0), vk::ApiVersion14};
+            const vk::InstanceCreateInfo instance_create_info{{}, &application_info, static_cast<std::uint32_t>(enabled_instance_layers.size()), enabled_instance_layers.data(), static_cast<std::uint32_t>(enabled_instance_extensions.size()), enabled_instance_extensions.data()};
             this->context.instance = vk::raii::Instance{this->context.context, instance_create_info};
         }
         {
@@ -392,8 +734,6 @@ namespace xayah {
                     if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) required_extensions_available = false;
                 }
                 if (!required_extensions_available) continue;
-                const vk::PhysicalDeviceProperties properties = physical_device.getProperties();
-                if (properties.limits.lineWidthRange[0] > viewport_grid_line_width || properties.limits.lineWidthRange[1] < viewport_grid_line_width) continue;
 
                 const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
                 for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
@@ -406,44 +746,20 @@ namespace xayah {
                 }
                 if (selected) break;
             }
-            if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, line rasterization, 1.5-wide line, and graphics-present queue support");
+            if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, external memory, external semaphore, and graphics-present queue support");
         }
         {
-            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceLineRasterizationFeatures>();
-            if (!supported_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) throw std::runtime_error("Device does not support shaderDrawParameters");
-            if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy) throw std::runtime_error("Device does not support samplerAnisotropy");
-            if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid) throw std::runtime_error("Device does not support fillModeNonSolid");
-            if (!supported_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines) throw std::runtime_error("Device does not support wideLines");
-            if (!supported_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore) throw std::runtime_error("Device does not support timelineSemaphore");
+            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
             if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
-            if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().shaderDemoteToHelperInvocation) throw std::runtime_error("Device does not support shaderDemoteToHelperInvocation");
-            if (!supported_features.get<vk::PhysicalDeviceLineRasterizationFeatures>().smoothLines) throw std::runtime_error("Device does not support smoothLines");
 
-            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceLineRasterizationFeatures> enabled_features{{}, {}, {}, {}, {}};
-            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy            = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.fillModeNonSolid             = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines                    = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters           = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore              = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2               = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering               = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().shaderDemoteToHelperInvocation = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceLineRasterizationFeatures>().smoothLines           = VK_TRUE;
+            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}};
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = VK_TRUE;
+            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = VK_TRUE;
 
             constexpr std::array queue_priorities{1.0f};
             const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
-            const vk::DeviceCreateInfo device_create_info{
-                {},
-                1,
-                &queue_create_info,
-                0,
-                nullptr,
-                static_cast<std::uint32_t>(enabled_device_extensions.size()),
-                enabled_device_extensions.data(),
-                nullptr,
-                &enabled_features.get<vk::PhysicalDeviceFeatures2>(),
-            };
+            const vk::DeviceCreateInfo device_create_info{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_device_extensions.size()), enabled_device_extensions.data(), nullptr, &enabled_features.get<vk::PhysicalDeviceFeatures2>()};
             this->context.device         = vk::raii::Device{this->context.physical_device, device_create_info};
             this->context.graphics_queue = vk::raii::Queue{this->context.device, this->context.graphics_queue_index, 0};
         }
@@ -452,7 +768,6 @@ namespace xayah {
             this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
         }
         this->create_swapchain();
-        this->create_viewport_pipeline();
         {
             constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
             constexpr vk::FenceCreateInfo fence_create_info{vk::FenceCreateFlagBits::eSignaled};
@@ -467,225 +782,15 @@ namespace xayah {
                 this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
             }
         }
-        {
-            if (this->imgui.initialized) throw std::runtime_error("ImGui is already initialized");
-            if (this->surface.window.get() == nullptr) throw std::runtime_error("Cannot initialize ImGui without a GLFW window");
-            if (this->swapchain.images.empty()) throw std::runtime_error("Cannot initialize ImGui without swapchain images");
+        this->create_imgui();
 
-            bool context_created            = false;
-            bool glfw_backend_initialized   = false;
-            bool vulkan_backend_initialized = false;
-            try {
-                constexpr std::array descriptor_pool_sizes{
-                    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eUniformTexelBuffer, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageTexelBuffer, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, 1000},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, 1000},
-                };
-                const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{
-                    vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-                    1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
-                    static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
-                    descriptor_pool_sizes.data(),
-                };
-                this->imgui.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
-                this->imgui.color_format    = this->swapchain.format;
-                this->imgui.min_image_count = std::max(2u, this->sync.frame_count);
-                this->imgui.image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
-                if (this->imgui.image_count < this->imgui.min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
-
-                IMGUI_CHECKVERSION();
-                ImGui::CreateContext();
-                context_created = true;
-
-                ImGuiIO& io = ImGui::GetIO();
-                if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-                if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-                load_imgui_fonts();
-                apply_imgui_style(this->imgui.viewports);
-
-                if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
-                glfw_backend_initialized = true;
-
-                auto color_attachment_format = static_cast<VkFormat>(this->imgui.color_format);
-                VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
-                pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-                pipeline_rendering_create_info.colorAttachmentCount    = 1;
-                pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
-
-                ImGui_ImplVulkan_InitInfo init_info{};
-                init_info.ApiVersion                                   = VK_API_VERSION_1_4;
-                init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
-                init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
-                init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
-                init_info.QueueFamily                                  = this->context.graphics_queue_index;
-                init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
-                init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
-                init_info.MinImageCount                                = this->imgui.min_image_count;
-                init_info.ImageCount                                   = this->imgui.image_count;
-                init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
-                init_info.UseDynamicRendering                          = true;
-                init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
-                if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
-                vulkan_backend_initialized = true;
-                this->imgui.initialized    = true;
-            } catch (...) {
-                if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
-                if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
-                if (context_created) ImGui::DestroyContext();
-                this->imgui.descriptor_pool = nullptr;
-                this->imgui.color_format    = vk::Format::eUndefined;
-                this->imgui.min_image_count = 2;
-                this->imgui.image_count     = 2;
-                this->imgui.initialized     = false;
-                throw;
-            }
-        }
-
-        {
-            constexpr std::string_view reset{"\x1b[0m"};
-            constexpr std::string_view bold{"\x1b[1m"};
-            constexpr std::string_view dim{"\x1b[2m"};
-            constexpr std::string_view cyan{"\x1b[36m"};
-            constexpr std::string_view green{"\x1b[32m"};
-            constexpr std::string_view magenta{"\x1b[35m"};
-            constexpr std::string_view blue{"\x1b[34m"};
-
-            const auto enabled_instance_layer     = [&](const char* name) { return std::ranges::find(enabled_instance_layers, std::string_view{name}, [](const char* layer) { return std::string_view{layer}; }) != enabled_instance_layers.end(); };
-            const auto enabled_instance_extension = [&](const char* name) { return std::ranges::find(enabled_instance_extensions, std::string_view{name}, [](const char* extension) { return std::string_view{extension}; }) != enabled_instance_extensions.end(); };
-            const auto enabled_device_extension   = [&](const char* name) { return std::ranges::find(enabled_device_extensions, std::string_view{name}, [](const char* extension) { return std::string_view{extension}; }) != enabled_device_extensions.end(); };
-
-            const std::vector<vk::LayerProperties> instance_layers         = this->context.context.enumerateInstanceLayerProperties();
-            const std::vector<vk::ExtensionProperties> instance_extensions = this->context.context.enumerateInstanceExtensionProperties();
-            const std::vector<vk::ExtensionProperties> device_extensions   = this->context.physical_device.enumerateDeviceExtensionProperties();
-            const std::vector<vk::QueueFamilyProperties> queue_families    = this->context.physical_device.getQueueFamilyProperties();
-            const auto properties_chain                                    = this->context.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
-            const vk::PhysicalDeviceProperties& properties                 = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
-            const vk::PhysicalDeviceDriverProperties& driver               = properties_chain.get<vk::PhysicalDeviceDriverProperties>();
-            const auto features                                            = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceLineRasterizationFeatures>();
-            const vk::PhysicalDeviceMemoryProperties memory                = this->context.physical_device.getMemoryProperties();
-            const vk::SurfaceCapabilitiesKHR surface_capabilities          = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
-            const std::vector<vk::SurfaceFormatKHR> surface_formats        = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
-            const std::vector<vk::PresentModeKHR> present_modes            = this->context.physical_device.getSurfacePresentModesKHR(this->surface.surface);
-
-            std::println("\n{}{}Spectra Vulkan Context{}", bold, cyan, reset);
-            std::println("{}{}{}", dim, std::string(96, '='), reset);
-            std::println("{}Application{}       {}", blue, reset, std::string{app_name});
-            std::println("{}Engine{}            {}", blue, reset, std::string{engine_name});
-            std::println("{}Window requested{}  {} x {}", blue, reset, window_width, window_height);
-            std::println("{}Framebuffer{}       {} x {}", blue, reset, this->surface.extent.width, this->surface.extent.height);
-            std::println("{}Selected device{}   {}", blue, reset, properties.deviceName.data());
-            std::println("{}Device type{}       {}", blue, reset, vk::to_string(properties.deviceType));
-            std::println("{}Vendor / Device{}   0x{:04X} / 0x{:04X}", blue, reset, properties.vendorID, properties.deviceID);
-            std::println("{}Vulkan API{}        {}.{}.{}", blue, reset, vk::apiVersionMajor(properties.apiVersion), vk::apiVersionMinor(properties.apiVersion), vk::apiVersionPatch(properties.apiVersion));
-            std::println("{}Driver{}            {} ({})", blue, reset, driver.driverName.data(), vk::to_string(driver.driverID));
-            std::println("{}Driver info{}       {}", blue, reset, driver.driverInfo.data());
-            std::println("{}Driver version{}    {}", blue, reset, properties.driverVersion);
-            std::println("{}Conformance{}       {}.{}.{}.{}", blue, reset, driver.conformanceVersion.major, driver.conformanceVersion.minor, driver.conformanceVersion.subminor, driver.conformanceVersion.patch);
-
-            std::println("\n{}{}Instance Layers{} {}", bold, magenta, reset, instance_layers.size());
-            for (const vk::LayerProperties& layer : instance_layers) {
-                const std::string_view status = enabled_instance_layer(layer.layerName.data()) ? "ENABLED" : "available";
-                const std::string_view color  = enabled_instance_layer(layer.layerName.data()) ? green : dim;
-                std::println("  {}[{:<9}]{} {:<44} spec {}.{}.{} impl {} {}", color, status, reset, layer.layerName.data(), vk::apiVersionMajor(layer.specVersion), vk::apiVersionMinor(layer.specVersion), vk::apiVersionPatch(layer.specVersion), layer.implementationVersion, layer.description.data());
-            }
-
-            std::println("\n{}{}Instance Extensions{} {}", bold, magenta, reset, instance_extensions.size());
-            for (const vk::ExtensionProperties& extension : instance_extensions) {
-                const std::string_view status = enabled_instance_extension(extension.extensionName.data()) ? "ENABLED" : "available";
-                const std::string_view color  = enabled_instance_extension(extension.extensionName.data()) ? green : dim;
-                std::println("  {}[{:<9}]{} {:<48} spec {}", color, status, reset, extension.extensionName.data(), extension.specVersion);
-            }
-
-            std::println("\n{}{}Device Extensions{} {}", bold, magenta, reset, device_extensions.size());
-            for (const vk::ExtensionProperties& extension : device_extensions) {
-                const std::string_view status = enabled_device_extension(extension.extensionName.data()) ? "ENABLED" : "available";
-                const std::string_view color  = enabled_device_extension(extension.extensionName.data()) ? green : dim;
-                std::println("  {}[{:<9}]{} {:<48} spec {}", color, status, reset, extension.extensionName.data(), extension.specVersion);
-            }
-
-            std::println("\n{}{}Enabled Device Features{}", bold, magenta, reset);
-            std::println("  {}[ENABLED]{} samplerAnisotropy", green, reset);
-            std::println("  {}[ENABLED]{} fillModeNonSolid", green, reset);
-            std::println("  {}[ENABLED]{} wideLines", green, reset);
-            std::println("  {}[ENABLED]{} shaderDrawParameters", green, reset);
-            std::println("  {}[ENABLED]{} timelineSemaphore", green, reset);
-            std::println("  {}[ENABLED]{} synchronization2", green, reset);
-            std::println("  {}[ENABLED]{} dynamicRendering", green, reset);
-            std::println("  {}[ENABLED]{} smoothLines", green, reset);
-            std::println("  {}[support]{} robustBufferAccess: {}", dim, reset, static_cast<bool>(features.get<vk::PhysicalDeviceFeatures2>().features.robustBufferAccess));
-
-            std::println("\n{}{}Queue Families{} {}", bold, magenta, reset, queue_families.size());
-            for (std::uint32_t index = 0; index < queue_families.size(); ++index) {
-                const bool selected = index == this->context.graphics_queue_index;
-                const bool present  = this->context.physical_device.getSurfaceSupportKHR(index, this->surface.surface);
-                std::println("  {}[{:<8}]{} #{:<2} queues {:<2} present {:<5} flags {}", selected ? green : dim, selected ? "SELECTED" : "available", reset, index, queue_families[index].queueCount, present, vk::to_string(queue_families[index].queueFlags));
-            }
-
-            std::println("\n{}{}Surface{}", bold, magenta, reset);
-            if (surface_capabilities.currentExtent.width == std::numeric_limits<std::uint32_t>::max())
-                std::println("  extent current variable  min {} x {}  max {} x {}", surface_capabilities.minImageExtent.width, surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.width, surface_capabilities.maxImageExtent.height);
-            else
-                std::println("  extent current {} x {}  min {} x {}  max {} x {}", surface_capabilities.currentExtent.width, surface_capabilities.currentExtent.height, surface_capabilities.minImageExtent.width, surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.width, surface_capabilities.maxImageExtent.height);
-            std::println("  image count   min {}  max {}", surface_capabilities.minImageCount, surface_capabilities.maxImageCount);
-            std::println("  transform     current {}  supported {}", vk::to_string(surface_capabilities.currentTransform), vk::to_string(surface_capabilities.supportedTransforms));
-            std::println("  usage         {}", vk::to_string(surface_capabilities.supportedUsageFlags));
-            std::println("  formats       {}", surface_formats.size());
-            for (const vk::SurfaceFormatKHR& format : surface_formats) std::println("    {} / {}", vk::to_string(format.format), vk::to_string(format.colorSpace));
-            std::println("  present modes {}", present_modes.size());
-            for (const vk::PresentModeKHR present_mode : present_modes) std::println("    {}", vk::to_string(present_mode));
-
-            std::println("\n{}{}Swapchain Plan{}", bold, magenta, reset);
-            std::println("  format       {} / {}", vk::to_string(this->swapchain.format), vk::to_string(this->swapchain.color_space));
-            std::println("  extent       {} x {}", this->swapchain.extent.width, this->swapchain.extent.height);
-            std::println("  image count  {}", this->swapchain.image_count);
-            std::println("  images       {}", this->swapchain.images.size());
-            std::println("  image views  {}", this->swapchain.image_views.size());
-            std::println("  layouts      {}", this->swapchain.image_layouts.size());
-            std::println("  present mode {}", vk::to_string(this->swapchain.present_mode));
-            std::println("  usage        {}", vk::to_string(this->swapchain.usage));
-            std::println("  depth format {}", vk::to_string(this->swapchain.depth_format));
-            std::println("  depth aspect {}", vk::to_string(this->swapchain.depth_aspect));
-            std::println("  depth layout {}", vk::to_string(this->swapchain.depth_layout));
-
-            std::println("\n{}{}Frame Sync{}", bold, magenta, reset);
-            std::println("  frames in flight {}", this->sync.frame_count);
-            std::println("  current frame    {}", this->sync.frame_index);
-            std::println("  command buffers  {}", this->sync.command_buffers.size());
-            std::println("  image available  {}", this->sync.image_available_semaphores.size());
-            std::println("  render finished  {}", this->sync.render_finished_semaphores.size());
-            std::println("  image in flight  {}", this->sync.image_in_flight_frame.size());
-            std::println("  in-flight fences {}", this->sync.in_flight_fences.size());
-
-            std::println("\n{}{}Memory{}", bold, magenta, reset);
-            for (std::uint32_t index = 0; index < memory.memoryHeapCount; ++index) std::println("  heap #{:<2} {:>10.1f} MiB  {}", index, static_cast<double>(memory.memoryHeaps[index].size) / 1024.0 / 1024.0, vk::to_string(memory.memoryHeaps[index].flags));
-
-            std::println("\n{}{}Limits{}", bold, magenta, reset);
-            std::println("  maxImageDimension2D      {}", properties.limits.maxImageDimension2D);
-            std::println("  maxSamplerAnisotropy     {}", properties.limits.maxSamplerAnisotropy);
-            std::println("  maxBoundDescriptorSets   {}", properties.limits.maxBoundDescriptorSets);
-            std::println("  timestampPeriod          {}", properties.limits.timestampPeriod);
-            std::println("{}{}{}\n", dim, std::string(96, '='), reset);
-        }
+        const auto properties_chain = this->context.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
+        const vk::PhysicalDeviceProperties& properties = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
+        const vk::PhysicalDeviceDriverProperties& driver = properties_chain.get<vk::PhysicalDeviceDriverProperties>();
+        std::println("Spectra Vulkan device: {} | Vulkan {}.{}.{} | Driver {} ({})", properties.deviceName.data(), vk::apiVersionMajor(properties.apiVersion), vk::apiVersionMinor(properties.apiVersion), vk::apiVersionPatch(properties.apiVersion), driver.driverName.data(), vk::to_string(driver.driverID));
+        std::println("Spectra swapchain: {} {}x{} images {} present {}", vk::to_string(this->swapchain.format), this->swapchain.extent.width, this->swapchain.extent.height, this->swapchain.images.size(), vk::to_string(this->swapchain.present_mode));
     } catch (...) {
-        this->destroy_viewport_pipeline();
-        if (this->imgui.initialized) {
-            ImGui_ImplVulkan_Shutdown();
-            ImGui_ImplGlfw_Shutdown();
-            ImGui::DestroyContext();
-            this->imgui.descriptor_pool = nullptr;
-            this->imgui.color_format    = vk::Format::eUndefined;
-            this->imgui.min_image_count = 2;
-            this->imgui.image_count     = 2;
-            this->imgui.initialized     = false;
-        }
+        this->destroy_imgui();
         if (this->surface.glfw_initialized) glfwTerminate();
         throw;
     }
@@ -696,26 +801,14 @@ namespace xayah {
         } catch (...) {
         }
 
-        if (this->imgui.initialized) {
-            ImGui_ImplVulkan_Shutdown();
-            ImGui_ImplGlfw_Shutdown();
-            ImGui::DestroyContext();
-        }
-        this->destroy_viewport_pipeline();
-        this->imgui.descriptor_pool = nullptr;
-        this->imgui.color_format    = vk::Format::eUndefined;
-        this->imgui.min_image_count = 2;
-        this->imgui.image_count     = 2;
-        this->imgui.initialized     = false;
+        this->pbrt_interactive.reset();
+        this->destroy_imgui();
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
         this->sync.image_in_flight_frame.clear();
         this->sync.render_finished_semaphores.clear();
         this->sync.image_available_semaphores.clear();
-        this->context.command_pool   = nullptr;
-        this->swapchain.depth_view   = nullptr;
-        this->swapchain.depth_image  = nullptr;
-        this->swapchain.depth_memory = nullptr;
+        this->context.command_pool = nullptr;
         this->swapchain.image_views.clear();
         this->swapchain.handle = nullptr;
         this->swapchain.image_layouts.clear();
@@ -731,36 +824,136 @@ namespace xayah {
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::render(SpectraScene& document) {
-        this->render_loop(document);
+    void Spectra::create_imgui() {
+        if (this->imgui.initialized) throw std::runtime_error("ImGui is already initialized");
+        if (this->surface.window.get() == nullptr) throw std::runtime_error("Cannot initialize ImGui without a GLFW window");
+        if (this->swapchain.images.empty()) throw std::runtime_error("Cannot initialize ImGui without swapchain images");
+
+        bool context_created            = false;
+        bool glfw_backend_initialized   = false;
+        bool vulkan_backend_initialized = false;
+        try {
+            constexpr std::array descriptor_pool_sizes{
+                vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eUniformTexelBuffer, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eStorageTexelBuffer, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, 1000},
+                vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, 1000},
+            };
+            const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()), static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+            this->imgui.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
+            this->imgui.color_format    = this->swapchain.format;
+            this->imgui.min_image_count = std::max(2u, this->sync.frame_count);
+            this->imgui.image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
+            if (this->imgui.image_count < this->imgui.min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
+
+            IMGUI_CHECKVERSION();
+            ImGui::CreateContext();
+            context_created = true;
+
+            ImGuiIO& io = ImGui::GetIO();
+            if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+            if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+            load_imgui_fonts();
+            apply_imgui_style(this->imgui.viewports);
+
+            if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
+            glfw_backend_initialized = true;
+
+            auto color_attachment_format = static_cast<VkFormat>(this->imgui.color_format);
+            VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
+            pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+            pipeline_rendering_create_info.colorAttachmentCount    = 1;
+            pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
+
+            ImGui_ImplVulkan_InitInfo init_info{};
+            init_info.ApiVersion                                   = VK_API_VERSION_1_4;
+            init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
+            init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
+            init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
+            init_info.QueueFamily                                  = this->context.graphics_queue_index;
+            init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
+            init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
+            init_info.MinImageCount                                = this->imgui.min_image_count;
+            init_info.ImageCount                                   = this->imgui.image_count;
+            init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
+            init_info.UseDynamicRendering                          = true;
+            init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
+            if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
+            vulkan_backend_initialized = true;
+            this->imgui.initialized    = true;
+        } catch (...) {
+            if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
+            if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
+            if (context_created) ImGui::DestroyContext();
+            this->imgui.descriptor_pool = nullptr;
+            this->imgui.color_format    = vk::Format::eUndefined;
+            this->imgui.min_image_count = 2;
+            this->imgui.image_count     = 2;
+            this->imgui.initialized     = false;
+            throw;
+        }
     }
 
-    void Spectra::render_loop(SpectraScene& document) {
-        document.validate();
+    void Spectra::destroy_imgui() noexcept {
+        if (this->pbrt_interactive != nullptr) this->pbrt_interactive->release_imgui_descriptors();
+        if (this->imgui.initialized) {
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+        }
+        this->imgui.descriptor_pool = nullptr;
+        this->imgui.color_format    = vk::Format::eUndefined;
+        this->imgui.min_image_count = 2;
+        this->imgui.image_count     = 2;
+        this->imgui.initialized     = false;
+        this->ui.dock_layout_initialized = false;
+    }
 
-        const RenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
-        document.create_render_resources(render_create_context);
+    void Spectra::render_pbrt_interactive(const std::filesystem::path& scene_path) {
+        if (this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT interactive session is already active");
+        this->session.mode_label       = "PBRT GPU Interactive";
+        this->session.status           = "Initializing";
+        this->session.message          = scene_path.filename().string();
+        this->pbrt_interactive         = std::make_unique<SpectraPbrtInteractiveSession>(scene_path, this->context.physical_device, this->context.device, this->sync.frame_count);
+        this->session.status           = "Rendering";
+        this->session.message          = this->pbrt_interactive->scene_label();
         try {
-            while (!glfwWindowShouldClose(this->surface.window.get())) {
-                FrameState frame{};
-                if (!this->begin_frame(frame, document)) continue;
-                this->record_frame(frame, document);
-                this->end_frame(frame, document);
-            }
-
+            this->render_loop();
             this->context.device.waitIdle();
-            document.destroy_render_resources();
+            this->pbrt_interactive.reset();
+            this->session.mode_label = "Idle";
+            this->session.status     = "Idle";
         } catch (...) {
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
-            document.destroy_render_resources();
+            this->pbrt_interactive.reset();
+            this->session.mode_label = "Idle";
+            this->session.status     = "Failed";
             throw;
         }
     }
 
-    void Spectra::update_window_title(const float delta_seconds, const SpectraScene& document) {
+    void Spectra::render_loop() {
+        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot enter Spectra render loop without an active PBRT interactive session");
+        while (!glfwWindowShouldClose(this->surface.window.get())) {
+            FrameState frame{};
+            if (!this->begin_frame(frame)) continue;
+            this->record_frame(frame);
+            this->end_frame(frame);
+        }
+        this->context.device.waitIdle();
+    }
+
+    void Spectra::update_window_title(const float delta_seconds) {
         if (this->surface.window == nullptr) throw std::runtime_error("Cannot update window title without a GLFW window");
 
         ++this->window_title.frame_count;
@@ -777,18 +970,18 @@ namespace xayah {
             height = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[1])));
         }
 
-        const char* renderer_label = this->renderer.mode == RendererMode::spectra_preview ? "Spectra Preview" : "Debug Overlay";
-        const SpectraSceneStats stats = document.stats();
-        const std::string scene_label = document.path().empty() ? "Default Spectra" : document.path().filename().string();
-        const std::string title = std::format("{} - {} | {} | {} | {} | {}x{} | C{} G{} L{} M{} T{} | Obj {} Tri {} | {:.0f} FPS / {:.3f}ms | Frame {}", this->window_title.base, scene_label, renderer_label, this->render_output.status, this->session.mode_label, width, height, stats.cameras, stats.geometries, stats.lights, stats.materials, stats.textures, document.object_count(), stats.preview_triangles, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
+        const std::string scene_label = this->pbrt_interactive == nullptr ? "No Scene" : this->pbrt_interactive->scene_label();
+        const int current_sample      = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->current_sample();
+        const int sample_count        = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->sample_count();
+        const std::string title       = std::format("{} - {} | {} | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, this->session.mode_label, width, height, current_sample, sample_count, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
     }
 
-    bool Spectra::begin_frame(FrameState& frame, SpectraScene& document) {
+    bool Spectra::begin_frame(FrameState& frame) {
         glfwPollEvents();
         if (this->surface.resize_requested) {
-            this->recreate_swapchain(document);
+            this->recreate_swapchain();
             return false;
         }
 
@@ -802,7 +995,7 @@ namespace xayah {
             frame.recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
             frame.image_index            = acquired_image.value;
         } catch (const vk::OutOfDateKHRError&) {
-            this->recreate_swapchain(document);
+            this->recreate_swapchain();
             return false;
         }
 
@@ -815,149 +1008,54 @@ namespace xayah {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        ImGuizmo::BeginFrame();
+
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         if (viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-
-        ImGuiIO& io                       = ImGui::GetIO();
-        const ImVec2 mouse_position       = io.MousePos;
-        const bool transform_gizmo_active = this->gizmo.using_gizmo || ImGuizmo::IsUsingAny();
-        const bool in_viewport_rect       = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
-        const bool in_viewport            = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused) && !transform_gizmo_active;
-        const bool right_mouse            = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-        const bool middle_mouse           = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-        const bool left_mouse             = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        const bool shift                  = io.KeyShift;
-        const bool ctrl                   = io.KeyCtrl;
-        const bool alt                    = io.KeyAlt;
-
-        this->input.space_pressed = !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false);
-        this->input.shift_down    = shift;
-        this->viewport.camera.update_animation(io.DeltaTime);
-        if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) this->viewport.camera.set_window_size({static_cast<std::uint32_t>(this->ui.viewport_size[0]), static_cast<std::uint32_t>(this->ui.viewport_size[1])});
-        if (in_viewport && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_G, false)) this->viewport.show_grid = !this->viewport.show_grid;
-        if (in_viewport && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_T, false)) this->ui.gizmo_visible = !this->ui.gizmo_visible;
-        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_H, false)) this->viewport.camera.reset_home();
-
-        if (in_viewport && !io.WantTextInput) {
-            CameraInputs camera_inputs{};
-            camera_inputs.left_mouse   = left_mouse;
-            camera_inputs.middle_mouse = middle_mouse;
-            camera_inputs.right_mouse  = right_mouse;
-            camera_inputs.shift        = shift;
-            camera_inputs.ctrl         = ctrl;
-            camera_inputs.alt          = alt;
-
-            if (!alt) {
-                float key_motion            = io.DeltaTime;
-                bool keyboard_camera_motion = false;
-                if (shift) key_motion *= 5.0f;
-                if (ctrl) key_motion *= 0.1f;
-                if (ImGui::IsKeyDown(ImGuiKey_W)) {
-                    this->viewport.camera.key_motion({key_motion, 0.0f}, CameraAction::dolly);
-                    keyboard_camera_motion = true;
-                }
-                if (ImGui::IsKeyDown(ImGuiKey_S)) {
-                    this->viewport.camera.key_motion({-key_motion, 0.0f}, CameraAction::dolly);
-                    keyboard_camera_motion = true;
-                }
-                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
-                    this->viewport.camera.key_motion({key_motion, 0.0f}, CameraAction::pan);
-                    keyboard_camera_motion = true;
-                }
-                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
-                    this->viewport.camera.key_motion({-key_motion, 0.0f}, CameraAction::pan);
-                    keyboard_camera_motion = true;
-                }
-                if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
-                    this->viewport.camera.key_motion({0.0f, key_motion}, CameraAction::pan);
-                    keyboard_camera_motion = true;
-                }
-                if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
-                    this->viewport.camera.key_motion({0.0f, -key_motion}, CameraAction::pan);
-                    keyboard_camera_motion = true;
-                }
-                if (keyboard_camera_motion) {
-                    camera_inputs.shift = false;
-                    camera_inputs.ctrl  = false;
-                }
-            }
-
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) this->viewport.camera.set_mouse_position({mouse_position.x, mouse_position.y});
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f)) static_cast<void>(this->viewport.camera.mouse_move({mouse_position.x, mouse_position.y}, camera_inputs));
-            if (io.MouseWheel != 0.0f) this->viewport.camera.wheel(io.MouseWheel * -10.0f, camera_inputs);
+        const ImGuiIO& io = ImGui::GetIO();
+        const ImVec2 mouse_position = io.MousePos;
+        const bool in_viewport_rect = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
+        const bool in_viewport      = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused);
+        if (this->pbrt_interactive != nullptr) {
+            this->pbrt_interactive->process_input(in_viewport, this->surface.window.get());
+            this->pbrt_interactive->render_frame(frame.frame_index);
         }
         return true;
     }
 
-    void Spectra::record_frame(const FrameState& frame, SpectraScene& document) {
-        if (this->timeline.visible) {
-            if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
-            if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
-            this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-            this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
-        }
-
-        this->draw_main_menu(document);
+    void Spectra::record_frame(const FrameState& frame) {
+        this->draw_main_menu();
         this->draw_dockspace();
         this->draw_viewport_window();
-        this->draw_camera_window(document);
-        this->draw_scene_browser(document);
-        this->draw_light_window(document);
-        this->draw_material_window(document);
+        this->draw_session_window();
         this->draw_settings_window();
-        this->draw_grid_settings_window();
-        this->draw_render_output(document);
-        this->draw_object_inspector(document);
-        this->draw_environment_window();
-        this->draw_tonemapper_window();
-        this->draw_statistics_window(document);
-        this->draw_timeline_window();
-        this->draw_transform_gizmo(document);
+        this->draw_statistics_window();
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
         command_buffer.reset();
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
+        if (this->pbrt_interactive != nullptr) this->pbrt_interactive->record_copy(command_buffer);
 
         {
-            constexpr vk::PipelineStageFlags2 depth_stages = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-            constexpr vk::AccessFlags2 depth_access        = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-            const std::array attachment_barriers{
-                vk::ImageMemoryBarrier2{
-                    vk::PipelineStageFlagBits2::eAllCommands,
-                    {},
-                    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                    vk::AccessFlagBits2::eColorAttachmentWrite,
-                    this->swapchain.image_layouts[frame.image_index],
-                    vk::ImageLayout::eColorAttachmentOptimal,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    this->swapchain.images[frame.image_index],
-                    {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                },
-                vk::ImageMemoryBarrier2{
-                    depth_stages,
-                    depth_access,
-                    depth_stages,
-                    depth_access,
-                    this->swapchain.depth_layout,
-                    vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    VK_QUEUE_FAMILY_IGNORED,
-                    *this->swapchain.depth_image,
-                    {this->swapchain.depth_aspect, 0, 1, 0, 1},
-                },
+            const vk::ImageMemoryBarrier2 color_barrier{
+                vk::PipelineStageFlagBits2::eAllCommands,
+                {},
+                vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                vk::AccessFlagBits2::eColorAttachmentWrite,
+                this->swapchain.image_layouts[frame.image_index],
+                vk::ImageLayout::eColorAttachmentOptimal,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                this->swapchain.images[frame.image_index],
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             };
-            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(attachment_barriers.size()), attachment_barriers.data()};
+            const vk::DependencyInfo dependency_info{{}, 0, nullptr, 0, nullptr, 1, &color_barrier};
             command_buffer.pipelineBarrier2(dependency_info);
         }
         this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::eColorAttachmentOptimal;
-        this->swapchain.depth_layout                     = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
-        const std::array<float, 4> clear_color = this->ui.solid_background ? std::array{this->ui.background_color[0], this->ui.background_color[1], this->ui.background_color[2], 1.0f} : std::array{0.02f, 0.02f, 0.025f, 1.0f};
+        const std::array<float, 4> clear_color{this->ui.background_color[0], this->ui.background_color[1], this->ui.background_color[2], 1.0f};
         const vk::ClearValue color_clear_value{vk::ClearColorValue{clear_color}};
-        constexpr vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0}};
         const vk::RenderingAttachmentInfo color_attachment{
             *this->swapchain.image_views[frame.image_index],
             vk::ImageLayout::eColorAttachmentOptimal,
@@ -968,96 +1066,8 @@ namespace xayah {
             vk::AttachmentStoreOp::eStore,
             color_clear_value,
         };
-        const vk::RenderingAttachmentInfo depth_attachment{
-            *this->swapchain.depth_view,
-            vk::ImageLayout::eDepthStencilAttachmentOptimal,
-            vk::ResolveModeFlagBits::eNone,
-            {},
-            vk::ImageLayout::eUndefined,
-            vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eDontCare,
-            depth_clear_value,
-        };
-        const vk::RenderingAttachmentInfo* stencil_attachment = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? &depth_attachment : nullptr;
-        const vk::RenderingInfo scene_rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, &depth_attachment, stencil_attachment};
-        command_buffer.beginRendering(scene_rendering_info);
-
-        if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Cannot render viewport with zero swapchain extent");
-        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const ImGuiIO& io = ImGui::GetIO();
-        if (!this->ui.viewport_known) throw std::runtime_error("Docked viewport window is not available");
-        if (this->ui.viewport_size[0] <= 0.0f || this->ui.viewport_size[1] <= 0.0f) throw std::runtime_error("Docked viewport size must be positive");
-        if (io.DisplaySize.x <= 0.0f || io.DisplaySize.y <= 0.0f) throw std::runtime_error("ImGui display size must be positive");
-
-        const float framebuffer_scale_x = static_cast<float>(this->swapchain.extent.width) / io.DisplaySize.x;
-        const float framebuffer_scale_y = static_cast<float>(this->swapchain.extent.height) / io.DisplaySize.y;
-        const float viewport_min_x      = (this->ui.viewport_position[0] - main_viewport->Pos.x) * framebuffer_scale_x;
-        const float viewport_min_y      = (this->ui.viewport_position[1] - main_viewport->Pos.y) * framebuffer_scale_y;
-        const float viewport_max_x      = (this->ui.viewport_position[0] + this->ui.viewport_size[0] - main_viewport->Pos.x) * framebuffer_scale_x;
-        const float viewport_max_y      = (this->ui.viewport_position[1] + this->ui.viewport_size[1] - main_viewport->Pos.y) * framebuffer_scale_y;
-        const std::int32_t viewport_x   = static_cast<std::int32_t>(std::floor(viewport_min_x));
-        const std::int32_t viewport_y   = static_cast<std::int32_t>(std::floor(viewport_min_y));
-        const std::int32_t viewport_r   = static_cast<std::int32_t>(std::ceil(viewport_max_x));
-        const std::int32_t viewport_b   = static_cast<std::int32_t>(std::ceil(viewport_max_y));
-        if (viewport_x < 0 || viewport_y < 0 || viewport_r > static_cast<std::int32_t>(this->swapchain.extent.width) || viewport_b > static_cast<std::int32_t>(this->swapchain.extent.height)) throw std::runtime_error("Docked viewport is outside the swapchain framebuffer");
-        if (viewport_r <= viewport_x || viewport_b <= viewport_y) throw std::runtime_error("Docked viewport framebuffer size must be positive");
-
-        const std::uint32_t scene_viewport_width  = static_cast<std::uint32_t>(viewport_r - viewport_x);
-        const std::uint32_t scene_viewport_height = static_cast<std::uint32_t>(viewport_b - viewport_y);
-        const vk::Viewport vulkan_viewport{static_cast<float>(viewport_x), static_cast<float>(viewport_y), static_cast<float>(scene_viewport_width), static_cast<float>(scene_viewport_height), 0.0f, 1.0f};
-        const vk::Rect2D scissor{{viewport_x, viewport_y}, {scene_viewport_width, scene_viewport_height}};
-        this->viewport.camera.set_window_size({scene_viewport_width, scene_viewport_height});
-        const float aspect = static_cast<float>(scene_viewport_width) / static_cast<float>(scene_viewport_height);
-        if (this->ui.auto_fit_pending) {
-            if (document.object_count() != 0) {
-                const BoundingBoxBounds bounds = document.world_bounds();
-                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, aspect);
-            }
-            this->ui.auto_fit_pending = false;
-        }
-        const std::array<float, 16> view_projection = this->viewport.camera.view_projection(aspect);
-
-        const std::array<float, 3> camera_position = this->viewport.camera.position();
-        const std::array<float, 3> camera_right    = this->viewport.camera.right();
-        const std::array<float, 3> camera_up       = this->viewport.camera.up();
-
-        command_buffer.setViewport(0, vulkan_viewport);
-        command_buffer.setScissor(0, scissor);
-        const RenderFrameContext render_frame_context{&this->context.physical_device, &this->context.device, &command_buffer, frame.frame_index, this->sync.frame_count, view_projection, camera_position, camera_right, camera_up};
-        document.render(render_frame_context);
-
-        if (this->viewport.show_grid) {
-            if (!*this->viewport.pipeline_layout || !*this->viewport.grid_pipeline || !*this->viewport.axis_pipeline) throw std::runtime_error("Viewport grid pipeline is not initialized");
-            if (this->viewport.descriptor_sets.size() != this->sync.frame_count || this->viewport.frame_resources.size() != this->sync.frame_count) throw std::runtime_error("Viewport grid per-frame resources are invalid");
-
-            const ViewportGridParameters parameters  = viewport_grid_parameters(this->viewport.camera, aspect, {static_cast<float>(scene_viewport_width), static_cast<float>(scene_viewport_height)}, this->viewport.grid_unit, this->viewport.grid_num_lines);
-            constexpr vk::BufferUsageFlags usage     = vk::BufferUsageFlagBits::eStorageBuffer;
-            constexpr vk::MemoryPropertyFlags memory = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-            auto& frame_resources                    = this->viewport.frame_resources.at(frame.frame_index);
-            ensure_buffer(this->context.physical_device, this->context.device, frame_resources.parameter_buffer, frame_resources.parameter_memory, frame_resources.parameter_size, sizeof(ViewportGridParameters), usage, memory);
-            write_buffer(frame_resources.parameter_memory, frame_resources.parameter_size, &parameters, sizeof(ViewportGridParameters));
-
-            const vk::DescriptorBufferInfo buffer_info{*frame_resources.parameter_buffer, 0, sizeof(ViewportGridParameters)};
-            const vk::DescriptorSet descriptor_set = *this->viewport.descriptor_sets[frame.frame_index];
-            const vk::WriteDescriptorSet write{descriptor_set, 0, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &buffer_info};
-            const std::array writes{write};
-            this->context.device.updateDescriptorSets(writes, {});
-
-            command_buffer.setViewport(0, vulkan_viewport);
-            command_buffer.setScissor(0, scissor);
-            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport.pipeline_layout, 0, vk::ArrayProxy<const vk::DescriptorSet>{descriptor_set}, {});
-
-            ViewportGridPushConstants push_constants{viewport_grid_flag_show_grid};
-            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.grid_pipeline);
-            command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, vk::ArrayProxy<const ViewportGridPushConstants>{1, &push_constants});
-            command_buffer.draw(12u * this->viewport.grid_num_lines, 1, 0, 0);
-
-            push_constants.grid_flag = viewport_grid_flag_axis_x | viewport_grid_flag_axis_y | viewport_grid_flag_axis_z;
-            command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->viewport.axis_pipeline);
-            command_buffer.pushConstants(*this->viewport.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, vk::ArrayProxy<const ViewportGridPushConstants>{1, &push_constants});
-            command_buffer.draw(6, 1, 0, 0);
-        }
+        const vk::RenderingInfo clear_rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &color_attachment, nullptr, nullptr};
+        command_buffer.beginRendering(clear_rendering_info);
         command_buffer.endRendering();
 
         ImGui::Render();
@@ -1081,1077 +1091,24 @@ namespace xayah {
         command_buffer.end();
     }
 
-    void Spectra::draw_main_menu(SpectraScene& document) {
-        ImGuiIO& io = ImGui::GetIO();
-        if (!io.WantTextInput) {
-            if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.scene_browser_visible = !this->ui.scene_browser_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.light_visible = !this->ui.light_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) this->ui.material_visible = !this->ui.material_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) this->ui.settings_visible = !this->ui.settings_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) this->ui.inspector_visible = !this->ui.inspector_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F7, false)) this->ui.environment_visible = !this->ui.environment_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_F8, false)) this->ui.tonemapper_visible = !this->ui.tonemapper_visible;
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) document.clear_selection();
-        }
-
-        float fit_aspect = this->viewport.camera.aspect_ratio();
-        if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) fit_aspect = this->ui.viewport_size[0] / this->ui.viewport_size[1];
-        if (!io.WantTextInput && io.KeyCtrl && io.KeyShift && document.object_count() != 0 && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-            const BoundingBoxBounds bounds = document.world_bounds();
-            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
-        } else if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && document.has_selection() && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-            const BoundingBoxBounds bounds = document.selected_world_bounds();
-            this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
-        }
-
-        if (!ImGui::BeginMainMenuBar()) return;
-
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem(ICON_MS_CLOSE " Exit", "Ctrl+Q")) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Edit")) {
-            ImGui::BeginDisabled(!document.has_selection());
-            if (ImGui::MenuItem(ICON_MS_CLOSE " Clear Selection", "Esc")) document.clear_selection();
-            ImGui::EndDisabled();
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem(ICON_MS_HOME " Reset Camera", "H")) this->viewport.camera.reset_home();
-            ImGui::BeginDisabled(document.object_count() == 0);
-            if (ImGui::MenuItem(ICON_MS_ZOOM_OUT " Fit Scene", "Ctrl+Shift+F")) {
-                const BoundingBoxBounds bounds = document.world_bounds();
-                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
-            }
-            ImGui::EndDisabled();
-            ImGui::BeginDisabled(!document.has_selection());
-            if (ImGui::MenuItem(ICON_MS_ZOOM_IN " Fit Object", "Ctrl+F")) {
-                const BoundingBoxBounds bounds = document.selected_world_bounds();
-                this->viewport.camera.fit_bounds(bounds.minimum, bounds.maximum, false, true, fit_aspect);
-            }
-            ImGui::EndDisabled();
-            ImGui::Separator();
-            ImGui::MenuItem(ICON_MS_VIEW_IN_AR " 3D Axis", nullptr, &this->ui.axis_visible);
-            ImGui::MenuItem(ICON_MS_GRID_ON " Grid", "G", &this->viewport.show_grid);
-            ImGui::MenuItem(ICON_MS_3D_ROTATION " Gizmo", "T", &this->ui.gizmo_visible);
-            ImGui::MenuItem(ICON_MS_STRAIGHTEN " Snap", nullptr, &this->ui.snap_enabled);
-            ImGui::MenuItem(ICON_MS_MOVIE " Timeline", nullptr, &this->ui.timeline_visible);
-            ImGui::Separator();
-            ImGui::MenuItem(ICON_MS_GRID_VIEW " Grid & Snap Settings...", nullptr, &this->ui.grid_settings_visible);
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Windows")) {
-            ImGui::MenuItem(ICON_MS_PHOTO_CAMERA " Camera", "F1", &this->ui.camera_visible);
-            ImGui::MenuItem(ICON_MS_ACCOUNT_TREE " Scene Browser", "F2", &this->ui.scene_browser_visible);
-            ImGui::MenuItem(ICON_MS_LIGHTBULB " Lights", "F3", &this->ui.light_visible);
-            ImGui::MenuItem(ICON_MS_PALETTE " Materials", "F4", &this->ui.material_visible);
-            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F5", &this->ui.settings_visible);
-            ImGui::MenuItem(ICON_MS_LIST_ALT " Inspector", "F6", &this->ui.inspector_visible);
-            ImGui::MenuItem(ICON_MS_PUBLIC " Environment", "F7", &this->ui.environment_visible);
-            ImGui::MenuItem(ICON_MS_TONALITY " Tonemapper", "F8", &this->ui.tonemapper_visible);
-            ImGui::Separator();
-            ImGui::MenuItem(ICON_MS_MONITORING " Render Output", nullptr, &this->ui.render_output_visible);
-            ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", nullptr, &this->ui.statistics_visible);
-            ImGui::MenuItem(ICON_MS_MOVIE " Timeline", nullptr, &this->ui.timeline_visible);
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Render")) {
-            const bool preview_selected = this->renderer.mode == RendererMode::spectra_preview;
-            const bool overlay_selected = this->renderer.mode == RendererMode::debug_overlay;
-            if (ImGui::MenuItem(ICON_MS_AUTO_AWESOME " Spectra Preview", nullptr, preview_selected)) this->renderer.mode = RendererMode::spectra_preview;
-            if (ImGui::MenuItem(ICON_MS_IMAGE " Debug Overlay", nullptr, overlay_selected)) this->renderer.mode = RendererMode::debug_overlay;
-            ImGui::EndMenu();
-        }
-
-        this->draw_menu_toolbar(document);
-        ImGui::EndMainMenuBar();
-    }
-
-    void Spectra::draw_menu_toolbar(SpectraScene& document) {
-        struct ToggleButton {
-            const char* icon;
-            const char* shortcut;
-            bool* visible;
-            const char* tooltip;
-        };
-
-        const std::array<ToggleButton, 8> window_toggles{{
-            {ICON_MS_PHOTO_CAMERA, "F1", &this->ui.camera_visible, "Camera"},
-            {ICON_MS_ACCOUNT_TREE, "F2", &this->ui.scene_browser_visible, "Scene Browser"},
-            {ICON_MS_LIGHTBULB, "F3", &this->ui.light_visible, "Lights"},
-            {ICON_MS_PALETTE, "F4", &this->ui.material_visible, "Materials"},
-            {ICON_MS_SETTINGS, "F5", &this->ui.settings_visible, "Settings"},
-            {ICON_MS_LIST_ALT, "F6", &this->ui.inspector_visible, "Inspector"},
-            {ICON_MS_PUBLIC, "F7", &this->ui.environment_visible, "Environment"},
-            {ICON_MS_TONALITY, "F8", &this->ui.tonemapper_visible, "Tonemapper"},
-        }};
-        const std::array<ToggleButton, 4> viewport_toggles{{
-            {ICON_MS_GRID_ON, "G", &this->viewport.show_grid, "Grid"},
-            {ICON_MS_3D_ROTATION, "T", &this->ui.gizmo_visible, "Gizmo"},
-            {ICON_MS_STRAIGHTEN, nullptr, &this->ui.snap_enabled, "Snap"},
-            {ICON_MS_MOVIE, nullptr, &this->ui.timeline_visible, "Timeline"},
-        }};
-
-        const float button_size  = ImGui::GetFrameHeight();
-        const float total_width  = 2.0f + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 2) * button_size + static_cast<float>(window_toggles.size() + viewport_toggles.size() + 5) * 2.0f;
-        const float window_width = ImGui::GetWindowWidth();
-        if (window_width <= total_width + 260.0f) throw std::runtime_error("Viewport is too small for main menu toolbar");
-
-        ImGui::SameLine(window_width * 0.5f - total_width * 0.5f);
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
-        for (const ToggleButton& toggle : window_toggles) {
-            ImGui::PushStyleColor(ImGuiCol_Button, *toggle.visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-            if (ImGui::Button(toggle.icon, ImVec2{button_size, button_size})) *toggle.visible = !*toggle.visible;
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle %s Window (%s)", toggle.tooltip, toggle.shortcut);
-            ImGui::SameLine(0.0f, 2.0f);
-        }
-
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
-        for (const ToggleButton& toggle : viewport_toggles) {
-            ImGui::PushStyleColor(ImGuiCol_Button, *toggle.visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-            if (ImGui::Button(toggle.icon, ImVec2{button_size, button_size})) *toggle.visible = !*toggle.visible;
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) {
-                if (toggle.shortcut == nullptr)
-                    ImGui::SetTooltip("Toggle %s", toggle.tooltip);
-                else
-                    ImGui::SetTooltip("Toggle %s (%s)", toggle.tooltip, toggle.shortcut);
-            }
-            ImGui::SameLine(0.0f, 2.0f);
-        }
-
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
-        const bool preview_mode = this->renderer.mode == RendererMode::spectra_preview;
-        ImGui::PushStyleColor(ImGuiCol_Button, preview_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button(ICON_MS_AUTO_AWESOME, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::spectra_preview;
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spectra preview");
-        ImGui::SameLine(0.0f, 2.0f);
-
-        const bool overlay_mode = this->renderer.mode == RendererMode::debug_overlay;
-        ImGui::PushStyleColor(ImGuiCol_Button, overlay_mode ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button(ICON_MS_IMAGE, ImVec2{button_size, button_size})) this->renderer.mode = RendererMode::debug_overlay;
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Debug overlay");
-
-        if (!document.has_selection() || !document.selected_entity().visible) return;
-        ImGui::SameLine();
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::translate ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button("T##MenuTranslate", ImVec2{button_size, button_size})) this->gizmo.operation = GizmoOperation::translate;
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate");
-        ImGui::SameLine(0.0f, 2.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::rotate ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button("R##MenuRotate", ImVec2{button_size, button_size})) this->gizmo.operation = GizmoOperation::rotate;
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate");
-        ImGui::SameLine(0.0f, 2.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, this->gizmo.operation == GizmoOperation::scale ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button("S##MenuScale", ImVec2{button_size, button_size})) this->gizmo.operation = GizmoOperation::scale;
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale");
-    }
-
-    void Spectra::draw_dockspace() {
-        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (main_viewport->WorkSize.x <= 640.0f || main_viewport->WorkSize.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
-
-        constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
-        const ImVec4 dockspace_window_background     = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{dockspace_window_background.x, dockspace_window_background.y, dockspace_window_background.z, 0.0f});
-        const ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, main_viewport, dockspace_flags);
-        ImGui::PopStyleColor();
-        if (dockspace_id == 0) throw std::runtime_error("Failed to create Spectra dockspace");
-        if (this->ui.dock_layout_initialized) return;
-
-        ImGui::DockBuilderRemoveNode(dockspace_id);
-        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace | dockspace_flags);
-        ImGui::DockBuilderSetNodePos(dockspace_id, main_viewport->WorkPos);
-        ImGui::DockBuilderSetNodeSize(dockspace_id, main_viewport->WorkSize);
-
-        ImGuiID center_id      = dockspace_id;
-        ImGuiID left_id        = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.25f, nullptr, &center_id);
-        ImGuiID left_bottom_id = ImGui::DockBuilderSplitNode(left_id, ImGuiDir_Down, 0.35f, nullptr, &left_id);
-        ImGuiID right_id       = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.25f, nullptr, &center_id);
-        ImGuiID inspector_id   = ImGui::DockBuilderSplitNode(right_id, ImGuiDir_Down, 0.35f, nullptr, &right_id);
-        ImGuiID bottom_id      = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.35f, nullptr, &center_id);
-        if (left_id == 0 || left_bottom_id == 0 || right_id == 0 || inspector_id == 0 || bottom_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra dock layout");
-
-        ImGui::DockBuilderDockWindow("Viewport", center_id);
-        ImGui::DockBuilderDockWindow("Camera", left_id);
-        ImGui::DockBuilderDockWindow("Settings", left_id);
-        ImGui::DockBuilderDockWindow("Tonemapper", left_bottom_id);
-        ImGui::DockBuilderDockWindow("Environment", left_bottom_id);
-        ImGui::DockBuilderDockWindow("Scene Browser", right_id);
-        ImGui::DockBuilderDockWindow("Lights", right_id);
-        ImGui::DockBuilderDockWindow("Materials", right_id);
-        ImGui::DockBuilderDockWindow("Inspector", inspector_id);
-        ImGui::DockBuilderDockWindow("Render Output", bottom_id);
-        ImGui::DockBuilderDockWindow("Statistics", bottom_id);
-        ImGui::DockBuilderDockWindow("Timeline", bottom_id);
-        ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
-        if (central_node == nullptr) throw std::runtime_error("Failed to find Spectra central dock node");
-        central_node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
-        ImGui::DockBuilderFinish(dockspace_id);
-        this->ui.dock_layout_initialized = true;
-    }
-
-    void Spectra::draw_viewport_window() {
-        constexpr ImGuiWindowFlags viewport_window_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
-        if (ImGui::Begin("Viewport", nullptr, viewport_window_flags)) {
-            const ImVec2 viewport_position = ImGui::GetCursorScreenPos();
-            const ImVec2 viewport_size     = ImGui::GetContentRegionAvail();
-            if (viewport_size.x <= 0.0f || viewport_size.y <= 0.0f) throw std::runtime_error("Viewport dock window has no drawable area");
-            this->ui.viewport_known    = true;
-            this->ui.viewport_position = {viewport_position.x, viewport_position.y};
-            this->ui.viewport_size     = {viewport_size.x, viewport_size.y};
-            this->ui.viewport_hovered  = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow);
-            this->ui.viewport_focused  = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
-            ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-        } else {
-            this->ui.viewport_known   = false;
-            this->ui.viewport_hovered = false;
-            this->ui.viewport_focused = false;
-        }
-        ImGui::End();
-        ImGui::PopStyleVar();
-    }
-
-    void Spectra::draw_camera_window(SpectraScene& document) {
-        if (!this->ui.camera_visible) return;
-        if (!ImGui::Begin("Camera", &this->ui.camera_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        CameraState camera   = this->viewport.camera.state();
-        bool changed         = false;
-        bool instant_changed = false;
-        if (ImGui::CollapsingHeader("Viewport Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
-            this->draw_camera_quick_actions(camera);
-            this->draw_camera_navigation();
-            ImGui::Separator();
-            instant_changed |= this->draw_camera_projection(camera);
-            changed |= this->draw_camera_position(camera);
-            changed |= this->draw_camera_other(camera);
-        }
-        if (changed || instant_changed) this->viewport.camera.set_camera(camera, instant_changed);
-        ImGui::Separator();
-        this->draw_scene_camera_section(document, true);
-
-        ImGui::End();
-    }
-
-    void Spectra::draw_camera_quick_actions(CameraState& camera) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-
-        if (ImGui::Button(ICON_MS_HOME)) {
-            this->viewport.camera.reset_home();
-            camera = this->viewport.camera.state();
-        }
-        camera_tooltip("Reset to home camera position");
-
-        const float help_button_size = ImGui::CalcTextSize(ICON_MS_HELP).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - help_button_size, 0.0f);
-        if (ImGui::Button(ICON_MS_HELP)) ImGui::OpenPopup("Camera Help");
-        camera_tooltip("Show camera controls help");
-
-        ImGui::PopStyleColor();
-
-        if (ImGui::BeginPopupModal("Camera Help", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("Camera Controls:");
-            ImGui::BulletText("Left Mouse: Orbit / Pan / Dolly depending on modifiers and mode");
-            ImGui::BulletText("Middle Mouse: Pan");
-            ImGui::BulletText("Right Mouse: Dolly");
-            ImGui::BulletText("Mouse Wheel: Dolly / Shift+Wheel: Zoom");
-            ImGui::Indent();
-            ImGui::TextColored(ImVec4{0.7f, 0.7f, 0.7f, 1.0f}, "Perspective: changes FOV");
-            ImGui::TextColored(ImVec4{0.7f, 0.7f, 0.7f, 1.0f}, "Orthographic: changes viewport size");
-            ImGui::Unindent();
-            ImGui::BulletText("WASD / Arrow Keys: Move camera");
-            ImGui::BulletText("Home: Reset camera");
-            ImGui::Spacing();
-            ImGui::TextUnformatted("Navigation Modes:");
-            ImGui::BulletText("Examine: Orbit around center point");
-            ImGui::BulletText("Fly: Free movement in 3D space");
-            ImGui::BulletText("Walk: Movement constrained to horizontal plane");
-            ImGui::Spacing();
-            ImGui::TextUnformatted("Projection Types:");
-            ImGui::BulletText("Perspective: Objects get smaller with distance");
-            ImGui::BulletText("Orthographic: Parallel projection, no size change");
-            if (ImGui::Button("Close", ImVec2{120.0f, 0.0f})) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-    }
-
-    void Spectra::draw_camera_navigation() {
-        ImGui::Separator();
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-
-        const CameraMode mode = this->viewport.camera.get_mode();
-        ImGui::PushStyleColor(ImGuiCol_Button, mode == CameraMode::examine ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button(ICON_MS_ORBIT)) this->viewport.camera.set_mode(CameraMode::examine);
-        ImGui::PopStyleColor();
-        camera_tooltip("Orbit around a point of interest");
-
-        ImGui::SameLine(0.0f, camera_button_spacing);
-        ImGui::PushStyleColor(ImGuiCol_Button, mode == CameraMode::fly ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button(ICON_MS_FLIGHT)) this->viewport.camera.set_mode(CameraMode::fly);
-        ImGui::PopStyleColor();
-        camera_tooltip("Fly: Free camera movement");
-
-        ImGui::SameLine(0.0f, camera_button_spacing);
-        ImGui::PushStyleColor(ImGuiCol_Button, mode == CameraMode::walk ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
-        if (ImGui::Button(ICON_MS_DIRECTIONS_WALK)) this->viewport.camera.set_mode(CameraMode::walk);
-        ImGui::PopStyleColor();
-        camera_tooltip("Walk: Stay on a horizontal plane");
-
-        const CameraMode current_mode = this->viewport.camera.get_mode();
-        if (current_mode == CameraMode::fly || current_mode == CameraMode::walk) {
-            if (begin_camera_property_table("##CameraSpeed")) {
-                float speed = this->viewport.camera.get_speed();
-                begin_camera_property_row("Speed");
-                if (ImGui::DragFloat("##Speed", &speed, 0.2f, 0.001f, 1000.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) this->viewport.camera.set_speed(speed);
-                camera_tooltip("Speed of camera movement");
-                ImGui::EndTable();
-            }
-        }
-    }
-
-    bool Spectra::draw_camera_projection(CameraState& camera) {
-        bool changed = false;
-        if (ImGui::TreeNodeEx("Projection", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (begin_camera_property_table("##CameraProjection")) {
-                begin_camera_property_row("Type");
-                bool is_perspective = camera.projection == CameraProjection::perspective;
-                if (ImGui::RadioButton("Perspective", is_perspective)) {
-                    if (!is_perspective) {
-                        this->viewport.camera.set_camera(camera, true);
-                        this->viewport.camera.set_projection(CameraProjection::perspective);
-                        camera = this->viewport.camera.state();
-                    }
-                }
-                is_perspective = camera.projection == CameraProjection::perspective;
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Orthographic", !is_perspective)) {
-                    if (is_perspective) {
-                        this->viewport.camera.set_camera(camera, true);
-                        this->viewport.camera.set_projection(CameraProjection::orthographic);
-                        camera = this->viewport.camera.state();
-                    }
-                }
-
-                if (camera.projection == CameraProjection::perspective) {
-                    begin_camera_property_row("FOV");
-                    if (ImGui::SliderFloat("##FOV", &camera.fov_degrees, 1.0f, 179.0f, "%.1f deg", ImGuiSliderFlags_Logarithmic)) changed = true;
-                    camera_tooltip("Field of view of the camera in degrees");
-                } else {
-                    begin_camera_property_row("View");
-                    const float distance              = this->viewport.camera.distance_to_center();
-                    const std::array<float, 3> center = camera.center;
-                    struct AxisView {
-                        const char* label;
-                        const char* tooltip;
-                        std::array<float, 3> direction;
-                        std::array<float, 3> up;
-                    };
-                    constexpr std::array<AxisView, 6> axis_views{{
-                        {"+X", "Right view", {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-                        {"-X", "Left view", {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-                        {"+Y", "Top view", {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
-                        {"-Y", "Bottom view", {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
-                        {"+Z", "Front view", {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}},
-                        {"-Z", "Back view", {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
-                    }};
-                    for (std::size_t index = 0; index < axis_views.size(); ++index) {
-                        if (index > 0) ImGui::SameLine();
-                        if (ImGui::Button(axis_views[index].label)) {
-                            camera.eye = {
-                                center[0] + axis_views[index].direction[0] * distance,
-                                center[1] + axis_views[index].direction[1] * distance,
-                                center[2] + axis_views[index].direction[2] * distance,
-                            };
-                            camera.up = axis_views[index].up;
-                            changed   = true;
-                        }
-                        camera_tooltip(axis_views[index].tooltip);
-                    }
-
-                    begin_camera_property_row("Mag");
-                    std::array<float, 2> magnitudes = camera.orthographic_magnitudes;
-                    if (ImGui::DragFloat2("##Mag", magnitudes.data(), 0.1f, 0.01f, 10000.0f, "%.3f")) {
-                        if (magnitudes[0] != camera.orthographic_magnitudes[0]) {
-                            camera.orthographic_magnitudes[0] = magnitudes[0];
-                            camera.orthographic_magnitudes[1] = magnitudes[0] / this->viewport.camera.aspect_ratio();
-                        } else if (magnitudes[1] != camera.orthographic_magnitudes[1]) {
-                            camera.orthographic_magnitudes[1] = magnitudes[1];
-                            camera.orthographic_magnitudes[0] = magnitudes[1] * this->viewport.camera.aspect_ratio();
-                        }
-                        changed = true;
-                    }
-                    camera_tooltip("Orthographic half-width and half-height");
-                }
-
-                begin_camera_property_row("Z-Clip");
-                if (ImGui::DragFloat2("##ZClip", camera.near_far.data(), 20000.0f, 0.00001f, 1000000000.0f, "%.6f", ImGuiSliderFlags_Logarithmic)) changed = true;
-                camera_tooltip("Near and far clip planes for depth buffer");
-                ImGui::EndTable();
-            }
-            ImGui::TreePop();
-        }
-        return changed;
-    }
-
-    bool Spectra::draw_camera_position(CameraState& camera) {
-        bool changed = false;
-        if (ImGui::TreeNodeEx("Position", ImGuiTreeNodeFlags_None)) {
-            CameraState edited = camera;
-            bool local_changed = false;
-            if (begin_camera_property_table("##CameraPosition")) {
-                begin_camera_property_row("Eye");
-                local_changed |= ImGui::InputFloat3("##Eye", edited.eye.data(), "%.3f");
-                begin_camera_property_row("Center");
-                local_changed |= ImGui::InputFloat3("##Center", edited.center.data(), "%.3f");
-                begin_camera_property_row("Up");
-                local_changed |= ImGui::InputFloat3("##Up", edited.up.data(), "%.3f");
-                ImGui::EndTable();
-            }
-            if (!this->viewport.camera.is_animating() && local_changed) {
-                camera.eye    = edited.eye;
-                camera.center = edited.center;
-                camera.up     = edited.up;
-                changed       = true;
-            }
-            ImGui::TreePop();
-        }
-        return changed;
-    }
-
-    bool Spectra::draw_camera_other(CameraState& camera) {
-        bool changed = false;
-        if (ImGui::TreeNodeEx("Other", ImGuiTreeNodeFlags_None)) {
-            if (begin_camera_property_table("##CameraOther")) {
-                begin_camera_property_row("Up vector");
-                const bool y_is_up = camera.up[0] == 0.0f && camera.up[1] == 1.0f && camera.up[2] == 0.0f;
-                if (ImGui::RadioButton("Y-up", y_is_up)) {
-                    camera.up = {0.0f, 1.0f, 0.0f};
-                    changed   = true;
-                }
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Z-up", !y_is_up)) {
-                    camera.up = {0.0f, 0.0f, 1.0f};
-                    changed   = true;
-                }
-
-                begin_camera_property_row("Transition");
-                float duration = this->viewport.camera.get_animation_duration();
-                if (ImGui::SliderFloat("##Transition", &duration, 0.0f, 2.0f, "%.2fs")) this->viewport.camera.set_animation_duration(duration);
-                camera_tooltip("Transition duration of camera movement");
-                ImGui::EndTable();
-            }
-            ImGui::TreePop();
-        }
-        return changed;
-    }
-
-    void Spectra::draw_scene_camera_section(SpectraScene& document, const bool editing_enabled) {
-        if (!ImGui::CollapsingHeader("Scene Camera", ImGuiTreeNodeFlags_DefaultOpen)) return;
-        const std::vector<std::uint64_t> camera_ids = document.entity_ids(SpectraSceneEntityKind::camera);
-        if (camera_ids.empty()) {
-            ImGui::TextDisabled("No Scene camera element");
-            return;
-        }
-
-        std::uint64_t camera_id = camera_ids.front();
-        if (document.has_selection() && document.selected_entity().kind == SpectraSceneEntityKind::camera) camera_id = document.selected_entity().id;
-        const SpectraSceneEntity& current_camera = document.entity_by_id(camera_id);
-        const std::string current_label = scene_entity_combo_label(current_camera);
-        if (ImGui::BeginCombo("Camera", current_label.c_str())) {
-            for (const std::uint64_t id : camera_ids) {
-                const SpectraSceneEntity& camera = document.entity_by_id(id);
-                const std::string label = scene_entity_combo_label(camera);
-                const bool selected = id == camera_id;
-                if (ImGui::Selectable(label.c_str(), selected)) {
-                    document.select_entity(id);
-                    camera_id = id;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-
-        const SpectraSceneEntity& camera = document.entity_by_id(camera_id);
-        ImGui::TextDisabled("Type: %s", camera.detail.empty() ? "camera" : camera.detail.c_str());
-        if (ImGui::Button(ICON_MS_PHOTO_CAMERA " Select Scene Camera")) document.select_entity(camera_id);
-        if (ImGui::Button(ICON_MS_ZOOM_IN " Fit Viewport From Scene Camera")) this->fit_viewport_from_scene_camera(document, camera_id);
-        ImGui::BeginDisabled(!editing_enabled);
-        if (ImGui::Button(ICON_MS_EDIT " Write Viewport To Scene Camera")) this->write_viewport_to_scene_camera(document, camera_id);
-        ImGui::EndDisabled();
-        if (!editing_enabled) ImGui::TextDisabled("Scene camera editing is locked while final render is running");
-
-        if (ImGui::CollapsingHeader("Scene Camera Transform", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_entity_transform_ui(camera_id, editing_enabled);
-        if (ImGui::CollapsingHeader("Scene Camera Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_entity_parameters_ui(camera_id, editing_enabled);
-    }
-
-    void Spectra::fit_viewport_from_scene_camera(const SpectraScene& document, const std::uint64_t camera_id) {
-        const SpectraSceneEntity& camera = document.entity_by_id(camera_id);
-        if (camera.kind != SpectraSceneEntityKind::camera) throw std::runtime_error("Cannot fit viewport from a non-camera Spectra element");
-        CameraState state = document.camera_by_entity_id(camera_id).state;
-        this->viewport.camera.set_camera(state, true);
-    }
-
-    void Spectra::write_viewport_to_scene_camera(SpectraScene& document, const std::uint64_t camera_id) {
-        SpectraSceneEntity& camera = document.entity_by_id(camera_id);
-        if (camera.kind != SpectraSceneEntityKind::camera) throw std::runtime_error("Cannot write viewport state to a non-camera Spectra element");
-        const CameraState& state = this->viewport.camera.state();
-        camera.transform = viewport_camera_to_scene_camera_transform(state);
-        document.camera_by_entity_id(camera_id).state = state;
-        document.mark_camera_edited(camera_id);
-    }
-
-    void Spectra::draw_scene_browser(SpectraScene& document) {
-        if (!this->ui.scene_browser_visible) return;
-        if (!ImGui::Begin("Scene Browser", &this->ui.scene_browser_visible)) {
-            ImGui::End();
-            return;
-        }
-        document.draw_scene_browser_ui();
-        ImGui::End();
-    }
-
-    void Spectra::draw_light_window(SpectraScene& document) {
-        if (!this->ui.light_visible) return;
-        if (!ImGui::Begin("Lights", &this->ui.light_visible)) {
-            ImGui::End();
-            return;
-        }
-        const std::vector<std::uint64_t> light_ids = document.entity_ids(SpectraSceneEntityKind::light);
-        if (light_ids.empty()) {
-            ImGui::TextDisabled("No Spectra light element");
-            ImGui::End();
-            return;
-        }
-
-        std::uint64_t light_id = light_ids.front();
-        if (document.has_selection() && document.selected_entity().kind == SpectraSceneEntityKind::light) light_id = document.selected_entity().id;
-        const SpectraSceneEntity& current_light = document.entity_by_id(light_id);
-        const std::string current_label = scene_entity_combo_label(current_light);
-        if (ImGui::BeginCombo("Light", current_label.c_str())) {
-            for (const std::uint64_t id : light_ids) {
-                const SpectraSceneEntity& light = document.entity_by_id(id);
-                const std::string label = scene_entity_combo_label(light);
-                const bool selected = id == light_id;
-                if (ImGui::Selectable(label.c_str(), selected)) {
-                    document.select_entity(id);
-                    light_id = id;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-
-        SpectraSceneEntity& light = document.entity_by_id(light_id);
-        ImGui::TextDisabled("Type: %s", light.detail.empty() ? "light" : light.detail.c_str());
-        if (ImGui::Button(ICON_MS_LIGHTBULB " Select Light")) document.select_entity(light_id);
-        const bool editing_enabled = true;
-        ImGui::BeginDisabled(!editing_enabled);
-        if (ImGui::Checkbox("Visible", &light.visible)) document.mark_entity_visibility_edited(light_id);
-        ImGui::EndDisabled();
-        if (!editing_enabled) ImGui::TextDisabled("Light editing is locked while final render is running");
-        if (ImGui::CollapsingHeader("Light Transform", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_entity_transform_ui(light_id, editing_enabled);
-        if (ImGui::CollapsingHeader("Light Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_entity_parameters_ui(light_id, editing_enabled);
-        ImGui::End();
-    }
-
-    void Spectra::draw_material_window(SpectraScene& document) {
-        if (!this->ui.material_visible) return;
-        if (!ImGui::Begin("Materials", &this->ui.material_visible)) {
-            ImGui::End();
-            return;
-        }
-        const bool editing_enabled = true;
-        if (!editing_enabled) ImGui::TextDisabled("Material editing is locked while final render is running");
-
-        if (ImGui::BeginTabBar("SpectraMaterialTextureTabs")) {
-            if (ImGui::BeginTabItem("Materials")) {
-                const std::vector<std::uint64_t> material_ids = document.entity_ids(SpectraSceneEntityKind::material);
-                if (material_ids.empty()) {
-                    ImGui::TextDisabled("No Spectra material element");
-                } else {
-                    std::uint64_t material_id = material_ids.front();
-                    if (document.has_selection() && document.selected_entity().kind == SpectraSceneEntityKind::material) material_id = document.selected_entity().id;
-                    const SpectraSceneEntity& current_material = document.entity_by_id(material_id);
-                    const std::string current_label = scene_entity_combo_label(current_material);
-                    if (ImGui::BeginCombo("Material", current_label.c_str())) {
-                        for (const std::uint64_t id : material_ids) {
-                            const SpectraSceneEntity& material = document.entity_by_id(id);
-                            const std::string label = scene_entity_combo_label(material);
-                            const bool selected = id == material_id;
-                            if (ImGui::Selectable(label.c_str(), selected)) {
-                                document.select_entity(id);
-                                material_id = id;
-                            }
-                            if (selected) ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    const SpectraSceneEntity& material = document.entity_by_id(material_id);
-                    ImGui::TextDisabled("Type: %s", material.detail.empty() ? "material" : material.detail.c_str());
-                    if (ImGui::Button(ICON_MS_PALETTE " Select Material")) document.select_entity(material_id);
-                    if (ImGui::CollapsingHeader("Material Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_entity_parameters_ui(material_id, editing_enabled);
-                }
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Textures")) {
-                const std::vector<std::uint64_t> texture_ids = document.entity_ids(SpectraSceneEntityKind::texture);
-                if (texture_ids.empty()) {
-                    ImGui::TextDisabled("No Spectra texture element");
-                } else {
-                    std::uint64_t texture_id = texture_ids.front();
-                    if (document.has_selection() && document.selected_entity().kind == SpectraSceneEntityKind::texture) texture_id = document.selected_entity().id;
-                    const SpectraSceneEntity& current_texture = document.entity_by_id(texture_id);
-                    const std::string current_label = scene_entity_combo_label(current_texture);
-                    if (ImGui::BeginCombo("Texture", current_label.c_str())) {
-                        for (const std::uint64_t id : texture_ids) {
-                            const SpectraSceneEntity& texture = document.entity_by_id(id);
-                            const std::string label = scene_entity_combo_label(texture);
-                            const bool selected = id == texture_id;
-                            if (ImGui::Selectable(label.c_str(), selected)) {
-                                document.select_entity(id);
-                                texture_id = id;
-                            }
-                            if (selected) ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    const SpectraSceneEntity& texture = document.entity_by_id(texture_id);
-                    ImGui::TextDisabled("Type: %s", texture.detail.empty() ? "texture" : texture.detail.c_str());
-                    if (ImGui::Button(ICON_MS_TEXTURE " Select Texture")) document.select_entity(texture_id);
-                    if (ImGui::CollapsingHeader("Texture Parameters", ImGuiTreeNodeFlags_DefaultOpen)) document.draw_entity_parameters_ui(texture_id, editing_enabled);
-                }
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-        ImGui::End();
-    }
-
-    void Spectra::draw_settings_window() {
-        if (!this->ui.settings_visible) return;
-        if (!ImGui::Begin("Settings", &this->ui.settings_visible)) {
-            ImGui::End();
-            return;
-        }
-        const bool preview_selected = this->renderer.mode == RendererMode::spectra_preview;
-        const bool overlay_selected = this->renderer.mode == RendererMode::debug_overlay;
-        if (ImGui::BeginCombo("Active Renderer", preview_selected ? "Spectra Preview" : "Debug Overlay")) {
-            if (ImGui::Selectable("Spectra Preview", preview_selected)) this->renderer.mode = RendererMode::spectra_preview;
-            if (preview_selected) ImGui::SetItemDefaultFocus();
-            if (ImGui::Selectable("Debug Overlay", overlay_selected)) this->renderer.mode = RendererMode::debug_overlay;
-            if (overlay_selected) ImGui::SetItemDefaultFocus();
-            ImGui::EndCombo();
-        }
-        ImGui::Separator();
-        ImGui::Checkbox("Gizmo", &this->ui.gizmo_visible);
-        ImGui::Checkbox("3D Axis", &this->ui.axis_visible);
-        ImGui::End();
-    }
-
-    void Spectra::draw_grid_settings_window() {
-        if (!this->ui.grid_settings_visible) return;
-        if (!ImGui::Begin(ICON_MS_GRID_VIEW " Grid & Snap", &this->ui.grid_settings_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        ImGui::DragFloat("Grid Unit", &this->viewport.grid_unit, 0.01f, 0.001f, 1000.0f, "%.3f");
-        ImGui::Checkbox("Enable Snapping", &this->ui.snap_enabled);
-        ImGui::BeginDisabled(!this->ui.snap_enabled);
-        ImGui::Text("Translation %.3f (= Grid Unit)", this->viewport.grid_unit);
-        ImGui::DragFloat("Rotation (deg)", &this->ui.snap_rotation_degrees, 0.1f, 0.001f, 360.0f, "%.3f");
-        ImGui::DragFloat("Scale", &this->ui.snap_scale, 0.001f, 0.001f, 100.0f, "%.3f");
-        ImGui::EndDisabled();
-        if (this->viewport.grid_unit <= 0.0f) throw std::runtime_error("Grid unit must stay positive");
-        if (this->ui.snap_rotation_degrees <= 0.0f) throw std::runtime_error("Snap rotation must stay positive");
-        if (this->ui.snap_scale <= 0.0f) throw std::runtime_error("Snap scale must stay positive");
-        ImGui::End();
-    }
-
-    void Spectra::start_render_output_job(SpectraScene& document) {
-        const auto started = std::chrono::steady_clock::now();
-        try {
-            if (this->renderer.resolution[0] <= 0 || this->renderer.resolution[1] <= 0) throw std::runtime_error("Snapshot resolution must be positive");
-            if (this->renderer.samples_per_pixel <= 0) throw std::runtime_error("Snapshot SPP must be positive");
-            if (this->renderer.thread_count <= 0) throw std::runtime_error("Snapshot thread count must be positive");
-
-            document.validate();
-            RenderSceneSnapshot snapshot = document.create_render_snapshot();
-            const auto finished = std::chrono::steady_clock::now();
-            this->render_output.has_result             = true;
-            this->render_output.last_backend           = this->renderer.backend;
-            this->render_output.last_resolution        = this->renderer.resolution;
-            this->render_output.last_samples_per_pixel = this->renderer.samples_per_pixel;
-            this->render_output.last_thread_count      = this->renderer.thread_count;
-            this->render_output.last_seconds           = std::chrono::duration<double>{finished - started}.count();
-            this->render_output.last_output_path       = "SpectraPathTracer pending";
-            this->render_output.status                 = "Snapshot Ready";
-            this->render_output.message                = std::format("{} triangles, {} spheres, {} disks, {} materials, {} lights", snapshot.triangles.size(), snapshot.spheres.size(), snapshot.disks.size(), snapshot.materials.size(), snapshot.lights.size());
-        } catch (const std::exception& error) {
-            const auto finished = std::chrono::steady_clock::now();
-            this->render_output.has_result       = false;
-            this->render_output.last_seconds     = std::chrono::duration<double>{finished - started}.count();
-            this->render_output.last_output_path = {};
-            this->render_output.status           = "Failed";
-            this->render_output.message          = error.what();
-        }
-    }
-
-    void Spectra::draw_render_output(SpectraScene& document) {
-        if (!this->ui.render_output_visible) return;
-        if (!ImGui::Begin("Render Output", &this->ui.render_output_visible)) {
-            ImGui::End();
-            return;
-        }
-        if (ImGui::CollapsingHeader("Spectra Snapshot", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::LabelText("Backend", "%s", spectra_backend_label(this->renderer.backend));
-            ImGui::InputInt2("Resolution", this->renderer.resolution.data());
-            ImGui::InputInt("SPP", &this->renderer.samples_per_pixel);
-            ImGui::InputInt("Threads", &this->renderer.thread_count);
-            ImGui::InputText("Output", this->renderer.output_path.data(), this->renderer.output_path.size());
-        }
-        ImGui::Separator();
-        if (ImGui::Button(ICON_MS_AUTO_AWESOME " Validate Snapshot")) this->start_render_output_job(document);
-        ImGui::Separator();
-        if (ImGui::BeginTable("RenderOutputTable", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 112.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Status");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(ImVec4{0.58f, 0.76f, 0.96f, 1.0f}, "%s", this->render_output.status.c_str());
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Backend");
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(this->render_output.has_result ? spectra_backend_label(this->render_output.last_backend) : spectra_backend_label(this->renderer.backend));
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Resolution");
-            ImGui::TableNextColumn();
-            const std::array<int, 2> resolution = this->render_output.has_result ? this->render_output.last_resolution : this->renderer.resolution;
-            ImGui::Text("%d x %d", resolution[0], resolution[1]);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("SPP");
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", this->render_output.has_result ? this->render_output.last_samples_per_pixel : this->renderer.samples_per_pixel);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Threads");
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", this->render_output.has_result ? this->render_output.last_thread_count : this->renderer.thread_count);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Output");
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", this->render_output.has_result ? this->render_output.last_output_path.c_str() : this->renderer.output_path.data());
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Seconds");
-            ImGui::TableNextColumn();
-            if (this->render_output.has_result) ImGui::Text("%.3f", this->render_output.last_seconds); else ImGui::TextDisabled("-");
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Message");
-            ImGui::TableNextColumn();
-            const ImVec4 message_color = this->render_output.status == "Failed" ? ImVec4{0.95f, 0.52f, 0.42f, 1.0f} : ImVec4{0.58f, 0.76f, 0.96f, 1.0f};
-            ImGui::TextColored(message_color, "%s", this->render_output.message.c_str());
-            ImGui::EndTable();
-        }
-        ImGui::End();
-    }
-
-    void Spectra::draw_object_inspector(SpectraScene& document) {
-        if (!this->ui.inspector_visible) return;
-        if (!ImGui::Begin("Inspector", &this->ui.inspector_visible)) {
-            ImGui::End();
-            return;
-        }
-        document.draw_selected_inspector_ui(true);
-        ImGui::End();
-    }
-
-    void Spectra::draw_environment_window() {
-        if (!this->ui.environment_visible) return;
-        if (!ImGui::Begin("Environment", &this->ui.environment_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        const char* environment_label = this->ui.environment_type == 0 ? "Sky" : "HDR";
-        if (ImGui::BeginCombo("Environment Type", environment_label)) {
-            const bool sky_selected = this->ui.environment_type == 0;
-            if (ImGui::Selectable("Sky", sky_selected)) this->ui.environment_type = 0;
-            if (sky_selected) ImGui::SetItemDefaultFocus();
-            const bool hdr_selected = this->ui.environment_type == 1;
-            if (ImGui::Selectable("HDR", hdr_selected)) this->ui.environment_type = 1;
-            if (hdr_selected) ImGui::SetItemDefaultFocus();
-            ImGui::EndCombo();
-        }
-        ImGui::Checkbox("Solid Color", &this->ui.solid_background);
-        if (this->ui.solid_background) ImGui::ColorEdit3("Background", this->ui.background_color.data());
-        ImGui::SliderFloat("Intensity", &this->ui.environment_intensity, 0.0f, 100.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
-        ImGui::SliderFloat("Rotation", &this->ui.environment_rotation_degrees, -360.0f, 360.0f, "%.1f deg");
-        ImGui::End();
-    }
-
-    void Spectra::draw_tonemapper_window() {
-        if (!this->ui.tonemapper_visible) return;
-        if (!ImGui::Begin("Tonemapper", &this->ui.tonemapper_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        ImGui::Checkbox("ACES", &this->ui.tonemap_aces);
-        ImGui::SliderFloat("Exposure", &this->ui.tonemap_exposure, -8.0f, 8.0f, "%.2f");
-        ImGui::SliderFloat("Gamma", &this->ui.tonemap_gamma, 0.8f, 4.0f, "%.2f");
-        if (this->ui.tonemap_gamma <= 0.0f) throw std::runtime_error("Tonemapper gamma must be positive");
-        ImGui::End();
-    }
-
-    void Spectra::draw_statistics_window(SpectraScene& document) {
-        if (!this->ui.statistics_visible) return;
-        if (!ImGui::Begin("Statistics", &this->ui.statistics_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        const float fps = ImGui::GetIO().Framerate;
-        if (ImGui::BeginTable("StatisticsTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 128.0f);
-            ImGui::TableHeadersRow();
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Framebuffer");
-            ImGui::TableNextColumn();
-            ImGui::Text("%u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Swapchain Images");
-            ImGui::TableNextColumn();
-            ImGui::Text("%u", static_cast<std::uint32_t>(this->swapchain.images.size()));
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Frame Slot");
-            ImGui::TableNextColumn();
-            ImGui::Text("%u / %u", this->sync.frame_index, this->sync.frame_count);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Spectra Objects");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", document.object_count());
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Cameras");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", document.stats().cameras);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Geometry");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", document.stats().geometries);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Materials");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", document.stats().materials);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Textures");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", document.stats().textures);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Lights");
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu", document.stats().lights);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Session");
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(this->session.mode_label.c_str());
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("FPS");
-            ImGui::TableNextColumn();
-            ImGui::Text("%.1f", fps);
-            ImGui::EndTable();
-        }
-        ImGui::End();
-    }
-
-    void Spectra::draw_timeline_window() {
-        if (!this->ui.timeline_visible) return;
-        if (!ImGui::Begin("Timeline", &this->ui.timeline_visible)) {
-            ImGui::End();
-            return;
-        }
-
-        if (!this->timeline.visible) {
-            ImGui::TextDisabled("Timeline is idle");
-            ImGui::End();
-            return;
-        }
-        if (this->timeline.frame_min > this->timeline.frame_max) throw std::runtime_error("Invalid timeline frame range");
-        if (this->timeline.available_frame_max < this->timeline.frame_min || this->timeline.available_frame_max > this->timeline.frame_max) throw std::runtime_error("Invalid timeline available frame range");
-        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-        this->timeline.first_frame   = std::clamp(this->timeline.first_frame, this->timeline.frame_min, this->timeline.frame_max);
-
-        class TimelineSequence final : public ImSequencer::SequenceInterface {
-        public:
-            int frame_min{0};
-            int frame_max{0};
-            int available_frame_max{0};
-            int row_start_frame{0};
-            int row_end_frame{0};
-
-            TimelineSequence(const int frame_min, const int frame_max, const int available_frame_max) : frame_min{frame_min}, frame_max{frame_max}, available_frame_max{available_frame_max}, row_start_frame{frame_min}, row_end_frame{available_frame_max} {}
-
-            int GetFrameMin() const override {
-                return this->frame_min;
-            }
-
-            int GetFrameMax() const override {
-                return this->frame_max;
-            }
-
-            int GetItemCount() const override {
-                return 1;
-            }
-
-            const char* GetItemLabel(const int index) const override {
-                if (index != 0) throw std::runtime_error("Timeline row index out of range");
-                return "Frame";
-            }
-
-            void Get(const int index, int** start, int** end, int* type, unsigned int* color) override {
-                if (index != 0) throw std::runtime_error("Timeline row index out of range");
-                if (start != nullptr) *start = &this->row_start_frame;
-                if (end != nullptr) *end = &this->row_end_frame;
-                if (type != nullptr) *type = 0;
-                if (color != nullptr) *color = 0x4E79A7;
-            }
-        };
-
-        TimelineSequence sequence{this->timeline.frame_min, this->timeline.frame_max, this->timeline.available_frame_max};
-        constexpr int sequence_options = ImSequencer::SEQUENCER_CHANGE_FRAME;
-        ImSequencer::Sequencer(&sequence, &this->timeline.current_frame, nullptr, nullptr, &this->timeline.first_frame, sequence_options);
-        this->timeline.current_frame = std::clamp(this->timeline.current_frame, this->timeline.frame_min, this->timeline.frame_max);
-        ImGui::End();
-    }
-
-    void Spectra::draw_transform_gizmo(SpectraScene& document) {
-        if (!this->ui.gizmo_visible) {
-            this->gizmo.using_gizmo = false;
-            return;
-        }
-        if (!this->ui.viewport_known) {
-            this->gizmo.using_gizmo = false;
-            return;
-        }
-        if (!document.has_selection()) {
-            this->gizmo.using_gizmo = false;
-            return;
-        }
-        SpectraSceneEntity& selected_entity = document.selected_entity();
-        if (!selected_entity.visible || (selected_entity.kind != SpectraSceneEntityKind::geometry && selected_entity.kind != SpectraSceneEntityKind::light)) {
-            this->gizmo.using_gizmo = false;
-            return;
-        }
-
-        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float gizmo_width  = this->ui.viewport_size[0];
-        const float gizmo_height = this->ui.viewport_size[1];
-        if (gizmo_width <= 0.0f || gizmo_height <= 0.0f) throw std::runtime_error("Viewport is too small for transform gizmo");
-
-        constexpr ImGuiWindowFlags gizmo_window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
-        ImGui::SetNextWindowViewport(main_viewport->ID);
-        ImGui::SetNextWindowPos(ImVec2{this->ui.viewport_position[0], this->ui.viewport_position[1]}, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2{gizmo_width, gizmo_height}, ImGuiCond_Always);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::Begin("Viewport Gizmo", nullptr, gizmo_window_flags);
-
-        ImGuizmo::SetOrthographic(this->viewport.camera.orthographic());
-        ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-        ImGuizmo::SetRect(this->ui.viewport_position[0], this->ui.viewport_position[1], gizmo_width, gizmo_height);
-
-        ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
-        if (this->gizmo.operation == GizmoOperation::rotate) operation = ImGuizmo::ROTATE;
-        if (this->gizmo.operation == GizmoOperation::scale) operation = ImGuizmo::SCALE;
-
-        ImGuizmo::MODE mode = this->gizmo.mode == GizmoMode::world ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
-        if (this->gizmo.operation == GizmoOperation::scale) mode = ImGuizmo::LOCAL;
-
-        const float aspect                     = gizmo_width / gizmo_height;
-        const std::array<float, 16> view       = this->viewport.camera.view_matrix();
-        const std::array<float, 16> projection = this->viewport.camera.gizmo_projection_matrix(aspect);
-        std::array<float, 16> matrix           = selected_entity.transform;
-        std::array<float, 3> snap_values{};
-        const float* snap = nullptr;
-        if (this->ui.snap_enabled) {
-            if (this->gizmo.operation == GizmoOperation::translate) snap_values = {this->viewport.grid_unit, this->viewport.grid_unit, this->viewport.grid_unit};
-            if (this->gizmo.operation == GizmoOperation::rotate) snap_values = {this->ui.snap_rotation_degrees, this->ui.snap_rotation_degrees, this->ui.snap_rotation_degrees};
-            if (this->gizmo.operation == GizmoOperation::scale) snap_values = {this->ui.snap_scale, this->ui.snap_scale, this->ui.snap_scale};
-            snap = snap_values.data();
-        }
-        if (ImGuizmo::Manipulate(view.data(), projection.data(), operation, mode, matrix.data(), nullptr, snap)) {
-            selected_entity.transform = matrix;
-            document.mark_entity_transform_edited(selected_entity.id);
-        }
-        this->gizmo.using_gizmo = ImGuizmo::IsUsingAny() || ImGuizmo::IsOver();
-
-        ImGui::End();
-        ImGui::PopStyleVar(2);
-    }
-
-    void Spectra::end_frame(FrameState& frame, SpectraScene& document) {
+    void Spectra::end_frame(FrameState& frame) {
         if (this->imgui.viewports) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }
 
-        const vk::SemaphoreSubmitInfo wait_semaphore_info{*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
+        std::array<vk::SemaphoreSubmitInfo, 2> wait_semaphore_infos{
+            vk::SemaphoreSubmitInfo{*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands},
+            vk::SemaphoreSubmitInfo{},
+        };
+        std::uint32_t wait_semaphore_count = 1;
+        if (this->pbrt_interactive != nullptr) {
+            wait_semaphore_infos[1] = vk::SemaphoreSubmitInfo{this->pbrt_interactive->active_cuda_complete_semaphore(), 0, vk::PipelineStageFlagBits2::eTransfer};
+            wait_semaphore_count    = 2;
+        }
         const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
         const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[frame.image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
-        const vk::SubmitInfo2 submit_info{{}, 1, &wait_semaphore_info, 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
+        const vk::SubmitInfo2 submit_info{{}, wait_semaphore_count, wait_semaphore_infos.data(), 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
         this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame.frame_index]);
 
         const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
@@ -2181,137 +1138,178 @@ namespace xayah {
             } else
                 throw;
         }
-        if (frame.recreate_after_present) this->recreate_swapchain(document);
-        if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime, document);
+        if (frame.recreate_after_present) this->recreate_swapchain();
+        if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
 
-    void Spectra::create_viewport_pipeline() {
-        if (!*this->context.physical_device) throw std::runtime_error("Cannot create viewport pipeline without a physical device");
-        if (!*this->context.device) throw std::runtime_error("Cannot create viewport pipeline without a Vulkan device");
-        if (this->swapchain.format == vk::Format::eUndefined || this->swapchain.depth_format == vk::Format::eUndefined) throw std::runtime_error("Cannot create viewport pipeline without swapchain formats");
-        if (this->sync.frame_count == 0) throw std::runtime_error("Cannot create viewport grid without frames in flight");
+    void Spectra::draw_main_menu() {
+        ImGuiIO& io = ImGui::GetIO();
+        if (!io.WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.session_visible = !this->ui.session_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) this->ui.settings_visible = !this->ui.settings_visible;
+            if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) this->ui.statistics_visible = !this->ui.statistics_visible;
+        }
 
-        constexpr std::array bindings{
-            vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
-        };
-        const vk::DescriptorSetLayoutCreateInfo descriptor_layout_create_info{{}, static_cast<std::uint32_t>(bindings.size()), bindings.data()};
-        this->viewport.descriptor_layout = vk::raii::DescriptorSetLayout{this->context.device, descriptor_layout_create_info};
-
-        const vk::DescriptorSetLayout descriptor_layout_handle = *this->viewport.descriptor_layout;
-        constexpr vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(ViewportGridPushConstants)};
-        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1, &descriptor_layout_handle, 1, &push_constant_range};
-        this->viewport.pipeline_layout = vk::raii::PipelineLayout{this->context.device, pipeline_layout_create_info};
-
-        const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eStorageBuffer, this->sync.frame_count};
-        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->sync.frame_count, 1, &pool_size};
-        this->viewport.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
-
-        const std::vector descriptor_layouts(this->sync.frame_count, descriptor_layout_handle);
-        const vk::DescriptorSetAllocateInfo allocate_info{*this->viewport.descriptor_pool, this->sync.frame_count, descriptor_layouts.data()};
-        this->viewport.descriptor_sets = vk::raii::DescriptorSets{this->context.device, allocate_info};
-        if (this->viewport.descriptor_sets.size() != this->sync.frame_count) throw std::runtime_error("Failed to allocate viewport grid descriptor sets");
-        this->viewport.frame_resources.clear();
-        this->viewport.frame_resources.resize(this->sync.frame_count);
-
-        const std::vector<std::uint32_t> vertex_code   = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "gizmo_grid.vert.spv");
-        const std::vector<std::uint32_t> fragment_code = read_spirv(std::filesystem::path{SPECTRA_SHADER_DIR} / "gizmo_grid.frag.spv");
-        const vk::ShaderModuleCreateInfo vertex_module_create_info{{}, vertex_code.size() * sizeof(std::uint32_t), vertex_code.data()};
-        const vk::ShaderModuleCreateInfo fragment_module_create_info{{}, fragment_code.size() * sizeof(std::uint32_t), fragment_code.data()};
-        const vk::raii::ShaderModule vertex_shader{this->context.device, vertex_module_create_info};
-        const vk::raii::ShaderModule fragment_shader{this->context.device, fragment_module_create_info};
-        const std::array shader_stages{
-            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
-            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
-        };
-
-        constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
-        constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eLineList, VK_FALSE};
-        vk::PipelineViewportStateCreateInfo viewport_state{};
-        viewport_state.viewportCount = 1;
-        viewport_state.scissorCount  = 1;
-
-        const vk::PipelineRasterizationLineStateCreateInfo line_state{vk::LineRasterizationMode::eRectangularSmooth, VK_FALSE, 0, 0};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{
-            {},
-            VK_FALSE,
-            VK_FALSE,
-            vk::PolygonMode::eFill,
-            vk::CullModeFlagBits::eNone,
-            vk::FrontFace::eCounterClockwise,
-            VK_FALSE,
-            0.0f,
-            0.0f,
-            0.0f,
-            viewport_grid_line_width,
-            &line_state,
-        };
-        constexpr vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1};
-        constexpr vk::PipelineDepthStencilStateCreateInfo grid_depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        constexpr vk::PipelineDepthStencilStateCreateInfo axis_depth_stencil_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-
-        vk::PipelineColorBlendAttachmentState grid_blend_attachment{};
-        grid_blend_attachment.blendEnable         = VK_TRUE;
-        grid_blend_attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
-        grid_blend_attachment.dstColorBlendFactor = vk::BlendFactor::eOne;
-        grid_blend_attachment.colorBlendOp        = vk::BlendOp::eAdd;
-        grid_blend_attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
-        grid_blend_attachment.dstAlphaBlendFactor = vk::BlendFactor::eZero;
-        grid_blend_attachment.alphaBlendOp        = vk::BlendOp::eAdd;
-        grid_blend_attachment.colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-        const vk::PipelineColorBlendStateCreateInfo grid_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &grid_blend_attachment};
-
-        vk::PipelineColorBlendAttachmentState axis_blend_attachment{};
-        axis_blend_attachment.blendEnable         = VK_TRUE;
-        axis_blend_attachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
-        axis_blend_attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
-        axis_blend_attachment.colorBlendOp        = vk::BlendOp::eAdd;
-        axis_blend_attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
-        axis_blend_attachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
-        axis_blend_attachment.alphaBlendOp        = vk::BlendOp::eAdd;
-        axis_blend_attachment.colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-        const vk::PipelineColorBlendStateCreateInfo axis_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1, &axis_blend_attachment};
-        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
-
-        const vk::Format color_format   = this->swapchain.format;
-        const vk::Format stencil_format = static_cast<bool>(this->swapchain.depth_aspect & vk::ImageAspectFlagBits::eStencil) ? this->swapchain.depth_format : vk::Format::eUndefined;
-        vk::PipelineRenderingCreateInfo rendering_create_info{};
-        rendering_create_info.colorAttachmentCount    = 1;
-        rendering_create_info.pColorAttachmentFormats = &color_format;
-        rendering_create_info.depthAttachmentFormat   = this->swapchain.depth_format;
-        rendering_create_info.stencilAttachmentFormat = stencil_format;
-
-        vk::GraphicsPipelineCreateInfo pipeline_create_info{};
-        pipeline_create_info.pNext               = &rendering_create_info;
-        pipeline_create_info.stageCount          = static_cast<std::uint32_t>(shader_stages.size());
-        pipeline_create_info.pStages             = shader_stages.data();
-        pipeline_create_info.pVertexInputState   = &vertex_input_state;
-        pipeline_create_info.pInputAssemblyState = &input_assembly_state;
-        pipeline_create_info.pViewportState      = &viewport_state;
-        pipeline_create_info.pRasterizationState = &rasterization_state;
-        pipeline_create_info.pMultisampleState   = &multisample_state;
-        pipeline_create_info.pDepthStencilState  = &grid_depth_stencil_state;
-        pipeline_create_info.pColorBlendState    = &grid_blend_state;
-        pipeline_create_info.pDynamicState       = &dynamic_state;
-        pipeline_create_info.layout              = *this->viewport.pipeline_layout;
-        pipeline_create_info.renderPass          = nullptr;
-        pipeline_create_info.subpass             = 0;
-        this->viewport.grid_pipeline             = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
-        pipeline_create_info.pDepthStencilState  = &axis_depth_stencil_state;
-        pipeline_create_info.pColorBlendState    = &axis_blend_state;
-        this->viewport.axis_pipeline             = vk::raii::Pipeline{this->context.device, nullptr, pipeline_create_info};
+        if (!ImGui::BeginMainMenuBar()) return;
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem(ICON_MS_CLOSE " Exit", "Esc")) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Windows")) {
+            ImGui::MenuItem(ICON_MS_TUNE " Session", "F1", &this->ui.session_visible);
+            ImGui::MenuItem(ICON_MS_SETTINGS " Settings", "F2", &this->ui.settings_visible);
+            ImGui::MenuItem(ICON_MS_ANALYTICS " Statistics", "F3", &this->ui.statistics_visible);
+            ImGui::EndMenu();
+        }
+        this->draw_menu_toolbar();
+        ImGui::EndMainMenuBar();
     }
 
-    void Spectra::destroy_viewport_pipeline() noexcept {
-        this->viewport.axis_pipeline   = nullptr;
-        this->viewport.grid_pipeline   = nullptr;
-        this->viewport.pipeline_layout = nullptr;
-        this->viewport.frame_resources.clear();
-        this->viewport.descriptor_sets   = nullptr;
-        this->viewport.descriptor_pool   = nullptr;
-        this->viewport.descriptor_layout = nullptr;
+    void Spectra::draw_menu_toolbar() {
+        struct ToggleButton {
+            const char* icon;
+            const char* shortcut;
+            bool* visible;
+            const char* tooltip;
+        };
+
+        const std::array<ToggleButton, 3> toggles{{
+            {ICON_MS_TUNE, "F1", &this->ui.session_visible, "Session"},
+            {ICON_MS_SETTINGS, "F2", &this->ui.settings_visible, "Settings"},
+            {ICON_MS_ANALYTICS, "F3", &this->ui.statistics_visible, "Statistics"},
+        }};
+
+        const float button_size  = ImGui::GetFrameHeight();
+        const float total_width  = 2.0f + static_cast<float>(toggles.size()) * button_size + static_cast<float>(toggles.size() + 1) * 2.0f;
+        const float window_width = ImGui::GetWindowWidth();
+        if (window_width <= total_width + 180.0f) return;
+
+        ImGui::SameLine(window_width * 0.5f - total_width * 0.5f);
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        for (const ToggleButton& toggle : toggles) {
+            ImGui::PushStyleColor(ImGuiCol_Button, *toggle.visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+            if (ImGui::Button(toggle.icon, ImVec2{button_size, button_size})) *toggle.visible = !*toggle.visible;
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle %s Window (%s)", toggle.tooltip, toggle.shortcut);
+            ImGui::SameLine(0.0f, 2.0f);
+        }
+    }
+
+    void Spectra::draw_dockspace() {
+        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        if (main_viewport->WorkSize.x <= 640.0f || main_viewport->WorkSize.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
+
+        constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
+        const ImVec4 dockspace_window_background     = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{dockspace_window_background.x, dockspace_window_background.y, dockspace_window_background.z, 0.0f});
+        const ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, main_viewport, dockspace_flags);
+        ImGui::PopStyleColor();
+        if (dockspace_id == 0) throw std::runtime_error("Failed to create Spectra dockspace");
+        if (this->ui.dock_layout_initialized) return;
+
+        ImGui::DockBuilderRemoveNode(dockspace_id);
+        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace | dockspace_flags);
+        ImGui::DockBuilderSetNodePos(dockspace_id, main_viewport->WorkPos);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, main_viewport->WorkSize);
+
+        ImGuiID center_id = dockspace_id;
+        ImGuiID right_id  = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.23f, nullptr, &center_id);
+        ImGuiID bottom_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.22f, nullptr, &center_id);
+        if (right_id == 0 || bottom_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra dock layout");
+
+        ImGui::DockBuilderDockWindow("Viewport", center_id);
+        ImGui::DockBuilderDockWindow("PBRT Session", right_id);
+        ImGui::DockBuilderDockWindow("Settings", right_id);
+        ImGui::DockBuilderDockWindow("Statistics", bottom_id);
+        ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
+        if (central_node == nullptr) throw std::runtime_error("Failed to find Spectra central dock node");
+        central_node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+        ImGui::DockBuilderFinish(dockspace_id);
+        this->ui.dock_layout_initialized = true;
+    }
+
+    void Spectra::draw_viewport_window() {
+        constexpr ImGuiWindowFlags viewport_window_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
+        if (ImGui::Begin("Viewport", nullptr, viewport_window_flags)) {
+            const ImVec2 viewport_position = ImGui::GetCursorScreenPos();
+            const ImVec2 viewport_size     = ImGui::GetContentRegionAvail();
+            if (viewport_size.x <= 0.0f || viewport_size.y <= 0.0f) throw std::runtime_error("Viewport dock window has no drawable area");
+            this->ui.viewport_known    = true;
+            this->ui.viewport_position = {viewport_position.x, viewport_position.y};
+            this->ui.viewport_size     = {viewport_size.x, viewport_size.y};
+            this->ui.viewport_hovered  = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow);
+            this->ui.viewport_focused  = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
+            if (this->pbrt_interactive != nullptr) {
+                const VkDescriptorSet descriptor = this->pbrt_interactive->active_descriptor();
+                if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("PBRT interactive viewport descriptor is null");
+                const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
+                ImGui::Image(ImTextureRef{texture_id}, viewport_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
+                ImGui::SetCursorScreenPos(viewport_position);
+            }
+            ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+        } else {
+            this->ui.viewport_known   = false;
+            this->ui.viewport_hovered = false;
+            this->ui.viewport_focused = false;
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+    }
+
+    void Spectra::draw_session_window() {
+        if (!this->ui.session_visible) return;
+        if (!ImGui::Begin("PBRT Session", &this->ui.session_visible)) {
+            ImGui::End();
+            return;
+        }
+
+        ImGui::TextUnformatted(this->session.mode_label.c_str());
+        ImGui::Separator();
+        if (this->pbrt_interactive == nullptr) {
+            ImGui::TextDisabled("No active PBRT interactive session");
+            ImGui::End();
+            return;
+        }
+
+        const std::array<int, 2> resolution = this->pbrt_interactive->film_resolution();
+        ImGui::Text("Scene: %s", this->pbrt_interactive->scene_label().c_str());
+        ImGui::Text("Resolution: %d x %d", resolution[0], resolution[1]);
+        ImGui::Text("Sample: %d / %d", this->pbrt_interactive->current_sample(), this->pbrt_interactive->sample_count());
+        ImGui::Text("Exposure: %.3f", this->pbrt_interactive->current_exposure());
+        ImGui::Text("Move scale: %.6f", this->pbrt_interactive->current_move_scale());
+        ImGui::Separator();
+        ImGui::TextDisabled("WASD/QE move, arrows or left-drag rotate, B/Shift+B exposure, +/- speed, R reset, C print camera");
+        ImGui::End();
+    }
+
+    void Spectra::draw_settings_window() {
+        if (!this->ui.settings_visible) return;
+        if (!ImGui::Begin("Settings", &this->ui.settings_visible)) {
+            ImGui::End();
+            return;
+        }
+        ImGui::ColorEdit3("Background", this->ui.background_color.data(), ImGuiColorEditFlags_Float);
+        ImGui::End();
+    }
+
+    void Spectra::draw_statistics_window() {
+        if (!this->ui.statistics_visible) return;
+        if (!ImGui::Begin("Statistics", &this->ui.statistics_visible)) {
+            ImGui::End();
+            return;
+        }
+        const ImGuiIO& io = ImGui::GetIO();
+        ImGui::Text("FPS: %.1f", io.Framerate);
+        ImGui::Text("Frame time: %.3f ms", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
+        ImGui::Text("Swapchain: %u x %u", this->swapchain.extent.width, this->swapchain.extent.height);
+        ImGui::Text("Viewport: %.0f x %.0f", this->ui.viewport_size[0], this->ui.viewport_size[1]);
+        ImGui::Text("Frames in flight: %u", this->sync.frame_count);
+        ImGui::End();
     }
 
     void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
@@ -2365,8 +1363,6 @@ namespace xayah {
 
             if ((surface_capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eColorAttachment) != vk::ImageUsageFlagBits::eColorAttachment) throw std::runtime_error("Swapchain must support color attachment usage");
             this->swapchain.usage = vk::ImageUsageFlagBits::eColorAttachment;
-            if ((surface_capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferDst) == vk::ImageUsageFlagBits::eTransferDst) this->swapchain.usage |= vk::ImageUsageFlagBits::eTransferDst;
-            if ((surface_capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc) == vk::ImageUsageFlagBits::eTransferSrc) this->swapchain.usage |= vk::ImageUsageFlagBits::eTransferSrc;
         }
         {
             const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
@@ -2383,24 +1379,7 @@ namespace xayah {
             }
 
             const vk::SurfaceTransformFlagBitsKHR pre_transform = surface_capabilities.supportedTransforms & vk::SurfaceTransformFlagBitsKHR::eIdentity ? vk::SurfaceTransformFlagBitsKHR::eIdentity : surface_capabilities.currentTransform;
-            const vk::SwapchainCreateInfoKHR swapchain_create_info{
-                {},
-                *this->surface.surface,
-                this->swapchain.image_count,
-                this->swapchain.format,
-                this->swapchain.color_space,
-                this->swapchain.extent,
-                1,
-                this->swapchain.usage,
-                vk::SharingMode::eExclusive,
-                0,
-                nullptr,
-                pre_transform,
-                composite_alpha,
-                this->swapchain.present_mode,
-                VK_TRUE,
-                *old_swapchain,
-            };
+            const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, this->swapchain.image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, this->swapchain.usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
             this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
         }
         {
@@ -2412,74 +1391,10 @@ namespace xayah {
             this->swapchain.image_views.clear();
             this->swapchain.image_views.reserve(this->swapchain.images.size());
             for (const vk::Image image : this->swapchain.images) {
-                const vk::ImageViewCreateInfo image_view_create_info{
-                    {},
-                    image,
-                    vk::ImageViewType::e2D,
-                    this->swapchain.format,
-                    {},
-                    {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                };
+                const vk::ImageViewCreateInfo image_view_create_info{{}, image, vk::ImageViewType::e2D, this->swapchain.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
                 this->swapchain.image_views.emplace_back(this->context.device, image_view_create_info);
             }
             if (this->swapchain.image_views.size() != this->swapchain.images.size()) throw std::runtime_error("Failed to create all swapchain image views");
-        }
-        {
-            bool selected = false;
-            for (constexpr std::array depth_formats{vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}; const vk::Format format : depth_formats) {
-                if (static_cast<bool>(this->context.physical_device.getFormatProperties(format).optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)) {
-                    this->swapchain.depth_format = format;
-                    selected                     = true;
-                    break;
-                }
-            }
-            if (!selected) throw std::runtime_error("No supported Vulkan depth format");
-            this->swapchain.depth_aspect = this->swapchain.depth_format == vk::Format::eD32SfloatS8Uint || this->swapchain.depth_format == vk::Format::eD24UnormS8Uint ? vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil : vk::ImageAspectFlagBits::eDepth;
-            this->swapchain.depth_layout = vk::ImageLayout::eUndefined;
-
-            const vk::ImageCreateInfo depth_image_create_info{
-                {},
-                vk::ImageType::e2D,
-                this->swapchain.depth_format,
-                vk::Extent3D{this->swapchain.extent.width, this->swapchain.extent.height, 1},
-                1,
-                1,
-                vk::SampleCountFlagBits::e1,
-                vk::ImageTiling::eOptimal,
-                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eTransientAttachment,
-                vk::SharingMode::eExclusive,
-                0,
-                nullptr,
-                vk::ImageLayout::eUndefined,
-            };
-            this->swapchain.depth_image = vk::raii::Image{this->context.device, depth_image_create_info};
-
-            const vk::MemoryRequirements depth_memory_requirements = this->swapchain.depth_image.getMemoryRequirements();
-            const vk::PhysicalDeviceMemoryProperties memory        = this->context.physical_device.getMemoryProperties();
-            std::uint32_t memory_type_index                        = std::numeric_limits<std::uint32_t>::max();
-            for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-                if ((depth_memory_requirements.memoryTypeBits & (1u << index)) != 0 && (memory.memoryTypes[index].propertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal) == vk::MemoryPropertyFlagBits::eDeviceLocal) {
-                    memory_type_index = index;
-                    break;
-                }
-            }
-            if (memory_type_index == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("No suitable Vulkan memory type for depth image");
-            const vk::MemoryAllocateInfo depth_memory_allocate_info{
-                depth_memory_requirements.size,
-                memory_type_index,
-            };
-            this->swapchain.depth_memory = vk::raii::DeviceMemory{this->context.device, depth_memory_allocate_info};
-            this->swapchain.depth_image.bindMemory(*this->swapchain.depth_memory, 0);
-
-            const vk::ImageViewCreateInfo depth_view_create_info{
-                {},
-                *this->swapchain.depth_image,
-                vk::ImageViewType::e2D,
-                this->swapchain.depth_format,
-                {},
-                {this->swapchain.depth_aspect, 0, 1, 0, 1},
-            };
-            this->swapchain.depth_view = vk::raii::ImageView{this->context.device, depth_view_create_info};
         }
         {
             constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
@@ -2490,7 +1405,7 @@ namespace xayah {
         }
     }
 
-    void Spectra::recreate_swapchain(SpectraScene& document) {
+    void Spectra::recreate_swapchain() {
         {
             int width  = 0;
             int height = 0;
@@ -2502,116 +1417,24 @@ namespace xayah {
         }
 
         this->context.device.waitIdle();
-
-        this->destroy_viewport_pipeline();
         vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
-        this->swapchain.depth_view           = nullptr;
-        this->swapchain.depth_image          = nullptr;
-        this->swapchain.depth_memory         = nullptr;
-        this->swapchain.depth_format         = {};
-        this->swapchain.depth_aspect         = {};
-        this->swapchain.depth_layout         = vk::ImageLayout::eUndefined;
         this->swapchain.image_views.clear();
         this->sync.render_finished_semaphores.clear();
         this->sync.image_in_flight_frame.clear();
         this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
         this->create_swapchain(std::move(old_swapchain));
-        this->create_viewport_pipeline();
-        const RenderCreateContext render_create_context{&this->context.device, this->swapchain.format, this->swapchain.depth_format, this->swapchain.depth_aspect, this->sync.frame_count};
-        document.recreate_render_resources(render_create_context);
-        {
-            const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
-            if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");
-            if (this->imgui.color_format != this->swapchain.format || this->imgui.image_count != image_count) {
-                const bool docking   = this->imgui.docking;
-                const bool viewports = this->imgui.viewports;
-                ImGui_ImplVulkan_Shutdown();
-                ImGui_ImplGlfw_Shutdown();
-                ImGui::DestroyContext();
-                this->imgui.descriptor_pool = nullptr;
-                this->imgui.color_format    = this->swapchain.format;
-                this->imgui.min_image_count = std::max(2u, this->sync.frame_count);
-                this->imgui.image_count     = image_count;
-                this->imgui.docking         = docking;
-                this->imgui.viewports       = viewports;
-                this->imgui.initialized     = false;
-                if (this->imgui.image_count < this->imgui.min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
 
-                bool context_created            = false;
-                bool glfw_backend_initialized   = false;
-                bool vulkan_backend_initialized = false;
-                try {
-                    constexpr std::array descriptor_pool_sizes{
-                        vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eUniformTexelBuffer, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageTexelBuffer, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eUniformBufferDynamic, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, 1000},
-                        vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, 1000},
-                    };
-                    const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{
-                        vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-                        1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
-                        static_cast<std::uint32_t>(descriptor_pool_sizes.size()),
-                        descriptor_pool_sizes.data(),
-                    };
-                    this->imgui.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
-
-                    IMGUI_CHECKVERSION();
-                    ImGui::CreateContext();
-                    context_created = true;
-
-                    ImGuiIO& io = ImGui::GetIO();
-                    if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-                    if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-                    load_imgui_fonts();
-                    apply_imgui_style(this->imgui.viewports);
-
-                    if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
-                    glfw_backend_initialized = true;
-
-                    const auto color_attachment_format = static_cast<VkFormat>(this->imgui.color_format);
-                    VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
-                    pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-                    pipeline_rendering_create_info.colorAttachmentCount    = 1;
-                    pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
-
-                    ImGui_ImplVulkan_InitInfo init_info{};
-                    init_info.ApiVersion                                   = VK_API_VERSION_1_4;
-                    init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
-                    init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
-                    init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
-                    init_info.QueueFamily                                  = this->context.graphics_queue_index;
-                    init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
-                    init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
-                    init_info.MinImageCount                                = this->imgui.min_image_count;
-                    init_info.ImageCount                                   = this->imgui.image_count;
-                    init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
-                    init_info.UseDynamicRendering                          = true;
-                    init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
-                    if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
-                    vulkan_backend_initialized = true;
-                    this->imgui.initialized    = true;
-                } catch (...) {
-                    if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
-                    if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
-                    if (context_created) ImGui::DestroyContext();
-                    this->imgui.descriptor_pool = nullptr;
-                    this->imgui.color_format    = vk::Format::eUndefined;
-                    this->imgui.min_image_count = 2;
-                    this->imgui.image_count     = 2;
-                    this->imgui.docking         = docking;
-                    this->imgui.viewports       = viewports;
-                    this->imgui.initialized     = false;
-                    throw;
-                }
-            }
+        const std::uint32_t image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
+        if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized during swapchain recreation");
+        if (this->imgui.color_format != this->swapchain.format || this->imgui.image_count != image_count) {
+            const bool docking   = this->imgui.docking;
+            const bool viewports = this->imgui.viewports;
+            this->destroy_imgui();
+            this->imgui.docking   = docking;
+            this->imgui.viewports = viewports;
+            this->create_imgui();
+            if (this->pbrt_interactive != nullptr) this->pbrt_interactive->create_imgui_descriptors();
         }
         this->surface.resize_requested = false;
     }

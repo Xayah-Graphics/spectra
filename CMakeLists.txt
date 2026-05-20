@@ -36,14 +36,18 @@ endif ()
 
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
-find_package(OpenGL REQUIRED)
 find_package(CUDAToolkit REQUIRED)
-find_program(SLANGC_EXECUTABLE slangc REQUIRED)
+
+set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(vendor/glfw)
+if (NOT TARGET glfw)
+    message(FATAL_ERROR "Top-level GLFW dependency did not define the glfw target.")
+endif ()
 
 add_subdirectory(vendor/pbrt)
-if (NOT TARGET glfw)
-    message(FATAL_ERROR "PBRT vendor dependencies did not define the glfw target.")
-endif ()
 
 
 # ============================================================================
@@ -160,8 +164,6 @@ set(PBRT_INCLUDE_DIRS
         ${NANOVDB_INCLUDE}
         ${CMAKE_CURRENT_BINARY_DIR}
         ${PBRT_GENERATED_DIR}
-        ${GLFW_INCLUDE}
-        ${GLAD_INCLUDE}
         ${PBRT_OPTIX_PATH}/include
         ${CUDAToolkit_INCLUDE_DIRS}
         ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
@@ -307,11 +309,9 @@ set(PBRT_UTIL_SOURCE
         pbrt/util/check.cpp
         pbrt/util/color.cpp
         pbrt/util/colorspace.cpp
-        pbrt/util/display.cpp
         pbrt/util/error.cpp
         pbrt/util/file.cpp
         pbrt/util/float.cpp
-        pbrt/util/gui.cpp
         pbrt/util/image.cpp
         pbrt/util/log.cpp
         pbrt/util/loopsubdiv.cpp
@@ -450,9 +450,6 @@ target_link_libraries(
         deflate::deflate
         double-conversion
         utf8proc
-        glfw
-        glad
-        OpenGL::GL
         CUDA::cudart
         CUDA::cuda_driver
         Threads::Threads
@@ -479,47 +476,13 @@ endif ()
 
 
 # ============================================================================
-# Shaders
-# ============================================================================
-set(SPECTRA_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-set(SPECTRA_GRID_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gizmo_grid.slang)
-set(SPECTRA_BOUNDING_BOX_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/bounding_box.slang)
-set(SPECTRA_PREVIEW_SHADER ${CMAKE_CURRENT_SOURCE_DIR}/shaders/spectra_preview.slang)
-set(
-        SPECTRA_SHADER_OUTPUTS
-        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
-        ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
-)
-add_custom_command(
-        OUTPUT ${SPECTRA_SHADER_OUTPUTS}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_SHADER_OUTPUT_DIR}
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_GRID_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/gizmo_grid.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_BOUNDING_BOX_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/bounding_box.frag.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry vertex_main -stage vertex -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.vert.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SPECTRA_PREVIEW_SHADER} -target spirv -profile spirv_1_6 -matrix-layout-column-major -entry fragment_main -stage fragment -o ${SPECTRA_SHADER_OUTPUT_DIR}/spectra_preview.frag.spv
-        DEPENDS ${SPECTRA_GRID_SHADER} ${SPECTRA_BOUNDING_BOX_SHADER} ${SPECTRA_PREVIEW_SHADER}
-        VERBATIM
-)
-add_custom_target(spectra_shaders DEPENDS ${SPECTRA_SHADER_OUTPUTS})
-
-
-# ============================================================================
 # Spectra
 # ============================================================================
 add_library(spectra)
-add_dependencies(spectra spectra_shaders)
 target_sources(
         spectra
         PRIVATE
         modules/spectra.cpp
-        modules/render_context.cpp
-        modules/spectra_scene.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -527,30 +490,18 @@ target_sources(
         vendor/imgui/imgui_widgets.cpp
         vendor/imgui/backends/imgui_impl_glfw.cpp
         vendor/imgui/backends/imgui_impl_vulkan.cpp
-        vendor/ImGuizmo/ImGuizmo.cpp
-        vendor/ImGuizmo/GraphEditor.cpp
-        vendor/ImGuizmo/ImCurveEdit.cpp
-        vendor/ImGuizmo/ImGradient.cpp
-        vendor/ImGuizmo/ImSequencer.cpp
-        vendor/ImGuizmo/ImVectorEditor.cpp
-        vendor/ImNodeFlow/ImNodeFlow.cpp
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        modules/render_context.ixx
-        modules/camera.ixx
-        modules/spectra_scene.ixx
         modules/spectra.ixx
 )
-target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw)
-target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS SPECTRA_SHADER_DIR="${SPECTRA_SHADER_OUTPUT_DIR}")
+target_link_libraries(spectra PRIVATE Vulkan::Vulkan glfw pbrt_lib CUDA::cudart)
+target_compile_definitions(spectra PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(
         spectra
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImGuizmo
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/ImNodeFlow
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/glfw/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
 )
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 
