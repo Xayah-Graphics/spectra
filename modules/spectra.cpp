@@ -233,6 +233,7 @@ namespace xayah {
         pbrt::Float move_scale{1.0f};
         int sample_index{0};
         int max_samples{0};
+        int target_samples{0};
         bool reset_requested{false};
         bool pbrt_initialized{false};
         std::uint32_t active_frame_index{0};
@@ -261,6 +262,7 @@ namespace xayah {
             if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
             this->max_samples = this->integrator->sampler.SamplesPerPixel();
             if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
+            this->target_samples = this->max_samples;
 
             this->render_from_camera = this->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
             this->camera_from_render = pbrt::Inverse(this->render_from_camera);
@@ -329,16 +331,16 @@ namespace xayah {
             return this->sample_index;
         }
 
-        [[nodiscard]] int sample_count() const {
+        [[nodiscard]] int sampler_sample_count() const {
             return this->max_samples;
+        }
+
+        [[nodiscard]] int target_sample_count() const {
+            return this->target_samples;
         }
 
         [[nodiscard]] float current_exposure() const {
             return static_cast<float>(this->exposure);
-        }
-
-        [[nodiscard]] float current_move_scale() const {
-            return static_cast<float>(this->move_scale);
         }
 
         [[nodiscard]] VkDescriptorSet active_descriptor() const {
@@ -348,6 +350,22 @@ namespace xayah {
 
         [[nodiscard]] vk::Semaphore active_cuda_complete_semaphore() const {
             return *this->frames.at(this->active_frame_index).cuda_complete_semaphore;
+        }
+
+        void set_target_sample_count(const int target_sample_count) {
+            if (target_sample_count < 1 || target_sample_count > this->max_samples) throw std::runtime_error("PBRT target sample count is outside the sampler SPP range");
+            if (target_sample_count == this->target_samples) return;
+            this->target_samples = target_sample_count;
+            this->request_reset_accumulation();
+        }
+
+        void set_exposure(const float value) {
+            if (!(value >= 0.001f && value <= 1000.0f)) throw std::runtime_error("PBRT exposure must be in [0.001, 1000]");
+            this->exposure = static_cast<pbrt::Float>(value);
+        }
+
+        void request_reset_accumulation() {
+            this->reset_requested = true;
         }
 
         void release_imgui_descriptors() noexcept {
@@ -426,9 +444,9 @@ namespace xayah {
             }
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
                 if (io.KeyShift)
-                    this->exposure /= 1.125f;
+                    this->set_exposure(std::clamp(static_cast<float>(this->exposure / 1.125f), 0.001f, 1000.0f));
                 else
-                    this->exposure *= 1.125f;
+                    this->set_exposure(std::clamp(static_cast<float>(this->exposure * 1.125f), 0.001f, 1000.0f));
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Equal, false)) this->move_scale *= 2.0f;
             if (ImGui::IsKeyPressed(ImGuiKey_Minus, false)) this->move_scale *= 0.5f;
@@ -452,7 +470,7 @@ namespace xayah {
                 this->sample_index     = 0;
                 this->reset_requested = false;
             }
-            if (this->sample_index < this->max_samples) {
+            if (this->sample_index < this->target_samples) {
                 const pbrt::Transform camera_motion = this->render_from_camera * this->moving_from_camera * this->camera_from_render;
                 this->integrator->RenderSample(this->pixel_bounds, camera_motion, this->sample_index);
                 ++this->sample_index;
@@ -972,7 +990,7 @@ namespace xayah {
 
         const std::string scene_label = this->pbrt_interactive == nullptr ? "No Scene" : this->pbrt_interactive->scene_label();
         const int current_sample      = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->current_sample();
-        const int sample_count        = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->sample_count();
+        const int sample_count        = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->target_sample_count();
         const std::string title       = std::format("{} - {} | {} | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, this->session.mode_label, width, height, current_sample, sample_count, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
@@ -1277,13 +1295,11 @@ namespace xayah {
         }
 
         const std::array<int, 2> resolution = this->pbrt_interactive->film_resolution();
+        ImGui::Text("Status: %s", this->session.status.c_str());
+        ImGui::Text("Message: %s", this->session.message.c_str());
         ImGui::Text("Scene: %s", this->pbrt_interactive->scene_label().c_str());
         ImGui::Text("Resolution: %d x %d", resolution[0], resolution[1]);
-        ImGui::Text("Sample: %d / %d", this->pbrt_interactive->current_sample(), this->pbrt_interactive->sample_count());
-        ImGui::Text("Exposure: %.3f", this->pbrt_interactive->current_exposure());
-        ImGui::Text("Move scale: %.6f", this->pbrt_interactive->current_move_scale());
-        ImGui::Separator();
-        ImGui::TextDisabled("WASD/QE move, arrows or left-drag rotate, B/Shift+B exposure, +/- speed, R reset, C print camera");
+        ImGui::Text("Sample: %d / %d", this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count());
         ImGui::End();
     }
 
@@ -1293,6 +1309,83 @@ namespace xayah {
             ImGui::End();
             return;
         }
+        if (ImGui::BeginTable("SpectraRendererSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Active Renderer");
+            ImGui::TableSetColumnIndex(1);
+            const char* active_renderer_label = this->ui.active_render_mode == SpectraRenderMode::PbrtPathtracer ? "PBRT Pathtracer" : "Vulkan Rasterizer";
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("##ActiveRenderer", active_renderer_label)) {
+                const bool pbrt_selected = this->ui.active_render_mode == SpectraRenderMode::PbrtPathtracer;
+                if (ImGui::Selectable("PBRT Pathtracer", pbrt_selected)) this->ui.active_render_mode = SpectraRenderMode::PbrtPathtracer;
+                if (pbrt_selected) ImGui::SetItemDefaultFocus();
+                ImGui::BeginDisabled();
+                const bool rasterizer_selected = this->ui.active_render_mode == SpectraRenderMode::VulkanRasterizer;
+                ImGui::Selectable("Vulkan Rasterizer", rasterizer_selected);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Vulkan Rasterizer is reserved for the next milestone");
+                ImGui::EndCombo();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Path Tracer", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (this->pbrt_interactive == nullptr) {
+                ImGui::TextDisabled("No active PBRT interactive session");
+            } else if (ImGui::BeginTable("SpectraPathTracerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("PBRT Sampler SPP");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%d", this->pbrt_interactive->sampler_sample_count());
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Current Sample");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%d / %d", this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count());
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Max Iterations");
+                ImGui::TableSetColumnIndex(1);
+                int target_sample_count = this->pbrt_interactive->target_sample_count();
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->pbrt_interactive->sampler_sample_count())) this->pbrt_interactive->set_target_sample_count(target_sample_count);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Exposure");
+                ImGui::TableSetColumnIndex(1);
+                float exposure = this->pbrt_interactive->current_exposure();
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::DragFloat("##Exposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->pbrt_interactive->set_exposure(exposure);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Viewport exposure multiplier. This does not reset accumulation.");
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Accumulation");
+                ImGui::TableSetColumnIndex(1);
+                if (ImGui::Button("Reset Accumulation")) this->pbrt_interactive->request_reset_accumulation();
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Controls");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled(ICON_MS_KEYBOARD);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD/QE move\nArrow keys or left-drag rotate\nB / Shift+B exposure\n+ / - speed\nR reset camera\nC print camera transform");
+
+                ImGui::EndTable();
+            }
+        }
+        ImGui::Separator();
         ImGui::ColorEdit3("Background", this->ui.background_color.data(), ImGuiColorEditFlags_Float);
         ImGui::End();
     }

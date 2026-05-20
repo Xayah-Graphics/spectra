@@ -21,6 +21,11 @@ namespace xayah {
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
     private:
+        enum class SpectraRenderMode {
+            PbrtPathtracer,
+            VulkanRasterizer,
+        };
+
         struct FrameState {
             std::uint32_t frame_index{0};
             std::uint32_t image_index{0};
@@ -100,6 +105,7 @@ namespace xayah {
             bool viewport_known{false};
             bool viewport_hovered{false};
             bool viewport_focused{false};
+            SpectraRenderMode active_render_mode{SpectraRenderMode::PbrtPathtracer};
             std::array<float, 2> viewport_position{0.0f, 0.0f};
             std::array<float, 2> viewport_size{1280.0f, 720.0f};
             std::array<float, 3> background_color{0.02f, 0.02f, 0.025f};
