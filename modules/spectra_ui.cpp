@@ -56,6 +56,16 @@ namespace {
         return "Present";
     }
 
+    [[nodiscard]] std::string resolution_text(const std::array<int, 2>& resolution) {
+        if (resolution[0] <= 0 || resolution[1] <= 0) return "Pending";
+        return std::format("{} x {}", resolution[0], resolution[1]);
+    }
+
+    [[nodiscard]] std::string positive_int_text(const int value) {
+        if (value <= 0) return "Pending";
+        return std::format("{}", value);
+    }
+
     [[nodiscard]] const char* scene_texture_value_type_label(const xayah::SpectraSceneTextureValueType value_type) {
         switch (value_type) {
             case xayah::SpectraSceneTextureValueType::Unknown: return "Unknown";
@@ -251,16 +261,31 @@ namespace xayah {
             const ImVec2 viewport_position = ImGui::GetCursorScreenPos();
             const ImVec2 viewport_size     = ImGui::GetContentRegionAvail();
             if (viewport_size.x <= 0.0f || viewport_size.y <= 0.0f) throw std::runtime_error("Viewport dock window has no drawable area");
+            const ImGuiIO& io = ImGui::GetIO();
+            if (!std::isfinite(io.DisplayFramebufferScale.x) || !std::isfinite(io.DisplayFramebufferScale.y) || !(io.DisplayFramebufferScale.x > 0.0f) || !(io.DisplayFramebufferScale.y > 0.0f)) throw std::runtime_error("ImGui framebuffer scale must be finite and positive");
+            const std::array<int, 2> viewport_framebuffer_size{
+                static_cast<int>(std::round(viewport_size.x * io.DisplayFramebufferScale.x)),
+                static_cast<int>(std::round(viewport_size.y * io.DisplayFramebufferScale.y)),
+            };
+            if (viewport_framebuffer_size[0] <= 0 || viewport_framebuffer_size[1] <= 0) throw std::runtime_error("Viewport framebuffer resolution must be positive");
             this->ui.viewport_known    = true;
             this->ui.viewport_position = {viewport_position.x, viewport_position.y};
             this->ui.viewport_size     = {viewport_size.x, viewport_size.y};
+            this->ui.viewport_framebuffer_size = viewport_framebuffer_size;
             this->ui.viewport_hovered  = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow);
             this->ui.viewport_focused  = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
-            if (this->spectra_scene != nullptr) {
+            this->observe_viewport_render_resolution(viewport_framebuffer_size);
+            if (this->renderers_ready()) {
                 const VkDescriptorSet descriptor = this->active_viewport_descriptor();
                 if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("Active renderer viewport descriptor is null");
                 const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
                 ImGui::Image(ImTextureRef{texture_id}, viewport_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
+                ImGui::SetCursorScreenPos(viewport_position);
+            } else if (this->spectra_scene != nullptr) {
+                const char* pending_label = this->render_resolution_sync.rebuilding ? "Rebuilding renderer" : "Waiting for viewport resolution";
+                const ImVec2 text_size = ImGui::CalcTextSize(pending_label);
+                ImGui::SetCursorScreenPos(ImVec2{viewport_position.x + std::max(0.0f, (viewport_size.x - text_size.x) * 0.5f), viewport_position.y + std::max(0.0f, (viewport_size.y - text_size.y) * 0.5f)});
+                ImGui::TextDisabled("%s", pending_label);
                 ImGui::SetCursorScreenPos(viewport_position);
             }
             ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
@@ -268,6 +293,7 @@ namespace xayah {
             this->ui.viewport_known   = false;
             this->ui.viewport_hovered = false;
             this->ui.viewport_focused = false;
+            this->ui.viewport_framebuffer_size = {0, 0};
         }
         ImGui::End();
         ImGui::PopStyleVar();
@@ -340,8 +366,8 @@ namespace xayah {
             ImGui::TableSetColumnIndex(1);
             ImGui::TextWrapped("%s", this->spectra_scene->scene_path_text.c_str());
             draw_statistics_row("Active Renderer", this->active_renderer_label());
-            draw_statistics_row("Film Resolution", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
-            draw_statistics_row("Sampler SPP", std::format("{}", this->spectra_scene->sampler_sample_count));
+            draw_statistics_row("Film Resolution", resolution_text(this->spectra_scene->film_resolution));
+            draw_statistics_row("Sampler SPP", positive_int_text(this->spectra_scene->sampler_sample_count));
             draw_statistics_row("Directives", std::format("{}", this->spectra_scene->pbrt_directives.size()));
             draw_statistics_row("Shapes", std::format("{}", this->spectra_scene->shapes.size()));
             draw_statistics_row("Materials", std::format("{}", this->spectra_scene->materials.size()));
@@ -679,7 +705,7 @@ namespace xayah {
 
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const ActiveRendererStatus renderer_status = this->active_renderer_status();
-        const std::string viewport_resolution       = this->ui.viewport_known ? std::format("{:.0f} x {:.0f}", this->ui.viewport_size[0], this->ui.viewport_size[1]) : "Unknown";
+        const std::string viewport_resolution       = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
 
         ImGui::SeparatorText("Renderer");
         if (ImGui::BeginTable("SpectraInspectorRenderer", 2, table_flags)) {
@@ -702,8 +728,8 @@ namespace xayah {
             ImGui::TextUnformatted("Path");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextWrapped("%s", this->spectra_scene->scene_path_text.c_str());
-            draw_statistics_row("Film Resolution", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
-            draw_statistics_row("Sampler SPP", std::format("{}", this->spectra_scene->sampler_sample_count));
+            draw_statistics_row("Film Resolution", resolution_text(this->spectra_scene->film_resolution));
+            draw_statistics_row("Sampler SPP", positive_int_text(this->spectra_scene->sampler_sample_count));
             draw_statistics_row("Viewport", viewport_resolution);
             draw_statistics_row("Swapchain", std::format("{} x {}", this->swapchain.extent.width, this->swapchain.extent.height));
             ImGui::EndTable();
@@ -799,7 +825,7 @@ namespace xayah {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("PBRT Sampler SPP");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%d", this->spectra_scene->sampler_sample_count);
+                ImGui::TextUnformatted(positive_int_text(this->spectra_scene->sampler_sample_count).c_str());
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -839,7 +865,7 @@ namespace xayah {
                 ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                 draw_statistics_row("State", this->ui.active_render_mode == SpectraRenderMode::VulkanRasterizer ? renderer_status.state : "Inactive");
-                draw_statistics_row("Output", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
+                draw_statistics_row("Output", resolution_text(this->spectra_scene->film_resolution));
                 draw_statistics_row("Vertices", std::format("{}", this->vulkan_rasterizer->vertex_count()));
                 draw_statistics_row("Indices", std::format("{}", this->vulkan_rasterizer->index_count()));
                 draw_statistics_row("Triangles", std::format("{}", this->vulkan_rasterizer->triangle_count));
@@ -1003,7 +1029,7 @@ namespace xayah {
             return;
         }
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
-        const std::string viewport_resolution    = this->ui.viewport_known ? std::format("{:.0f} x {:.0f}", this->ui.viewport_size[0], this->ui.viewport_size[1]) : "Unknown";
+        const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
         const ActiveRendererStatus renderer_status = this->active_renderer_status();
 
         ImGui::SeparatorText("Runtime");
@@ -1059,13 +1085,17 @@ namespace xayah {
             case SpectraRenderMode::PbrtPathtracer:
                 break;
             case SpectraRenderMode::VulkanRasterizer:
-                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Cannot show Vulkan rasterizer statistics without an active rasterizer session");
+                if (this->vulkan_rasterizer == nullptr) {
+                    ImGui::TextDisabled("No active Vulkan rasterizer session");
+                    ImGui::End();
+                    return;
+                }
                 ImGui::SeparatorText("Rasterizer");
                 if (ImGui::BeginTable("SpectraRasterizerStatistics", 2, table_flags)) {
                     ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
                     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                     draw_statistics_row("State", renderer_status.state);
-                    draw_statistics_row("Output Resolution", std::format("{} x {}", this->spectra_scene->film_resolution[0], this->spectra_scene->film_resolution[1]));
+                    draw_statistics_row("Output Resolution", resolution_text(this->spectra_scene->film_resolution));
                     draw_statistics_row("Vertices", std::format("{}", this->vulkan_rasterizer->vertex_count()));
                     draw_statistics_row("Indices", std::format("{}", this->vulkan_rasterizer->index_count()));
                     draw_statistics_row("Triangles", std::format("{}", this->vulkan_rasterizer->triangle_count));
@@ -1108,7 +1138,7 @@ namespace xayah {
             const std::string progress_label = std::format("{:.1f}%", completion_percent);
             ImGui::ProgressBar(completion_ratio, ImVec2{-1.0f, 0.0f}, progress_label.c_str());
 
-            draw_statistics_row("Film Resolution", std::format("{} x {}", film_resolution[0], film_resolution[1]));
+            draw_statistics_row("Film Resolution", resolution_text(film_resolution));
             if (this->statistics.throughput_mspp.has_value())
                 draw_statistics_row("Throughput Avg", std::format("{:.2f} MSPP/s over {} sample frames", this->statistics.throughput_mspp.average(), this->statistics.throughput_mspp.count));
             else

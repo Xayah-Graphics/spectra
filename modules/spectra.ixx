@@ -302,6 +302,7 @@ namespace xayah {
     };
 
     struct SpectraPbrtBackendSceneState;
+    struct SpectraPbrtRuntimeState;
 
     struct SpectraPbrtBackendScene {
         std::unique_ptr<SpectraPbrtBackendSceneState> state{};
@@ -314,7 +315,7 @@ namespace xayah {
         SpectraPbrtBackendScene& operator=(const SpectraPbrtBackendScene& other)     = delete;
         SpectraPbrtBackendScene& operator=(SpectraPbrtBackendScene&& other) noexcept = delete;
 
-        void load(const SpectraScene& spectra_scene);
+        void load(const SpectraScene& spectra_scene, const std::array<int, 2>& resolution);
         void unload_noexcept() noexcept;
         [[nodiscard]] pbrt::BasicScene& basic_scene();
     };
@@ -372,12 +373,21 @@ namespace xayah {
         void render_loop();
         void load_spectra_scene(const std::filesystem::path& scene_path);
         void unload_spectra_scene_noexcept() noexcept;
-        void load_pbrt_backend_scene();
+        void load_pbrt_backend_scene(const std::array<int, 2>& resolution);
         void unload_pbrt_backend_scene_noexcept() noexcept;
         void load_raster_scene();
         void unload_raster_scene_noexcept() noexcept;
         void load_vulkan_rasterizer();
         void unload_vulkan_rasterizer_noexcept() noexcept;
+        void create_renderers_for_resolution(const std::array<int, 2>& resolution);
+        void rebuild_renderers_for_resolution(const std::array<int, 2>& resolution);
+        void unload_renderer_sessions_noexcept() noexcept;
+        void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
+        void synchronize_render_resolution();
+        [[nodiscard]] bool renderers_ready() const;
+        void initialize_pbrt_runtime();
+        void reset_pbrt_runtime_options_for_scene();
+        void wait_pbrt_gpu_noexcept() const noexcept;
         void update_window_title(float delta_seconds);
         void update_frame_statistics(const FrameState& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
         void clear_pathtracer_throughput_statistics();
@@ -476,6 +486,7 @@ namespace xayah {
             SpectraRenderMode active_render_mode{SpectraRenderMode::PbrtPathtracer};
             std::array<float, 2> viewport_position{0.0f, 0.0f};
             std::array<float, 2> viewport_size{1280.0f, 720.0f};
+            std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
         std::unique_ptr<SpectraScene> spectra_scene{};
@@ -483,6 +494,16 @@ namespace xayah {
         std::unique_ptr<SpectraPbrtBackendScene> pbrt_backend_scene{};
         std::unique_ptr<SpectraPbrtInteractiveSession> pbrt_interactive{};
         std::unique_ptr<SpectraVulkanRasterizer> vulkan_rasterizer{};
+        std::unique_ptr<SpectraPbrtRuntimeState> pbrt_runtime{};
+
+        struct {
+            bool candidate_known{false};
+            bool renderer_created{false};
+            bool rebuilding{false};
+            float stable_seconds{0.0f};
+            std::array<int, 2> candidate_resolution{0, 0};
+            std::array<int, 2> active_resolution{0, 0};
+        } render_resolution_sync;
 
         struct {
             bool initialized{false};

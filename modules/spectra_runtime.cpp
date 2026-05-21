@@ -19,6 +19,8 @@ module;
 #include <material_symbols/material_symbols_rounded_regular.h>
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
+#include <pbrt/gpu/util.h>
+#include <pbrt/options.h>
 #include <pbrt/pbrt.h>
 #include <pbrt/scene.h>
 #include <pbrt/util/transform.h>
@@ -30,6 +32,11 @@ import std;
 #include "spectra_internal.h"
 
 namespace xayah {
+    struct SpectraPbrtRuntimeState {
+        pbrt::PBRTOptions baseline_options{};
+        bool initialized{false};
+    };
+
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
         const vk::ImageMemoryBarrier2 image_memory_barrier{
             src_stage,
@@ -669,6 +676,7 @@ namespace xayah {
             }
         }
         this->create_imgui();
+        this->initialize_pbrt_runtime();
 
         const auto properties_chain = this->context.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
         const vk::PhysicalDeviceProperties& properties = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
@@ -687,10 +695,8 @@ namespace xayah {
         } catch (...) {
         }
 
-        this->unload_vulkan_rasterizer_noexcept();
-        this->pbrt_interactive.reset();
+        this->unload_renderer_sessions_noexcept();
         this->unload_raster_scene_noexcept();
-        this->unload_pbrt_backend_scene_noexcept();
         this->unload_spectra_scene_noexcept();
         this->destroy_imgui();
         this->sync.command_buffers.clear();
@@ -826,14 +832,17 @@ namespace xayah {
         }
     }
 
-    void Spectra::load_pbrt_backend_scene() {
+    void Spectra::load_pbrt_backend_scene(const std::array<int, 2>& resolution) {
         if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot load PBRT backend scene without a loaded Spectra scene");
         if (this->pbrt_backend_scene != nullptr) throw std::runtime_error("PBRT backend scene is already loaded");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot load PBRT backend scene with a non-positive resolution");
         std::unique_ptr<SpectraPbrtBackendScene> loaded_backend_scene = std::make_unique<SpectraPbrtBackendScene>();
         try {
-            loaded_backend_scene->load(*this->spectra_scene);
+            this->reset_pbrt_runtime_options_for_scene();
+            loaded_backend_scene->load(*this->spectra_scene, resolution);
             this->pbrt_backend_scene = std::move(loaded_backend_scene);
         } catch (...) {
+            this->wait_pbrt_gpu_noexcept();
             loaded_backend_scene->unload_noexcept();
             throw;
         }
@@ -841,6 +850,7 @@ namespace xayah {
 
     void Spectra::unload_pbrt_backend_scene_noexcept() noexcept {
         if (this->pbrt_backend_scene != nullptr) {
+            this->wait_pbrt_gpu_noexcept();
             this->pbrt_backend_scene->unload_noexcept();
             this->pbrt_backend_scene.reset();
         }
@@ -877,6 +887,129 @@ namespace xayah {
         this->vulkan_rasterizer.reset();
     }
 
+    void Spectra::create_renderers_for_resolution(const std::array<int, 2>& resolution) {
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot create renderer sessions without a loaded Spectra scene");
+        if (this->raster_scene == nullptr) throw std::runtime_error("Cannot create renderer sessions without a built Spectra raster scene");
+        if (this->pbrt_backend_scene != nullptr || this->pbrt_interactive != nullptr || this->vulkan_rasterizer != nullptr) throw std::runtime_error("Renderer sessions are already loaded");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create renderer sessions with a non-positive resolution");
+        try {
+            this->load_pbrt_backend_scene(resolution);
+            if (this->pbrt_backend_scene == nullptr) throw std::runtime_error("PBRT backend scene was not loaded");
+            this->pbrt_interactive = std::make_unique<SpectraPbrtInteractiveSession>(*this->spectra_scene, this->pbrt_backend_scene->basic_scene(), this->context.physical_device, this->context.device, this->sync.frame_count);
+            this->spectra_scene->set_runtime_metadata(this->pbrt_interactive->film_resolution(), this->pbrt_interactive->sampler_sample_count(), this->pbrt_interactive->camera_from_world_matrix());
+            this->load_vulkan_rasterizer();
+            this->render_resolution_sync.active_resolution = resolution;
+            this->render_resolution_sync.renderer_created  = true;
+        } catch (...) {
+            this->unload_renderer_sessions_noexcept();
+            throw;
+        }
+    }
+
+    void Spectra::rebuild_renderers_for_resolution(const std::array<int, 2>& resolution) {
+        if (this->render_resolution_sync.rebuilding) throw std::runtime_error("Renderer resolution rebuild is already active");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild renderer sessions with a non-positive resolution");
+        if (this->render_resolution_sync.renderer_created && this->render_resolution_sync.active_resolution == resolution) return;
+
+        const bool preserve_camera = this->camera.initialized;
+        const SpectraCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
+        const float preserved_speed     = this->camera.speed;
+        const int preserved_samples     = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->target_sample_count();
+        const float preserved_exposure  = this->pbrt_interactive == nullptr ? 1.0f : this->pbrt_interactive->current_exposure();
+        this->render_resolution_sync.rebuilding = true;
+        try {
+            this->context.device.waitIdle();
+            this->wait_pbrt_gpu_noexcept();
+            this->unload_renderer_sessions_noexcept();
+            this->create_renderers_for_resolution(resolution);
+            if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT interactive session was not created");
+            if (preserved_samples > 0) this->pbrt_interactive->set_target_sample_count(preserved_samples);
+            this->pbrt_interactive->set_exposure(preserved_exposure);
+            if (preserve_camera) {
+                this->camera.camera_from_world          = this->spectra_scene->camera_from_world;
+                this->camera.eye                        = preserved_pose.eye;
+                this->camera.center                     = preserved_pose.center;
+                this->camera.up                         = preserved_pose.up;
+                this->camera.basis_handedness           = preserved_pose.basis_handedness;
+                this->camera.speed                      = preserved_speed;
+                this->camera.fov_degrees                = raster_camera_fov_degrees(*this->spectra_scene);
+                this->camera.mouse_position_known       = false;
+                this->camera.input_enabled              = false;
+                this->camera.moving_from_camera         = moving_from_camera_from_pose(this->camera.camera_from_world, preserved_pose);
+                this->camera.pathtracer_accumulation_dirty = false;
+            } else
+                this->initialize_camera_state();
+            this->clear_pathtracer_throughput_statistics();
+            this->statistics.last_frame_rendered_sample = false;
+            this->render_resolution_sync.rebuilding     = false;
+        } catch (...) {
+            this->render_resolution_sync.rebuilding = false;
+            throw;
+        }
+    }
+
+    void Spectra::unload_renderer_sessions_noexcept() noexcept {
+        this->unload_vulkan_rasterizer_noexcept();
+        this->pbrt_interactive.reset();
+        this->unload_pbrt_backend_scene_noexcept();
+        this->render_resolution_sync.renderer_created  = false;
+        this->render_resolution_sync.active_resolution = {0, 0};
+    }
+
+    void Spectra::observe_viewport_render_resolution(const std::array<int, 2>& resolution) {
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Viewport framebuffer resolution must be positive");
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid while tracking viewport resolution");
+        if (!this->render_resolution_sync.candidate_known || this->render_resolution_sync.candidate_resolution != resolution) {
+            this->render_resolution_sync.candidate_known     = true;
+            this->render_resolution_sync.candidate_resolution = resolution;
+            this->render_resolution_sync.stable_seconds      = 0.0f;
+            return;
+        }
+        this->render_resolution_sync.stable_seconds += io.DeltaTime;
+    }
+
+    void Spectra::synchronize_render_resolution() {
+        constexpr float resolution_stability_seconds = 0.3f;
+        if (this->spectra_scene == nullptr || this->raster_scene == nullptr) return;
+        if (!this->render_resolution_sync.candidate_known) return;
+        if (this->render_resolution_sync.stable_seconds < resolution_stability_seconds) return;
+        if (this->render_resolution_sync.renderer_created && this->render_resolution_sync.active_resolution == this->render_resolution_sync.candidate_resolution) return;
+        this->rebuild_renderers_for_resolution(this->render_resolution_sync.candidate_resolution);
+    }
+
+    [[nodiscard]] bool Spectra::renderers_ready() const {
+        return this->render_resolution_sync.renderer_created && this->pbrt_backend_scene != nullptr && this->pbrt_interactive != nullptr && this->vulkan_rasterizer != nullptr;
+    }
+
+    void Spectra::initialize_pbrt_runtime() {
+        if (this->pbrt_runtime != nullptr || pbrt::Options != nullptr) throw std::runtime_error("PBRT runtime is already initialized");
+        std::unique_ptr<SpectraPbrtRuntimeState> runtime = std::make_unique<SpectraPbrtRuntimeState>();
+        runtime->baseline_options.useGPU         = true;
+        runtime->baseline_options.wavefront      = false;
+        runtime->baseline_options.nThreads       = 30;
+        runtime->baseline_options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
+        pbrt::InitPBRT(runtime->baseline_options);
+        runtime->initialized = true;
+        this->pbrt_runtime   = std::move(runtime);
+    }
+
+    void Spectra::reset_pbrt_runtime_options_for_scene() {
+        if (this->pbrt_runtime == nullptr || !this->pbrt_runtime->initialized) throw std::runtime_error("PBRT runtime is not initialized");
+        if (pbrt::Options == nullptr) throw std::runtime_error("PBRT global options are unavailable");
+        *pbrt::Options = this->pbrt_runtime->baseline_options;
+#ifdef PBRT_BUILD_GPU_RENDERER
+        if (pbrt::Options->useGPU) pbrt::CopyOptionsToGPU();
+#endif
+    }
+
+    void Spectra::wait_pbrt_gpu_noexcept() const noexcept {
+        try {
+            if (pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
+        } catch (...) {
+        }
+    }
+
     void Spectra::run_interactive_scene(const std::filesystem::path& scene_path) {
         if (this->spectra_scene != nullptr) throw std::runtime_error("Spectra scene is already active");
         if (this->raster_scene != nullptr) throw std::runtime_error("Spectra raster scene is already active");
@@ -885,29 +1018,19 @@ namespace xayah {
         if (this->vulkan_rasterizer != nullptr) throw std::runtime_error("Vulkan rasterizer is already active");
         try {
             this->load_spectra_scene(scene_path);
-            this->load_pbrt_backend_scene();
-            if (this->spectra_scene == nullptr || this->pbrt_backend_scene == nullptr) throw std::runtime_error("Spectra scene load did not produce both shared and PBRT backend scene resources");
-            this->pbrt_interactive = std::make_unique<SpectraPbrtInteractiveSession>(*this->spectra_scene, this->pbrt_backend_scene->basic_scene(), this->context.physical_device, this->context.device, this->sync.frame_count);
-            this->spectra_scene->set_runtime_metadata(this->pbrt_interactive->film_resolution(), this->pbrt_interactive->sampler_sample_count(), this->pbrt_interactive->camera_from_world_matrix());
             this->load_raster_scene();
-            this->load_vulkan_rasterizer();
-            this->initialize_camera_state();
             this->render_loop();
             this->context.device.waitIdle();
-            this->unload_vulkan_rasterizer_noexcept();
+            this->unload_renderer_sessions_noexcept();
             this->unload_raster_scene_noexcept();
-            this->pbrt_interactive.reset();
-            this->unload_pbrt_backend_scene_noexcept();
             this->unload_spectra_scene_noexcept();
         } catch (...) {
             try {
                 if (*this->context.device) this->context.device.waitIdle();
             } catch (...) {
             }
-            this->unload_vulkan_rasterizer_noexcept();
+            this->unload_renderer_sessions_noexcept();
             this->unload_raster_scene_noexcept();
-            this->pbrt_interactive.reset();
-            this->unload_pbrt_backend_scene_noexcept();
             this->unload_spectra_scene_noexcept();
             throw;
         }
@@ -936,9 +1059,12 @@ namespace xayah {
 
         std::uint32_t width  = this->swapchain.extent.width;
         std::uint32_t height = this->swapchain.extent.height;
-        if (this->ui.viewport_known && this->ui.viewport_size[0] > 0.0f && this->ui.viewport_size[1] > 0.0f) {
-            width  = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[0])));
-            height = static_cast<std::uint32_t>(std::max(1.0f, std::round(this->ui.viewport_size[1])));
+        if (this->render_resolution_sync.renderer_created) {
+            width  = static_cast<std::uint32_t>(this->render_resolution_sync.active_resolution[0]);
+            height = static_cast<std::uint32_t>(this->render_resolution_sync.active_resolution[1]);
+        } else if (this->ui.viewport_known && this->ui.viewport_framebuffer_size[0] > 0 && this->ui.viewport_framebuffer_size[1] > 0) {
+            width  = static_cast<std::uint32_t>(this->ui.viewport_framebuffer_size[0]);
+            height = static_cast<std::uint32_t>(this->ui.viewport_framebuffer_size[1]);
         }
 
         const std::string scene_label = this->spectra_scene == nullptr ? "No Scene" : this->spectra_scene->scene_label;
@@ -992,6 +1118,14 @@ namespace xayah {
         status.label                              = this->active_renderer_label();
         status.sample_range                       = this->active_renderer_sample_range();
         status.pathtracer_accumulation_dirty      = this->camera.pathtracer_accumulation_dirty;
+        if (this->render_resolution_sync.rebuilding) {
+            status.state = "Rebuilding";
+            return status;
+        }
+        if (!this->render_resolution_sync.renderer_created) {
+            status.state = this->render_resolution_sync.candidate_known ? "Pending Resolution" : "Waiting for Viewport";
+            return status;
+        }
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
                 status.has_accumulation = true;
@@ -1037,6 +1171,7 @@ namespace xayah {
                 if (this->pbrt_interactive == nullptr) return {0, 0};
                 return {this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count()};
             case SpectraRenderMode::VulkanRasterizer:
+                if (this->vulkan_rasterizer == nullptr) return {0, 0};
                 return {1, 1};
         }
         throw std::runtime_error("Unknown Spectra render mode");
@@ -1147,6 +1282,10 @@ namespace xayah {
 
     void Spectra::set_active_render_mode(const SpectraRenderMode render_mode) {
         if (render_mode == this->ui.active_render_mode) return;
+        if (!this->renderers_ready()) {
+            this->ui.active_render_mode = render_mode;
+            return;
+        }
         switch (render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
                 if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot switch to PBRT Pathtracer without an active PBRT session");
@@ -1323,11 +1462,18 @@ namespace xayah {
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot update renderer frame without an active Spectra scene");
         frame.render_mode = this->ui.active_render_mode;
-        this->process_camera_input(this->surface.window.get());
-        const ActiveRendererFrameResult render_result = this->render_active_renderer_frame(frame);
-        frame.wait_for_external_completion = this->active_renderer_uses_external_completion_semaphore();
-        if (frame.wait_for_external_completion) frame.external_completion_semaphore = this->active_renderer_complete_semaphore();
-        this->update_frame_statistics(frame, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
+        this->synchronize_render_resolution();
+        if (this->renderers_ready()) {
+            this->process_camera_input(this->surface.window.get());
+            const ActiveRendererFrameResult render_result = this->render_active_renderer_frame(frame);
+            frame.wait_for_external_completion = this->active_renderer_uses_external_completion_semaphore();
+            if (frame.wait_for_external_completion) frame.external_completion_semaphore = this->active_renderer_complete_semaphore();
+            this->update_frame_statistics(frame, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
+        } else {
+            const ImGuiIO& io = ImGui::GetIO();
+            if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
+            this->update_frame_statistics(frame, false, false, 0);
+        }
         return true;
     }
 
@@ -1347,7 +1493,7 @@ namespace xayah {
         command_buffer.reset();
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
-        if (this->spectra_scene != nullptr) this->record_renderer_output(frame.render_mode, command_buffer);
+        if (this->renderers_ready()) this->record_renderer_output(frame.render_mode, command_buffer);
 
         {
             const vk::ImageMemoryBarrier2 color_barrier{

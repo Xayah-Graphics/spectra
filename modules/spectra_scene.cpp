@@ -1,5 +1,4 @@
 module;
-#include <pbrt/gpu/util.h>
 #include <pbrt/options.h>
 #include <pbrt/parser.h>
 #include <pbrt/pbrt.h>
@@ -1093,13 +1092,55 @@ namespace {
             return false;
         }
     };
+
+    [[nodiscard]] pbrt::ParsedParameter* make_integer_parameter(const std::string_view name, const int value, const pbrt::FileLoc& location) {
+        pbrt::ParsedParameter* parameter = new pbrt::ParsedParameter(location);
+        parameter->type                  = "integer";
+        parameter->name                  = std::string{name};
+        parameter->AddInt(value);
+        return parameter;
+    }
+
+    [[nodiscard]] pbrt::ParsedParameterVector film_parameters_with_resolution(pbrt::ParsedParameterVector parameters, const std::array<int, 2>& resolution, const pbrt::FileLoc& location) {
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("PBRT backend resolution must be positive");
+        for (auto iterator = parameters.begin(); iterator != parameters.end();) {
+            pbrt::ParsedParameter* parameter = *iterator;
+            if (parameter == nullptr) throw std::runtime_error("PBRT Film parameter is null");
+            if (parameter->name == "xresolution" || parameter->name == "yresolution") {
+                delete parameter;
+                iterator = parameters.erase(iterator);
+            } else
+                ++iterator;
+        }
+        parameters.push_back(make_integer_parameter("xresolution", resolution[0], location));
+        parameters.push_back(make_integer_parameter("yresolution", resolution[1], location));
+        return parameters;
+    }
+
+    struct SpectraResolutionOverrideSceneBuilder final : pbrt::BasicSceneBuilder {
+        SpectraResolutionOverrideSceneBuilder(pbrt::BasicScene* scene, const std::array<int, 2>& resolution) : pbrt::BasicSceneBuilder{scene}, resolution{resolution} {
+            if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("PBRT backend resolution must be positive");
+        }
+
+        void Film(const std::string& type, pbrt::ParsedParameterVector parameters, pbrt::FileLoc location) override {
+            this->film_seen = true;
+            pbrt::BasicSceneBuilder::Film(type, film_parameters_with_resolution(std::move(parameters), this->resolution, location), location);
+        }
+
+        void WorldBegin(pbrt::FileLoc location) override {
+            if (!this->film_seen) pbrt::BasicSceneBuilder::Film("rgb", film_parameters_with_resolution(pbrt::ParsedParameterVector{}, this->resolution, location), location);
+            pbrt::BasicSceneBuilder::WorldBegin(location);
+        }
+
+        std::array<int, 2> resolution{0, 0};
+        bool film_seen{false};
+    };
 }
 
 namespace xayah {
     struct SpectraPbrtBackendSceneState {
         std::unique_ptr<pbrt::BasicScene> scene{};
         std::unique_ptr<pbrt::BasicSceneBuilder> builder{};
-        bool pbrt_initialized{false};
     };
 
     void SpectraScene::load(const std::filesystem::path& path) {
@@ -1250,22 +1291,16 @@ namespace xayah {
         this->unload_noexcept();
     }
 
-    void SpectraPbrtBackendScene::load(const SpectraScene& spectra_scene) {
+    void SpectraPbrtBackendScene::load(const SpectraScene& spectra_scene, const std::array<int, 2>& resolution) {
         if (this->state == nullptr) throw std::runtime_error("PBRT backend scene state is null");
         if (this->state->scene != nullptr) throw std::runtime_error("PBRT backend scene is already loaded");
         if (spectra_scene.scene_path.empty()) throw std::runtime_error("Cannot build PBRT backend scene without a loaded Spectra scene");
         if (spectra_scene.pbrt_directives.empty()) throw std::runtime_error("Cannot build PBRT backend scene before Spectra scene parsing is complete");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot build PBRT backend scene with a non-positive resolution");
+        if (pbrt::Options == nullptr) throw std::runtime_error("Cannot build PBRT backend scene before PBRT runtime is initialized");
         try {
-            pbrt::PBRTOptions options{};
-            options.useGPU         = true;
-            options.wavefront      = false;
-            options.nThreads       = 30;
-            options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
-            pbrt::InitPBRT(options);
-            this->state->pbrt_initialized = true;
-
             this->state->scene   = std::make_unique<pbrt::BasicScene>();
-            this->state->builder = std::make_unique<pbrt::BasicSceneBuilder>(this->state->scene.get());
+            this->state->builder = std::make_unique<SpectraResolutionOverrideSceneBuilder>(this->state->scene.get(), resolution);
             std::vector<std::string> filenames{spectra_scene.scene_path_text};
             pbrt::ParseFiles(this->state->builder.get(), filenames);
         } catch (...) {
@@ -1276,19 +1311,8 @@ namespace xayah {
 
     void SpectraPbrtBackendScene::unload_noexcept() noexcept {
         if (this->state == nullptr) return;
-        try {
-            if (this->state->pbrt_initialized && pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
-        } catch (...) {
-        }
-        this->state->scene.reset();
         this->state->builder.reset();
-        if (this->state->pbrt_initialized) {
-            try {
-                pbrt::CleanupPBRT();
-            } catch (...) {
-            }
-            this->state->pbrt_initialized = false;
-        }
+        this->state->scene.reset();
     }
 
     [[nodiscard]] pbrt::BasicScene& SpectraPbrtBackendScene::basic_scene() {
