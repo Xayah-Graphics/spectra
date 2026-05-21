@@ -1097,7 +1097,8 @@ namespace xayah {
         this->draw_dockspace();
         this->draw_viewport_window();
         this->draw_camera_window();
-        this->draw_scene_diagnostics_window();
+        this->draw_scene_browser_window();
+        this->draw_inspector_window();
         this->draw_settings_window();
         this->draw_environment_window();
         this->draw_tonemapper_window();

@@ -403,7 +403,8 @@ namespace xayah {
         void draw_dockspace();
         void draw_viewport_window();
         void draw_camera_window();
-        void draw_scene_diagnostics_window();
+        void draw_scene_browser_window();
+        void draw_inspector_window();
         void draw_settings_window();
         void draw_environment_window();
         void draw_tonemapper_window();
@@ -462,11 +463,12 @@ namespace xayah {
         struct {
             bool dock_layout_initialized{false};
             bool camera_visible{true};
-            bool scene_diagnostics_visible{true};
+            bool scene_browser_visible{true};
+            bool inspector_visible{true};
             bool settings_visible{true};
             bool environment_visible{true};
             bool tonemapper_visible{true};
-            bool statistics_visible{false};
+            bool statistics_visible{true};
             bool viewport_known{false};
             bool viewport_hovered{false};
             bool viewport_focused{false};
