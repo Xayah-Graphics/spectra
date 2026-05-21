@@ -59,6 +59,18 @@ namespace xayah {
         }
 
 
+    [[nodiscard]] std::array<float, 6> SpectraVulkanRasterizer::camera_initial_focus_bounds() const {
+            if (!this->has_initial_focus_bounds) throw std::runtime_error("Vulkan rasterizer camera initial focus bounds are unavailable");
+            for (const float value : this->initial_focus_bounds) {
+                if (!std::isfinite(value)) throw std::runtime_error("Vulkan rasterizer camera initial focus bounds contain a non-finite value");
+            }
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                if (this->initial_focus_bounds[axis] > this->initial_focus_bounds[axis + 3]) throw std::runtime_error("Vulkan rasterizer camera initial focus bounds are invalid");
+            }
+            return this->initial_focus_bounds;
+        }
+
+
     void SpectraVulkanRasterizer::render_frame(const std::uint32_t frame_index) {
             if (frame_index >= this->frames.size()) throw std::runtime_error("Vulkan rasterizer frame index is out of range");
             this->active_frame_index = frame_index;
@@ -302,6 +314,8 @@ namespace xayah {
                 const float dz = bounds_max[2] - bounds_min[2];
                 this->initial_move_scale = std::sqrt(dx * dx + dy * dy + dz * dz) / 1000.0f;
                 if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("Raster scene bounds must define a positive interactive move scale");
+                this->initial_focus_bounds     = {bounds_min[0], bounds_min[1], bounds_min[2], bounds_max[0], bounds_max[1], bounds_max[2]};
+                this->has_initial_focus_bounds = true;
             }
             return draws;
         }

@@ -292,13 +292,13 @@ namespace xayah {
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Move Scale");
+            ImGui::TextUnformatted("Camera Speed");
             ImGui::TableSetColumnIndex(1);
-            float move_scale = this->camera.move_scale;
-            const float drag_speed = std::max(std::abs(move_scale) * 0.01f, 0.000001f);
+            float speed = this->camera.speed;
+            const float drag_speed = std::max(std::abs(speed) * 0.01f, 0.000001f);
             ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::DragFloat("##CameraMoveScale", &move_scale, drag_speed, 0.0f, 0.0f, "%.6g")) this->set_camera_move_scale(move_scale);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera movement distance per key step. Changing this does not reset accumulation.");
+            if (ImGui::DragFloat("##CameraSpeed", &speed, drag_speed, 0.0f, 0.0f, "%.6g")) this->set_camera_speed(speed);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera movement speed in world units per second. Changing this does not reset accumulation.");
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);

@@ -7,9 +7,6 @@ namespace xayah {
     [[nodiscard]] std::array<float, 16> identity_matrix_array();
     void validate_matrix_array(const std::array<float, 16>& values);
     [[nodiscard]] std::array<float, 16> multiply_matrix_arrays(const std::array<float, 16>& lhs, const std::array<float, 16>& rhs);
-    [[nodiscard]] std::array<float, 16> translation_matrix_array(float x, float y, float z);
-    [[nodiscard]] std::array<float, 16> rotation_x_matrix_array(float degrees);
-    [[nodiscard]] std::array<float, 16> rotation_y_matrix_array(float degrees);
     [[nodiscard]] std::array<float, 16> matrix_array_from_transform(const pbrt::Transform& transform);
     [[nodiscard]] pbrt::Transform transform_from_matrix_array(const std::array<float, 16>& values);
     [[nodiscard]] std::array<float, 16> transpose_matrix_array(const std::array<float, 16>& matrix);
@@ -59,6 +56,7 @@ namespace xayah {
         pbrt::Transform camera_from_world{};
         pbrt::Float exposure{1.0f};
         pbrt::Float initial_move_scale{1.0f};
+        std::array<float, 6> initial_focus_bounds{};
         int sample_index{0};
         int max_samples{0};
         int target_samples{0};
@@ -89,6 +87,8 @@ namespace xayah {
         [[nodiscard]] float current_exposure() const;
 
         [[nodiscard]] float camera_initial_move_scale() const;
+
+        [[nodiscard]] std::array<float, 6> camera_initial_focus_bounds() const;
 
         [[nodiscard]] std::array<int, 2> film_resolution() const;
 
@@ -188,6 +188,8 @@ namespace xayah {
         std::size_t draw_count{0};
         std::size_t triangle_count{0};
         float initial_move_scale{1.0f};
+        std::array<float, 6> initial_focus_bounds{};
+        bool has_initial_focus_bounds{false};
         BufferResource vertex_buffer{};
         BufferResource index_buffer{};
         BufferResource draw_buffer{};
@@ -213,6 +215,8 @@ namespace xayah {
         [[nodiscard]] VkDescriptorSet active_descriptor() const;
 
         [[nodiscard]] float camera_initial_move_scale() const;
+
+        [[nodiscard]] std::array<float, 6> camera_initial_focus_bounds() const;
 
         void render_frame(const std::uint32_t frame_index);
 

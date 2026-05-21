@@ -92,43 +92,6 @@ namespace xayah {
         return result;
     }
 
-    [[nodiscard]] std::array<float, 16> translation_matrix_array(const float x, const float y, const float z) {
-        std::array<float, 16> matrix = identity_matrix_array();
-        matrix[3]  = x;
-        matrix[7]  = y;
-        matrix[11] = z;
-        validate_matrix_array(matrix);
-        return matrix;
-    }
-
-    [[nodiscard]] std::array<float, 16> rotation_x_matrix_array(const float degrees) {
-        constexpr float radians_per_degree = 0.017453292519943295769f;
-        const float radians                = degrees * radians_per_degree;
-        const float sin_theta              = std::sin(radians);
-        const float cos_theta              = std::cos(radians);
-        std::array<float, 16> matrix       = identity_matrix_array();
-        matrix[5]                          = cos_theta;
-        matrix[6]                          = -sin_theta;
-        matrix[9]                          = sin_theta;
-        matrix[10]                         = cos_theta;
-        validate_matrix_array(matrix);
-        return matrix;
-    }
-
-    [[nodiscard]] std::array<float, 16> rotation_y_matrix_array(const float degrees) {
-        constexpr float radians_per_degree = 0.017453292519943295769f;
-        const float radians                = degrees * radians_per_degree;
-        const float sin_theta              = std::sin(radians);
-        const float cos_theta              = std::cos(radians);
-        std::array<float, 16> matrix       = identity_matrix_array();
-        matrix[0]                          = cos_theta;
-        matrix[2]                          = sin_theta;
-        matrix[8]                          = -sin_theta;
-        matrix[10]                         = cos_theta;
-        validate_matrix_array(matrix);
-        return matrix;
-    }
-
     [[nodiscard]] std::array<float, 16> matrix_array_from_transform(const pbrt::Transform& transform) {
         std::array<float, 16> values{};
         const pbrt::SquareMatrix<4>& matrix = transform.GetMatrix();
@@ -214,6 +177,237 @@ namespace xayah {
         return {x / w, y / w, z / w};
     }
 
+    [[nodiscard]] std::array<float, 3> transform_vector_array(const std::array<float, 16>& matrix, const std::array<float, 3>& vector) {
+        validate_matrix_array(matrix);
+        const float x = matrix[0] * vector[0] + matrix[1] * vector[1] + matrix[2] * vector[2];
+        const float y = matrix[4] * vector[0] + matrix[5] * vector[1] + matrix[6] * vector[2];
+        const float z = matrix[8] * vector[0] + matrix[9] * vector[1] + matrix[10] * vector[2];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) throw std::runtime_error("Camera transformed vector is invalid");
+        return {x, y, z};
+    }
+
+    [[nodiscard]] float vector3_dot(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs) {
+        return lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2];
+    }
+
+    [[nodiscard]] std::array<float, 3> vector3_cross(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs) {
+        return {
+            lhs[1] * rhs[2] - lhs[2] * rhs[1],
+            lhs[2] * rhs[0] - lhs[0] * rhs[2],
+            lhs[0] * rhs[1] - lhs[1] * rhs[0],
+        };
+    }
+
+    [[nodiscard]] std::array<float, 3> vector3_add(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs) {
+        return {lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2]};
+    }
+
+    [[nodiscard]] std::array<float, 3> vector3_subtract(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs) {
+        return {lhs[0] - rhs[0], lhs[1] - rhs[1], lhs[2] - rhs[2]};
+    }
+
+    [[nodiscard]] std::array<float, 3> vector3_scale(const std::array<float, 3>& vector, const float scale) {
+        return {vector[0] * scale, vector[1] * scale, vector[2] * scale};
+    }
+
+    [[nodiscard]] float vector3_length(const std::array<float, 3>& vector) {
+        const float length_squared = vector3_dot(vector, vector);
+        if (!std::isfinite(length_squared) || length_squared < 0.0f) throw std::runtime_error("Camera vector length is invalid");
+        return std::sqrt(length_squared);
+    }
+
+    [[nodiscard]] std::array<float, 3> vector3_normalize(const std::array<float, 3>& vector, const char* error_message) {
+        const float length = vector3_length(vector);
+        if (!(length > 1.0e-20f)) throw std::runtime_error(error_message);
+        return vector3_scale(vector, 1.0f / length);
+    }
+
+    [[nodiscard]] std::array<float, 3> camera_effective_up(const std::array<float, 3>& eye, const std::array<float, 3>& center, const std::array<float, 3>& up) {
+        const std::array<float, 3> view_direction = vector3_subtract(center, eye);
+        if (vector3_length(vector3_cross(view_direction, up)) > 1.0e-10f) return up;
+        return std::abs(up[1]) < 0.9f ? std::array<float, 3>{0.0f, 1.0f, 0.0f} : std::array<float, 3>{1.0f, 0.0f, 0.0f};
+    }
+
+    struct SpectraCameraFrame {
+        std::array<float, 3> forward{};
+        std::array<float, 3> right{};
+        std::array<float, 3> up{};
+    };
+
+    struct SpectraCameraPose {
+        std::array<float, 3> eye{};
+        std::array<float, 3> center{};
+        std::array<float, 3> up{};
+        float basis_handedness{1.0f};
+    };
+
+    [[nodiscard]] SpectraCameraFrame camera_frame_from_pose(const std::array<float, 3>& eye, const std::array<float, 3>& center, const std::array<float, 3>& up, const float basis_handedness) {
+        if (basis_handedness != -1.0f && basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
+        SpectraCameraFrame frame{};
+        frame.forward = vector3_normalize(vector3_subtract(center, eye), "Camera eye and center must not overlap");
+        const std::array<float, 3> effective_up = camera_effective_up(eye, center, up);
+        const std::array<float, 3> positive_right = vector3_normalize(vector3_cross(effective_up, frame.forward), "Camera right vector is invalid");
+        frame.right                               = vector3_scale(positive_right, basis_handedness);
+        frame.up                                  = vector3_cross(frame.forward, positive_right);
+        return frame;
+    }
+
+    [[nodiscard]] std::array<float, 16> camera_from_world_matrix_from_pose(const std::array<float, 3>& eye, const std::array<float, 3>& center, const std::array<float, 3>& up, const float basis_handedness) {
+        const SpectraCameraFrame frame = camera_frame_from_pose(eye, center, up, basis_handedness);
+        std::array<float, 16> matrix{
+            frame.right[0], frame.right[1], frame.right[2], -vector3_dot(frame.right, eye),
+            frame.up[0], frame.up[1], frame.up[2], -vector3_dot(frame.up, eye),
+            frame.forward[0], frame.forward[1], frame.forward[2], -vector3_dot(frame.forward, eye),
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
+        validate_matrix_array(matrix);
+        return matrix;
+    }
+
+    [[nodiscard]] std::array<float, 3> camera_focus_center_from_bounds(const std::array<float, 3>& eye, const std::array<float, 3>& forward, const std::array<float, 6>& focus_bounds) {
+        std::array<float, 3> bounds_min{focus_bounds[0], focus_bounds[1], focus_bounds[2]};
+        std::array<float, 3> bounds_max{focus_bounds[3], focus_bounds[4], focus_bounds[5]};
+        for (const float value : focus_bounds) {
+            if (!std::isfinite(value)) throw std::runtime_error("Camera focus bounds contain a non-finite value");
+        }
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            if (bounds_min[axis] > bounds_max[axis]) throw std::runtime_error("Camera focus bounds are invalid");
+        }
+
+        const std::array<float, 3> bounds_center{
+            (bounds_min[0] + bounds_max[0]) * 0.5f,
+            (bounds_min[1] + bounds_max[1]) * 0.5f,
+            (bounds_min[2] + bounds_max[2]) * 0.5f,
+        };
+        float focus_distance = vector3_dot(vector3_subtract(bounds_center, eye), forward);
+
+        constexpr float parallel_epsilon = 1.0e-7f;
+        constexpr float distance_epsilon = 1.0e-5f;
+        float ray_min = 0.0f;
+        float ray_max = std::numeric_limits<float>::infinity();
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            if (std::abs(forward[axis]) <= parallel_epsilon) {
+                if (eye[axis] < bounds_min[axis] || eye[axis] > bounds_max[axis]) throw std::runtime_error("Camera focus bounds do not intersect the initial view ray");
+            } else {
+                float t0 = (bounds_min[axis] - eye[axis]) / forward[axis];
+                float t1 = (bounds_max[axis] - eye[axis]) / forward[axis];
+                if (t0 > t1) std::swap(t0, t1);
+                ray_min = std::max(ray_min, t0);
+                ray_max = std::min(ray_max, t1);
+                if (ray_min > ray_max) throw std::runtime_error("Camera focus bounds do not intersect the initial view ray");
+            }
+        }
+        if (!(ray_max > distance_epsilon)) throw std::runtime_error("Camera focus bounds must be in front of the initial camera");
+        const float lower_bound = std::max(ray_min, distance_epsilon);
+        focus_distance = std::clamp(focus_distance, lower_bound, ray_max);
+        if (!(focus_distance > distance_epsilon) || !std::isfinite(focus_distance)) throw std::runtime_error("Camera focus distance is invalid");
+        return vector3_add(eye, vector3_scale(forward, focus_distance));
+    }
+
+    [[nodiscard]] SpectraCameraPose camera_pose_from_base_matrix(const std::array<float, 16>& camera_from_world, const std::array<float, 6>& focus_bounds) {
+        const std::array<float, 16> world_from_camera = inverse_matrix_array(camera_from_world);
+        SpectraCameraPose pose{};
+        pose.eye                    = transform_point_array(world_from_camera, {0.0f, 0.0f, 0.0f});
+        const std::array<float, 3> right   = vector3_normalize(transform_vector_array(world_from_camera, {1.0f, 0.0f, 0.0f}), "Base camera right vector is invalid");
+        const std::array<float, 3> forward = vector3_normalize(transform_vector_array(world_from_camera, {0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
+        pose.up                            = vector3_normalize(transform_vector_array(world_from_camera, {0.0f, 1.0f, 0.0f}), "Base camera up vector is invalid");
+        const std::array<float, 3> positive_right = vector3_normalize(vector3_cross(camera_effective_up(pose.eye, vector3_add(pose.eye, forward), pose.up), forward), "Base camera positive right vector is invalid");
+        pose.basis_handedness              = vector3_dot(right, positive_right) < 0.0f ? -1.0f : 1.0f;
+        pose.center                        = camera_focus_center_from_bounds(pose.eye, forward, focus_bounds);
+        return pose;
+    }
+
+    [[nodiscard]] std::array<float, 2> camera_view_dimensions(const std::array<float, 3>& eye, const std::array<float, 3>& center, const float fov_degrees, const std::array<float, 2>& viewport_size) {
+        if (!std::isfinite(fov_degrees) || !(fov_degrees > 0.0f) || !(fov_degrees < 180.0f)) throw std::runtime_error("Camera fov must be finite and inside (0, 180)");
+        if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
+        constexpr float radians_per_degree = 0.017453292519943295769f;
+        const float distance               = vector3_length(vector3_subtract(eye, center));
+        const float half_height            = distance * std::tan(fov_degrees * radians_per_degree * 0.5f);
+        const float height                 = half_height * 2.0f;
+        const float width                  = height * std::max(viewport_size[0] / viewport_size[1], 0.001f);
+        if (!std::isfinite(width) || !std::isfinite(height) || !(width > 0.0f) || !(height > 0.0f)) throw std::runtime_error("Camera view dimensions are invalid");
+        return {width, height};
+    }
+
+    bool camera_pan(SpectraCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
+        if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
+        const SpectraCameraFrame frame        = camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const std::array<float, 2> view_size  = camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
+        const std::array<float, 3> horizontal = vector3_scale(frame.right, -displacement[0] * view_size[0]);
+        const std::array<float, 3> vertical   = vector3_scale(frame.up, displacement[1] * view_size[1]);
+        const std::array<float, 3> offset     = vector3_add(horizontal, vertical);
+        pose.eye                              = vector3_add(pose.eye, offset);
+        pose.center                           = vector3_add(pose.center, offset);
+        return true;
+    }
+
+    bool camera_dolly(SpectraCameraPose& pose, const std::array<float, 2>& displacement) {
+        const float larger_displacement = std::abs(displacement[0]) > std::abs(displacement[1]) ? displacement[0] : -displacement[1];
+        if (larger_displacement == 0.0f) return false;
+        if (larger_displacement >= 0.99f) return false;
+        const std::array<float, 3> direction = vector3_subtract(pose.center, pose.eye);
+        if (!(vector3_length(direction) > 1.0e-6f)) return false;
+        pose.eye = vector3_add(pose.eye, vector3_scale(direction, larger_displacement));
+        return true;
+    }
+
+    bool camera_orbit(SpectraCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
+        if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
+        if (pose.basis_handedness != -1.0f && pose.basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
+        constexpr float two_pi   = 6.2831853071795864769f;
+        constexpr float pole_pad = 1.0e-3f;
+        displacement[0] *= -pose.basis_handedness;
+        displacement[0] *= two_pi;
+        displacement[1] *= two_pi;
+
+        const std::array<float, 3> origin   = invert ? pose.eye : pose.center;
+        const std::array<float, 3> position = invert ? pose.center : pose.eye;
+        std::array<float, 3> center_to_eye  = vector3_subtract(position, origin);
+        const float radius                  = vector3_length(center_to_eye);
+        if (!(radius > 1.0e-6f)) return false;
+        center_to_eye = vector3_scale(center_to_eye, 1.0f / radius);
+
+        const std::array<float, 3> normalized_up = vector3_normalize(pose.up, "Camera up vector is invalid");
+        const float cos_elevation                = vector3_dot(center_to_eye, normalized_up);
+        std::array<float, 3> horizontal          = vector3_subtract(center_to_eye, vector3_scale(normalized_up, cos_elevation));
+        const float sin_elevation                = vector3_length(horizontal);
+        const float elevation                    = std::atan2(sin_elevation, cos_elevation);
+        if (sin_elevation < 1.0e-6f) {
+            const std::array<float, 3> reference = std::abs(normalized_up[0]) < 0.9f ? std::array<float, 3>{1.0f, 0.0f, 0.0f} : std::array<float, 3>{0.0f, 0.0f, 1.0f};
+            horizontal                           = vector3_normalize(vector3_subtract(reference, vector3_scale(normalized_up, vector3_dot(reference, normalized_up))), "Camera orbit horizontal vector is invalid");
+        } else {
+            horizontal = vector3_scale(horizontal, 1.0f / sin_elevation);
+        }
+
+        const float yaw_cos                    = std::cos(-displacement[0]);
+        const float yaw_sin                    = std::sin(-displacement[0]);
+        horizontal                             = vector3_add(vector3_scale(horizontal, yaw_cos), vector3_scale(vector3_cross(normalized_up, horizontal), yaw_sin));
+        const float new_elevation              = std::clamp(elevation - displacement[1], pole_pad, 3.14159265358979323846f - pole_pad);
+        const std::array<float, 3> new_offset   = vector3_scale(vector3_add(vector3_scale(normalized_up, std::cos(new_elevation)), vector3_scale(horizontal, std::sin(new_elevation))), radius);
+        const std::array<float, 3> new_position = vector3_add(new_offset, origin);
+        if (invert) pose.center = new_position;
+        else pose.eye = new_position;
+        return true;
+    }
+
+    bool camera_key_motion(SpectraCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
+        if (delta[0] == 0.0f && delta[1] == 0.0f) return false;
+        if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
+        const SpectraCameraFrame frame = camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const std::array<float, 3> movement = dolly
+            ? vector3_scale(frame.forward, delta[0] * speed)
+            : vector3_add(vector3_scale(frame.right, delta[0] * speed), vector3_scale(frame.up, delta[1] * speed));
+        pose.eye    = vector3_add(pose.eye, movement);
+        pose.center = vector3_add(pose.center, movement);
+        return true;
+    }
+
+    [[nodiscard]] std::array<float, 16> moving_from_camera_from_pose(const std::array<float, 16>& base_camera_from_world, const SpectraCameraPose& pose) {
+        const std::array<float, 16> current_camera_from_world = camera_from_world_matrix_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const std::array<float, 16> current_world_from_camera = inverse_matrix_array(current_camera_from_world);
+        return multiply_matrix_arrays(base_camera_from_world, current_world_from_camera);
+    }
+
     [[nodiscard]] std::array<float, 16> raster_perspective_matrix(const float fov_degrees, const float aspect) {
         if (!std::isfinite(fov_degrees) || !(fov_degrees > 0.0f) || !(fov_degrees < 180.0f)) throw std::runtime_error("Raster perspective fov must be finite and inside (0, 180)");
         if (!std::isfinite(aspect) || !(aspect > 0.0f)) throw std::runtime_error("Raster perspective aspect ratio must be finite and positive");
@@ -247,8 +441,8 @@ namespace xayah {
         if (scene.film_resolution[0] <= 0 || scene.film_resolution[1] <= 0) throw std::runtime_error("Rasterizer requires positive PBRT film resolution metadata");
         const float aspect = static_cast<float>(scene.film_resolution[0]) / static_cast<float>(scene.film_resolution[1]);
         const std::array<float, 16> projection = raster_perspective_matrix(raster_camera_fov_degrees(scene), aspect);
-        const std::array<float, 16> moved_camera_from_world = multiply_matrix_arrays(moving_from_camera, camera_from_world);
-        return multiply_matrix_arrays(projection, moved_camera_from_world);
+        const std::array<float, 16> current_camera_from_world = multiply_matrix_arrays(inverse_matrix_array(moving_from_camera), camera_from_world);
+        return multiply_matrix_arrays(projection, current_camera_from_world);
     }
 
     [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
@@ -860,6 +1054,18 @@ namespace xayah {
         throw std::runtime_error("Unknown Spectra render mode");
     }
 
+    [[nodiscard]] std::array<float, 6> Spectra::active_renderer_initial_focus_bounds() const {
+        switch (this->ui.active_render_mode) {
+            case SpectraRenderMode::PbrtPathtracer:
+                if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT camera focus bounds requested without an active PBRT session");
+                return this->pbrt_interactive->camera_initial_focus_bounds();
+            case SpectraRenderMode::VulkanRasterizer:
+                if (this->vulkan_rasterizer == nullptr) throw std::runtime_error("Vulkan rasterizer camera focus bounds requested without an active rasterizer session");
+                return this->vulkan_rasterizer->camera_initial_focus_bounds();
+        }
+        throw std::runtime_error("Unknown Spectra render mode");
+    }
+
     [[nodiscard]] bool Spectra::active_renderer_uses_external_completion_semaphore() const {
         switch (this->ui.active_render_mode) {
             case SpectraRenderMode::PbrtPathtracer:
@@ -957,22 +1163,38 @@ namespace xayah {
 
     void Spectra::initialize_camera_state() {
         if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
-        this->camera.initialized        = true;
-        this->camera.input_enabled      = false;
-        this->camera.move_scale         = this->active_renderer_initial_move_scale();
-        this->camera.moving_from_camera = identity_matrix_array();
-        this->camera.camera_from_world  = this->spectra_scene->camera_from_world;
+        const float initial_move_scale = this->active_renderer_initial_move_scale();
+        if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
+        this->camera.camera_from_world = this->spectra_scene->camera_from_world;
+        const SpectraCameraPose pose   = camera_pose_from_base_matrix(this->camera.camera_from_world, this->active_renderer_initial_focus_bounds());
+        this->camera.initialized       = true;
+        this->camera.input_enabled     = false;
+        this->camera.speed             = initial_move_scale * 60.0f;
+        this->camera.fov_degrees       = raster_camera_fov_degrees(*this->spectra_scene);
+        this->camera.basis_handedness  = pose.basis_handedness;
+        this->camera.eye               = pose.eye;
+        this->camera.center            = pose.center;
+        this->camera.up                = pose.up;
+        this->camera.mouse_position    = {0.0f, 0.0f};
+        this->camera.mouse_position_known = false;
+        this->camera.moving_from_camera   = identity_matrix_array();
         this->camera.pathtracer_accumulation_dirty = false;
     }
 
-    void Spectra::set_camera_move_scale(const float move_scale) {
-        if (!std::isfinite(move_scale) || !(move_scale > 0.0f)) throw std::runtime_error("Camera move scale must be finite and positive");
-        this->camera.move_scale = move_scale;
+    void Spectra::set_camera_speed(const float speed) {
+        if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
+        this->camera.speed = speed;
     }
 
     void Spectra::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
-        this->camera.moving_from_camera = identity_matrix_array();
+        const SpectraCameraPose pose  = camera_pose_from_base_matrix(this->camera.camera_from_world, this->active_renderer_initial_focus_bounds());
+        this->camera.eye              = pose.eye;
+        this->camera.center           = pose.center;
+        this->camera.up               = pose.up;
+        this->camera.basis_handedness = pose.basis_handedness;
+        this->camera.mouse_position_known = false;
+        this->camera.moving_from_camera   = identity_matrix_array();
         this->mark_pathtracer_accumulation_dirty();
     }
 
@@ -984,68 +1206,85 @@ namespace xayah {
         const ImVec2 mouse_position = io.MousePos;
         const bool in_viewport_rect = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
         this->camera.input_enabled  = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused) && !io.WantTextInput;
-        if (!this->camera.input_enabled) return;
+        if (!this->camera.input_enabled) {
+            this->camera.mouse_position_known = false;
+            return;
+        }
         if (!this->camera.initialized) throw std::runtime_error("Cannot process camera input before camera state is initialized");
 
-        std::array<float, 16> moving_from_camera = this->camera.moving_from_camera;
-        bool needs_reset                         = false;
-        if (ImGui::IsKeyDown(ImGuiKey_A)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(-this->camera.move_scale, 0.0f, 0.0f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_D)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(this->camera.move_scale, 0.0f, 0.0f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_S)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, 0.0f, -this->camera.move_scale));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_W)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, 0.0f, this->camera.move_scale));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_Q)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, -this->camera.move_scale, 0.0f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_E)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, translation_matrix_array(0.0f, this->camera.move_scale, 0.0f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(-0.5f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(0.5f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(-0.5f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
-            moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(0.5f));
-            needs_reset        = true;
-        }
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
-            if (io.MouseDelta.x < 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(-1.0f));
-            if (io.MouseDelta.x > 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_y_matrix_array(1.0f));
-            if (io.MouseDelta.y > 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(-1.0f));
-            if (io.MouseDelta.y < 0.0f) moving_from_camera = multiply_matrix_arrays(moving_from_camera, rotation_x_matrix_array(1.0f));
-            needs_reset = needs_reset || io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
-        }
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
-            moving_from_camera = identity_matrix_array();
-            needs_reset        = true;
+            this->reset_camera();
+            return;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false)) this->set_camera_move_scale(this->camera.move_scale * 2.0f);
-        if (ImGui::IsKeyPressed(ImGuiKey_Minus, false)) this->set_camera_move_scale(this->camera.move_scale * 0.5f);
+        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) this->set_camera_speed(this->camera.speed * 2.0f);
+        if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) this->set_camera_speed(this->camera.speed * 0.5f);
 
-        if (needs_reset) {
-            validate_matrix_array(moving_from_camera);
-            this->camera.moving_from_camera = moving_from_camera;
+        const bool shift = io.KeyShift;
+        const bool ctrl  = io.KeyCtrl;
+        const bool alt   = io.KeyAlt;
+        SpectraCameraPose pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
+        bool camera_changed = false;
+        if (!alt) {
+            if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid");
+            float key_motion_factor = io.DeltaTime;
+            if (shift) key_motion_factor *= 5.0f;
+            if (ctrl) key_motion_factor *= 0.1f;
+            if (key_motion_factor > 0.0f) {
+                if (ImGui::IsKeyDown(ImGuiKey_W)) camera_changed = camera_key_motion(pose, {key_motion_factor, 0.0f}, this->camera.speed, true) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_S)) camera_changed = camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->camera.speed, true) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) camera_changed = camera_key_motion(pose, {key_motion_factor, 0.0f}, this->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) camera_changed = camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) camera_changed = camera_key_motion(pose, {0.0f, key_motion_factor}, this->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) camera_changed = camera_key_motion(pose, {0.0f, -key_motion_factor}, this->camera.speed, false) || camera_changed;
+            }
+        }
+
+        const std::array<float, 2> viewport_size = this->ui.viewport_size;
+        if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
+        const std::array<float, 2> current_mouse_position{mouse_position.x, mouse_position.y};
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right, false)) {
+            this->camera.mouse_position       = current_mouse_position;
+            this->camera.mouse_position_known = true;
+        }
+
+        const bool left_dragging   = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f);
+        const bool middle_dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f);
+        const bool right_dragging  = ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f);
+        if (left_dragging || middle_dragging || right_dragging) {
+            if (!this->camera.mouse_position_known) {
+                this->camera.mouse_position       = current_mouse_position;
+                this->camera.mouse_position_known = true;
+            }
+            const std::array<float, 2> mouse_displacement{
+                (current_mouse_position[0] - this->camera.mouse_position[0]) / viewport_size[0],
+                (current_mouse_position[1] - this->camera.mouse_position[1]) / viewport_size[1],
+            };
+            if (left_dragging) {
+                if ((ctrl && shift) || alt) camera_changed = camera_orbit(pose, {mouse_displacement[0], -mouse_displacement[1]}, true) || camera_changed;
+                else if (shift) camera_changed = camera_dolly(pose, mouse_displacement) || camera_changed;
+                else if (ctrl) camera_changed = camera_pan(pose, mouse_displacement, this->camera.fov_degrees, viewport_size) || camera_changed;
+                else camera_changed = camera_orbit(pose, mouse_displacement, false) || camera_changed;
+            } else if (middle_dragging) {
+                camera_changed = camera_pan(pose, mouse_displacement, this->camera.fov_degrees, viewport_size) || camera_changed;
+            } else if (right_dragging) {
+                camera_changed = camera_dolly(pose, mouse_displacement) || camera_changed;
+            }
+            this->camera.mouse_position = current_mouse_position;
+        }
+
+        if (io.MouseWheel != 0.0f && !shift) {
+            constexpr float wheel_speed = 10.0f;
+            const float wheel_value     = io.MouseWheel * wheel_speed;
+            const float dolly_delta     = wheel_value * std::abs(wheel_value) / viewport_size[0];
+            camera_changed              = camera_dolly(pose, {dolly_delta, 0.0f}) || camera_changed;
+        }
+
+        if (camera_changed) {
+            this->camera.eye                  = pose.eye;
+            this->camera.center               = pose.center;
+            this->camera.up                   = pose.up;
+            this->camera.basis_handedness     = pose.basis_handedness;
+            this->camera.moving_from_camera   = moving_from_camera_from_pose(this->camera.camera_from_world, pose);
             this->mark_pathtracer_accumulation_dirty();
         }
     }

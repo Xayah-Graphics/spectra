@@ -92,6 +92,33 @@ namespace xayah {
                 const pbrt::Bounds3f scene_bounds = this->integrator->aggregate->Bounds();
                 this->initial_move_scale          = pbrt::Length(scene_bounds.Diagonal()) / 1000.0f;
                 if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("PBRT scene bounds must define a positive interactive move scale");
+                const pbrt::Transform world_from_render = pbrt::Inverse(this->render_from_camera * this->camera_from_world);
+                std::array<float, 3> world_bounds_min{};
+                std::array<float, 3> world_bounds_max{};
+                bool has_world_bounds = false;
+                for (const float x : std::array<float, 2>{scene_bounds.pMin.x, scene_bounds.pMax.x}) {
+                    for (const float y : std::array<float, 2>{scene_bounds.pMin.y, scene_bounds.pMax.y}) {
+                        for (const float z : std::array<float, 2>{scene_bounds.pMin.z, scene_bounds.pMax.z}) {
+                            const pbrt::Point3f corner_world = world_from_render(pbrt::Point3f{x, y, z});
+                            const std::array<float, 3> point{corner_world.x, corner_world.y, corner_world.z};
+                            for (const float value : point) {
+                                if (!std::isfinite(value)) throw std::runtime_error("PBRT scene focus bounds contain a non-finite value");
+                            }
+                            if (!has_world_bounds) {
+                                world_bounds_min = point;
+                                world_bounds_max = point;
+                                has_world_bounds = true;
+                            } else {
+                                for (std::size_t axis = 0; axis < 3; ++axis) {
+                                    world_bounds_min[axis] = std::min(world_bounds_min[axis], point[axis]);
+                                    world_bounds_max[axis] = std::max(world_bounds_max[axis], point[axis]);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!has_world_bounds) throw std::runtime_error("PBRT scene focus bounds are unavailable");
+                this->initial_focus_bounds = {world_bounds_min[0], world_bounds_min[1], world_bounds_min[2], world_bounds_max[0], world_bounds_max[1], world_bounds_max[2]};
 
                 this->validate_cuda_vulkan_device(physical_device);
                 this->create_frame_resources(physical_device, device, frame_count);
@@ -143,6 +170,17 @@ namespace xayah {
     [[nodiscard]] float SpectraPbrtInteractiveSession::camera_initial_move_scale() const {
             if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("PBRT interactive camera initial move scale must be positive");
             return static_cast<float>(this->initial_move_scale);
+        }
+
+
+    [[nodiscard]] std::array<float, 6> SpectraPbrtInteractiveSession::camera_initial_focus_bounds() const {
+            for (const float value : this->initial_focus_bounds) {
+                if (!std::isfinite(value)) throw std::runtime_error("PBRT interactive camera initial focus bounds contain a non-finite value");
+            }
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                if (this->initial_focus_bounds[axis] > this->initial_focus_bounds[axis + 3]) throw std::runtime_error("PBRT interactive camera initial focus bounds are invalid");
+            }
+            return this->initial_focus_bounds;
         }
 
 

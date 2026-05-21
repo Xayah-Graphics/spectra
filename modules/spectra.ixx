@@ -383,13 +383,14 @@ namespace xayah {
         void clear_pathtracer_throughput_statistics();
         void initialize_camera_state();
         void process_camera_input(GLFWwindow* window);
-        void set_camera_move_scale(float move_scale);
+        void set_camera_speed(float speed);
         void reset_camera();
         [[nodiscard]] const char* active_renderer_label() const;
         [[nodiscard]] ActiveRendererStatus active_renderer_status() const;
         [[nodiscard]] VkDescriptorSet active_viewport_descriptor() const;
         [[nodiscard]] std::array<int, 2> active_renderer_sample_range() const;
         [[nodiscard]] float active_renderer_initial_move_scale() const;
+        [[nodiscard]] std::array<float, 6> active_renderer_initial_focus_bounds() const;
         [[nodiscard]] bool active_renderer_uses_external_completion_semaphore() const;
         [[nodiscard]] vk::Semaphore active_renderer_complete_semaphore() const;
         [[nodiscard]] ActiveRendererFrameResult render_active_renderer_frame(const FrameState& frame);
@@ -486,7 +487,14 @@ namespace xayah {
         struct {
             bool initialized{false};
             bool input_enabled{false};
-            float move_scale{1.0f};
+            float speed{1.0f};
+            float fov_degrees{60.0f};
+            float basis_handedness{1.0f};
+            bool mouse_position_known{false};
+            std::array<float, 3> eye{0.0f, 0.0f, 0.0f};
+            std::array<float, 3> center{0.0f, 0.0f, 1.0f};
+            std::array<float, 3> up{0.0f, 1.0f, 0.0f};
+            std::array<float, 2> mouse_position{0.0f, 0.0f};
             std::array<float, 16> moving_from_camera{
                 1.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 1.0f, 0.0f, 0.0f,
