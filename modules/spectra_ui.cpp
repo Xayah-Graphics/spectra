@@ -17,10 +17,10 @@ module;
 #include <pbrt/util/transform.h>
 #include <pbrt/util/vecmath.h>
 #include <vulkan/vulkan_raii.hpp>
-#include "spectra_pbrt_fwd.h"
+#include <pbrt/scene.h>
 module spectra;
 import std;
-#include "spectra_internal.h"
+import :runtime;
 
 namespace {
     void draw_statistics_row(const char* label, const char* value) {
@@ -142,7 +142,7 @@ namespace {
 } // namespace
 
 namespace xayah {
-    void Spectra::draw_main_menu() {
+    void SpectraState::draw_main_menu() {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) this->ui.camera_visible = !this->ui.camera_visible;
@@ -174,7 +174,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_menu_toolbar() {
+    void SpectraState::draw_menu_toolbar() {
         struct ToggleButton {
             const char* icon;
             const char* shortcut;
@@ -210,7 +210,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_dockspace() {
+    void SpectraState::draw_dockspace() {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (main_viewport->WorkSize.x <= 640.0f || main_viewport->WorkSize.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
@@ -254,7 +254,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_viewport_window() {
+    void SpectraState::draw_viewport_window() {
         constexpr ImGuiWindowFlags viewport_window_flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
         if (ImGui::Begin("Viewport", nullptr, viewport_window_flags)) {
@@ -300,7 +300,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_camera_window() {
+    void SpectraState::draw_camera_window() {
         if (!this->ui.camera_visible) return;
         if (!ImGui::Begin("Camera", &this->ui.camera_visible)) {
             ImGui::End();
@@ -341,7 +341,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_scene_browser_window() {
+    void SpectraState::draw_scene_browser_window() {
         if (!this->ui.scene_browser_visible) return;
         if (!ImGui::Begin("Scene Browser", &this->ui.scene_browser_visible)) {
             ImGui::End();
@@ -690,7 +690,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_inspector_window() {
+    void SpectraState::draw_inspector_window() {
         if (!this->ui.inspector_visible) return;
         if (!ImGui::Begin("Inspector", &this->ui.inspector_visible)) {
             ImGui::End();
@@ -783,7 +783,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_settings_window() {
+    void SpectraState::draw_settings_window() {
         if (!this->ui.settings_visible) return;
         if (!ImGui::Begin("Settings", &this->ui.settings_visible)) {
             ImGui::End();
@@ -879,7 +879,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_environment_window() {
+    void SpectraState::draw_environment_window() {
         if (!this->ui.environment_visible) return;
         if (!ImGui::Begin("Environment", &this->ui.environment_visible)) {
             ImGui::End();
@@ -986,7 +986,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_tonemapper_window() {
+    void SpectraState::draw_tonemapper_window() {
         if (!this->ui.tonemapper_visible) return;
         if (!ImGui::Begin("Tonemapper", &this->ui.tonemapper_visible)) {
             ImGui::End();
@@ -1022,7 +1022,7 @@ namespace xayah {
     }
 
 
-    void Spectra::draw_statistics_window() {
+    void SpectraState::draw_statistics_window() {
         if (!this->ui.statistics_visible) return;
         if (!ImGui::Begin("Statistics", &this->ui.statistics_visible)) {
             ImGui::End();

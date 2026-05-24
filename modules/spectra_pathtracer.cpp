@@ -26,7 +26,7 @@ module;
 #include <vulkan/vulkan_raii.hpp>
 module spectra;
 import std;
-#include "spectra_internal.h"
+import :runtime;
 
 namespace {
     [[nodiscard]] vk::ExternalMemoryHandleTypeFlagBits pbrt_external_memory_handle_type() {
@@ -60,11 +60,67 @@ namespace {
         return cudaExternalSemaphoreHandleTypeOpaqueFd;
 #endif
     }
+
+    [[nodiscard]] std::array<float, 16> matrix_array_from_transform(const pbrt::Transform& transform) {
+        std::array<float, 16> values{};
+        const pbrt::SquareMatrix<4>& matrix = transform.GetMatrix();
+        for (std::size_t row = 0; row < 4; ++row) {
+            for (std::size_t column = 0; column < 4; ++column) values[row * 4 + column] = static_cast<float>(matrix[row][column]);
+        }
+        return values;
+    }
+
+    [[nodiscard]] pbrt::Transform transform_from_matrix_array(const std::array<float, 16>& values) {
+        pbrt::Float matrix[4][4]{};
+        for (std::size_t row = 0; row < 4; ++row) {
+            for (std::size_t column = 0; column < 4; ++column) {
+                const float value = values[row * 4 + column];
+                if (!std::isfinite(value)) throw std::runtime_error("Matrix contains a non-finite value");
+                matrix[row][column] = static_cast<pbrt::Float>(value);
+            }
+        }
+        return pbrt::Transform{matrix};
+    }
 }
 
 namespace xayah {
-    SpectraPbrtInteractiveSession::SpectraPbrtInteractiveSession(const SpectraScene& spectra_scene, pbrt::BasicScene& backend_scene, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path {spectra_scene.scene_path} {
+    struct SpectraPbrtInteractiveState {
+        std::unique_ptr<pbrt::WavefrontPathIntegrator> integrator{};
+        pbrt::Bounds2i pixel_bounds{};
+        pbrt::Vector2i resolution{};
+        pbrt::Transform render_from_camera{};
+        pbrt::Transform camera_from_render{};
+        pbrt::Transform camera_from_world{};
+    };
+
+    struct SpectraPbrtSessionDriver {
+        static void render_one_sample(SpectraPbrtInteractiveSession& session, const pbrt::Transform& camera_motion) {
+            if (session.sample_index >= session.target_samples) throw std::runtime_error("PBRT sample index is already at the target sample count");
+            session.pbrt_state->integrator->RenderSample(session.pbrt_state->pixel_bounds, camera_motion, session.sample_index);
+            ++session.sample_index;
+        }
+
+        static void rerender_after_reset(SpectraPbrtInteractiveSession& session, const std::uint32_t frame_index, const pbrt::Transform& camera_motion) {
+            if (session.physical_device == nullptr || session.device == nullptr) throw std::runtime_error("PBRT interactive Vulkan handles are not available for reset");
+            session.device->waitIdle();
+            session.destroy_frame_resources_noexcept();
+            session.pbrt_state->integrator->ResetFilm(session.pbrt_state->pixel_bounds);
+            pbrt::GPUWait();
+            session.sample_index     = 0;
+            session.reset_requested  = false;
+            render_one_sample(session, camera_motion);
+            pbrt::GPUWait();
+            session.create_frame_resources(*session.physical_device, *session.device, session.frame_count);
+            session.create_imgui_descriptors();
+            session.active_frame_index = frame_index;
+        }
+    };
+
+    SpectraPbrtInteractiveSession::SpectraPbrtInteractiveSession(const SpectraScene& spectra_scene, SpectraPbrtBackendScene& backend_scene, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path {spectra_scene.scene_path} {
             try {
+                this->pbrt_state = std::make_unique<SpectraPbrtInteractiveState>();
+                pbrt::BasicScene* native_backend_scene = static_cast<pbrt::BasicScene*>(backend_scene.native_basic_scene());
+                if (native_backend_scene == nullptr) throw std::runtime_error("PBRT backend scene native pointer is null");
                 if (this->scene_path.empty()) throw std::runtime_error("PBRT scene path is empty");
                 if (!std::filesystem::exists(this->scene_path)) throw std::runtime_error(std::string{"PBRT scene does not exist: "} + this->scene_path.string());
                 if (spectra_scene.pbrt_directives.empty()) throw std::runtime_error("Spectra scene has no PBRT parser directives");
@@ -73,26 +129,26 @@ namespace xayah {
                 this->device          = &device;
                 this->frame_count     = frame_count;
 
-                this->integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, backend_scene);
+                this->pbrt_state->integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, *native_backend_scene);
 #ifdef PBRT_BUILD_GPU_RENDERER
-                if (pbrt::Options != nullptr && pbrt::Options->useGPU) this->integrator->PrefetchGPUAllocations();
+                if (pbrt::Options != nullptr && pbrt::Options->useGPU) this->pbrt_state->integrator->PrefetchGPUAllocations();
 #endif
-                this->pixel_bounds = this->integrator->film.PixelBounds();
-                this->resolution   = this->pixel_bounds.Diagonal();
-                if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
-                this->max_samples = this->integrator->sampler.SamplesPerPixel();
+                this->pbrt_state->pixel_bounds = this->pbrt_state->integrator->film.PixelBounds();
+                this->pbrt_state->resolution   = this->pbrt_state->pixel_bounds.Diagonal();
+                if (this->pbrt_state->resolution.x <= 0 || this->pbrt_state->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
+                this->max_samples = this->pbrt_state->integrator->sampler.SamplesPerPixel();
                 if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
                 this->target_samples = this->max_samples;
-                this->render_one_sample(pbrt::Transform{});
+                SpectraPbrtSessionDriver::render_one_sample(*this, pbrt::Transform{});
                 pbrt::GPUWait();
 
-                this->render_from_camera = this->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
-                this->camera_from_render = pbrt::Inverse(this->render_from_camera);
-                this->camera_from_world  = this->integrator->camera.GetCameraTransform().CameraFromWorld(this->integrator->camera.SampleTime(0.0f));
-                const pbrt::Bounds3f scene_bounds = this->integrator->aggregate->Bounds();
+                this->pbrt_state->render_from_camera = this->pbrt_state->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
+                this->pbrt_state->camera_from_render = pbrt::Inverse(this->pbrt_state->render_from_camera);
+                this->pbrt_state->camera_from_world  = this->pbrt_state->integrator->camera.GetCameraTransform().CameraFromWorld(this->pbrt_state->integrator->camera.SampleTime(0.0f));
+                const pbrt::Bounds3f scene_bounds = this->pbrt_state->integrator->aggregate->Bounds();
                 this->initial_move_scale          = pbrt::Length(scene_bounds.Diagonal()) / 1000.0f;
                 if (!(this->initial_move_scale > 0.0f)) throw std::runtime_error("PBRT scene bounds must define a positive interactive move scale");
-                const pbrt::Transform world_from_render = pbrt::Inverse(this->render_from_camera * this->camera_from_world);
+                const pbrt::Transform world_from_render = pbrt::Inverse(this->pbrt_state->render_from_camera * this->pbrt_state->camera_from_world);
                 std::array<float, 3> world_bounds_min{};
                 std::array<float, 3> world_bounds_max{};
                 bool has_world_bounds = false;
@@ -142,7 +198,7 @@ namespace xayah {
             } catch (...) {
             }
             this->destroy_frame_resources_noexcept();
-            this->integrator.reset();
+            this->pbrt_state->integrator.reset();
         }
 
 
@@ -185,19 +241,19 @@ namespace xayah {
 
 
     [[nodiscard]] std::array<int, 2> SpectraPbrtInteractiveSession::film_resolution() const {
-            if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive before metadata is queried");
-            return {this->resolution.x, this->resolution.y};
+            if (this->pbrt_state->resolution.x <= 0 || this->pbrt_state->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive before metadata is queried");
+            return {this->pbrt_state->resolution.x, this->pbrt_state->resolution.y};
         }
 
 
     [[nodiscard]] std::array<float, 16> SpectraPbrtInteractiveSession::camera_from_world_matrix() const {
-            return matrix_array_from_transform(this->camera_from_world);
+            return matrix_array_from_transform(this->pbrt_state->camera_from_world);
         }
 
 
     [[nodiscard]] std::uint64_t SpectraPbrtInteractiveSession::film_pixel_count() const {
-            if (this->resolution.x <= 0 || this->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive before statistics are queried");
-            return static_cast<std::uint64_t>(this->resolution.x) * static_cast<std::uint64_t>(this->resolution.y);
+            if (this->pbrt_state->resolution.x <= 0 || this->pbrt_state->resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive before statistics are queried");
+            return static_cast<std::uint64_t>(this->pbrt_state->resolution.x) * static_cast<std::uint64_t>(this->pbrt_state->resolution.y);
         }
 
 
@@ -231,7 +287,7 @@ namespace xayah {
 
     void SpectraPbrtInteractiveSession::set_exposure(const float value) {
             if (!(value >= 0.001f && value <= 1000.0f)) throw std::runtime_error("PBRT exposure must be in [0.001, 1000]");
-            this->exposure = static_cast<pbrt::Float>(value);
+            this->exposure = value;
         }
 
 
@@ -280,47 +336,24 @@ namespace xayah {
         }
 
 
-    void SpectraPbrtInteractiveSession::render_one_sample(const pbrt::Transform& camera_motion) {
-            if (this->sample_index >= this->target_samples) throw std::runtime_error("PBRT sample index is already at the target sample count");
-            this->integrator->RenderSample(this->pixel_bounds, camera_motion, this->sample_index);
-            ++this->sample_index;
-        }
-
-
-    void SpectraPbrtInteractiveSession::rerender_after_reset(const std::uint32_t frame_index, const pbrt::Transform& camera_motion) {
-            if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("PBRT interactive Vulkan handles are not available for reset");
-            this->device->waitIdle();
-            this->destroy_frame_resources_noexcept();
-            this->integrator->ResetFilm(this->pixel_bounds);
-            pbrt::GPUWait();
-            this->sample_index     = 0;
-            this->reset_requested  = false;
-            this->render_one_sample(camera_motion);
-            pbrt::GPUWait();
-            this->create_frame_resources(*this->physical_device, *this->device, this->frame_count);
-            this->create_imgui_descriptors();
-            this->active_frame_index = frame_index;
-        }
-
-
     [[nodiscard]] SpectraPbrtInteractiveSession::RenderFrameResult SpectraPbrtInteractiveSession::render_frame(const std::uint32_t frame_index, const std::array<float, 16>& moving_from_camera_matrix) {
             if (frame_index >= this->frames.size()) throw std::runtime_error("PBRT interactive frame index is out of range");
             this->active_frame_index = frame_index;
             RenderFrameResult result{};
             const pbrt::Transform moving_from_camera = transform_from_matrix_array(moving_from_camera_matrix);
-            const pbrt::Transform camera_motion = this->render_from_camera * moving_from_camera * this->camera_from_render;
+            const pbrt::Transform camera_motion = this->pbrt_state->render_from_camera * moving_from_camera * this->pbrt_state->camera_from_render;
             if (this->reset_requested) {
-                this->rerender_after_reset(frame_index, camera_motion);
+                SpectraPbrtSessionDriver::rerender_after_reset(*this, frame_index, camera_motion);
                 result.rendered_sample    = true;
                 result.sample_pixels      = this->film_pixel_count() * static_cast<std::uint64_t>(this->sample_index);
                 result.reset_accumulation = true;
             } else if (this->sample_index < this->target_samples) {
-                this->render_one_sample(camera_motion);
+                SpectraPbrtSessionDriver::render_one_sample(*this, camera_motion);
                 result.rendered_sample = true;
                 result.sample_pixels   = this->film_pixel_count();
             }
             FrameResource& output_frame = this->frames.at(frame_index);
-            this->integrator->UpdateFramebufferFromFilm(this->pixel_bounds, this->exposure, output_frame.cuda_pixels);
+            this->pbrt_state->integrator->UpdateFramebufferFromFilm(this->pbrt_state->pixel_bounds, this->exposure, output_frame.cuda_pixels);
 
             cudaExternalSemaphoreSignalParams signal_params{};
             CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&output_frame.cuda_external_semaphore, &signal_params, 1, 0));
@@ -355,7 +388,7 @@ namespace xayah {
                 0,
                 {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
                 {0, 0, 0},
-                {static_cast<std::uint32_t>(this->resolution.x), static_cast<std::uint32_t>(this->resolution.y), 1},
+                {static_cast<std::uint32_t>(this->pbrt_state->resolution.x), static_cast<std::uint32_t>(this->pbrt_state->resolution.y), 1},
             };
             command_buffer.copyBufferToImage(*frame.interop_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
 
@@ -389,7 +422,7 @@ namespace xayah {
             constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst;
             if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
 
-            const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(this->resolution.x) * static_cast<vk::DeviceSize>(this->resolution.y);
+            const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(this->pbrt_state->resolution.x) * static_cast<vk::DeviceSize>(this->pbrt_state->resolution.y);
             if (rgba_bytes == 0) throw std::runtime_error("PBRT interactive interop buffer cannot be zero bytes");
             this->frames.resize(frame_count);
             for (FrameResource& frame : this->frames) {
@@ -472,7 +505,7 @@ namespace xayah {
                 {},
                 vk::ImageType::e2D,
                 display_format,
-                vk::Extent3D{static_cast<std::uint32_t>(this->resolution.x), static_cast<std::uint32_t>(this->resolution.y), 1},
+                vk::Extent3D{static_cast<std::uint32_t>(this->pbrt_state->resolution.x), static_cast<std::uint32_t>(this->pbrt_state->resolution.y), 1},
                 1,
                 1,
                 vk::SampleCountFlagBits::e1,

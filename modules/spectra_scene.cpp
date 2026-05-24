@@ -8,6 +8,7 @@ module;
 
 module spectra;
 import std;
+import :runtime;
 
 namespace {
     constexpr std::uint32_t start_transform_bit{1u << 0u};
@@ -1315,10 +1316,10 @@ namespace xayah {
         this->state->scene.reset();
     }
 
-    [[nodiscard]] pbrt::BasicScene& SpectraPbrtBackendScene::basic_scene() {
+    [[nodiscard]] void* SpectraPbrtBackendScene::native_basic_scene() {
         if (this->state == nullptr) throw std::runtime_error("PBRT backend scene state is null");
         if (this->state->scene == nullptr) throw std::runtime_error("PBRT backend scene is not loaded");
-        return *this->state->scene;
+        return this->state->scene.get();
     }
 
 }

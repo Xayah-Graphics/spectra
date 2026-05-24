@@ -18,10 +18,9 @@ module;
 #include <pbrt/util/vecmath.h>
 #include <vulkan/vulkan_raii.hpp>
 #include "spectra_raster_spirv.h"
-#include "spectra_pbrt_fwd.h"
 module spectra;
 import std;
-#include "spectra_internal.h"
+import :runtime;
 
 namespace xayah {
     SpectraVulkanRasterizer::SpectraVulkanRasterizer(const SpectraScene& scene, const SpectraRasterScene& raster_scene, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const vk::raii::Queue& graphics_queue, const vk::raii::CommandPool& command_pool, const std::uint32_t frame_count) : scene {&scene}, raster_scene{&raster_scene}, physical_device{&physical_device}, device{&device}, graphics_queue{&graphics_queue}, command_pool{&command_pool} {
