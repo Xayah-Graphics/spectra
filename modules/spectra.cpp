@@ -401,7 +401,7 @@ namespace xayah {
     }
 
     void Spectra::destroy_imgui() noexcept {
-        if (this->pbrt_interactive != nullptr) this->pbrt_interactive->release_imgui_descriptors();
+        if (this->pbrt_pathtracer != nullptr) this->pbrt_pathtracer->release_viewport_descriptors_noexcept();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -422,43 +422,19 @@ namespace xayah {
         }
     }
 
-    void Spectra::load_pbrt_backend_scene(const std::array<int, 2>& resolution) {
-        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot load PBRT backend scene without a loaded Spectra scene");
-        if (this->pbrt_backend_scene != nullptr) throw std::runtime_error("PBRT backend scene is already loaded");
-        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot load PBRT backend scene with a non-positive resolution");
-        std::unique_ptr<SpectraPbrtBackendScene> loaded_backend_scene = std::make_unique<SpectraPbrtBackendScene>();
+    void Spectra::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot create PBRT pathtracer without a loaded Spectra scene");
+        if (this->pbrt_pathtracer != nullptr) throw std::runtime_error("PBRT pathtracer is already loaded");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create PBRT pathtracer with a non-positive resolution");
         try {
             if (this->pbrt_runtime == nullptr) throw std::runtime_error("PBRT runtime is not initialized");
             this->pbrt_runtime->reset_options_for_scene();
-            loaded_backend_scene->load(*this->spectra_scene, resolution);
-            this->pbrt_backend_scene = std::move(loaded_backend_scene);
-        } catch (...) {
-            if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
-            loaded_backend_scene->unload_noexcept();
-            throw;
-        }
-    }
-
-    void Spectra::unload_pbrt_backend_scene_noexcept() noexcept {
-        if (this->pbrt_backend_scene != nullptr) {
-            if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
-            this->pbrt_backend_scene->unload_noexcept();
-            this->pbrt_backend_scene.reset();
-        }
-    }
-
-    void Spectra::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
-        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot create PBRT pathtracer without a loaded Spectra scene");
-        if (this->pbrt_backend_scene != nullptr || this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT pathtracer session is already loaded");
-        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create PBRT pathtracer with a non-positive resolution");
-        try {
-            this->load_pbrt_backend_scene(resolution);
-            if (this->pbrt_backend_scene == nullptr) throw std::runtime_error("PBRT backend scene was not loaded");
-            this->pbrt_interactive = std::make_unique<SpectraPbrtInteractiveSession>(*this->spectra_scene, *this->pbrt_backend_scene, this->context.physical_device, this->context.device, this->sync.frame_count);
-            this->spectra_scene->set_runtime_metadata(this->pbrt_interactive->film_resolution(), this->pbrt_interactive->sampler_sample_count(), this->pbrt_interactive->camera_from_world_transform());
+            this->pbrt_pathtracer = std::make_unique<SpectraPbrtPathtracer>(*this->spectra_scene, resolution, this->context.physical_device, this->context.device, this->sync.frame_count);
+            this->spectra_scene->set_runtime_metadata(this->pbrt_pathtracer->film_resolution(), this->pbrt_pathtracer->sampler_sample_count(), this->pbrt_pathtracer->camera_from_world_transform());
             this->render_resolution_sync.active_resolution = resolution;
             this->render_resolution_sync.pathtracer_created  = true;
         } catch (...) {
+            if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
             this->unload_pathtracer_noexcept();
             throw;
         }
@@ -472,17 +448,17 @@ namespace xayah {
         const bool preserve_camera = this->camera.initialized;
         const SpectraCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
         const float preserved_speed     = this->camera.speed;
-        const int preserved_samples     = this->pbrt_interactive == nullptr ? 0 : this->pbrt_interactive->target_sample_count();
-        const float preserved_exposure  = this->pbrt_interactive == nullptr ? 1.0f : this->pbrt_interactive->current_exposure();
+        const int preserved_samples     = this->pbrt_pathtracer == nullptr ? 0 : this->pbrt_pathtracer->target_sample_count();
+        const float preserved_exposure  = this->pbrt_pathtracer == nullptr ? 1.0f : this->pbrt_pathtracer->current_exposure();
         this->render_resolution_sync.rebuilding = true;
         try {
             this->context.device.waitIdle();
             if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
             this->unload_pathtracer_noexcept();
             this->create_pathtracer_for_resolution(resolution);
-            if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT interactive session was not created");
-            if (preserved_samples > 0) this->pbrt_interactive->set_target_sample_count(preserved_samples);
-            this->pbrt_interactive->set_exposure(preserved_exposure);
+            if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT pathtracer was not created");
+            if (preserved_samples > 0) this->pbrt_pathtracer->set_target_sample_count(preserved_samples);
+            this->pbrt_pathtracer->set_exposure(preserved_exposure);
             if (preserve_camera) {
                 this->camera.camera_from_world          = this->spectra_scene->camera_from_world;
                 this->camera.eye                        = preserved_pose.eye;
@@ -506,8 +482,8 @@ namespace xayah {
     }
 
     void Spectra::unload_pathtracer_noexcept() noexcept {
-        this->pbrt_interactive.reset();
-        this->unload_pbrt_backend_scene_noexcept();
+        if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
+        this->pbrt_pathtracer.reset();
         this->render_resolution_sync.pathtracer_created  = false;
         this->render_resolution_sync.active_resolution = {0, 0};
     }
@@ -535,13 +511,12 @@ namespace xayah {
     }
 
     [[nodiscard]] bool Spectra::pathtracer_ready() const {
-        return this->render_resolution_sync.pathtracer_created && this->pbrt_backend_scene != nullptr && this->pbrt_interactive != nullptr;
+        return this->render_resolution_sync.pathtracer_created && this->pbrt_pathtracer != nullptr;
     }
 
     void Spectra::run_interactive_scene(const std::filesystem::path& scene_path) {
         if (this->spectra_scene != nullptr) throw std::runtime_error("Spectra scene is already active");
-        if (this->pbrt_backend_scene != nullptr) throw std::runtime_error("PBRT backend scene is already active");
-        if (this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT interactive session is already active");
+        if (this->pbrt_pathtracer != nullptr) throw std::runtime_error("PBRT pathtracer is already active");
 
         std::exception_ptr failure{};
         try {
@@ -648,8 +623,8 @@ namespace xayah {
             status.state = this->render_resolution_sync.candidate_known ? "Pending Resolution" : "Waiting for Viewport";
             return status;
         }
-        status.uses_external_completion = this->pbrt_interactive != nullptr;
-        if (this->pbrt_interactive == nullptr) {
+        status.uses_external_completion = this->pbrt_pathtracer != nullptr;
+        if (this->pbrt_pathtracer == nullptr) {
             status.state = "Unavailable";
             return status;
         }
@@ -658,44 +633,44 @@ namespace xayah {
     }
 
     [[nodiscard]] VkDescriptorSet Spectra::pathtracer_viewport_descriptor() const {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT pathtracer viewport descriptor requested without an active PBRT session");
-        return this->pbrt_interactive->active_descriptor();
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT pathtracer viewport descriptor requested without an active PBRT session");
+        return this->pbrt_pathtracer->active_descriptor();
     }
 
     [[nodiscard]] std::array<int, 2> Spectra::pathtracer_sample_range() const {
-        if (this->pbrt_interactive == nullptr) return {0, 0};
-        return {this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count()};
+        if (this->pbrt_pathtracer == nullptr) return {0, 0};
+        return {this->pbrt_pathtracer->current_sample(), this->pbrt_pathtracer->target_sample_count()};
     }
 
     [[nodiscard]] float Spectra::pathtracer_initial_move_scale() const {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT camera move scale requested without an active PBRT session");
-        return this->pbrt_interactive->camera_initial_move_scale();
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT camera move scale requested without an active PBRT session");
+        return this->pbrt_pathtracer->camera_initial_move_scale();
     }
 
     [[nodiscard]] SpectraPbrtBounds3 Spectra::pathtracer_initial_focus_bounds() const {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT camera focus bounds requested without an active PBRT session");
-        return this->pbrt_interactive->camera_initial_focus_bounds();
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT camera focus bounds requested without an active PBRT session");
+        return this->pbrt_pathtracer->camera_initial_focus_bounds();
     }
 
     [[nodiscard]] vk::Semaphore Spectra::pathtracer_complete_semaphore() const {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("PBRT completion semaphore requested without an active PBRT session");
-        return this->pbrt_interactive->active_cuda_complete_semaphore();
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT completion semaphore requested without an active PBRT session");
+        return this->pbrt_pathtracer->active_cuda_complete_semaphore();
     }
 
     [[nodiscard]] Spectra::PathtracerFrameResult Spectra::render_pathtracer_frame(const FrameState& frame) {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot render PBRT pathtracer without an active PBRT session");
-        const SpectraPbrtInteractiveSession::RenderFrameResult render_result = this->pbrt_interactive->render_frame(frame.frame_index, this->camera.moving_from_camera);
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("Cannot render PBRT pathtracer without an active PBRT session");
+        const SpectraPbrtPathtracer::RenderFrameResult render_result = this->pbrt_pathtracer->render_frame(frame.frame_index, this->camera.moving_from_camera);
         return {render_result.sample_pixels, render_result.rendered_sample, render_result.reset_accumulation};
     }
 
     void Spectra::record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot record PBRT pathtracer output without an active PBRT session");
-        this->pbrt_interactive->record_copy(command_buffer);
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("Cannot record PBRT pathtracer output without an active PBRT session");
+        this->pbrt_pathtracer->record_copy(command_buffer);
     }
 
     void Spectra::request_pathtracer_accumulation_reset() {
-        if (this->pbrt_interactive == nullptr) throw std::runtime_error("Cannot reset PBRT accumulation without an active PBRT session");
-        this->pbrt_interactive->request_reset_accumulation();
+        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("Cannot reset PBRT accumulation without an active PBRT session");
+        this->pbrt_pathtracer->request_reset_accumulation();
         this->clear_pathtracer_throughput_statistics();
     }
 
@@ -1122,7 +1097,7 @@ namespace xayah {
             this->imgui.docking   = docking;
             this->imgui.viewports = viewports;
             this->create_imgui();
-            if (this->pbrt_interactive != nullptr) this->pbrt_interactive->create_imgui_descriptors();
+            if (this->pbrt_pathtracer != nullptr) this->pbrt_pathtracer->create_viewport_descriptors();
         }
         this->surface.resize_requested = false;
     }
@@ -1736,14 +1711,14 @@ namespace xayah {
             ImGui::EndTable();
         }
 
-        if (this->pbrt_interactive != nullptr) {
+        if (this->pbrt_pathtracer != nullptr) {
             ImGui::SeparatorText("Path Tracer");
             if (ImGui::BeginTable("SpectraInspectorPathTracer", 2, table_flags)) {
                 ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 150.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_statistics_row("Sample", std::format("{} / {}", this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count()));
-                draw_statistics_row("Completion", std::format("{:.1f}%", this->pbrt_interactive->completion_ratio() * 100.0f));
-                draw_statistics_row("Exposure", std::format("{:.3f}", this->pbrt_interactive->current_exposure()));
+                draw_statistics_row("Sample", std::format("{} / {}", this->pbrt_pathtracer->current_sample(), this->pbrt_pathtracer->target_sample_count()));
+                draw_statistics_row("Completion", std::format("{:.1f}%", this->pbrt_pathtracer->completion_ratio() * 100.0f));
+                draw_statistics_row("Exposure", std::format("{:.3f}", this->pbrt_pathtracer->current_exposure()));
                 ImGui::EndTable();
             }
         }
@@ -1760,7 +1735,7 @@ namespace xayah {
         }
 
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
-        if (this->pbrt_interactive == nullptr) {
+        if (this->pbrt_pathtracer == nullptr) {
             ImGui::TextDisabled("No active PBRT interactive session");
             ImGui::End();
             return;
@@ -1782,17 +1757,17 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Current Sample");
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%d / %d", this->pbrt_interactive->current_sample(), this->pbrt_interactive->target_sample_count());
+            ImGui::Text("%d / %d", this->pbrt_pathtracer->current_sample(), this->pbrt_pathtracer->target_sample_count());
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Max Iterations");
             ImGui::TableSetColumnIndex(1);
-            const int previous_target_sample_count = this->pbrt_interactive->target_sample_count();
+            const int previous_target_sample_count = this->pbrt_pathtracer->target_sample_count();
             int target_sample_count                = previous_target_sample_count;
             ImGui::SetNextItemWidth(-1.0f);
             if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->spectra_scene->sampler_sample_count)) {
-                this->pbrt_interactive->set_target_sample_count(target_sample_count);
+                this->pbrt_pathtracer->set_target_sample_count(target_sample_count);
                 if (target_sample_count != previous_target_sample_count) this->clear_pathtracer_throughput_statistics();
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
@@ -1922,7 +1897,7 @@ namespace xayah {
             ImGui::End();
             return;
         }
-        if (this->pbrt_interactive == nullptr) {
+        if (this->pbrt_pathtracer == nullptr) {
             ImGui::TextDisabled("No active PBRT interactive session");
             ImGui::End();
             return;
@@ -1936,9 +1911,9 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Exposure");
             ImGui::TableSetColumnIndex(1);
-            float exposure = this->pbrt_interactive->current_exposure();
+            float exposure = this->pbrt_pathtracer->current_exposure();
             ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::DragFloat("##TonemapperExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->pbrt_interactive->set_exposure(exposure);
+            if (ImGui::DragFloat("##TonemapperExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->pbrt_pathtracer->set_exposure(exposure);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Viewport exposure multiplier. This does not reset accumulation.");
 
             ImGui::EndTable();
@@ -1996,16 +1971,16 @@ namespace xayah {
             return;
         }
 
-        if (this->pbrt_interactive == nullptr) {
+        if (this->pbrt_pathtracer == nullptr) {
             ImGui::TextDisabled("No active PBRT interactive session");
             ImGui::End();
             return;
         }
 
         const std::array<int, 2> film_resolution = this->spectra_scene->film_resolution;
-        const int current_sample                 = this->pbrt_interactive->current_sample();
-        const int target_sample                  = this->pbrt_interactive->target_sample_count();
-        const float completion_ratio             = this->pbrt_interactive->completion_ratio();
+        const int current_sample                 = this->pbrt_pathtracer->current_sample();
+        const int target_sample                  = this->pbrt_pathtracer->target_sample_count();
+        const float completion_ratio             = this->pbrt_pathtracer->completion_ratio();
         const float completion_percent           = completion_ratio * 100.0f;
         const bool sampling_completed            = current_sample >= target_sample;
         const std::string sampling_state         = sampling_completed ? "Completed" : "Sampling";

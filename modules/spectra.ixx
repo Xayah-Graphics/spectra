@@ -55,8 +55,6 @@ export namespace xayah {
         void end_frame(FrameState& frame);
         void render_loop();
         void unload_spectra_scene_noexcept() noexcept;
-        void load_pbrt_backend_scene(const std::array<int, 2>& resolution);
-        void unload_pbrt_backend_scene_noexcept() noexcept;
         void create_pathtracer_for_resolution(const std::array<int, 2>& resolution);
         void rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution);
         void unload_pathtracer_noexcept() noexcept;
@@ -159,8 +157,7 @@ export namespace xayah {
         } ui;
 
         std::unique_ptr<SpectraScene> spectra_scene{};
-        std::unique_ptr<SpectraPbrtBackendScene> pbrt_backend_scene{};
-        std::unique_ptr<SpectraPbrtInteractiveSession> pbrt_interactive{};
+        std::unique_ptr<SpectraPbrtPathtracer> pbrt_pathtracer{};
         std::unique_ptr<SpectraPbrtRuntime> pbrt_runtime{};
 
         struct {
