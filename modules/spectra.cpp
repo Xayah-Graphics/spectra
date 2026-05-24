@@ -1730,15 +1730,6 @@ namespace {
     constexpr std::uint32_t end_transform_bit{1u << 1u};
     constexpr std::uint32_t all_transform_bits{start_transform_bit | end_transform_bit};
 
-    [[nodiscard]] std::array<float, 16> identity_matrix_array() {
-        return {
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, 1.0f,
-        };
-    }
-
     [[nodiscard]] xayah::SpectraPbrtFileLocation copy_file_location(const pbrt::FileLoc& location) {
         return {std::string{location.filename}, location.line, location.column};
     }
@@ -1770,7 +1761,7 @@ namespace {
         xayah::SpectraPbrtDirective directive{};
         directive.kind      = kind;
         directive.location  = copy_file_location(location);
-        directive.transform = identity_matrix_array();
+        directive.transform = xayah::identity_matrix_array();
         return directive;
     }
 
@@ -1782,15 +1773,6 @@ namespace {
 
     [[nodiscard]] pbrt::Transform pbrt_transform_from_parser_matrix(const pbrt::Float transform[16]) {
         return pbrt::Transpose(pbrt::Transform{pbrt::SquareMatrix<4>{pstd::MakeSpan(transform, 16)}});
-    }
-
-    [[nodiscard]] std::array<float, 16> matrix_array_from_transform(const pbrt::Transform& transform) {
-        std::array<float, 16> matrix{};
-        const pbrt::SquareMatrix<4>& pbrt_matrix = transform.GetMatrix();
-        for (int row = 0; row < 4; ++row) {
-            for (int column = 0; column < 4; ++column) matrix[static_cast<std::size_t>(row * 4 + column)] = static_cast<float>(pbrt_matrix[row][column]);
-        }
-        return matrix;
     }
 
     [[nodiscard]] std::array<pbrt::Transform, pbrt::MaxTransforms> inverse_transform_set(const std::array<pbrt::Transform, pbrt::MaxTransforms>& transform_set) {
@@ -1888,18 +1870,6 @@ namespace {
         target[0] += value[0];
         target[1] += value[1];
         target[2] += value[2];
-    }
-
-    [[nodiscard]] std::array<float, 16> multiply_matrix_arrays(const std::array<float, 16>& left, const std::array<float, 16>& right) {
-        std::array<float, 16> result{};
-        for (std::size_t row = 0; row < 4; ++row) {
-            for (std::size_t column = 0; column < 4; ++column) {
-                float sum{0.0f};
-                for (std::size_t index = 0; index < 4; ++index) sum += left[row * 4 + index] * right[index * 4 + column];
-                result[row * 4 + column] = sum;
-            }
-        }
-        return result;
     }
 
     [[nodiscard]] std::optional<std::array<float, 3>> read_constant_rgb_parameter(xayah::SpectraRasterScene& raster_scene, const xayah::SpectraSceneMaterial& material, const std::string& material_label, const std::string& parameter_name) {
@@ -2350,7 +2320,7 @@ namespace {
         }
 
         [[nodiscard]] std::array<float, 16> current_transform_matrix() const {
-            return matrix_array_from_transform(this->graphics_state.ctm[0]);
+            return xayah::matrix_array_from_transform(this->graphics_state.ctm[0]);
         }
 
         void mark_unsupported(const xayah::SpectraSceneUnsupportedFeatureKind kind, const std::string& source_type, const std::string& source_name, const std::string& message, const pbrt::FileLoc& location) {
@@ -2381,7 +2351,7 @@ namespace {
             setting.type       = type;
             setting.name       = name;
             setting.location   = copy_file_location(location);
-            setting.transform  = include_transform ? this->current_transform_matrix() : identity_matrix_array();
+            setting.transform  = include_transform ? this->current_transform_matrix() : xayah::identity_matrix_array();
             setting.parameters = parameters;
             return setting;
         }
@@ -3084,29 +3054,6 @@ namespace xayah {
         pbrt::Transform camera_from_world{};
     };
 
-    struct SpectraPbrtSessionDriver {
-        static void render_one_sample(SpectraPbrtInteractiveSession& session, const pbrt::Transform& camera_motion) {
-            if (session.sample_index >= session.target_samples) throw std::runtime_error("PBRT sample index is already at the target sample count");
-            session.pbrt_state->integrator->RenderSample(session.pbrt_state->pixel_bounds, camera_motion, session.sample_index);
-            ++session.sample_index;
-        }
-
-        static void rerender_after_reset(SpectraPbrtInteractiveSession& session, const std::uint32_t frame_index, const pbrt::Transform& camera_motion) {
-            if (session.physical_device == nullptr || session.device == nullptr) throw std::runtime_error("PBRT interactive Vulkan handles are not available for reset");
-            session.device->waitIdle();
-            session.destroy_frame_resources_noexcept();
-            session.pbrt_state->integrator->ResetFilm(session.pbrt_state->pixel_bounds);
-            pbrt::GPUWait();
-            session.sample_index     = 0;
-            session.reset_requested  = false;
-            render_one_sample(session, camera_motion);
-            pbrt::GPUWait();
-            session.create_frame_resources(*session.physical_device, *session.device, session.frame_count);
-            session.create_imgui_descriptors();
-            session.active_frame_index = frame_index;
-        }
-    };
-
     SpectraPbrtInteractiveSession::SpectraPbrtInteractiveSession(const SpectraScene& spectra_scene, SpectraPbrtBackendScene& backend_scene, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : scene_path {spectra_scene.scene_path} {
             try {
                 this->pbrt_state = std::make_unique<SpectraPbrtInteractiveState>();
@@ -3130,7 +3077,8 @@ namespace xayah {
                 this->max_samples = this->pbrt_state->integrator->sampler.SamplesPerPixel();
                 if (this->max_samples <= 0) throw std::runtime_error("PBRT sampler SPP must be positive");
                 this->target_samples = this->max_samples;
-                SpectraPbrtSessionDriver::render_one_sample(*this, pbrt::Transform{});
+                this->pbrt_state->integrator->RenderSample(this->pbrt_state->pixel_bounds, pbrt::Transform{}, this->sample_index);
+                ++this->sample_index;
                 pbrt::GPUWait();
 
                 this->pbrt_state->render_from_camera = this->pbrt_state->integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
@@ -3334,12 +3282,25 @@ namespace xayah {
             const pbrt::Transform moving_from_camera = transform_from_matrix_array(moving_from_camera_matrix);
             const pbrt::Transform camera_motion = this->pbrt_state->render_from_camera * moving_from_camera * this->pbrt_state->camera_from_render;
             if (this->reset_requested) {
-                SpectraPbrtSessionDriver::rerender_after_reset(*this, frame_index, camera_motion);
+                if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("PBRT interactive Vulkan handles are not available for reset");
+                this->device->waitIdle();
+                this->destroy_frame_resources_noexcept();
+                this->pbrt_state->integrator->ResetFilm(this->pbrt_state->pixel_bounds);
+                pbrt::GPUWait();
+                this->sample_index    = 0;
+                this->reset_requested = false;
+                this->pbrt_state->integrator->RenderSample(this->pbrt_state->pixel_bounds, camera_motion, this->sample_index);
+                ++this->sample_index;
+                pbrt::GPUWait();
+                this->create_frame_resources(*this->physical_device, *this->device, this->frame_count);
+                this->create_imgui_descriptors();
+                this->active_frame_index = frame_index;
                 result.rendered_sample    = true;
                 result.sample_pixels      = this->film_pixel_count() * static_cast<std::uint64_t>(this->sample_index);
                 result.reset_accumulation = true;
             } else if (this->sample_index < this->target_samples) {
-                SpectraPbrtSessionDriver::render_one_sample(*this, camera_motion);
+                this->pbrt_state->integrator->RenderSample(this->pbrt_state->pixel_bounds, camera_motion, this->sample_index);
+                ++this->sample_index;
                 result.rendered_sample = true;
                 result.sample_pixels   = this->film_pixel_count();
             }
