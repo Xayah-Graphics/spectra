@@ -371,11 +371,9 @@ namespace xayah {
         void record_frame(const FrameState& frame);
         void end_frame(FrameState& frame);
         void render_loop();
-        void load_spectra_scene(const std::filesystem::path& scene_path);
         void unload_spectra_scene_noexcept() noexcept;
         void load_pbrt_backend_scene(const std::array<int, 2>& resolution);
         void unload_pbrt_backend_scene_noexcept() noexcept;
-        void load_raster_scene();
         void unload_raster_scene_noexcept() noexcept;
         void load_vulkan_rasterizer();
         void unload_vulkan_rasterizer_noexcept() noexcept;
@@ -385,7 +383,6 @@ namespace xayah {
         void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
         void synchronize_render_resolution();
         [[nodiscard]] bool renderers_ready() const;
-        void initialize_pbrt_runtime();
         void reset_pbrt_runtime_options_for_scene();
         void wait_pbrt_gpu_noexcept() const noexcept;
         void update_window_title(float delta_seconds);

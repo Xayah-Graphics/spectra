@@ -676,7 +676,17 @@ namespace xayah {
             }
         }
         this->create_imgui();
-        this->initialize_pbrt_runtime();
+        {
+            if (this->pbrt_runtime != nullptr || pbrt::Options != nullptr) throw std::runtime_error("PBRT runtime is already initialized");
+            std::unique_ptr<SpectraPbrtRuntimeState> runtime = std::make_unique<SpectraPbrtRuntimeState>();
+            runtime->baseline_options.useGPU         = true;
+            runtime->baseline_options.wavefront      = false;
+            runtime->baseline_options.nThreads       = 30;
+            runtime->baseline_options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
+            pbrt::InitPBRT(runtime->baseline_options);
+            runtime->initialized = true;
+            this->pbrt_runtime   = std::move(runtime);
+        }
     } catch (...) {
         this->destroy_imgui();
         if (this->surface.glfw_initialized) glfwTerminate();
@@ -807,18 +817,6 @@ namespace xayah {
         this->ui.dock_layout_initialized = false;
     }
 
-    void Spectra::load_spectra_scene(const std::filesystem::path& scene_path) {
-        if (this->spectra_scene != nullptr) throw std::runtime_error("Spectra scene is already loaded");
-        std::unique_ptr<SpectraScene> loaded_scene = std::make_unique<SpectraScene>();
-        try {
-            loaded_scene->load(scene_path);
-            this->spectra_scene = std::move(loaded_scene);
-        } catch (...) {
-            loaded_scene->unload_noexcept();
-            throw;
-        }
-    }
-
     void Spectra::unload_spectra_scene_noexcept() noexcept {
         if (this->spectra_scene != nullptr) {
             this->spectra_scene->unload_noexcept();
@@ -847,19 +845,6 @@ namespace xayah {
             this->wait_pbrt_gpu_noexcept();
             this->pbrt_backend_scene->unload_noexcept();
             this->pbrt_backend_scene.reset();
-        }
-    }
-
-    void Spectra::load_raster_scene() {
-        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot build raster scene without a loaded Spectra scene");
-        if (this->raster_scene != nullptr) throw std::runtime_error("Spectra raster scene is already loaded");
-        std::unique_ptr<SpectraRasterScene> loaded_raster_scene = std::make_unique<SpectraRasterScene>();
-        try {
-            loaded_raster_scene->build(*this->spectra_scene);
-            this->raster_scene = std::move(loaded_raster_scene);
-        } catch (...) {
-            loaded_raster_scene->unload_noexcept();
-            throw;
         }
     }
 
@@ -976,18 +961,6 @@ namespace xayah {
         return this->render_resolution_sync.renderer_created && this->pbrt_backend_scene != nullptr && this->pbrt_interactive != nullptr && this->vulkan_rasterizer != nullptr;
     }
 
-    void Spectra::initialize_pbrt_runtime() {
-        if (this->pbrt_runtime != nullptr || pbrt::Options != nullptr) throw std::runtime_error("PBRT runtime is already initialized");
-        std::unique_ptr<SpectraPbrtRuntimeState> runtime = std::make_unique<SpectraPbrtRuntimeState>();
-        runtime->baseline_options.useGPU         = true;
-        runtime->baseline_options.wavefront      = false;
-        runtime->baseline_options.nThreads       = 30;
-        runtime->baseline_options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
-        pbrt::InitPBRT(runtime->baseline_options);
-        runtime->initialized = true;
-        this->pbrt_runtime   = std::move(runtime);
-    }
-
     void Spectra::reset_pbrt_runtime_options_for_scene() {
         if (this->pbrt_runtime == nullptr || !this->pbrt_runtime->initialized) throw std::runtime_error("PBRT runtime is not initialized");
         if (pbrt::Options == nullptr) throw std::runtime_error("PBRT global options are unavailable");
@@ -1010,24 +983,43 @@ namespace xayah {
         if (this->pbrt_backend_scene != nullptr) throw std::runtime_error("PBRT backend scene is already active");
         if (this->pbrt_interactive != nullptr) throw std::runtime_error("PBRT interactive session is already active");
         if (this->vulkan_rasterizer != nullptr) throw std::runtime_error("Vulkan rasterizer is already active");
+
+        std::exception_ptr failure{};
         try {
-            this->load_spectra_scene(scene_path);
-            this->load_raster_scene();
-            this->render_loop();
-            this->context.device.waitIdle();
-            this->unload_renderer_sessions_noexcept();
-            this->unload_raster_scene_noexcept();
-            this->unload_spectra_scene_noexcept();
-        } catch (...) {
-            try {
-                if (*this->context.device) this->context.device.waitIdle();
-            } catch (...) {
+            {
+                std::unique_ptr<SpectraScene> loaded_scene = std::make_unique<SpectraScene>();
+                try {
+                    loaded_scene->load(scene_path);
+                    this->spectra_scene = std::move(loaded_scene);
+                } catch (...) {
+                    loaded_scene->unload_noexcept();
+                    throw;
+                }
             }
-            this->unload_renderer_sessions_noexcept();
-            this->unload_raster_scene_noexcept();
-            this->unload_spectra_scene_noexcept();
-            throw;
+            {
+                std::unique_ptr<SpectraRasterScene> loaded_raster_scene = std::make_unique<SpectraRasterScene>();
+                try {
+                    loaded_raster_scene->build(*this->spectra_scene);
+                    this->raster_scene = std::move(loaded_raster_scene);
+                } catch (...) {
+                    loaded_raster_scene->unload_noexcept();
+                    throw;
+                }
+            }
+            this->render_loop();
+        } catch (...) {
+            failure = std::current_exception();
         }
+
+        try {
+            this->context.device.waitIdle();
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
+        this->unload_renderer_sessions_noexcept();
+        this->unload_raster_scene_noexcept();
+        this->unload_spectra_scene_noexcept();
+        if (failure != nullptr) std::rethrow_exception(failure);
     }
 
     void Spectra::render_loop() {
