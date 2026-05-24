@@ -412,8 +412,6 @@ namespace xayah {
 
     SpectraPbrtRuntime::SpectraPbrtRuntime() : state{std::make_unique<SpectraPbrtRuntimeState>()} {
         if (pbrt::Options != nullptr) throw std::runtime_error("PBRT runtime is already initialized");
-        this->state->baseline_options.useGPU         = true;
-        this->state->baseline_options.wavefront      = false;
         this->state->baseline_options.nThreads       = 30;
         this->state->baseline_options.renderingSpace = pbrt::RenderingCoordinateSystem::CameraWorld;
         pbrt::InitPBRT(this->state->baseline_options);
@@ -433,13 +431,13 @@ namespace xayah {
         if (pbrt::Options == nullptr) throw std::runtime_error("PBRT global options are unavailable");
         *pbrt::Options = this->state->baseline_options;
 #ifdef PBRT_BUILD_GPU_RENDERER
-        if (pbrt::Options->useGPU) pbrt::CopyOptionsToGPU();
+        pbrt::CopyOptionsToGPU();
 #endif
     }
 
     void SpectraPbrtRuntime::wait_gpu_noexcept() const noexcept {
         try {
-            if (pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
+            if (pbrt::Options != nullptr) pbrt::GPUWait();
         } catch (...) {
         }
     }
@@ -1340,7 +1338,7 @@ namespace {
     void destroy_pathtracer_resources_noexcept(xayah::SpectraPbrtPathtracerState& pathtracer) noexcept {
         try {
             if (pathtracer.device != nullptr) pathtracer.device->waitIdle();
-            if (pbrt::Options != nullptr && pbrt::Options->useGPU) pbrt::GPUWait();
+            if (pbrt::Options != nullptr) pbrt::GPUWait();
         } catch (...) {
         }
         destroy_pathtracer_frame_resources_noexcept(pathtracer);
@@ -1373,7 +1371,7 @@ namespace xayah {
 
             pathtracer.integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, *pathtracer.scene);
 #ifdef PBRT_BUILD_GPU_RENDERER
-            if (pbrt::Options != nullptr && pbrt::Options->useGPU) pathtracer.integrator->PrefetchGPUAllocations();
+            pathtracer.integrator->PrefetchGPUAllocations();
 #endif
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
