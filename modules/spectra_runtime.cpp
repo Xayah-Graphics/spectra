@@ -677,12 +677,6 @@ namespace xayah {
         }
         this->create_imgui();
         this->initialize_pbrt_runtime();
-
-        const auto properties_chain = this->context.physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
-        const vk::PhysicalDeviceProperties& properties = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
-        const vk::PhysicalDeviceDriverProperties& driver = properties_chain.get<vk::PhysicalDeviceDriverProperties>();
-        std::println("Spectra Vulkan device: {} | Vulkan {}.{}.{} | Driver {} ({})", properties.deviceName.data(), vk::apiVersionMajor(properties.apiVersion), vk::apiVersionMinor(properties.apiVersion), vk::apiVersionPatch(properties.apiVersion), driver.driverName.data(), vk::to_string(driver.driverID));
-        std::println("Spectra swapchain: {} {}x{} images {} present {}", vk::to_string(this->swapchain.format), this->swapchain.extent.width, this->swapchain.extent.height, this->swapchain.images.size(), vk::to_string(this->swapchain.present_mode));
     } catch (...) {
         this->destroy_imgui();
         if (this->surface.glfw_initialized) glfwTerminate();
