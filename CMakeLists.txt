@@ -447,7 +447,7 @@ target_link_libraries(
         PRIVATE
         OpenEXR::OpenEXR
         Ptex_static
-        ${ZLIB_LIBRARIES}
+        ZLIB::ZLIB
         deflate::deflate
         double-conversion
         utf8proc
