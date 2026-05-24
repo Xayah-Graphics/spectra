@@ -510,11 +510,6 @@ target_sources(
         PRIVATE
         ${SPECTRA_RASTER_SPIRV_HEADER}
         modules/spectra.cpp
-        modules/spectra_pathtracer.cpp
-        modules/spectra_rasterizer.cpp
-        modules/spectra_runtime.cpp
-        modules/spectra_scene.cpp
-        modules/spectra_ui.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -525,9 +520,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/spectra.ixx
-        PRIVATE
-        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        modules/spectra_runtime.ixx
 )
 target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw pbrt_lib CUDA::cudart)
 target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
