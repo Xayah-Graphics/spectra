@@ -430,9 +430,7 @@ namespace xayah {
         if (this->state == nullptr || !this->state->initialized) throw std::runtime_error("PBRT runtime is not initialized");
         if (pbrt::Options == nullptr) throw std::runtime_error("PBRT global options are unavailable");
         *pbrt::Options = this->state->baseline_options;
-#ifdef PBRT_BUILD_GPU_RENDERER
         pbrt::CopyOptionsToGPU();
-#endif
     }
 
     void SpectraPbrtRuntime::wait_gpu_noexcept() const noexcept {
@@ -1370,9 +1368,7 @@ namespace xayah {
             pbrt::ParseFiles(pathtracer.builder.get(), filenames);
 
             pathtracer.integrator = std::make_unique<pbrt::WavefrontPathIntegrator>(&pbrt::CUDATrackedMemoryResource::singleton, *pathtracer.scene);
-#ifdef PBRT_BUILD_GPU_RENDERER
             pathtracer.integrator->PrefetchGPUAllocations();
-#endif
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
             if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("PBRT film resolution must be positive");
