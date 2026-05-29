@@ -31,7 +31,7 @@ endif ()
 # ============================================================================
 # Dependencies
 # ============================================================================
-if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu/pbrt.cpp")
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu/pbrt.cu")
     message(FATAL_ERROR "Expected local pbrt_gpu source at '${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu'.")
 endif ()
 if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/CMakeLists.txt")
