@@ -304,7 +304,6 @@ add_custom_command(
 )
 
 set(SPECTRA_GPU_CORE_SOURCE
-        src/core/bsdf.cu
         src/core/bssrdf.cu
         src/core/bxdfs.cu
         src/core/cameras.cu
@@ -317,7 +316,6 @@ set(SPECTRA_GPU_CORE_SOURCE
         src/core/media.cpp
         src/core/options.cu
         src/core/paramdict.cpp
-        src/core/ray.cpp
         src/core/samplers.cu
         src/core/shapes.cu
         src/core/textures.cu
@@ -331,7 +329,6 @@ set(SPECTRA_GPU_UTIL_SOURCE
         src/util/colorspace.cu
         src/util/error.cu
         src/util/file.cpp
-        src/util/float.cpp
         src/util/image.cpp
         src/util/loopsubdiv.cpp
         src/util/lowdiscrepancy.cu
@@ -346,7 +343,6 @@ set(SPECTRA_GPU_UTIL_SOURCE
         src/util/print.cpp
         src/util/progressreporter.cpp
         src/util/pstd.cu
-        src/util/rng.cu
         src/util/sampling.cu
         src/util/scattering.cu
         src/util/sobolmatrices.cu
