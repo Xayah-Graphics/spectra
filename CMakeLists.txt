@@ -105,3 +105,65 @@ set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 add_executable(spectra main.cpp)
 target_link_libraries(spectra PRIVATE spectra_core)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
+
+
+# ============================================================================
+# Spectra GPU
+# ============================================================================
+get_target_property(SPECTRA_GPU_PBRT_SOURCE pbrt_gpu_lib SOURCES)
+if (NOT SPECTRA_GPU_PBRT_SOURCE)
+    message(FATAL_ERROR "pbrt_gpu_lib did not expose its source list.")
+endif ()
+
+set(SPECTRA_GPU_RUNTIME_SOURCE)
+foreach (source IN LISTS SPECTRA_GPU_PBRT_SOURCE)
+    if (source MATCHES "(^|/)wavefront/")
+        continue ()
+    endif ()
+    if (IS_ABSOLUTE "${source}")
+        list(APPEND SPECTRA_GPU_RUNTIME_SOURCE "${source}")
+    else ()
+        list(APPEND SPECTRA_GPU_RUNTIME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu/${source}")
+    endif ()
+endforeach ()
+
+get_target_property(SPECTRA_GPU_PBRT_DEFINITIONS pbrt_gpu_lib COMPILE_DEFINITIONS)
+get_target_property(SPECTRA_GPU_PBRT_INCLUDES pbrt_gpu_lib INCLUDE_DIRECTORIES)
+get_target_property(SPECTRA_GPU_PBRT_OPTIONS pbrt_gpu_lib COMPILE_OPTIONS)
+get_target_property(SPECTRA_GPU_PBRT_LIBRARIES pbrt_gpu_lib LINK_LIBRARIES)
+if (SPECTRA_GPU_PBRT_DEFINITIONS STREQUAL "SPECTRA_GPU_PBRT_DEFINITIONS-NOTFOUND")
+    message(FATAL_ERROR "pbrt_gpu_lib did not expose compile definitions.")
+endif ()
+if (SPECTRA_GPU_PBRT_INCLUDES STREQUAL "SPECTRA_GPU_PBRT_INCLUDES-NOTFOUND")
+    message(FATAL_ERROR "pbrt_gpu_lib did not expose include directories.")
+endif ()
+if (SPECTRA_GPU_PBRT_OPTIONS STREQUAL "SPECTRA_GPU_PBRT_OPTIONS-NOTFOUND")
+    message(FATAL_ERROR "pbrt_gpu_lib did not expose compile options.")
+endif ()
+if (SPECTRA_GPU_PBRT_LIBRARIES STREQUAL "SPECTRA_GPU_PBRT_LIBRARIES-NOTFOUND")
+    message(FATAL_ERROR "pbrt_gpu_lib did not expose link libraries.")
+endif ()
+
+add_library(
+        spectra_gpu_lib
+        STATIC
+        ${SPECTRA_GPU_RUNTIME_SOURCE}
+        src/pathtracer.cpp
+        src/pathtracer.cu
+)
+add_library(spectra::gpu_lib ALIAS spectra_gpu_lib)
+add_dependencies(spectra_gpu_lib pbrt_gpu_soa_generated)
+target_compile_definitions(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_DEFINITIONS})
+target_include_directories(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_INCLUDES})
+target_compile_options(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_OPTIONS})
+target_link_libraries(spectra_gpu_lib PRIVATE ${SPECTRA_GPU_PBRT_LIBRARIES})
+set_property(TARGET spectra_gpu_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+set_property(TARGET spectra_gpu_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+
+add_executable(spectra_gpu_exe src/spectra_gpu.cpp)
+add_executable(spectra::gpu ALIAS spectra_gpu_exe)
+target_link_libraries(spectra_gpu_exe PRIVATE spectra_gpu_lib Threads::Threads)
+set_target_properties(spectra_gpu_exe PROPERTIES OUTPUT_NAME spectra_gpu)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(spectra_gpu_exe PRIVATE -rdynamic "LINKER:--no-as-needed")
+endif ()
