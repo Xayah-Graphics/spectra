@@ -120,6 +120,9 @@ foreach (source IN LISTS SPECTRA_GPU_PBRT_SOURCE)
     if (source MATCHES "(^|/)wavefront/")
         continue ()
     endif ()
+    if (source MATCHES "(^|/)pbrt\\.cu$")
+        continue ()
+    endif ()
     if (IS_ABSOLUTE "${source}")
         list(APPEND SPECTRA_GPU_RUNTIME_SOURCE "${source}")
     else ()
@@ -148,6 +151,8 @@ add_library(
         spectra_gpu_lib
         STATIC
         ${SPECTRA_GPU_RUNTIME_SOURCE}
+        src/runtime.cpp
+        src/runtime.cu
         src/pathtracer.cpp
         src/pathtracer.cu
 )
