@@ -110,51 +110,79 @@ set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
 # ============================================================================
 # Spectra GPU
 # ============================================================================
-get_target_property(SPECTRA_GPU_PBRT_SOURCE pbrt_gpu_lib SOURCES)
-if (NOT SPECTRA_GPU_PBRT_SOURCE)
-    message(FATAL_ERROR "pbrt_gpu_lib did not expose its source list.")
+option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
+option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
+set(SPECTRA_OPTIX_PATH "${PBRT_OPTIX_PATH}" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
+set(SPECTRA_OPTIX_SHADER_MODEL "${PBRT_OPTIX_SHADER_MODEL}" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
+
+if (SPECTRA_OPTIX_PATH STREQUAL "")
+    message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to the OptiX 9.1 SDK root for spectra_gpu.")
+endif ()
+if (NOT EXISTS "${SPECTRA_OPTIX_PATH}/include/optix.h")
+    message(FATAL_ERROR "SPECTRA_OPTIX_PATH='${SPECTRA_OPTIX_PATH}' does not contain include/optix.h.")
 endif ()
 
-set(SPECTRA_GPU_RUNTIME_SOURCE)
-foreach (source IN LISTS SPECTRA_GPU_PBRT_SOURCE)
-    if (source MATCHES "(^|/)wavefront/")
-        continue ()
-    endif ()
-    if (source MATCHES "(^|/)scene\\.cpp$")
-        continue ()
-    endif ()
-    if (source MATCHES "(^|/)parser\\.cpp$")
-        continue ()
-    endif ()
-    if (source MATCHES "(^|/)gpu/optix/aggregate\\.cu$")
-        continue ()
-    endif ()
-    if (source MATCHES "(^|/)pbrt\\.cu$")
-        continue ()
-    endif ()
-    if (IS_ABSOLUTE "${source}")
-        list(APPEND SPECTRA_GPU_RUNTIME_SOURCE "${source}")
-    else ()
-        list(APPEND SPECTRA_GPU_RUNTIME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu/${source}")
-    endif ()
-endforeach ()
+set(SPECTRA_GPU_DEFINITIONS PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:PBRT_DEBUG_BUILD>")
+if (SPECTRA_FLOAT_AS_DOUBLE)
+    list(APPEND SPECTRA_GPU_DEFINITIONS PBRT_FLOAT_AS_DOUBLE)
+endif ()
+if (SPECTRA_NVTX)
+    list(APPEND SPECTRA_GPU_DEFINITIONS NVTX)
+endif ()
 
-get_target_property(SPECTRA_GPU_PBRT_DEFINITIONS pbrt_gpu_lib COMPILE_DEFINITIONS)
-get_target_property(SPECTRA_GPU_PBRT_INCLUDES pbrt_gpu_lib INCLUDE_DIRECTORIES)
-get_target_property(SPECTRA_GPU_PBRT_OPTIONS pbrt_gpu_lib COMPILE_OPTIONS)
-get_target_property(SPECTRA_GPU_PBRT_LIBRARIES pbrt_gpu_lib LINK_LIBRARIES)
-if (SPECTRA_GPU_PBRT_DEFINITIONS STREQUAL "SPECTRA_GPU_PBRT_DEFINITIONS-NOTFOUND")
-    message(FATAL_ERROR "pbrt_gpu_lib did not expose compile definitions.")
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if (NOT MSVC)
+        message(FATAL_ERROR "Windows builds require MSVC.")
+    endif ()
+    list(APPEND SPECTRA_GPU_DEFINITIONS
+            PBRT_IS_WINDOWS
+            PBRT_IS_MSVC
+            NOMINMAX
+            _CRT_SECURE_NO_WARNINGS
+            _ENABLE_EXTENDED_ALIGNED_STORAGE
+            PBRT_HAS_INTRIN_H
+            "PBRT_NOINLINE=__declspec(noinline)"
+            "PBRT_RESTRICT=__restrict"
+            PBRT_HAVE__ALIGNED_MALLOC
+    )
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND SPECTRA_GPU_DEFINITIONS
+            PBRT_IS_LINUX
+            PBRT_HAVE_MMAP
+            "PBRT_NOINLINE=__attribute__((noinline))"
+            "PBRT_RESTRICT=__restrict__"
+            PBRT_HAVE_POSIX_MEMALIGN
+    )
+else ()
+    message(FATAL_ERROR "Only Linux/WSL and Windows/MSVC are supported by spectra_gpu.")
 endif ()
-if (SPECTRA_GPU_PBRT_INCLUDES STREQUAL "SPECTRA_GPU_PBRT_INCLUDES-NOTFOUND")
-    message(FATAL_ERROR "pbrt_gpu_lib did not expose include directories.")
-endif ()
-if (SPECTRA_GPU_PBRT_OPTIONS STREQUAL "SPECTRA_GPU_PBRT_OPTIONS-NOTFOUND")
-    message(FATAL_ERROR "pbrt_gpu_lib did not expose compile options.")
-endif ()
-if (SPECTRA_GPU_PBRT_LIBRARIES STREQUAL "SPECTRA_GPU_PBRT_LIBRARIES-NOTFOUND")
-    message(FATAL_ERROR "pbrt_gpu_lib did not expose link libraries.")
-endif ()
+
+set(SPECTRA_GPU_CUDA_WARNING_OPTIONS
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/Zc:preprocessor>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4244>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4267>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4305>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4552>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4838>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4843>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26451>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd26495>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4334>"
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler >/wd4146>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=partial_override>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=virtual_function_decl_hidden>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=integer_sign_change>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=declared_but_not_referenced>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=implicit_return_from_non_void_function>"
+)
+set(SPECTRA_GPU_CUDA_COMPILE_OPTIONS
+        "$<$<CXX_COMPILER_ID:MSVC>:$<$<COMPILE_LANGUAGE:CUDA>:--forward-slash-prefix-opts>>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:--forward-unknown-to-host-compiler>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:$<IF:$<AND:$<CONFIG:Debug>,$<NOT:$<BOOL:$<TARGET_PROPERTY:CUDA_PTX_COMPILATION>>>>,-G;-g,-lineinfo;-maxrregcount;128>>"
+)
 
 get_filename_component(SPECTRA_GPU_CUDA_COMPILER_BIN "${CMAKE_CUDA_COMPILER}" DIRECTORY)
 find_program(
@@ -168,6 +196,22 @@ if (NOT SPECTRA_GPU_BIN2C)
 endif ()
 
 set(SPECTRA_GPU_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/spectra_gpu)
+set(SPECTRA_GPU_INCLUDE_DIRS
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/vendor/pbrt
+        ${STB_INCLUDE}
+        ${QOI_INCLUDE}
+        ${ZLIB_INCLUDE_DIRS}
+        ${LIBDEFLATE_INCLUDE_DIRS}
+        ${PTEX_INCLUDE}
+        ${DOUBLE_CONVERSION_INCLUDE}
+        ${NANOVDB_INCLUDE}
+        ${PROJECT_BINARY_DIR}
+        ${SPECTRA_GPU_GENERATED_DIR}
+        ${SPECTRA_OPTIX_PATH}/include
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
 set(SPECTRA_GPU_BIN2C_SCRIPT ${SPECTRA_GPU_GENERATED_DIR}/spectra_gpu_bin2c_embed.cmake)
 file(MAKE_DIRECTORY "${SPECTRA_GPU_GENERATED_DIR}")
 file(WRITE "${SPECTRA_GPU_BIN2C_SCRIPT}" [=[
@@ -195,20 +239,143 @@ endif()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
 
+add_executable(spectra_gpu_soac src/tools/soac.cpp)
+target_compile_definitions(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_DEFINITIONS})
+target_include_directories(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
+
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spectra.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
+        DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spectra.soa
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/wavefront/workitems.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+        DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/wavefront/workitems.soa
+        VERBATIM
+)
+set(SPECTRA_GPU_SOA_GENERATED
+        ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
+        ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+)
+add_custom_target(spectra_gpu_soa_generated DEPENDS ${SPECTRA_GPU_SOA_GENERATED})
+
+add_executable(spectra_gpu_rgb2spec_opt src/tools/rgb2spec_opt.cpp)
+target_compile_definitions(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_DEFINITIONS})
+target_include_directories(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
+target_link_libraries(spectra_gpu_rgb2spec_opt PRIVATE Threads::Threads)
+
+set(SPECTRA_GPU_RGB_TO_SPECTRUM_SOURCES
+        ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_aces.cpp
+        ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_dci_p3.cpp
+        ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_rec2020.cpp
+        ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_srgb.cpp
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_aces.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND spectra_gpu_rgb2spec_opt 64 ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_aces.cpp ACES2065_1
+        DEPENDS spectra_gpu_rgb2spec_opt
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_dci_p3.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND spectra_gpu_rgb2spec_opt 64 ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_dci_p3.cpp DCI_P3
+        DEPENDS spectra_gpu_rgb2spec_opt
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_rec2020.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND spectra_gpu_rgb2spec_opt 64 ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_rec2020.cpp REC2020
+        DEPENDS spectra_gpu_rgb2spec_opt
+        VERBATIM
+)
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_srgb.cpp
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND spectra_gpu_rgb2spec_opt 64 ${SPECTRA_GPU_GENERATED_DIR}/rgbspectrum_srgb.cpp sRGB
+        DEPENDS spectra_gpu_rgb2spec_opt
+        VERBATIM
+)
+
+set(SPECTRA_GPU_CORE_SOURCE
+        src/core/bsdf.cu
+        src/core/bssrdf.cu
+        src/core/bxdfs.cu
+        src/core/cameras.cu
+        src/core/film.cu
+        src/core/filters.cu
+        src/core/interaction.cu
+        src/core/lights.cu
+        src/core/lightsamplers.cu
+        src/core/materials.cu
+        src/core/media.cpp
+        src/core/options.cu
+        src/core/paramdict.cpp
+        src/core/ray.cpp
+        src/core/samplers.cu
+        src/core/shapes.cu
+        src/core/textures.cu
+)
+set(SPECTRA_GPU_UTIL_SOURCE
+        src/util/args.cpp
+        src/util/bluenoise.cu
+        src/util/buffercache.cpp
+        src/util/check.cu
+        src/util/color.cu
+        src/util/colorspace.cu
+        src/util/error.cu
+        src/util/file.cpp
+        src/util/float.cpp
+        src/util/image.cpp
+        src/util/loopsubdiv.cpp
+        src/util/lowdiscrepancy.cu
+        src/util/math.cu
+        src/util/memory.cpp
+        src/util/mesh.cu
+        src/util/mipmap.cpp
+        src/util/noise.cu
+        src/util/parallel.cpp
+        src/util/pmj02tables.cu
+        src/util/primes.cu
+        src/util/print.cpp
+        src/util/progressreporter.cpp
+        src/util/pstd.cu
+        src/util/rng.cu
+        src/util/sampling.cu
+        src/util/scattering.cu
+        src/util/sobolmatrices.cu
+        src/util/spectrum.cu
+        src/util/stbimage.cpp
+        src/util/string.cpp
+        src/util/transform.cu
+        src/util/vecmath.cu
+)
+set(SPECTRA_GPU_DEVICE_SOURCE
+        src/gpu/memory.cu
+        src/gpu/util.cu
+)
+
 add_library(spectra_gpu_optix_ptx OBJECT src/optix/optix.cu)
 set_property(TARGET spectra_gpu_optix_ptx PROPERTY CUDA_PTX_COMPILATION ON)
 set_property(TARGET spectra_gpu_optix_ptx PROPERTY CUDA_ARCHITECTURES OFF)
-target_compile_definitions(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_PBRT_DEFINITIONS})
-target_include_directories(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_PBRT_INCLUDES})
+target_compile_definitions(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_DEFINITIONS})
+target_include_directories(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 target_compile_options(
         spectra_gpu_optix_ptx
         PRIVATE
-        ${SPECTRA_GPU_PBRT_OPTIONS}
-        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${PBRT_OPTIX_SHADER_MODEL}>"
+        ${SPECTRA_GPU_CUDA_COMPILE_OPTIONS}
+        ${SPECTRA_GPU_CUDA_WARNING_OPTIONS}
+        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_SHADER_MODEL}>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=20044>"
 )
-add_dependencies(spectra_gpu_optix_ptx pbrt_gpu_soa_generated)
+add_dependencies(spectra_gpu_optix_ptx spectra_gpu_soa_generated)
 
 set(SPECTRA_GPU_EMBEDDED_PTX ${SPECTRA_GPU_GENERATED_DIR}/optix.cu.ptx_embedded.c)
 add_custom_command(
@@ -225,13 +392,16 @@ add_custom_command(
 )
 add_library(spectra_gpu_embedded_ptx STATIC ${SPECTRA_GPU_EMBEDDED_PTX})
 
-set(SPECTRA_GPU_LINK_LIBRARIES ${SPECTRA_GPU_PBRT_LIBRARIES})
-list(REMOVE_ITEM SPECTRA_GPU_LINK_LIBRARIES pbrt_gpu_embedded_ptx)
-
 add_library(
         spectra_gpu_lib
         STATIC
-        ${SPECTRA_GPU_RUNTIME_SOURCE}
+        ${SPECTRA_GPU_RGB_TO_SPECTRUM_SOURCES}
+        ${SPECTRA_GPU_SOA_GENERATED}
+        ${SPECTRA_GPU_CORE_SOURCE}
+        ${SPECTRA_GPU_UTIL_SOURCE}
+        ${SPECTRA_GPU_DEVICE_SOURCE}
+        ${PROJECT_SOURCE_DIR}/vendor/pbrt/lodepng/lodepng.cpp
+        ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
         src/scene.cpp
         src/optix/aggregate.cu
         src/runtime.cpp
@@ -240,15 +410,37 @@ add_library(
         src/pathtracer.cu
 )
 add_library(spectra::gpu_lib ALIAS spectra_gpu_lib)
-add_dependencies(spectra_gpu_lib pbrt_gpu_soa_generated)
-target_compile_definitions(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_DEFINITIONS})
-target_include_directories(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_INCLUDES})
-target_compile_options(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_OPTIONS})
-target_link_libraries(spectra_gpu_lib PRIVATE ${SPECTRA_GPU_LINK_LIBRARIES} spectra_gpu_embedded_ptx)
+add_dependencies(spectra_gpu_lib spectra_gpu_soa_generated)
+target_compile_definitions(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_DEFINITIONS})
+target_include_directories(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_INCLUDE_DIRS})
+target_compile_options(
+        spectra_gpu_lib
+        PUBLIC
+        "$<$<COMPILE_LANG_AND_ID:CXX,Clang>:-ffp-contract=off>"
+        ${SPECTRA_GPU_CUDA_COMPILE_OPTIONS}
+        ${SPECTRA_GPU_CUDA_WARNING_OPTIONS}
+)
+target_link_libraries(
+        spectra_gpu_lib
+        PRIVATE
+        OpenEXR::OpenEXR
+        Ptex_static
+        ZLIB::ZLIB
+        deflate::deflate
+        double-conversion
+        utf8proc
+        CUDA::cudart
+        CUDA::cuda_driver
+        Threads::Threads
+        spectra_gpu_embedded_ptx
+)
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    target_link_libraries(spectra_gpu_lib PRIVATE dbghelp shell32 wsock32 ws2_32)
+endif ()
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-add_executable(spectra_gpu_exe src/spectra_gpu.cpp)
+add_executable(spectra_gpu_exe src/cmd/spectra_gpu.cpp)
 add_executable(spectra::gpu ALIAS spectra_gpu_exe)
 target_link_libraries(spectra_gpu_exe PRIVATE spectra_gpu_lib Threads::Threads)
 set_target_properties(spectra_gpu_exe PROPERTIES OUTPUT_NAME spectra_gpu)
