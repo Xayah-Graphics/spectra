@@ -120,6 +120,15 @@ foreach (source IN LISTS SPECTRA_GPU_PBRT_SOURCE)
     if (source MATCHES "(^|/)wavefront/")
         continue ()
     endif ()
+    if (source MATCHES "(^|/)scene\\.cpp$")
+        continue ()
+    endif ()
+    if (source MATCHES "(^|/)parser\\.cpp$")
+        continue ()
+    endif ()
+    if (source MATCHES "(^|/)gpu/optix/aggregate\\.cu$")
+        continue ()
+    endif ()
     if (source MATCHES "(^|/)pbrt\\.cu$")
         continue ()
     endif ()
@@ -147,10 +156,84 @@ if (SPECTRA_GPU_PBRT_LIBRARIES STREQUAL "SPECTRA_GPU_PBRT_LIBRARIES-NOTFOUND")
     message(FATAL_ERROR "pbrt_gpu_lib did not expose link libraries.")
 endif ()
 
+get_filename_component(SPECTRA_GPU_CUDA_COMPILER_BIN "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+find_program(
+        SPECTRA_GPU_BIN2C
+        NAMES bin2c
+        PATHS ${SPECTRA_GPU_CUDA_COMPILER_BIN} ${CUDAToolkit_BIN_DIR}
+        NO_DEFAULT_PATH
+)
+if (NOT SPECTRA_GPU_BIN2C)
+    message(FATAL_ERROR "CUDA bin2c was not found next to '${CMAKE_CUDA_COMPILER}'.")
+endif ()
+
+set(SPECTRA_GPU_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/spectra_gpu)
+set(SPECTRA_GPU_BIN2C_SCRIPT ${SPECTRA_GPU_GENERATED_DIR}/spectra_gpu_bin2c_embed.cmake)
+file(MAKE_DIRECTORY "${SPECTRA_GPU_GENERATED_DIR}")
+file(WRITE "${SPECTRA_GPU_BIN2C_SCRIPT}" [=[
+set(file_contents)
+foreach(obj IN LISTS OBJECTS)
+    get_filename_component(obj_ext "${obj}" EXT)
+    get_filename_component(obj_dir "${obj}" DIRECTORY)
+    if(obj_ext MATCHES "\\.ptx$")
+        execute_process(
+                COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
+                WORKING_DIRECTORY "${obj_dir}"
+                RESULT_VARIABLE result
+                OUTPUT_VARIABLE output
+                ERROR_VARIABLE error_var
+        )
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "bin2c failed for ${obj}: ${error_var}")
+        endif()
+        string(APPEND file_contents " \n${output}")
+    endif()
+endforeach()
+if(file_contents STREQUAL "")
+    message(FATAL_ERROR "No PTX input was passed to bin2c: ${OBJECTS}")
+endif()
+file(WRITE "${OUTPUT}" "${file_contents}")
+]=])
+
+add_library(spectra_gpu_optix_ptx OBJECT src/optix/optix.cu)
+set_property(TARGET spectra_gpu_optix_ptx PROPERTY CUDA_PTX_COMPILATION ON)
+set_property(TARGET spectra_gpu_optix_ptx PROPERTY CUDA_ARCHITECTURES OFF)
+target_compile_definitions(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_PBRT_DEFINITIONS})
+target_include_directories(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_PBRT_INCLUDES})
+target_compile_options(
+        spectra_gpu_optix_ptx
+        PRIVATE
+        ${SPECTRA_GPU_PBRT_OPTIONS}
+        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${PBRT_OPTIX_SHADER_MODEL}>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=20044>"
+)
+add_dependencies(spectra_gpu_optix_ptx pbrt_gpu_soa_generated)
+
+set(SPECTRA_GPU_EMBEDDED_PTX ${SPECTRA_GPU_GENERATED_DIR}/optix.cu.ptx_embedded.c)
+add_custom_command(
+        OUTPUT ${SPECTRA_GPU_EMBEDDED_PTX}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
+        COMMAND ${CMAKE_COMMAND}
+        "-DBIN_TO_C_COMMAND=${SPECTRA_GPU_BIN2C}"
+        "-DOBJECTS=$<TARGET_OBJECTS:spectra_gpu_optix_ptx>"
+        "-DVAR_NAME=SPECTRA_EMBEDDED_PTX"
+        "-DOUTPUT=${SPECTRA_GPU_EMBEDDED_PTX}"
+        -P ${SPECTRA_GPU_BIN2C_SCRIPT}
+        DEPENDS spectra_gpu_optix_ptx $<TARGET_OBJECTS:spectra_gpu_optix_ptx>
+        VERBATIM
+)
+add_library(spectra_gpu_embedded_ptx STATIC ${SPECTRA_GPU_EMBEDDED_PTX})
+
+set(SPECTRA_GPU_LINK_LIBRARIES ${SPECTRA_GPU_PBRT_LIBRARIES})
+list(REMOVE_ITEM SPECTRA_GPU_LINK_LIBRARIES pbrt_gpu_embedded_ptx)
+
 add_library(
         spectra_gpu_lib
         STATIC
         ${SPECTRA_GPU_RUNTIME_SOURCE}
+        src/scene.cpp
+        src/optix/aggregate.cu
         src/runtime.cpp
         src/runtime.cu
         src/pathtracer.cpp
@@ -161,7 +244,7 @@ add_dependencies(spectra_gpu_lib pbrt_gpu_soa_generated)
 target_compile_definitions(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_DEFINITIONS})
 target_include_directories(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_INCLUDES})
 target_compile_options(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_PBRT_OPTIONS})
-target_link_libraries(spectra_gpu_lib PRIVATE ${SPECTRA_GPU_PBRT_LIBRARIES})
+target_link_libraries(spectra_gpu_lib PRIVATE ${SPECTRA_GPU_LINK_LIBRARIES} spectra_gpu_embedded_ptx)
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
