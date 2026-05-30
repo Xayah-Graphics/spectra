@@ -30,13 +30,6 @@ namespace xayah {
         void unload_noexcept() noexcept;
     };
 
-    struct SpectraCameraPose {
-        spectra::Point3f eye{};
-        spectra::Point3f center{};
-        spectra::Vector3f up{};
-        float basis_handedness{1.0f};
-    };
-
     struct SpectraGpuRuntimeState;
 
     class SpectraGpuRuntime {
@@ -98,13 +91,6 @@ namespace xayah {
         std::unique_ptr<SpectraGpuPathtracerState> state{};
     };
 
-    [[nodiscard]] float spectra_camera_fov_degrees(const SpectraScene& scene);
-    [[nodiscard]] SpectraCameraPose camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds);
-    [[nodiscard]] spectra::Transform moving_from_camera_from_pose(const spectra::Transform& base_camera_from_world, const SpectraCameraPose& pose);
-    bool camera_pan(SpectraCameraPose& pose, const std::array<float, 2>& displacement, float fov_degrees, const std::array<float, 2>& viewport_size);
-    bool camera_dolly(SpectraCameraPose& pose, const std::array<float, 2>& displacement);
-    bool camera_orbit(SpectraCameraPose& pose, std::array<float, 2> displacement, bool invert);
-    bool camera_key_motion(SpectraCameraPose& pose, const std::array<float, 2>& delta, float speed, bool dolly);
 } // namespace xayah
 
 #endif

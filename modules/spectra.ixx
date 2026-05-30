@@ -7,18 +7,141 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 #include <vulkan/vulkan_raii.hpp>
 
 export module spectra;
 import std;
 
 export namespace xayah {
+    class Spectra;
+    class SpectraContext;
+    class SpectraFrameContext;
+    struct SpectraFrameState;
+    class SpectraPanelContext;
+    class SpectraRecordContext;
+
+    enum class SpectraDockSlot {
+        Center,
+        Left,
+        LeftBottom,
+        Right,
+        RightBottom,
+        Bottom,
+        Floating,
+    };
+
+    struct SpectraPanel {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        SpectraDockSlot dock_slot{SpectraDockSlot::Floating};
+        ImGuiWindowFlags window_flags{0};
+        bool visible{true};
+        bool closable{true};
+        bool show_in_menu{true};
+        bool show_in_toolbar{true};
+        bool zero_window_padding{false};
+        std::move_only_function<void(SpectraPanelContext&)> draw{};
+    };
+
+    class SpectraPlugin {
+    public:
+        virtual ~SpectraPlugin() = default;
+
+        [[nodiscard]] virtual std::string_view name() const = 0;
+        virtual void attach(SpectraContext& context) = 0;
+        virtual void detach(SpectraContext& context) noexcept;
+        virtual void before_imgui_shutdown(SpectraContext& context) noexcept;
+        virtual void after_imgui_created(SpectraContext& context);
+        virtual void begin_frame(SpectraFrameContext& context);
+        virtual void record_frame(SpectraRecordContext& context);
+    };
+
+    class SpectraContext {
+    public:
+        SpectraContext() = default;
+
+        [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const;
+        [[nodiscard]] const vk::raii::Device& device() const;
+        [[nodiscard]] std::uint32_t frame_count() const;
+        [[nodiscard]] vk::Extent2D swapchain_extent() const;
+        [[nodiscard]] vk::Format swapchain_format() const;
+        void register_panel(SpectraPanel panel) const;
+        void request_close() const;
+        void set_window_detail(std::string detail) const;
+
+    private:
+        friend class Spectra;
+        friend class SpectraFrameContext;
+        friend class SpectraPanelContext;
+        friend class SpectraRecordContext;
+        explicit SpectraContext(Spectra& spectra);
+
+        Spectra* spectra = nullptr;
+    };
+
+    class SpectraFrameContext {
+    public:
+        [[nodiscard]] SpectraContext app() const;
+        [[nodiscard]] std::uint32_t frame_index() const;
+        [[nodiscard]] std::uint32_t image_index() const;
+        [[nodiscard]] float delta_seconds() const;
+        void request_external_completion(vk::Semaphore semaphore) const;
+        void request_close() const;
+        void set_window_detail(std::string detail) const;
+
+    private:
+        friend class Spectra;
+
+        SpectraFrameContext(Spectra& spectra, SpectraFrameState& frame);
+
+        Spectra* spectra = nullptr;
+        SpectraFrameState* frame = nullptr;
+    };
+
+    class SpectraRecordContext {
+    public:
+        [[nodiscard]] SpectraContext app() const;
+        [[nodiscard]] std::uint32_t frame_index() const;
+        [[nodiscard]] std::uint32_t image_index() const;
+        [[nodiscard]] const vk::raii::CommandBuffer& command_buffer() const;
+
+    private:
+        friend class Spectra;
+
+        SpectraRecordContext(Spectra& spectra, SpectraFrameState& frame, const vk::raii::CommandBuffer& command_buffer);
+
+        Spectra* spectra = nullptr;
+        SpectraFrameState* frame = nullptr;
+        const vk::raii::CommandBuffer* command_buffer_value = nullptr;
+    };
+
+    class SpectraPanelContext {
+    public:
+        [[nodiscard]] SpectraContext app() const;
+        [[nodiscard]] std::string_view panel_id() const;
+        [[nodiscard]] std::string_view panel_title() const;
+        void request_close() const;
+
+    private:
+        friend class Spectra;
+
+        SpectraPanelContext(Spectra& spectra, SpectraPanel& panel);
+
+        Spectra* spectra = nullptr;
+        SpectraPanel* panel = nullptr;
+    };
+
     class Spectra {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
 
-        void run_interactive_scene(const std::filesystem::path& scene_path);
+        void register_plugin(std::unique_ptr<SpectraPlugin> plugin);
+        void run();
 
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
@@ -26,65 +149,25 @@ export namespace xayah {
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
     private:
-        struct FrameState {
-            std::uint32_t frame_index{0};
-            std::uint32_t image_index{0};
-            bool recreate_after_present{false};
-            bool wait_for_external_completion{false};
-            vk::Semaphore external_completion_semaphore{};
-        };
-
-        struct PathtracerFrameResult {
-            std::uint64_t sample_pixels{0};
-            bool rendered_sample{false};
-            bool reset_accumulation{false};
-        };
-
-        struct PathtracerStatus {
-            std::array<int, 2> sample_range{0, 0};
-            bool uses_external_completion{false};
-            std::string state{};
-        };
+        friend class SpectraContext;
+        friend class SpectraFrameContext;
+        friend class SpectraPanelContext;
+        friend class SpectraRecordContext;
 
         void create_imgui();
         void destroy_imgui() noexcept;
-        bool begin_frame(FrameState& frame);
-        void record_frame(const FrameState& frame);
-        void end_frame(FrameState& frame);
+        void notify_plugins_before_imgui_shutdown() noexcept;
+        void notify_plugins_after_imgui_created();
+        void detach_plugins_noexcept() noexcept;
         void render_loop();
-        void unload_spectra_scene_noexcept() noexcept;
-        void create_pathtracer_for_resolution(const std::array<int, 2>& resolution);
-        void rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution);
-        void unload_pathtracer_noexcept() noexcept;
-        void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
-        void synchronize_render_resolution();
-        [[nodiscard]] bool pathtracer_ready() const;
-        void update_window_title(float delta_seconds);
-        void update_frame_statistics(const FrameState& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
-        void clear_pathtracer_throughput_statistics();
-        void initialize_camera_state();
-        void process_camera_input(GLFWwindow* window);
-        void set_camera_speed(float speed);
-        void reset_camera();
-        [[nodiscard]] PathtracerStatus pathtracer_status() const;
-        [[nodiscard]] VkDescriptorSet pathtracer_viewport_descriptor() const;
-        [[nodiscard]] std::array<int, 2> pathtracer_sample_range() const;
-        [[nodiscard]] float pathtracer_initial_move_scale() const;
-        [[nodiscard]] vk::Semaphore pathtracer_complete_semaphore() const;
-        [[nodiscard]] PathtracerFrameResult render_pathtracer_frame(const FrameState& frame);
-        void record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer);
-        void request_pathtracer_accumulation_reset();
+        bool begin_frame(SpectraFrameState& frame);
+        void record_frame(SpectraFrameState& frame);
+        void end_frame(SpectraFrameState& frame);
         void draw_main_menu();
         void draw_menu_toolbar();
         void draw_dockspace();
-        void draw_viewport_window();
-        void draw_camera_window();
-        void draw_scene_browser_window();
-        void draw_inspector_window();
-        void draw_settings_window();
-        void draw_environment_window();
-        void draw_tonemapper_window();
-        void draw_statistics_window();
+        void draw_registered_panels();
+        void update_window_title(float delta_seconds);
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
