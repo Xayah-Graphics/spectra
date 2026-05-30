@@ -24,7 +24,6 @@
 #include <src/scene.h>
 #include <src/util/transform.h>
 #include <src/util/vecmath.h>
-#include <src/wavefront/aggregate.h>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <algorithm>
@@ -670,6 +669,7 @@ namespace {
         try {
             if (pathtracer.device != nullptr) pathtracer.device->waitIdle();
             if (spectra::Options != nullptr) spectra::GPUWait();
+            if (pathtracer.integrator != nullptr) pathtracer.integrator->ReleaseAggregate();
         } catch (...) {
         }
         destroy_pathtracer_frame_resources_noexcept(pathtracer);
@@ -713,7 +713,7 @@ namespace xayah {
             pathtracer.render_from_camera = pathtracer.integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
             pathtracer.camera_from_render = spectra::Inverse(pathtracer.render_from_camera);
             pathtracer.camera_from_world  = pathtracer.integrator->camera.GetCameraTransform().CameraFromWorld(pathtracer.integrator->camera.SampleTime(0.0f));
-            const spectra::Bounds3f scene_bounds = pathtracer.integrator->aggregate->Bounds();
+            const spectra::Bounds3f scene_bounds = pathtracer.integrator->Bounds();
             pathtracer.initial_move_scale     = spectra::Length(scene_bounds.Diagonal()) / 1000.0f;
             if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra GPU scene bounds must define a positive interactive move scale");
             const spectra::Transform world_from_render = spectra::Inverse(pathtracer.render_from_camera * pathtracer.camera_from_world);
