@@ -63,10 +63,9 @@ add_subdirectory(vendor/pbrt)
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
 option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
 set(SPECTRA_OPTIX_PATH "${PBRT_OPTIX_PATH}" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
-set(SPECTRA_OPTIX_SHADER_MODEL "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
-if (SPECTRA_OPTIX_SHADER_MODEL STREQUAL "")
-    set(SPECTRA_OPTIX_SHADER_MODEL "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX" FORCE)
-endif ()
+set(SPECTRA_OPTIX_GPU_ARCH "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
+set(SPECTRA_OPTIX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for spectra_gpu")
+set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for spectra_gpu")
 
 if (SPECTRA_OPTIX_PATH STREQUAL "")
     message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to the OptiX 9.1 SDK root for spectra_gpu.")
@@ -74,9 +73,25 @@ endif ()
 if (NOT EXISTS "${SPECTRA_OPTIX_PATH}/include/optix.h")
     message(FATAL_ERROR "SPECTRA_OPTIX_PATH='${SPECTRA_OPTIX_PATH}' does not contain include/optix.h.")
 endif ()
-if (NOT SPECTRA_OPTIX_SHADER_MODEL MATCHES "^sm_[0-9]+$")
-    message(FATAL_ERROR "SPECTRA_OPTIX_SHADER_MODEL='${SPECTRA_OPTIX_SHADER_MODEL}' must use the form sm_XX.")
+if (NOT SPECTRA_OPTIX_GPU_ARCH MATCHES "^sm_[0-9]+$")
+    message(FATAL_ERROR "SPECTRA_OPTIX_GPU_ARCH='${SPECTRA_OPTIX_GPU_ARCH}' must use the form sm_XX.")
 endif ()
+if (NOT SPECTRA_OPTIX_CACHE_SIZE_MB MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "SPECTRA_OPTIX_CACHE_SIZE_MB='${SPECTRA_OPTIX_CACHE_SIZE_MB}' must be a positive integer.")
+endif ()
+if (SPECTRA_OPTIX_CACHE_SIZE_MB LESS 1)
+    message(FATAL_ERROR "SPECTRA_OPTIX_CACHE_SIZE_MB must be greater than zero.")
+endif ()
+file(READ "${SPECTRA_OPTIX_PATH}/include/optix.h" SPECTRA_OPTIX_HEADER)
+string(REGEX MATCH "#define[ \t]+OPTIX_VERSION[ \t]+([0-9]+)" SPECTRA_OPTIX_VERSION_MATCH "${SPECTRA_OPTIX_HEADER}")
+if (NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR "Could not read OPTIX_VERSION from '${SPECTRA_OPTIX_PATH}/include/optix.h'.")
+endif ()
+set(SPECTRA_OPTIX_VERSION "${CMAKE_MATCH_1}")
+if (SPECTRA_OPTIX_VERSION LESS 90100)
+    message(FATAL_ERROR "spectra_gpu requires OptiX SDK 9.1.0 or newer; found OPTIX_VERSION=${SPECTRA_OPTIX_VERSION}.")
+endif ()
+math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
 set(SPECTRA_GPU_DEFINITIONS PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:PBRT_DEBUG_BUILD>")
 if (SPECTRA_FLOAT_AS_DOUBLE)
@@ -139,7 +154,7 @@ set(SPECTRA_GPU_CUDA_COMPILE_OPTIONS
         "$<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--forward-unknown-to-host-compiler>"
-        "$<$<COMPILE_LANGUAGE:CUDA>:$<IF:$<AND:$<CONFIG:Debug>,$<NOT:$<BOOL:$<TARGET_PROPERTY:CUDA_PTX_COMPILATION>>>>,-G;-g,-lineinfo;-maxrregcount;128>>"
+        "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>,$<NOT:$<BOOL:$<TARGET_PROPERTY:CUDA_PTX_COMPILATION>>>,$<NOT:$<BOOL:$<TARGET_PROPERTY:CUDA_OPTIX_COMPILATION>>>>:-G;-g;-lineinfo;-maxrregcount;128>"
 )
 
 get_filename_component(SPECTRA_GPU_CUDA_COMPILER_BIN "${CMAKE_CUDA_COMPILER}" DIRECTORY)
@@ -154,6 +169,21 @@ if (NOT SPECTRA_GPU_BIN2C)
 endif ()
 
 set(SPECTRA_GPU_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/spectra_gpu)
+file(MAKE_DIRECTORY "${SPECTRA_GPU_GENERATED_DIR}")
+file(MAKE_DIRECTORY "${SPECTRA_OPTIX_CACHE_DIR}")
+string(REPLACE "\\" "/" SPECTRA_OPTIX_CACHE_DIR_CONFIG "${SPECTRA_OPTIX_CACHE_DIR}")
+string(REPLACE "\"" "\\\"" SPECTRA_OPTIX_CACHE_DIR_CONFIG "${SPECTRA_OPTIX_CACHE_DIR_CONFIG}")
+file(WRITE "${SPECTRA_GPU_GENERATED_DIR}/spectra_optix_config.h"
+        "#pragma once\n"
+        "\n"
+        "#include <cstddef>\n"
+        "\n"
+        "namespace spectra::optix\n"
+        "{\n"
+        "    inline constexpr unsigned int SpectraOptiXSdkVersion = ${SPECTRA_OPTIX_VERSION};\n"
+        "    inline constexpr char SpectraOptiXCacheDir[] = \"${SPECTRA_OPTIX_CACHE_DIR_CONFIG}\";\n"
+        "    inline constexpr std::size_t SpectraOptiXCacheSizeBytes = ${SPECTRA_OPTIX_CACHE_SIZE_BYTES}ull;\n"
+        "} // namespace spectra::optix\n")
 set(SPECTRA_GPU_INCLUDE_DIRS
         ${PROJECT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/vendor/pbrt
@@ -171,13 +201,12 @@ set(SPECTRA_GPU_INCLUDE_DIRS
         ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
 set(SPECTRA_GPU_BIN2C_SCRIPT ${SPECTRA_GPU_GENERATED_DIR}/spectra_gpu_bin2c_embed.cmake)
-file(MAKE_DIRECTORY "${SPECTRA_GPU_GENERATED_DIR}")
 file(WRITE "${SPECTRA_GPU_BIN2C_SCRIPT}" [=[
 set(file_contents)
 foreach(obj IN LISTS OBJECTS)
     get_filename_component(obj_ext "${obj}" EXT)
     get_filename_component(obj_dir "${obj}" DIRECTORY)
-    if(obj_ext MATCHES "\\.ptx$")
+    if(obj_ext MATCHES "\\.optixir$")
         execute_process(
                 COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
                 WORKING_DIRECTORY "${obj_dir}"
@@ -188,11 +217,12 @@ foreach(obj IN LISTS OBJECTS)
         if(NOT result EQUAL 0)
             message(FATAL_ERROR "bin2c failed for ${obj}: ${error_var}")
         endif()
-        string(APPEND file_contents " \n${output}")
+        file(SIZE "${obj}" obj_size)
+        string(APPEND file_contents " \n${output}\nunsigned long long ${VAR_NAME}_SIZE = ${obj_size}ull;\n")
     endif()
 endforeach()
 if(file_contents STREQUAL "")
-    message(FATAL_ERROR "No PTX input was passed to bin2c: ${OBJECTS}")
+    message(FATAL_ERROR "No OptiX-IR input was passed to bin2c: ${OBJECTS}")
 endif()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
@@ -315,36 +345,36 @@ set(SPECTRA_GPU_DEVICE_SOURCE
         src/gpu/util.cu
 )
 
-add_library(spectra_gpu_optix_ptx OBJECT src/optix/optix.cu)
-set_property(TARGET spectra_gpu_optix_ptx PROPERTY CUDA_PTX_COMPILATION ON)
-set_property(TARGET spectra_gpu_optix_ptx PROPERTY CUDA_ARCHITECTURES OFF)
-target_compile_definitions(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_DEFINITIONS})
-target_include_directories(spectra_gpu_optix_ptx PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
+add_library(spectra_gpu_optix_input OBJECT src/optix/optix.cu)
+set_property(TARGET spectra_gpu_optix_input PROPERTY CUDA_OPTIX_COMPILATION ON)
+set_property(TARGET spectra_gpu_optix_input PROPERTY CUDA_ARCHITECTURES OFF)
+target_compile_definitions(spectra_gpu_optix_input PRIVATE ${SPECTRA_GPU_DEFINITIONS} CCCL_DISABLE_INT128_SUPPORT)
+target_include_directories(spectra_gpu_optix_input PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 target_compile_options(
-        spectra_gpu_optix_ptx
+        spectra_gpu_optix_input
         PRIVATE
         ${SPECTRA_GPU_CUDA_COMPILE_OPTIONS}
         ${SPECTRA_GPU_CUDA_WARNING_OPTIONS}
-        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_SHADER_MODEL}>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:--gpu-architecture=${SPECTRA_OPTIX_GPU_ARCH}>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --display_error_number>"
         "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe --diag_suppress=20044>"
 )
-add_dependencies(spectra_gpu_optix_ptx spectra_gpu_soa_generated)
+add_dependencies(spectra_gpu_optix_input spectra_gpu_soa_generated)
 
-set(SPECTRA_GPU_EMBEDDED_PTX ${SPECTRA_GPU_GENERATED_DIR}/optix.cu.ptx_embedded.c)
+set(SPECTRA_GPU_EMBEDDED_OPTIX_INPUT ${SPECTRA_GPU_GENERATED_DIR}/optix.cu.optixir_embedded.c)
 add_custom_command(
-        OUTPUT ${SPECTRA_GPU_EMBEDDED_PTX}
+        OUTPUT ${SPECTRA_GPU_EMBEDDED_OPTIX_INPUT}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
         COMMAND ${CMAKE_COMMAND}
         "-DBIN_TO_C_COMMAND=${SPECTRA_GPU_BIN2C}"
-        "-DOBJECTS=$<TARGET_OBJECTS:spectra_gpu_optix_ptx>"
-        "-DVAR_NAME=SPECTRA_EMBEDDED_PTX"
-        "-DOUTPUT=${SPECTRA_GPU_EMBEDDED_PTX}"
+        "-DOBJECTS=$<TARGET_OBJECTS:spectra_gpu_optix_input>"
+        "-DVAR_NAME=SPECTRA_EMBEDDED_OPTIX_INPUT"
+        "-DOUTPUT=${SPECTRA_GPU_EMBEDDED_OPTIX_INPUT}"
         -P ${SPECTRA_GPU_BIN2C_SCRIPT}
-        DEPENDS spectra_gpu_optix_ptx $<TARGET_OBJECTS:spectra_gpu_optix_ptx>
+        DEPENDS spectra_gpu_optix_input $<TARGET_OBJECTS:spectra_gpu_optix_input>
         VERBATIM
 )
-add_library(spectra_gpu_embedded_ptx STATIC ${SPECTRA_GPU_EMBEDDED_PTX})
+add_library(spectra_gpu_embedded_optix_input STATIC ${SPECTRA_GPU_EMBEDDED_OPTIX_INPUT})
 
 add_library(
         spectra_gpu_lib
@@ -386,7 +416,7 @@ target_link_libraries(
         CUDA::cudart
         CUDA::cuda_driver
         Threads::Threads
-        spectra_gpu_embedded_ptx
+        spectra_gpu_embedded_optix_input
 )
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(spectra_gpu_lib PRIVATE dbghelp shell32 wsock32 ws2_32)
