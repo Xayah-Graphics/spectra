@@ -410,6 +410,7 @@ add_library(spectra_core)
 target_sources(
         spectra_core
         PRIVATE
+        modules/spectra_gpu.h
         modules/spectra_gpu.cpp
         modules/spectra.cpp
 
@@ -421,7 +422,6 @@ target_sources(
         vendor/imgui/backends/imgui_impl_vulkan.cpp
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        modules/spectra_gpu.ixx
         modules/spectra.ixx
 )
 target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw CUDA::cudart spectra::gpu_lib)

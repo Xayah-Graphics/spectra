@@ -1,4 +1,3 @@
-module;
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
@@ -8,6 +7,9 @@ module;
 #else
 #include <unistd.h>
 #endif
+
+#include "spectra_gpu.h"
+
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <imgui.h>
@@ -25,8 +27,18 @@ module;
 #include <src/wavefront/aggregate.h>
 #include <vulkan/vulkan_raii.hpp>
 
-module spectra_gpu;
-import std;
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <format>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -71,20 +83,6 @@ namespace {
                 if (!std::isfinite(static_cast<float>(matrix[row][column])) || !std::isfinite(static_cast<float>(inverse[row][column]))) throw std::runtime_error(message);
             }
         }
-    }
-
-    [[nodiscard]] std::array<float, 16> raw_matrix_array_from_transform(const spectra::Transform& transform) {
-        validate_transform_matrix(transform, "Spectra GPU transform matrix contains a non-finite value");
-        std::array<float, 16> values{};
-        const spectra::SquareMatrix<4>& matrix = transform.GetMatrix();
-        for (std::size_t row = 0; row < 4; ++row) {
-            for (std::size_t column = 0; column < 4; ++column) {
-                const float value = static_cast<float>(matrix[row][column]);
-                if (!std::isfinite(value)) throw std::runtime_error("Camera transform matrix contains a non-finite value");
-                values[row * 4 + column] = value;
-            }
-        }
-        return values;
     }
 
     [[nodiscard]] float finite_length(const spectra::Vector3f& vector, const char* error_message) {
@@ -286,76 +284,15 @@ namespace {
     }
 
     [[nodiscard]] float raw_spectra_camera_fov_degrees(const xayah::SpectraScene& scene) {
-        if (!scene.camera.present) throw std::runtime_error("Interactive Spectra GPU camera controls require an explicit perspective camera");
-        if (scene.camera.name != "perspective") throw std::runtime_error(std::format("Interactive Spectra GPU camera controls require a perspective camera, not \"{}\"", scene.camera.name));
+        if (!scene.description.camera.present) throw std::runtime_error("Interactive Spectra GPU camera controls require an explicit perspective camera");
+        if (scene.description.camera.name != "perspective") throw std::runtime_error(std::format("Interactive Spectra GPU camera controls require a perspective camera, not \"{}\"", scene.description.camera.name));
         constexpr float spectra_gpu_perspective_default_fov = 90.0f;
-        for (const xayah::SpectraGpuParameter& parameter : scene.camera.parameters) {
+        for (const spectra::scene::SceneDescriptionParameter& parameter : scene.description.camera.parameters) {
             if (parameter.name != "fov") continue;
             if (parameter.floats.size() != 1) throw std::runtime_error("Spectra GPU perspective camera fov must have exactly one float value");
             return parameter.floats.front();
         }
         return spectra_gpu_perspective_default_fov;
-    }
-
-
-    [[nodiscard]] spectra::SquareMatrix<4> square_matrix_from_array(const std::array<float, 16>& values, const char* message) {
-        for (const float value : values) {
-            if (!std::isfinite(value)) throw std::runtime_error(message);
-        }
-        return spectra::SquareMatrix<4>{
-            values[0], values[1], values[2], values[3],
-            values[4], values[5], values[6], values[7],
-            values[8], values[9], values[10], values[11],
-            values[12], values[13], values[14], values[15],
-        };
-    }
-
-    [[nodiscard]] spectra::Transform spectra_transform_from_xayah(const xayah::SpectraGpuTransform& transform) {
-        spectra::Transform spectra_transform{
-            square_matrix_from_array(transform.matrix, "Spectra GPU transform matrix contains a non-finite value"),
-            square_matrix_from_array(transform.inverse_matrix, "Spectra GPU inverse transform matrix contains a non-finite value"),
-        };
-        validate_transform_matrix(spectra_transform, "Spectra GPU transform contains a non-finite value");
-        return spectra_transform;
-    }
-
-    [[nodiscard]] xayah::SpectraGpuTransform xayah_transform_from_spectra(const spectra::Transform& transform) {
-        xayah::SpectraGpuTransform spectra_transform{};
-        spectra_transform.matrix         = raw_matrix_array_from_transform(transform);
-        spectra_transform.inverse_matrix = raw_matrix_array_from_transform(spectra::Inverse(transform));
-        return spectra_transform;
-    }
-
-    [[nodiscard]] xayah::SpectraGpuPoint3 xayah_point3_from_spectra(const spectra::Point3f& point) {
-        return {point.x, point.y, point.z};
-    }
-
-    [[nodiscard]] spectra::Point3f spectra_point3_from_xayah(const xayah::SpectraGpuPoint3& point) {
-        return {point.x, point.y, point.z};
-    }
-
-    [[nodiscard]] spectra::Vector3f spectra_vector3_from_xayah(const xayah::SpectraGpuVector3& vector) {
-        return {vector.x, vector.y, vector.z};
-    }
-
-    [[nodiscard]] xayah::SpectraGpuVector3 xayah_vector3_from_spectra(const spectra::Vector3f& vector) {
-        return {vector.x, vector.y, vector.z};
-    }
-
-    [[nodiscard]] xayah::SpectraGpuBounds3 xayah_bounds_from_spectra(const spectra::Bounds3f& bounds) {
-        return {xayah_point3_from_spectra(bounds.pMin), xayah_point3_from_spectra(bounds.pMax)};
-    }
-
-    [[nodiscard]] spectra::Bounds3f spectra_bounds_from_xayah(const xayah::SpectraGpuBounds3& bounds) {
-        return {spectra_point3_from_xayah(bounds.minimum), spectra_point3_from_xayah(bounds.maximum)};
-    }
-
-    [[nodiscard]] xayah::SpectraCameraPose spectra_camera_pose_from_raw(const RawSpectraCameraPose& pose) {
-        return {xayah_point3_from_spectra(pose.eye), xayah_point3_from_spectra(pose.center), xayah_vector3_from_spectra(pose.up), pose.basis_handedness};
-    }
-
-    [[nodiscard]] RawSpectraCameraPose raw_camera_pose_from_spectra(const xayah::SpectraCameraPose& pose) {
-        return {spectra_point3_from_xayah(pose.eye), spectra_point3_from_xayah(pose.center), spectra_vector3_from_xayah(pose.up), pose.basis_handedness};
     }
 
 }
@@ -365,43 +302,40 @@ namespace xayah {
         return raw_spectra_camera_fov_degrees(scene);
     }
 
-    [[nodiscard]] SpectraCameraPose camera_pose_from_base_transform(const SpectraGpuTransform& camera_from_world, const SpectraGpuBounds3& focus_bounds) {
-        return spectra_camera_pose_from_raw(raw_camera_pose_from_base_transform(spectra_transform_from_xayah(camera_from_world), spectra_bounds_from_xayah(focus_bounds)));
+    [[nodiscard]] SpectraCameraPose camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
+        const RawSpectraCameraPose pose = raw_camera_pose_from_base_transform(camera_from_world, focus_bounds);
+        return {pose.eye, pose.center, pose.up, pose.basis_handedness};
     }
 
-    [[nodiscard]] SpectraGpuTransform moving_from_camera_from_pose(const SpectraGpuTransform& base_camera_from_world, const SpectraCameraPose& pose) {
-        return xayah_transform_from_spectra(raw_moving_from_camera_from_pose(spectra_transform_from_xayah(base_camera_from_world), raw_camera_pose_from_spectra(pose)));
-    }
-
-    void validate_spectra_bounds(const SpectraGpuBounds3& bounds, const char* message) {
-        raw_validate_bounds(spectra_bounds_from_xayah(bounds), message);
+    [[nodiscard]] spectra::Transform moving_from_camera_from_pose(const spectra::Transform& base_camera_from_world, const SpectraCameraPose& pose) {
+        return raw_moving_from_camera_from_pose(base_camera_from_world, {pose.eye, pose.center, pose.up, pose.basis_handedness});
     }
 
     bool camera_pan(SpectraCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
-        RawSpectraCameraPose raw_pose = raw_camera_pose_from_spectra(pose);
+        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
         const bool changed = raw_camera_pan(raw_pose, displacement, fov_degrees, viewport_size);
-        if (changed) pose = spectra_camera_pose_from_raw(raw_pose);
+        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
         return changed;
     }
 
     bool camera_dolly(SpectraCameraPose& pose, const std::array<float, 2>& displacement) {
-        RawSpectraCameraPose raw_pose = raw_camera_pose_from_spectra(pose);
+        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
         const bool changed = raw_camera_dolly(raw_pose, displacement);
-        if (changed) pose = spectra_camera_pose_from_raw(raw_pose);
+        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
         return changed;
     }
 
     bool camera_orbit(SpectraCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
-        RawSpectraCameraPose raw_pose = raw_camera_pose_from_spectra(pose);
+        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
         const bool changed = raw_camera_orbit(raw_pose, displacement, invert);
-        if (changed) pose = spectra_camera_pose_from_raw(raw_pose);
+        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
         return changed;
     }
 
     bool camera_key_motion(SpectraCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
-        RawSpectraCameraPose raw_pose = raw_camera_pose_from_spectra(pose);
+        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
         const bool changed = raw_camera_key_motion(raw_pose, delta, speed, dolly);
-        if (changed) pose = spectra_camera_pose_from_raw(raw_pose);
+        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
         return changed;
     }
 
@@ -437,152 +371,6 @@ namespace xayah {
 }
 
 
-namespace {
-    [[nodiscard]] xayah::SpectraGpuFileLocation copy_file_location(const spectra::scene::SceneDescriptionFileLocation& location) {
-        return {location.filename, location.line, location.column};
-    }
-
-    [[nodiscard]] std::vector<xayah::SpectraGpuParameter> copy_parameters(const std::vector<spectra::scene::SceneDescriptionParameter>& parameters) {
-        std::vector<xayah::SpectraGpuParameter> copied_parameters{};
-        copied_parameters.reserve(parameters.size());
-        for (const spectra::scene::SceneDescriptionParameter& parameter : parameters) {
-            xayah::SpectraGpuParameter copied_parameter{};
-            copied_parameter.type          = parameter.type;
-            copied_parameter.name          = parameter.name;
-            copied_parameter.location      = copy_file_location(parameter.location);
-            copied_parameter.floats        = parameter.floats;
-            copied_parameter.ints          = parameter.ints;
-            copied_parameter.strings       = parameter.strings;
-            copied_parameter.bools         = parameter.bools;
-            copied_parameter.may_be_unused = parameter.mayBeUnused;
-            copied_parameters.push_back(std::move(copied_parameter));
-        }
-        return copied_parameters;
-    }
-
-    [[nodiscard]] xayah::SpectraSceneTextureValueType copy_texture_value_type(const spectra::scene::SceneDescriptionTextureValueType value_type) {
-        switch (value_type) {
-            case spectra::scene::SceneDescriptionTextureValueType::Unknown: return xayah::SpectraSceneTextureValueType::Unknown;
-            case spectra::scene::SceneDescriptionTextureValueType::Float: return xayah::SpectraSceneTextureValueType::Float;
-            case spectra::scene::SceneDescriptionTextureValueType::Spectrum: return xayah::SpectraSceneTextureValueType::Spectrum;
-        }
-        throw std::runtime_error("Unhandled Spectra scene texture value type");
-    }
-
-    [[nodiscard]] xayah::SpectraSceneRenderSetting copy_render_setting(const spectra::scene::SceneDescriptionRenderSetting& setting) {
-        xayah::SpectraSceneRenderSetting copied{};
-        copied.present    = setting.present;
-        copied.type       = setting.type;
-        copied.name       = setting.name;
-        copied.location   = copy_file_location(setting.location);
-        copied.transform  = xayah_transform_from_spectra(setting.transform);
-        copied.parameters = copy_parameters(setting.parameters);
-        return copied;
-    }
-
-    void copy_scene_description(xayah::SpectraScene& scene, const spectra::scene::SceneDescription& description) {
-        scene.pixel_filter = copy_render_setting(description.pixelFilter);
-        scene.film         = copy_render_setting(description.film);
-        scene.sampler      = copy_render_setting(description.sampler);
-        scene.accelerator  = copy_render_setting(description.accelerator);
-        scene.integrator   = copy_render_setting(description.integrator);
-        scene.camera       = copy_render_setting(description.camera);
-
-        scene.textures.reserve(description.textures.size());
-        for (const spectra::scene::SceneDescriptionTexture& texture : description.textures) {
-            xayah::SpectraSceneTexture copied{};
-            copied.name           = texture.name;
-            copied.value_type     = copy_texture_value_type(texture.valueType);
-            copied.implementation = texture.implementation;
-            copied.location       = copy_file_location(texture.location);
-            copied.transform      = xayah_transform_from_spectra(texture.transform);
-            copied.parameters     = copy_parameters(texture.parameters);
-            scene.textures.push_back(std::move(copied));
-        }
-
-        scene.materials.reserve(description.materials.size());
-        for (const spectra::scene::SceneDescriptionMaterial& material : description.materials) {
-            xayah::SpectraSceneMaterial copied{};
-            copied.name       = material.name;
-            copied.type       = material.type;
-            copied.named      = material.named;
-            copied.location   = copy_file_location(material.location);
-            copied.parameters = copy_parameters(material.parameters);
-            scene.materials.push_back(std::move(copied));
-        }
-
-        scene.mediums.reserve(description.mediums.size());
-        for (const spectra::scene::SceneDescriptionMedium& medium : description.mediums) {
-            xayah::SpectraSceneMedium copied{};
-            copied.name       = medium.name;
-            copied.type       = medium.type;
-            copied.location   = copy_file_location(medium.location);
-            copied.transform  = xayah_transform_from_spectra(medium.transform);
-            copied.parameters = copy_parameters(medium.parameters);
-            scene.mediums.push_back(std::move(copied));
-        }
-
-        scene.medium_bindings.reserve(description.mediumBindings.size());
-        for (const spectra::scene::SceneDescriptionMediumBinding& binding : description.mediumBindings) {
-            xayah::SpectraSceneMediumBinding copied{};
-            copied.inside   = binding.inside;
-            copied.outside  = binding.outside;
-            copied.location = copy_file_location(binding.location);
-            scene.medium_bindings.push_back(std::move(copied));
-        }
-
-        scene.lights.reserve(description.lights.size());
-        for (const spectra::scene::SceneDescriptionLight& light : description.lights) {
-            xayah::SpectraSceneLight copied{};
-            copied.type           = light.type;
-            copied.area           = light.area;
-            copied.outside_medium = light.outsideMedium;
-            copied.location       = copy_file_location(light.location);
-            copied.transform      = xayah_transform_from_spectra(light.transform);
-            copied.parameters     = copy_parameters(light.parameters);
-            scene.lights.push_back(std::move(copied));
-        }
-
-        scene.shapes.reserve(description.shapes.size());
-        for (const spectra::scene::SceneDescriptionShape& shape : description.shapes) {
-            xayah::SpectraSceneShape copied{};
-            copied.type                   = shape.type;
-            copied.material_name          = shape.materialName;
-            copied.material_index         = shape.materialIndex;
-            copied.inside_medium          = shape.insideMedium;
-            copied.outside_medium         = shape.outsideMedium;
-            copied.object_definition_name = shape.objectDefinitionName;
-            copied.area_light_type        = shape.areaLightType;
-            copied.reverse_orientation    = shape.reverseOrientation;
-            copied.animated_transform     = shape.animatedTransform;
-            copied.location               = copy_file_location(shape.location);
-            copied.transform              = xayah_transform_from_spectra(shape.transform);
-            copied.parameters             = copy_parameters(shape.parameters);
-            scene.shapes.push_back(std::move(copied));
-        }
-
-        scene.object_definitions.reserve(description.objectDefinitions.size());
-        for (const spectra::scene::SceneDescriptionObjectDefinition& object_definition : description.objectDefinitions) {
-            xayah::SpectraSceneObjectDefinition copied{};
-            copied.name          = object_definition.name;
-            copied.location      = copy_file_location(object_definition.location);
-            copied.shape_indices = object_definition.shapeIndices;
-            scene.object_definitions.push_back(std::move(copied));
-        }
-
-        scene.object_instances.reserve(description.objectInstances.size());
-        for (const spectra::scene::SceneDescriptionObjectInstance& object_instance : description.objectInstances) {
-            xayah::SpectraSceneObjectInstance copied{};
-            copied.name               = object_instance.name;
-            copied.animated_transform = object_instance.animatedTransform;
-            copied.location           = copy_file_location(object_instance.location);
-            copied.transform          = xayah_transform_from_spectra(object_instance.transform);
-            scene.object_instances.push_back(std::move(copied));
-        }
-    }
-}
-
-
 namespace xayah {
     void SpectraScene::load(const std::filesystem::path& path) {
         if (!this->scene_path.empty()) throw std::runtime_error("Spectra scene is already loaded");
@@ -593,11 +381,9 @@ namespace xayah {
             this->scene_path      = path;
             this->scene_label     = path.filename().string();
             this->scene_path_text = path.string();
-            spectra::scene::SceneDescription description{};
-            spectra::scene::SceneDescriptionBuilder builder{&description};
+            spectra::scene::SceneDescriptionBuilder builder{&this->description};
             std::vector<std::string> filenames{this->scene_path_text};
             spectra::scene::ParseFiles(&builder, filenames);
-            copy_scene_description(*this, description);
             this->parsed = true;
         } catch (...) {
             this->unload_noexcept();
@@ -605,7 +391,7 @@ namespace xayah {
         }
     }
 
-    void SpectraScene::set_runtime_metadata(const std::array<int, 2>& resolution, const int samples_per_pixel, const SpectraGpuTransform& camera_transform) {
+    void SpectraScene::set_runtime_metadata(const std::array<int, 2>& resolution, const int samples_per_pixel, const spectra::Transform& camera_transform) {
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Spectra GPU film resolution must be positive");
         if (samples_per_pixel <= 0) throw std::runtime_error("Spectra GPU sampler SPP must be positive");
         this->film_resolution      = resolution;
@@ -618,23 +404,10 @@ namespace xayah {
         this->scene_label = "No Scene";
         this->scene_path_text.clear();
         this->film_resolution      = {0, 0};
-        this->camera_from_world    = SpectraGpuTransform{};
+        this->camera_from_world    = spectra::Transform{};
         this->sampler_sample_count = 0;
         this->parsed               = false;
-        this->pixel_filter = {};
-        this->film = {};
-        this->sampler = {};
-        this->accelerator = {};
-        this->integrator = {};
-        this->camera = {};
-        this->textures.clear();
-        this->materials.clear();
-        this->mediums.clear();
-        this->medium_bindings.clear();
-        this->lights.clear();
-        this->shapes.clear();
-        this->object_definitions.clear();
-        this->object_instances.clear();
+        this->description.Clear();
     }
 
 }
@@ -706,7 +479,7 @@ namespace xayah {
         vk::Format display_format{vk::Format::eR32G32B32A32Sfloat};
         float exposure{1.0f};
         float initial_move_scale{1.0f};
-        SpectraGpuBounds3 initial_focus_bounds{};
+        spectra::Bounds3f initial_focus_bounds{};
         int sample_index{0};
         int max_samples{0};
         int target_samples{0};
@@ -988,7 +761,7 @@ namespace xayah {
                 }
             }
             if (!has_world_bounds) throw std::runtime_error("Spectra GPU scene focus bounds are unavailable");
-            pathtracer.initial_focus_bounds = xayah_bounds_from_spectra(world_bounds);
+            pathtracer.initial_focus_bounds = world_bounds;
 
             validate_cuda_vulkan_device(physical_device);
             create_pathtracer_frame_resources(pathtracer, physical_device, device, frame_count);
@@ -1027,9 +800,9 @@ namespace xayah {
         return pathtracer.initial_move_scale;
     }
 
-    [[nodiscard]] SpectraGpuBounds3 SpectraGpuPathtracer::camera_initial_focus_bounds() const {
+    [[nodiscard]] spectra::Bounds3f SpectraGpuPathtracer::camera_initial_focus_bounds() const {
         const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        validate_spectra_bounds(pathtracer.initial_focus_bounds, "Spectra GPU pathtracer camera initial focus bounds are invalid");
+        raw_validate_bounds(pathtracer.initial_focus_bounds, "Spectra GPU pathtracer camera initial focus bounds are invalid");
         return pathtracer.initial_focus_bounds;
     }
 
@@ -1039,8 +812,8 @@ namespace xayah {
         return {pathtracer.resolution.x, pathtracer.resolution.y};
     }
 
-    [[nodiscard]] SpectraGpuTransform SpectraGpuPathtracer::camera_from_world_transform() const {
-        return xayah_transform_from_spectra(require_pathtracer_state(this->state).camera_from_world);
+    [[nodiscard]] spectra::Transform SpectraGpuPathtracer::camera_from_world_transform() const {
+        return require_pathtracer_state(this->state).camera_from_world;
     }
 
     [[nodiscard]] std::uint64_t SpectraGpuPathtracer::film_pixel_count() const {
@@ -1094,12 +867,12 @@ namespace xayah {
         create_pathtracer_viewport_descriptors(require_pathtracer_state(this->state));
     }
 
-    [[nodiscard]] SpectraGpuPathtracer::RenderFrameResult SpectraGpuPathtracer::render_frame(const std::uint32_t frame_index, const SpectraGpuTransform& moving_from_camera) {
+    [[nodiscard]] SpectraGpuPathtracer::RenderFrameResult SpectraGpuPathtracer::render_frame(const std::uint32_t frame_index, const spectra::Transform& moving_from_camera) {
         SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
         if (frame_index >= pathtracer.frames.size()) throw std::runtime_error("Spectra GPU pathtracer frame index is out of range");
         pathtracer.active_frame_index = frame_index;
         RenderFrameResult result{};
-        const spectra::Transform camera_motion = pathtracer.render_from_camera * spectra_transform_from_xayah(moving_from_camera) * pathtracer.camera_from_render;
+        const spectra::Transform camera_motion = pathtracer.render_from_camera * moving_from_camera * pathtracer.camera_from_render;
         if (pathtracer.reset_requested) {
             if (pathtracer.physical_device == nullptr || pathtracer.device == nullptr) throw std::runtime_error("Spectra GPU pathtracer Vulkan handles are not available for reset");
             pathtracer.device->waitIdle();

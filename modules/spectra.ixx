@@ -12,7 +12,6 @@ module;
 
 export module spectra;
 import std;
-import spectra_gpu;
 
 export namespace xayah {
     class Spectra {
@@ -72,7 +71,6 @@ export namespace xayah {
         [[nodiscard]] VkDescriptorSet pathtracer_viewport_descriptor() const;
         [[nodiscard]] std::array<int, 2> pathtracer_sample_range() const;
         [[nodiscard]] float pathtracer_initial_move_scale() const;
-        [[nodiscard]] SpectraGpuBounds3 pathtracer_initial_focus_bounds() const;
         [[nodiscard]] vk::Semaphore pathtracer_complete_semaphore() const;
         [[nodiscard]] PathtracerFrameResult render_pathtracer_frame(const FrameState& frame);
         void record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer);
@@ -91,158 +89,7 @@ export namespace xayah {
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
-        struct {
-            vk::raii::Context context;
-            vk::raii::Instance instance{nullptr};
-            vk::raii::DebugUtilsMessengerEXT debug_messenger{nullptr};
-            vk::raii::PhysicalDevice physical_device{nullptr};
-            vk::raii::Device device{nullptr};
-            vk::raii::Queue graphics_queue{nullptr};
-            std::uint32_t graphics_queue_index{0};
-            vk::raii::CommandPool command_pool{nullptr};
-        } context;
-
-        struct {
-            std::shared_ptr<GLFWwindow> window{nullptr};
-            vk::raii::SurfaceKHR surface{nullptr};
-            vk::Extent2D extent{};
-            bool resize_requested{false};
-            bool glfw_initialized{false};
-        } surface;
-
-        struct {
-            std::string base{"Spectra"};
-            float refresh_timer{0.0f};
-            std::uint64_t frame_count{0};
-        } window_title;
-
-        struct {
-            vk::raii::SwapchainKHR handle{nullptr};
-            vk::Format format{};
-            vk::ColorSpaceKHR color_space{};
-            vk::Extent2D extent{};
-            std::uint32_t image_count{0};
-            vk::PresentModeKHR present_mode{};
-            vk::ImageUsageFlags usage{};
-            std::vector<vk::Image> images{};
-            std::vector<vk::ImageLayout> image_layouts{};
-            std::vector<vk::raii::ImageView> image_views{};
-        } swapchain;
-
-        struct {
-            vk::raii::DescriptorPool descriptor_pool{nullptr};
-            vk::Format color_format{vk::Format::eUndefined};
-            std::uint32_t min_image_count{2};
-            std::uint32_t image_count{2};
-            bool docking{true};
-            bool viewports{false};
-            bool initialized{false};
-        } imgui;
-
-        struct {
-            bool dock_layout_initialized{false};
-            bool camera_visible{true};
-            bool scene_browser_visible{true};
-            bool inspector_visible{true};
-            bool settings_visible{true};
-            bool environment_visible{true};
-            bool tonemapper_visible{true};
-            bool statistics_visible{true};
-            bool viewport_known{false};
-            bool viewport_hovered{false};
-            bool viewport_focused{false};
-            std::array<float, 2> viewport_position{0.0f, 0.0f};
-            std::array<float, 2> viewport_size{1280.0f, 720.0f};
-            std::array<int, 2> viewport_framebuffer_size{0, 0};
-        } ui;
-
-        std::unique_ptr<SpectraScene> spectra_scene{};
-        std::unique_ptr<SpectraGpuPathtracer> gpu_pathtracer{};
-        std::unique_ptr<SpectraGpuRuntime> gpu_runtime{};
-
-        struct {
-            bool candidate_known{false};
-            bool pathtracer_created{false};
-            bool rebuilding{false};
-            float stable_seconds{0.0f};
-            std::array<int, 2> candidate_resolution{0, 0};
-            std::array<int, 2> active_resolution{0, 0};
-        } render_resolution_sync;
-
-        struct {
-            bool initialized{false};
-            bool input_enabled{false};
-            float speed{1.0f};
-            float fov_degrees{60.0f};
-            float basis_handedness{1.0f};
-            bool mouse_position_known{false};
-            SpectraGpuPoint3 eye{0.0f, 0.0f, 0.0f};
-            SpectraGpuPoint3 center{0.0f, 0.0f, 1.0f};
-            SpectraGpuVector3 up{0.0f, 1.0f, 0.0f};
-            std::array<float, 2> mouse_position{0.0f, 0.0f};
-            SpectraGpuTransform moving_from_camera{};
-            SpectraGpuTransform camera_from_world{};
-        } camera;
-
-        struct RollingFloatAverage {
-            static constexpr std::size_t sample_count{100};
-
-            std::array<float, sample_count> values{};
-            std::size_t count{0};
-            std::size_t cursor{0};
-            float sum{0.0f};
-
-            void clear() {
-                this->values.fill(0.0f);
-                this->count  = 0;
-                this->cursor = 0;
-                this->sum    = 0.0f;
-            }
-
-            void add(const float value) {
-                if (!std::isfinite(value) || value < 0.0f) throw std::runtime_error("Rolling statistic value must be finite and non-negative");
-                if (this->count < sample_count) {
-                    this->values[this->cursor] = value;
-                    this->sum += value;
-                    ++this->count;
-                } else {
-                    this->sum -= this->values[this->cursor];
-                    this->values[this->cursor] = value;
-                    this->sum += value;
-                }
-                this->cursor = (this->cursor + 1) % sample_count;
-            }
-
-            [[nodiscard]] bool has_value() const {
-                return this->count > 0;
-            }
-
-            [[nodiscard]] float average() const {
-                if (this->count == 0) return 0.0f;
-                return this->sum / static_cast<float>(this->count);
-            }
-        };
-
-        struct {
-            RollingFloatAverage frame_milliseconds{};
-            RollingFloatAverage throughput_mspp{};
-            std::uint64_t current_frame_id{0};
-            std::uint32_t active_frame_index{0};
-            std::uint32_t active_swapchain_image_index{0};
-            float last_frame_milliseconds{0.0f};
-            float last_valid_throughput_mspp{0.0f};
-            bool has_throughput{false};
-            bool last_frame_rendered_sample{false};
-        } statistics;
-
-        struct {
-            std::uint32_t frame_count{2};
-            std::uint32_t frame_index{0};
-            vk::raii::CommandBuffers command_buffers{nullptr};
-            std::vector<vk::raii::Semaphore> image_available_semaphores{};
-            std::vector<vk::raii::Semaphore> render_finished_semaphores{};
-            std::vector<std::uint32_t> image_in_flight_frame{};
-            std::vector<vk::raii::Fence> in_flight_fences{};
-        } sync;
+        struct SpectraState;
+        std::unique_ptr<SpectraState> state{};
     };
 } // namespace xayah
