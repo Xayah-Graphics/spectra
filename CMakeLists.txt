@@ -93,6 +93,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     list(APPEND SPECTRA_GPU_DEFINITIONS
             PBRT_IS_WINDOWS
             PBRT_IS_MSVC
+            UNICODE
+            _UNICODE
             NOMINMAX
             _CRT_SECURE_NO_WARNINGS
             _ENABLE_EXTENDED_ALIGNED_STORAGE
