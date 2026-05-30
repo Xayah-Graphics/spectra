@@ -197,7 +197,7 @@ endif()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
 
-add_executable(spectra_gpu_soac src/tools/soac.cpp)
+add_executable(spectra_gpu_soac src/cmd/soac.cpp)
 target_compile_definitions(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 
@@ -221,7 +221,7 @@ set(SPECTRA_GPU_SOA_GENERATED
 )
 add_custom_target(spectra_gpu_soa_generated DEPENDS ${SPECTRA_GPU_SOA_GENERATED})
 
-add_executable(spectra_gpu_rgb2spec_opt src/tools/rgb2spec_opt.cpp)
+add_executable(spectra_gpu_rgb2spec_opt src/cmd/rgb2spec_opt.cpp)
 target_compile_definitions(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 target_link_libraries(spectra_gpu_rgb2spec_opt PRIVATE Threads::Threads)
