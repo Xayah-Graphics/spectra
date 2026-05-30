@@ -48,6 +48,16 @@ namespace xayah {
         return VK_FALSE;
     }
 
+    [[nodiscard]] std::string spectra_scene_title_text(const SpectraScene& scene) {
+        const std::string title = scene.scene_path.filename().string();
+        if (!title.empty()) return title;
+        return scene.scene_path.string();
+    }
+
+    [[nodiscard]] std::string spectra_scene_full_path(const SpectraScene& scene) {
+        return scene.scene_path.string();
+    }
+
     [[nodiscard]] std::uint32_t find_memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
         const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
@@ -733,9 +743,9 @@ namespace xayah {
             height = static_cast<std::uint32_t>(this->state->ui.viewport_framebuffer_size[1]);
         }
 
-        const std::string scene_label = this->state->spectra_scene == nullptr ? "No Scene" : this->state->spectra_scene->scene_label;
+        const std::string scene_title = this->state->spectra_scene == nullptr ? "No Scene" : spectra_scene_title_text(*this->state->spectra_scene);
         const std::array<int, 2> sample_range = this->state->spectra_scene == nullptr ? std::array<int, 2>{0, 0} : this->pathtracer_sample_range();
-        const std::string title       = std::format("{} - {} | Spectra GPU Pathtracer | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->state->window_title.base, scene_label, width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->state->window_title.frame_count);
+        const std::string title       = std::format("{} - {} | Spectra GPU Pathtracer | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->state->window_title.base, scene_title, width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->state->window_title.frame_count);
         glfwSetWindowTitle(this->state->surface.window.get(), title.c_str());
         this->state->window_title.refresh_timer = 0.0f;
     }
@@ -1548,12 +1558,13 @@ namespace xayah {
         if (ImGui::BeginTable("SpectraSceneSummary", 2, summary_table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Scene", this->state->spectra_scene->scene_label);
+            draw_statistics_row("Scene", spectra_scene_title_text(*this->state->spectra_scene));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Path");
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextWrapped("%s", this->state->spectra_scene->scene_path_text.c_str());
+            const std::string scene_path = spectra_scene_full_path(*this->state->spectra_scene);
+            ImGui::TextWrapped("%s", scene_path.c_str());
             draw_statistics_row("Film Resolution", resolution_text(this->state->spectra_scene->film_resolution));
             draw_statistics_row("Sampler SPP", positive_int_text(this->state->spectra_scene->sampler_sample_count));
             draw_statistics_row("Shapes", std::format("{}", this->state->spectra_scene->description.shapes.size()));
@@ -1837,12 +1848,13 @@ namespace xayah {
         if (ImGui::BeginTable("SpectraInspectorScene", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Scene", this->state->spectra_scene->scene_label);
+            draw_statistics_row("Scene", spectra_scene_title_text(*this->state->spectra_scene));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Path");
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextWrapped("%s", this->state->spectra_scene->scene_path_text.c_str());
+            const std::string scene_path = spectra_scene_full_path(*this->state->spectra_scene);
+            ImGui::TextWrapped("%s", scene_path.c_str());
             draw_statistics_row("Film Resolution", resolution_text(this->state->spectra_scene->film_resolution));
             draw_statistics_row("Sampler SPP", positive_int_text(this->state->spectra_scene->sampler_sample_count));
             draw_statistics_row("Viewport", viewport_resolution);
@@ -2091,7 +2103,7 @@ namespace xayah {
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_statistics_row("Path Tracer State", pathtracer_status.state);
             draw_statistics_row("External Completion", pathtracer_status.uses_external_completion ? "Yes" : "No");
-            draw_statistics_row("Scene", this->state->spectra_scene == nullptr ? "No Scene" : this->state->spectra_scene->scene_label);
+            draw_statistics_row("Scene", this->state->spectra_scene == nullptr ? "No Scene" : spectra_scene_title_text(*this->state->spectra_scene));
             draw_statistics_row("Frame ID", std::format("{}", this->state->statistics.current_frame_id));
             draw_statistics_row("Frame Slot", std::format("{}", this->state->statistics.active_frame_index));
             draw_statistics_row("Swapchain Image", std::format("{}", this->state->statistics.active_swapchain_image_index));

@@ -104,22 +104,15 @@ namespace {
         return std::abs(up.y) < 0.9f ? spectra::Vector3f{0.0f, 1.0f, 0.0f} : spectra::Vector3f{1.0f, 0.0f, 0.0f};
     }
 
-    struct RawSpectraCameraFrame {
+    struct SpectraCameraFrame {
         spectra::Vector3f forward{};
         spectra::Vector3f right{};
         spectra::Vector3f up{};
     };
 
-    struct RawSpectraCameraPose {
-        spectra::Point3f eye{};
-        spectra::Point3f center{};
-        spectra::Vector3f up{};
-        float basis_handedness{1.0f};
-    };
-
-    [[nodiscard]] RawSpectraCameraFrame raw_camera_frame_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
+    [[nodiscard]] SpectraCameraFrame camera_frame_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
         if (basis_handedness != -1.0f && basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
-        RawSpectraCameraFrame frame{};
+        SpectraCameraFrame frame{};
         frame.forward = normalized_vector(center - eye, "Camera eye and center must not overlap");
         const spectra::Vector3f effective_up = camera_effective_up(eye, center, up);
         const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(effective_up, frame.forward), "Camera right vector is invalid");
@@ -128,8 +121,8 @@ namespace {
         return frame;
     }
 
-    [[nodiscard]] spectra::Transform raw_camera_from_world_transform_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
-        const RawSpectraCameraFrame frame = raw_camera_frame_from_pose(eye, center, up, basis_handedness);
+    [[nodiscard]] spectra::Transform camera_from_world_transform_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
+        const SpectraCameraFrame frame = camera_frame_from_pose(eye, center, up, basis_handedness);
         const spectra::Vector3f eye_vector{eye.x, eye.y, eye.z};
         spectra::Transform transform{spectra::SquareMatrix<4>{
             frame.right.x, frame.right.y, frame.right.z, -spectra::Dot(frame.right, eye_vector),
@@ -141,7 +134,7 @@ namespace {
         return transform;
     }
 
-    void raw_validate_bounds(const spectra::Bounds3f& bounds, const char* message) {
+    void validate_bounds(const spectra::Bounds3f& bounds, const char* message) {
         validate_finite_point(bounds.pMin, message);
         validate_finite_point(bounds.pMax, message);
         for (std::size_t axis = 0; axis < 3; ++axis) {
@@ -149,8 +142,8 @@ namespace {
         }
     }
 
-    [[nodiscard]] spectra::Point3f raw_camera_focus_center_from_bounds(const spectra::Point3f& eye, const spectra::Vector3f& forward, const spectra::Bounds3f& focus_bounds) {
-        raw_validate_bounds(focus_bounds, "Camera focus bounds are invalid");
+    [[nodiscard]] spectra::Point3f camera_focus_center_from_bounds(const spectra::Point3f& eye, const spectra::Vector3f& forward, const spectra::Bounds3f& focus_bounds) {
+        validate_bounds(focus_bounds, "Camera focus bounds are invalid");
 
         const spectra::Point3f bounds_center{
             (focus_bounds.pMin.x + focus_bounds.pMax.x) * 0.5f,
@@ -182,20 +175,20 @@ namespace {
         return eye + forward * focus_distance;
     }
 
-    [[nodiscard]] RawSpectraCameraPose raw_camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
+    [[nodiscard]] xayah::SpectraCameraPose camera_pose_from_base_transform_impl(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
         const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
-        RawSpectraCameraPose pose{};
+        xayah::SpectraCameraPose pose{};
         pose.eye                          = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
         const spectra::Vector3f right        = normalized_vector(world_from_camera(spectra::Vector3f{1.0f, 0.0f, 0.0f}), "Base camera right vector is invalid");
         const spectra::Vector3f forward      = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
         pose.up                           = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 1.0f, 0.0f}), "Base camera up vector is invalid");
         const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(camera_effective_up(pose.eye, pose.eye + forward, pose.up), forward), "Base camera positive right vector is invalid");
         pose.basis_handedness             = spectra::Dot(right, positive_right) < 0.0f ? -1.0f : 1.0f;
-        pose.center                        = raw_camera_focus_center_from_bounds(pose.eye, forward, focus_bounds);
+        pose.center                        = camera_focus_center_from_bounds(pose.eye, forward, focus_bounds);
         return pose;
     }
 
-    [[nodiscard]] std::array<float, 2> raw_camera_view_dimensions(const spectra::Point3f& eye, const spectra::Point3f& center, const float fov_degrees, const std::array<float, 2>& viewport_size) {
+    [[nodiscard]] std::array<float, 2> camera_view_dimensions(const spectra::Point3f& eye, const spectra::Point3f& center, const float fov_degrees, const std::array<float, 2>& viewport_size) {
         if (!std::isfinite(fov_degrees) || !(fov_degrees > 0.0f) || !(fov_degrees < 180.0f)) throw std::runtime_error("Camera fov must be finite and inside (0, 180)");
         if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
         constexpr float radians_per_degree = 0.017453292519943295769f;
@@ -207,17 +200,17 @@ namespace {
         return {width, height};
     }
 
-    bool raw_camera_pan(RawSpectraCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
+    bool camera_pan_impl(xayah::SpectraCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
         if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
-        const RawSpectraCameraFrame frame       = raw_camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
-        const std::array<float, 2> view_size = raw_camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
+        const SpectraCameraFrame frame       = camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const std::array<float, 2> view_size = camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
         const spectra::Vector3f offset          = frame.right * (-displacement[0] * view_size[0]) + frame.up * (displacement[1] * view_size[1]);
         pose.eye += offset;
         pose.center += offset;
         return true;
     }
 
-    bool raw_camera_dolly(RawSpectraCameraPose& pose, const std::array<float, 2>& displacement) {
+    bool camera_dolly_impl(xayah::SpectraCameraPose& pose, const std::array<float, 2>& displacement) {
         const float larger_displacement = std::abs(displacement[0]) > std::abs(displacement[1]) ? displacement[0] : -displacement[1];
         if (larger_displacement == 0.0f) return false;
         if (larger_displacement >= 0.99f) return false;
@@ -227,7 +220,7 @@ namespace {
         return true;
     }
 
-    bool raw_camera_orbit(RawSpectraCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
+    bool camera_orbit_impl(xayah::SpectraCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
         if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
         if (pose.basis_handedness != -1.0f && pose.basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
         constexpr float two_pi   = 6.2831853071795864769f;
@@ -266,10 +259,10 @@ namespace {
         return true;
     }
 
-    bool raw_camera_key_motion(RawSpectraCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
+    bool camera_key_motion_impl(xayah::SpectraCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
         if (delta[0] == 0.0f && delta[1] == 0.0f) return false;
         if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
-        const RawSpectraCameraFrame frame = raw_camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const SpectraCameraFrame frame = camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
         const spectra::Vector3f movement = dolly
             ? frame.forward * (delta[0] * speed)
             : frame.right * (delta[0] * speed) + frame.up * (delta[1] * speed);
@@ -278,12 +271,12 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] spectra::Transform raw_moving_from_camera_from_pose(const spectra::Transform& base_camera_from_world, const RawSpectraCameraPose& pose) {
-        const spectra::Transform current_camera_from_world = raw_camera_from_world_transform_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+    [[nodiscard]] spectra::Transform moving_from_camera_from_pose_impl(const spectra::Transform& base_camera_from_world, const xayah::SpectraCameraPose& pose) {
+        const spectra::Transform current_camera_from_world = camera_from_world_transform_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
 
-    [[nodiscard]] float raw_spectra_camera_fov_degrees(const xayah::SpectraScene& scene) {
+    [[nodiscard]] float spectra_camera_fov_degrees_impl(const xayah::SpectraScene& scene) {
         if (!scene.description.camera.present) throw std::runtime_error("Interactive Spectra GPU camera controls require an explicit perspective camera");
         if (scene.description.camera.name != "perspective") throw std::runtime_error(std::format("Interactive Spectra GPU camera controls require a perspective camera, not \"{}\"", scene.description.camera.name));
         constexpr float spectra_gpu_perspective_default_fov = 90.0f;
@@ -299,57 +292,42 @@ namespace {
 
 namespace xayah {
     [[nodiscard]] float spectra_camera_fov_degrees(const SpectraScene& scene) {
-        return raw_spectra_camera_fov_degrees(scene);
+        return spectra_camera_fov_degrees_impl(scene);
     }
 
     [[nodiscard]] SpectraCameraPose camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
-        const RawSpectraCameraPose pose = raw_camera_pose_from_base_transform(camera_from_world, focus_bounds);
-        return {pose.eye, pose.center, pose.up, pose.basis_handedness};
+        return camera_pose_from_base_transform_impl(camera_from_world, focus_bounds);
     }
 
     [[nodiscard]] spectra::Transform moving_from_camera_from_pose(const spectra::Transform& base_camera_from_world, const SpectraCameraPose& pose) {
-        return raw_moving_from_camera_from_pose(base_camera_from_world, {pose.eye, pose.center, pose.up, pose.basis_handedness});
+        return moving_from_camera_from_pose_impl(base_camera_from_world, pose);
     }
 
     bool camera_pan(SpectraCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
-        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
-        const bool changed = raw_camera_pan(raw_pose, displacement, fov_degrees, viewport_size);
-        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
-        return changed;
+        return camera_pan_impl(pose, displacement, fov_degrees, viewport_size);
     }
 
     bool camera_dolly(SpectraCameraPose& pose, const std::array<float, 2>& displacement) {
-        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
-        const bool changed = raw_camera_dolly(raw_pose, displacement);
-        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
-        return changed;
+        return camera_dolly_impl(pose, displacement);
     }
 
     bool camera_orbit(SpectraCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
-        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
-        const bool changed = raw_camera_orbit(raw_pose, displacement, invert);
-        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
-        return changed;
+        return camera_orbit_impl(pose, displacement, invert);
     }
 
     bool camera_key_motion(SpectraCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
-        RawSpectraCameraPose raw_pose{pose.eye, pose.center, pose.up, pose.basis_handedness};
-        const bool changed = raw_camera_key_motion(raw_pose, delta, speed, dolly);
-        if (changed) pose = {raw_pose.eye, raw_pose.center, raw_pose.up, raw_pose.basis_handedness};
-        return changed;
+        return camera_key_motion_impl(pose, delta, speed, dolly);
     }
 
     struct SpectraGpuRuntimeState {
         spectra::SpectraOptions baseline_options{};
         std::unique_ptr<spectra::runtime::Runtime> runtime{};
-        bool initialized{false};
     };
 
     SpectraGpuRuntime::SpectraGpuRuntime() : state{std::make_unique<SpectraGpuRuntimeState>()} {
         this->state->baseline_options.nThreads       = 30;
         this->state->baseline_options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
         this->state->runtime = std::make_unique<spectra::runtime::Runtime>(this->state->baseline_options);
-        this->state->initialized = true;
     }
 
     SpectraGpuRuntime::~SpectraGpuRuntime() noexcept {
@@ -361,7 +339,7 @@ namespace xayah {
     }
 
     void SpectraGpuRuntime::reset_options_for_scene() {
-        if (this->state == nullptr || !this->state->initialized || this->state->runtime == nullptr) throw std::runtime_error("Spectra GPU runtime is not initialized");
+        if (this->state == nullptr || this->state->runtime == nullptr) throw std::runtime_error("Spectra GPU runtime is not initialized");
         this->state->runtime->ResetOptions(this->state->baseline_options);
     }
 
@@ -378,13 +356,11 @@ namespace xayah {
         if (!std::filesystem::exists(path)) throw std::runtime_error(std::string{"Spectra scene does not exist: "} + path.string());
 
         try {
-            this->scene_path      = path;
-            this->scene_label     = path.filename().string();
-            this->scene_path_text = path.string();
+            this->scene_path = path;
             spectra::scene::SceneDescriptionBuilder builder{&this->description};
-            std::vector<std::string> filenames{this->scene_path_text};
+            const std::string filename = this->scene_path.string();
+            std::vector<std::string> filenames{filename};
             spectra::scene::ParseFiles(&builder, filenames);
-            this->parsed = true;
         } catch (...) {
             this->unload_noexcept();
             throw;
@@ -401,12 +377,9 @@ namespace xayah {
 
     void SpectraScene::unload_noexcept() noexcept {
         this->scene_path.clear();
-        this->scene_label = "No Scene";
-        this->scene_path_text.clear();
         this->film_resolution      = {0, 0};
         this->camera_from_world    = spectra::Transform{};
         this->sampler_sample_count = 0;
-        this->parsed               = false;
         this->description.Clear();
     }
 
@@ -467,7 +440,6 @@ namespace xayah {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
-        std::filesystem::path scene_path{};
         std::unique_ptr<spectra::scene::Scene> scene{};
         std::unique_ptr<spectra::scene::SceneBuilder> builder{};
         std::unique_ptr<spectra::pathtracer::SpectraPathtracer> integrator{};
@@ -714,18 +686,16 @@ namespace xayah {
             SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
             if (spectra_scene.scene_path.empty()) throw std::runtime_error("Cannot create Spectra GPU pathtracer without a loaded Spectra scene");
             if (!std::filesystem::exists(spectra_scene.scene_path)) throw std::runtime_error(std::string{"Spectra GPU scene does not exist: "} + spectra_scene.scene_path.string());
-            if (!spectra_scene.parsed) throw std::runtime_error("Spectra scene has not completed Spectra GPU parsing");
             if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra GPU pathtracer with a non-positive resolution");
             if (frame_count == 0) throw std::runtime_error("Spectra GPU pathtracer requires at least one frame in flight");
             if (spectra::Options == nullptr) throw std::runtime_error("Cannot create Spectra GPU pathtracer before Spectra GPU runtime is initialized");
 
-            pathtracer.scene_path       = spectra_scene.scene_path;
             pathtracer.physical_device  = &physical_device;
             pathtracer.device           = &device;
             pathtracer.frame_count      = frame_count;
             pathtracer.scene            = std::make_unique<spectra::scene::Scene>();
             pathtracer.builder          = std::make_unique<spectra::scene::SceneBuilder>(pathtracer.scene.get(), spectra::Point2i{resolution[0], resolution[1]});
-            std::vector<std::string> filenames{spectra_scene.scene_path_text};
+            std::vector<std::string> filenames{spectra_scene.scene_path.string()};
             spectra::scene::ParseFiles(pathtracer.builder.get(), filenames);
 
             pathtracer.integrator = std::make_unique<spectra::pathtracer::SpectraPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, *pathtracer.scene);
@@ -802,7 +772,7 @@ namespace xayah {
 
     [[nodiscard]] spectra::Bounds3f SpectraGpuPathtracer::camera_initial_focus_bounds() const {
         const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        raw_validate_bounds(pathtracer.initial_focus_bounds, "Spectra GPU pathtracer camera initial focus bounds are invalid");
+        validate_bounds(pathtracer.initial_focus_bounds, "Spectra GPU pathtracer camera initial focus bounds are invalid");
         return pathtracer.initial_focus_bounds;
     }
 

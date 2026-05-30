@@ -18,17 +18,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <string>
 
 namespace xayah {
     struct SpectraScene {
         std::filesystem::path scene_path{};
-        std::string scene_label{"No Scene"};
-        std::string scene_path_text{};
         std::array<int, 2> film_resolution{0, 0};
         spectra::Transform camera_from_world{};
         int sampler_sample_count{0};
-        bool parsed{false};
         spectra::scene::SceneDescription description{};
 
         void load(const std::filesystem::path& path);
