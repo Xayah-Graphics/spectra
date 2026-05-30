@@ -22,7 +22,7 @@ module;
 
 module spectra;
 import std;
-import pbrt;
+import spectra_gpu;
 
 namespace xayah {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -283,8 +283,8 @@ namespace xayah {
         }
         this->create_imgui();
         {
-            if (this->pbrt_runtime != nullptr) throw std::runtime_error("PBRT runtime is already initialized");
-            this->pbrt_runtime = std::make_unique<SpectraPbrtRuntime>();
+            if (this->gpu_runtime != nullptr) throw std::runtime_error("Spectra GPU runtime is already initialized");
+            this->gpu_runtime = std::make_unique<SpectraGpuRuntime>();
         }
     } catch (...) {
         this->destroy_imgui();
@@ -300,7 +300,7 @@ namespace xayah {
 
         this->unload_pathtracer_noexcept();
         this->unload_spectra_scene_noexcept();
-        this->pbrt_runtime.reset();
+        this->gpu_runtime.reset();
         this->destroy_imgui();
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
@@ -401,7 +401,7 @@ namespace xayah {
     }
 
     void Spectra::destroy_imgui() noexcept {
-        if (this->pbrt_pathtracer != nullptr) this->pbrt_pathtracer->release_viewport_descriptors_noexcept();
+        if (this->gpu_pathtracer != nullptr) this->gpu_pathtracer->release_viewport_descriptors_noexcept();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -423,42 +423,42 @@ namespace xayah {
     }
 
     void Spectra::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
-        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot create PBRT pathtracer without a loaded Spectra scene");
-        if (this->pbrt_pathtracer != nullptr) throw std::runtime_error("PBRT pathtracer is already loaded");
-        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create PBRT pathtracer with a non-positive resolution");
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot create Spectra GPU pathtracer without a loaded Spectra scene");
+        if (this->gpu_pathtracer != nullptr) throw std::runtime_error("Spectra GPU pathtracer is already loaded");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra GPU pathtracer with a non-positive resolution");
         try {
-            if (this->pbrt_runtime == nullptr) throw std::runtime_error("PBRT runtime is not initialized");
-            this->pbrt_runtime->reset_options_for_scene();
-            this->pbrt_pathtracer = std::make_unique<SpectraPbrtPathtracer>(*this->spectra_scene, resolution, this->context.physical_device, this->context.device, this->sync.frame_count);
-            this->spectra_scene->set_runtime_metadata(this->pbrt_pathtracer->film_resolution(), this->pbrt_pathtracer->sampler_sample_count(), this->pbrt_pathtracer->camera_from_world_transform());
+            if (this->gpu_runtime == nullptr) throw std::runtime_error("Spectra GPU runtime is not initialized");
+            this->gpu_runtime->reset_options_for_scene();
+            this->gpu_pathtracer = std::make_unique<SpectraGpuPathtracer>(*this->spectra_scene, resolution, this->context.physical_device, this->context.device, this->sync.frame_count);
+            this->spectra_scene->set_runtime_metadata(this->gpu_pathtracer->film_resolution(), this->gpu_pathtracer->sampler_sample_count(), this->gpu_pathtracer->camera_from_world_transform());
             this->render_resolution_sync.active_resolution = resolution;
             this->render_resolution_sync.pathtracer_created  = true;
         } catch (...) {
-            if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
+            if (this->gpu_runtime != nullptr) this->gpu_runtime->wait_gpu_noexcept();
             this->unload_pathtracer_noexcept();
             throw;
         }
     }
 
     void Spectra::rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
-        if (this->render_resolution_sync.rebuilding) throw std::runtime_error("PBRT pathtracer resolution rebuild is already active");
-        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild PBRT pathtracer with a non-positive resolution");
+        if (this->render_resolution_sync.rebuilding) throw std::runtime_error("Spectra GPU pathtracer resolution rebuild is already active");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild Spectra GPU pathtracer with a non-positive resolution");
         if (this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
 
         const bool preserve_camera = this->camera.initialized;
         const SpectraCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
         const float preserved_speed     = this->camera.speed;
-        const int preserved_samples     = this->pbrt_pathtracer == nullptr ? 0 : this->pbrt_pathtracer->target_sample_count();
-        const float preserved_exposure  = this->pbrt_pathtracer == nullptr ? 1.0f : this->pbrt_pathtracer->current_exposure();
+        const int preserved_samples     = this->gpu_pathtracer == nullptr ? 0 : this->gpu_pathtracer->target_sample_count();
+        const float preserved_exposure  = this->gpu_pathtracer == nullptr ? 1.0f : this->gpu_pathtracer->current_exposure();
         this->render_resolution_sync.rebuilding = true;
         try {
             this->context.device.waitIdle();
-            if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
+            if (this->gpu_runtime != nullptr) this->gpu_runtime->wait_gpu_noexcept();
             this->unload_pathtracer_noexcept();
             this->create_pathtracer_for_resolution(resolution);
-            if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT pathtracer was not created");
-            if (preserved_samples > 0) this->pbrt_pathtracer->set_target_sample_count(preserved_samples);
-            this->pbrt_pathtracer->set_exposure(preserved_exposure);
+            if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra GPU pathtracer was not created");
+            if (preserved_samples > 0) this->gpu_pathtracer->set_target_sample_count(preserved_samples);
+            this->gpu_pathtracer->set_exposure(preserved_exposure);
             if (preserve_camera) {
                 this->camera.camera_from_world          = this->spectra_scene->camera_from_world;
                 this->camera.eye                        = preserved_pose.eye;
@@ -466,7 +466,7 @@ namespace xayah {
                 this->camera.up                         = preserved_pose.up;
                 this->camera.basis_handedness           = preserved_pose.basis_handedness;
                 this->camera.speed                      = preserved_speed;
-                this->camera.fov_degrees                = pbrt_camera_fov_degrees(*this->spectra_scene);
+                this->camera.fov_degrees                = spectra_camera_fov_degrees(*this->spectra_scene);
                 this->camera.mouse_position_known       = false;
                 this->camera.input_enabled              = false;
                 this->camera.moving_from_camera         = moving_from_camera_from_pose(this->camera.camera_from_world, preserved_pose);
@@ -482,8 +482,8 @@ namespace xayah {
     }
 
     void Spectra::unload_pathtracer_noexcept() noexcept {
-        if (this->pbrt_runtime != nullptr) this->pbrt_runtime->wait_gpu_noexcept();
-        this->pbrt_pathtracer.reset();
+        if (this->gpu_runtime != nullptr) this->gpu_runtime->wait_gpu_noexcept();
+        this->gpu_pathtracer.reset();
         this->render_resolution_sync.pathtracer_created  = false;
         this->render_resolution_sync.active_resolution = {0, 0};
     }
@@ -511,12 +511,12 @@ namespace xayah {
     }
 
     [[nodiscard]] bool Spectra::pathtracer_ready() const {
-        return this->render_resolution_sync.pathtracer_created && this->pbrt_pathtracer != nullptr;
+        return this->render_resolution_sync.pathtracer_created && this->gpu_pathtracer != nullptr;
     }
 
     void Spectra::run_interactive_scene(const std::filesystem::path& scene_path) {
         if (this->spectra_scene != nullptr) throw std::runtime_error("Spectra scene is already active");
-        if (this->pbrt_pathtracer != nullptr) throw std::runtime_error("PBRT pathtracer is already active");
+        if (this->gpu_pathtracer != nullptr) throw std::runtime_error("Spectra GPU pathtracer is already active");
 
         std::exception_ptr failure{};
         try {
@@ -578,7 +578,7 @@ namespace xayah {
 
         const std::string scene_label = this->spectra_scene == nullptr ? "No Scene" : this->spectra_scene->scene_label;
         const std::array<int, 2> sample_range = this->spectra_scene == nullptr ? std::array<int, 2>{0, 0} : this->pathtracer_sample_range();
-        const std::string title       = std::format("{} - {} | PBRT Pathtracer | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
+        const std::string title       = std::format("{} - {} | Spectra GPU Pathtracer | {}x{} | sample {}/{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, scene_label, width, height, sample_range[0], sample_range[1], io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
     }
@@ -592,8 +592,8 @@ namespace xayah {
     void Spectra::update_frame_statistics(const FrameState& frame, const bool rendered_sample, const bool reset_accumulation, const std::uint64_t sample_pixels) {
         const ImGuiIO& io = ImGui::GetIO();
         if (!std::isfinite(io.DeltaTime) || !(io.DeltaTime > 0.0f)) throw std::runtime_error("ImGui frame delta time must be finite and positive for statistics");
-        if (!rendered_sample && sample_pixels != 0) throw std::runtime_error("PBRT pathtracer frame statistics reported sample-pixels without rendering a sample");
-        if (rendered_sample && sample_pixels == 0) throw std::runtime_error("PBRT pathtracer frame statistics rendered a sample without sample-pixels");
+        if (!rendered_sample && sample_pixels != 0) throw std::runtime_error("Spectra GPU pathtracer frame statistics reported sample-pixels without rendering a sample");
+        if (rendered_sample && sample_pixels == 0) throw std::runtime_error("Spectra GPU pathtracer frame statistics rendered a sample without sample-pixels");
 
         const float frame_milliseconds = io.DeltaTime * 1000.0f;
         this->statistics.current_frame_id             = this->window_title.frame_count + 1;
@@ -623,8 +623,8 @@ namespace xayah {
             status.state = this->render_resolution_sync.candidate_known ? "Pending Resolution" : "Waiting for Viewport";
             return status;
         }
-        status.uses_external_completion = this->pbrt_pathtracer != nullptr;
-        if (this->pbrt_pathtracer == nullptr) {
+        status.uses_external_completion = this->gpu_pathtracer != nullptr;
+        if (this->gpu_pathtracer == nullptr) {
             status.state = "Unavailable";
             return status;
         }
@@ -633,44 +633,44 @@ namespace xayah {
     }
 
     [[nodiscard]] VkDescriptorSet Spectra::pathtracer_viewport_descriptor() const {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT pathtracer viewport descriptor requested without an active PBRT session");
-        return this->pbrt_pathtracer->active_descriptor();
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra GPU pathtracer viewport descriptor requested without an active Spectra GPU session");
+        return this->gpu_pathtracer->active_descriptor();
     }
 
     [[nodiscard]] std::array<int, 2> Spectra::pathtracer_sample_range() const {
-        if (this->pbrt_pathtracer == nullptr) return {0, 0};
-        return {this->pbrt_pathtracer->current_sample(), this->pbrt_pathtracer->target_sample_count()};
+        if (this->gpu_pathtracer == nullptr) return {0, 0};
+        return {this->gpu_pathtracer->current_sample(), this->gpu_pathtracer->target_sample_count()};
     }
 
     [[nodiscard]] float Spectra::pathtracer_initial_move_scale() const {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT camera move scale requested without an active PBRT session");
-        return this->pbrt_pathtracer->camera_initial_move_scale();
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra GPU camera move scale requested without an active Spectra GPU session");
+        return this->gpu_pathtracer->camera_initial_move_scale();
     }
 
-    [[nodiscard]] SpectraPbrtBounds3 Spectra::pathtracer_initial_focus_bounds() const {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT camera focus bounds requested without an active PBRT session");
-        return this->pbrt_pathtracer->camera_initial_focus_bounds();
+    [[nodiscard]] SpectraGpuBounds3 Spectra::pathtracer_initial_focus_bounds() const {
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra GPU camera focus bounds requested without an active Spectra GPU session");
+        return this->gpu_pathtracer->camera_initial_focus_bounds();
     }
 
     [[nodiscard]] vk::Semaphore Spectra::pathtracer_complete_semaphore() const {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("PBRT completion semaphore requested without an active PBRT session");
-        return this->pbrt_pathtracer->active_cuda_complete_semaphore();
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra GPU completion semaphore requested without an active Spectra GPU session");
+        return this->gpu_pathtracer->active_cuda_complete_semaphore();
     }
 
     [[nodiscard]] Spectra::PathtracerFrameResult Spectra::render_pathtracer_frame(const FrameState& frame) {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("Cannot render PBRT pathtracer without an active PBRT session");
-        const SpectraPbrtPathtracer::RenderFrameResult render_result = this->pbrt_pathtracer->render_frame(frame.frame_index, this->camera.moving_from_camera);
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot render Spectra GPU pathtracer without an active Spectra GPU session");
+        const SpectraGpuPathtracer::RenderFrameResult render_result = this->gpu_pathtracer->render_frame(frame.frame_index, this->camera.moving_from_camera);
         return {render_result.sample_pixels, render_result.rendered_sample, render_result.reset_accumulation};
     }
 
     void Spectra::record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("Cannot record PBRT pathtracer output without an active PBRT session");
-        this->pbrt_pathtracer->record_copy(command_buffer);
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot record Spectra GPU pathtracer output without an active Spectra GPU session");
+        this->gpu_pathtracer->record_copy(command_buffer);
     }
 
     void Spectra::request_pathtracer_accumulation_reset() {
-        if (this->pbrt_pathtracer == nullptr) throw std::runtime_error("Cannot reset PBRT accumulation without an active PBRT session");
-        this->pbrt_pathtracer->request_reset_accumulation();
+        if (this->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot reset Spectra GPU accumulation without an active Spectra GPU session");
+        this->gpu_pathtracer->request_reset_accumulation();
         this->clear_pathtracer_throughput_statistics();
     }
 
@@ -683,14 +683,14 @@ namespace xayah {
         this->camera.initialized       = true;
         this->camera.input_enabled     = false;
         this->camera.speed             = initial_move_scale * 60.0f;
-        this->camera.fov_degrees       = pbrt_camera_fov_degrees(*this->spectra_scene);
+        this->camera.fov_degrees       = spectra_camera_fov_degrees(*this->spectra_scene);
         this->camera.basis_handedness  = pose.basis_handedness;
         this->camera.eye               = pose.eye;
         this->camera.center            = pose.center;
         this->camera.up                = pose.up;
         this->camera.mouse_position    = {0.0f, 0.0f};
         this->camera.mouse_position_known = false;
-        this->camera.moving_from_camera   = SpectraPbrtTransform{};
+        this->camera.moving_from_camera   = SpectraGpuTransform{};
     }
 
     void Spectra::set_camera_speed(const float speed) {
@@ -700,14 +700,14 @@ namespace xayah {
 
     void Spectra::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
-        if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active PBRT pathtracer");
+        if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra GPU pathtracer");
         const SpectraCameraPose pose  = camera_pose_from_base_transform(this->camera.camera_from_world, this->pathtracer_initial_focus_bounds());
         this->camera.eye              = pose.eye;
         this->camera.center           = pose.center;
         this->camera.up               = pose.up;
         this->camera.basis_handedness = pose.basis_handedness;
         this->camera.mouse_position_known = false;
-        this->camera.moving_from_camera   = SpectraPbrtTransform{};
+        this->camera.moving_from_camera   = SpectraGpuTransform{};
         this->request_pathtracer_accumulation_reset();
     }
 
@@ -834,7 +834,7 @@ namespace xayah {
         ImGui::NewFrame();
 
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot update PBRT pathtracer frame without an active Spectra scene");
+        if (this->spectra_scene == nullptr) throw std::runtime_error("Cannot update Spectra GPU pathtracer frame without an active Spectra scene");
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
             this->process_camera_input(this->surface.window.get());
@@ -1097,7 +1097,7 @@ namespace xayah {
             this->imgui.docking   = docking;
             this->imgui.viewports = viewports;
             this->create_imgui();
-            if (this->pbrt_pathtracer != nullptr) this->pbrt_pathtracer->create_viewport_descriptors();
+            if (this->gpu_pathtracer != nullptr) this->gpu_pathtracer->create_viewport_descriptors();
         }
         this->surface.resize_requested = false;
     }
@@ -1116,14 +1116,14 @@ namespace {
         draw_statistics_row(label, value.c_str());
     }
 
-    [[nodiscard]] std::string scene_file_location_text(const xayah::SpectraPbrtFileLocation& location);
+    [[nodiscard]] std::string scene_file_location_text(const xayah::SpectraGpuFileLocation& location);
 
     [[nodiscard]] std::string optional_scene_text(const std::string& value) {
         if (value.empty()) return "None";
         return value;
     }
 
-    [[nodiscard]] std::string pbrt_parameter_count_text(const std::vector<xayah::SpectraPbrtParameter>& parameters) {
+    [[nodiscard]] std::string spectra_parameter_count_text(const std::vector<xayah::SpectraGpuParameter>& parameters) {
         if (parameters.empty()) return "None";
         if (parameters.size() == 1u) return "1 parameter";
         return std::format("{} parameters", parameters.size());
@@ -1168,10 +1168,10 @@ namespace {
         if (setting.present) ImGui::TextWrapped("%s", scene_file_location_text(setting.location).c_str());
         else ImGui::TextDisabled("None");
         ImGui::TableSetColumnIndex(3);
-        ImGui::TextUnformatted(pbrt_parameter_count_text(setting.parameters).c_str());
+        ImGui::TextUnformatted(spectra_parameter_count_text(setting.parameters).c_str());
     }
 
-    [[nodiscard]] std::string scene_file_location_text(const xayah::SpectraPbrtFileLocation& location) {
+    [[nodiscard]] std::string scene_file_location_text(const xayah::SpectraGpuFileLocation& location) {
         if (location.filename.empty()) return "<unknown>";
         return std::format("{}:{}:{}", location.filename, location.line, location.column);
     }
@@ -1314,7 +1314,7 @@ namespace xayah {
             this->observe_viewport_render_resolution(viewport_framebuffer_size);
             if (this->pathtracer_ready()) {
                 const VkDescriptorSet descriptor = this->pathtracer_viewport_descriptor();
-                if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("PBRT pathtracer viewport descriptor is null");
+                if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra GPU pathtracer viewport descriptor is null");
                 const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
                 ImGui::Image(ImTextureRef{texture_id}, viewport_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
                 ImGui::SetCursorScreenPos(viewport_position);
@@ -1442,7 +1442,7 @@ namespace xayah {
 
         if (ImGui::BeginTabItem("Shapes")) {
             if (this->spectra_scene->shapes.empty()) {
-                ImGui::TextDisabled("No PBRT shapes recorded");
+                ImGui::TextDisabled("No Spectra GPU shapes recorded");
             } else if (ImGui::BeginTable("SpectraSceneShapes", 7, detail_table_flags)) {
                 ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
                 ImGui::TableSetupColumn("Material", ImGuiTableColumnFlags_WidthStretch);
@@ -1469,7 +1469,7 @@ namespace xayah {
                     ImGui::TableSetColumnIndex(5);
                     ImGui::TextWrapped("%s", scene_file_location_text(shape.location).c_str());
                     ImGui::TableSetColumnIndex(6);
-                    ImGui::TextUnformatted(pbrt_parameter_count_text(shape.parameters).c_str());
+                    ImGui::TextUnformatted(spectra_parameter_count_text(shape.parameters).c_str());
                 }
                 ImGui::EndTable();
             }
@@ -1478,7 +1478,7 @@ namespace xayah {
 
         if (ImGui::BeginTabItem("Materials")) {
             if (this->spectra_scene->materials.empty()) {
-                ImGui::TextDisabled("No PBRT materials recorded");
+                ImGui::TextDisabled("No Spectra GPU materials recorded");
             } else if (ImGui::BeginTable("SpectraSceneMaterials", 5, detail_table_flags)) {
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
@@ -1497,7 +1497,7 @@ namespace xayah {
                     ImGui::TableSetColumnIndex(3);
                     ImGui::TextWrapped("%s", scene_file_location_text(material.location).c_str());
                     ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(pbrt_parameter_count_text(material.parameters).c_str());
+                    ImGui::TextUnformatted(spectra_parameter_count_text(material.parameters).c_str());
                 }
                 ImGui::EndTable();
             }
@@ -1506,7 +1506,7 @@ namespace xayah {
 
         if (ImGui::BeginTabItem("Textures")) {
             if (this->spectra_scene->textures.empty()) {
-                ImGui::TextDisabled("No PBRT textures recorded");
+                ImGui::TextDisabled("No Spectra GPU textures recorded");
             } else if (ImGui::BeginTable("SpectraSceneTextures", 5, detail_table_flags)) {
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Value Type", ImGuiTableColumnFlags_WidthFixed, 100.0f);
@@ -1525,7 +1525,7 @@ namespace xayah {
                     ImGui::TableSetColumnIndex(3);
                     ImGui::TextWrapped("%s", scene_file_location_text(texture.location).c_str());
                     ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(pbrt_parameter_count_text(texture.parameters).c_str());
+                    ImGui::TextUnformatted(spectra_parameter_count_text(texture.parameters).c_str());
                 }
                 ImGui::EndTable();
             }
@@ -1534,7 +1534,7 @@ namespace xayah {
 
         if (ImGui::BeginTabItem("Media")) {
             if (this->spectra_scene->mediums.empty()) {
-                ImGui::TextDisabled("No PBRT media recorded");
+                ImGui::TextDisabled("No Spectra GPU media recorded");
             } else if (ImGui::BeginTable("SpectraSceneMedia", 4, detail_table_flags)) {
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
@@ -1550,14 +1550,14 @@ namespace xayah {
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextWrapped("%s", scene_file_location_text(medium.location).c_str());
                     ImGui::TableSetColumnIndex(3);
-                    ImGui::TextUnformatted(pbrt_parameter_count_text(medium.parameters).c_str());
+                    ImGui::TextUnformatted(spectra_parameter_count_text(medium.parameters).c_str());
                 }
                 ImGui::EndTable();
             }
 
             ImGui::SeparatorText("Medium Interfaces");
             if (this->spectra_scene->medium_bindings.empty()) {
-                ImGui::TextDisabled("No PBRT medium interfaces recorded");
+                ImGui::TextDisabled("No Spectra GPU medium interfaces recorded");
             } else if (ImGui::BeginTable("SpectraSceneMediumInterfaces", 3, detail_table_flags)) {
                 ImGui::TableSetupColumn("Inside", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Outside", ImGuiTableColumnFlags_WidthStretch);
@@ -1579,7 +1579,7 @@ namespace xayah {
 
         if (ImGui::BeginTabItem("Lights")) {
             if (this->spectra_scene->lights.empty()) {
-                ImGui::TextDisabled("No PBRT lights recorded");
+                ImGui::TextDisabled("No Spectra GPU lights recorded");
             } else if (ImGui::BeginTable("SpectraSceneLights", 5, detail_table_flags)) {
                 ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
                 ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -1598,7 +1598,7 @@ namespace xayah {
                     ImGui::TableSetColumnIndex(3);
                     ImGui::TextWrapped("%s", scene_file_location_text(light.location).c_str());
                     ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(pbrt_parameter_count_text(light.parameters).c_str());
+                    ImGui::TextUnformatted(spectra_parameter_count_text(light.parameters).c_str());
                 }
                 ImGui::EndTable();
             }
@@ -1608,7 +1608,7 @@ namespace xayah {
         if (ImGui::BeginTabItem("Objects")) {
             ImGui::SeparatorText("Definitions");
             if (this->spectra_scene->object_definitions.empty()) {
-                ImGui::TextDisabled("No PBRT object definitions recorded");
+                ImGui::TextDisabled("No Spectra GPU object definitions recorded");
             } else if (ImGui::BeginTable("SpectraSceneObjectDefinitions", 3, detail_table_flags)) {
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Shapes", ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -1628,7 +1628,7 @@ namespace xayah {
 
             ImGui::SeparatorText("Instances");
             if (this->spectra_scene->object_instances.empty()) {
-                ImGui::TextDisabled("No PBRT object instances recorded");
+                ImGui::TextDisabled("No Spectra GPU object instances recorded");
             } else if (ImGui::BeginTable("SpectraSceneObjectInstances", 3, detail_table_flags)) {
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Animated", ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -1711,14 +1711,14 @@ namespace xayah {
             ImGui::EndTable();
         }
 
-        if (this->pbrt_pathtracer != nullptr) {
+        if (this->gpu_pathtracer != nullptr) {
             ImGui::SeparatorText("Path Tracer");
             if (ImGui::BeginTable("SpectraInspectorPathTracer", 2, table_flags)) {
                 ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 150.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_statistics_row("Sample", std::format("{} / {}", this->pbrt_pathtracer->current_sample(), this->pbrt_pathtracer->target_sample_count()));
-                draw_statistics_row("Completion", std::format("{:.1f}%", this->pbrt_pathtracer->completion_ratio() * 100.0f));
-                draw_statistics_row("Exposure", std::format("{:.3f}", this->pbrt_pathtracer->current_exposure()));
+                draw_statistics_row("Sample", std::format("{} / {}", this->gpu_pathtracer->current_sample(), this->gpu_pathtracer->target_sample_count()));
+                draw_statistics_row("Completion", std::format("{:.1f}%", this->gpu_pathtracer->completion_ratio() * 100.0f));
+                draw_statistics_row("Exposure", std::format("{:.3f}", this->gpu_pathtracer->current_exposure()));
                 ImGui::EndTable();
             }
         }
@@ -1735,8 +1735,8 @@ namespace xayah {
         }
 
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
-        if (this->pbrt_pathtracer == nullptr) {
-            ImGui::TextDisabled("No active PBRT interactive session");
+        if (this->gpu_pathtracer == nullptr) {
+            ImGui::TextDisabled("No active Spectra GPU interactive session");
             ImGui::End();
             return;
         }
@@ -1749,7 +1749,7 @@ namespace xayah {
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("PBRT Sampler SPP");
+            ImGui::TextUnformatted("Spectra GPU Sampler SPP");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(positive_int_text(this->spectra_scene->sampler_sample_count).c_str());
 
@@ -1757,17 +1757,17 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Current Sample");
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%d / %d", this->pbrt_pathtracer->current_sample(), this->pbrt_pathtracer->target_sample_count());
+            ImGui::Text("%d / %d", this->gpu_pathtracer->current_sample(), this->gpu_pathtracer->target_sample_count());
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Max Iterations");
             ImGui::TableSetColumnIndex(1);
-            const int previous_target_sample_count = this->pbrt_pathtracer->target_sample_count();
+            const int previous_target_sample_count = this->gpu_pathtracer->target_sample_count();
             int target_sample_count                = previous_target_sample_count;
             ImGui::SetNextItemWidth(-1.0f);
             if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->spectra_scene->sampler_sample_count)) {
-                this->pbrt_pathtracer->set_target_sample_count(target_sample_count);
+                this->gpu_pathtracer->set_target_sample_count(target_sample_count);
                 if (target_sample_count != previous_target_sample_count) this->clear_pathtracer_throughput_statistics();
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
@@ -1792,7 +1792,7 @@ namespace xayah {
         }
 
         if (this->spectra_scene == nullptr) {
-            ImGui::TextDisabled("No active PBRT scene");
+            ImGui::TextDisabled("No active Spectra GPU scene");
             ImGui::End();
             return;
         }
@@ -1820,7 +1820,7 @@ namespace xayah {
         constexpr ImGuiTableFlags detail_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable;
         ImGui::SeparatorText("Lights");
         if (this->spectra_scene->lights.empty()) {
-            ImGui::TextDisabled("No PBRT lights recorded");
+            ImGui::TextDisabled("No Spectra GPU lights recorded");
         } else if (ImGui::BeginTable("SpectraEnvironmentLights", 5, detail_table_flags)) {
             ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
             ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -1839,14 +1839,14 @@ namespace xayah {
                 ImGui::TableSetColumnIndex(3);
                 ImGui::TextWrapped("%s", scene_file_location_text(light.location).c_str());
                 ImGui::TableSetColumnIndex(4);
-                ImGui::TextUnformatted(pbrt_parameter_count_text(light.parameters).c_str());
+                ImGui::TextUnformatted(spectra_parameter_count_text(light.parameters).c_str());
             }
             ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Media");
         if (this->spectra_scene->mediums.empty()) {
-            ImGui::TextDisabled("No PBRT media recorded");
+            ImGui::TextDisabled("No Spectra GPU media recorded");
         } else if (ImGui::BeginTable("SpectraEnvironmentMedia", 4, detail_table_flags)) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
@@ -1862,14 +1862,14 @@ namespace xayah {
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextWrapped("%s", scene_file_location_text(medium.location).c_str());
                 ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(pbrt_parameter_count_text(medium.parameters).c_str());
+                ImGui::TextUnformatted(spectra_parameter_count_text(medium.parameters).c_str());
             }
             ImGui::EndTable();
         }
 
         ImGui::SeparatorText("Medium Interfaces");
         if (this->spectra_scene->medium_bindings.empty()) {
-            ImGui::TextDisabled("No PBRT medium interfaces recorded");
+            ImGui::TextDisabled("No Spectra GPU medium interfaces recorded");
         } else if (ImGui::BeginTable("SpectraEnvironmentMediumInterfaces", 3, detail_table_flags)) {
             ImGui::TableSetupColumn("Inside", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Outside", ImGuiTableColumnFlags_WidthStretch);
@@ -1897,8 +1897,8 @@ namespace xayah {
             ImGui::End();
             return;
         }
-        if (this->pbrt_pathtracer == nullptr) {
-            ImGui::TextDisabled("No active PBRT interactive session");
+        if (this->gpu_pathtracer == nullptr) {
+            ImGui::TextDisabled("No active Spectra GPU interactive session");
             ImGui::End();
             return;
         }
@@ -1911,9 +1911,9 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Exposure");
             ImGui::TableSetColumnIndex(1);
-            float exposure = this->pbrt_pathtracer->current_exposure();
+            float exposure = this->gpu_pathtracer->current_exposure();
             ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::DragFloat("##TonemapperExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->pbrt_pathtracer->set_exposure(exposure);
+            if (ImGui::DragFloat("##TonemapperExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->gpu_pathtracer->set_exposure(exposure);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Viewport exposure multiplier. This does not reset accumulation.");
 
             ImGui::EndTable();
@@ -1966,21 +1966,21 @@ namespace xayah {
         }
 
         if (this->spectra_scene == nullptr) {
-            ImGui::TextDisabled("No active PBRT scene");
+            ImGui::TextDisabled("No active Spectra GPU scene");
             ImGui::End();
             return;
         }
 
-        if (this->pbrt_pathtracer == nullptr) {
-            ImGui::TextDisabled("No active PBRT interactive session");
+        if (this->gpu_pathtracer == nullptr) {
+            ImGui::TextDisabled("No active Spectra GPU interactive session");
             ImGui::End();
             return;
         }
 
         const std::array<int, 2> film_resolution = this->spectra_scene->film_resolution;
-        const int current_sample                 = this->pbrt_pathtracer->current_sample();
-        const int target_sample                  = this->pbrt_pathtracer->target_sample_count();
-        const float completion_ratio             = this->pbrt_pathtracer->completion_ratio();
+        const int current_sample                 = this->gpu_pathtracer->current_sample();
+        const int target_sample                  = this->gpu_pathtracer->target_sample_count();
+        const float completion_ratio             = this->gpu_pathtracer->completion_ratio();
         const float completion_percent           = completion_ratio * 100.0f;
         const bool sampling_completed            = current_sample >= target_sample;
         const std::string sampling_state         = sampling_completed ? "Completed" : "Sampling";
@@ -2006,7 +2006,7 @@ namespace xayah {
             else
                 draw_statistics_row("Throughput Avg", sampling_completed ? "Completed" : "Collecting");
             draw_statistics_row("Last Sample Throughput", this->statistics.has_throughput ? std::format("{:.2f} MSPP/s", this->statistics.last_valid_throughput_mspp) : "No sample yet");
-            draw_statistics_row("Current Frame Work", this->statistics.last_frame_rendered_sample ? "Rendered sample" : "No PBRT sample");
+            draw_statistics_row("Current Frame Work", this->statistics.last_frame_rendered_sample ? "Rendered sample" : "No Spectra GPU sample");
             ImGui::EndTable();
         }
 

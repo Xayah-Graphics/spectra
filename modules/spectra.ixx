@@ -12,7 +12,7 @@ module;
 
 export module spectra;
 import std;
-import pbrt;
+import spectra_gpu;
 
 export namespace xayah {
     class Spectra {
@@ -72,7 +72,7 @@ export namespace xayah {
         [[nodiscard]] VkDescriptorSet pathtracer_viewport_descriptor() const;
         [[nodiscard]] std::array<int, 2> pathtracer_sample_range() const;
         [[nodiscard]] float pathtracer_initial_move_scale() const;
-        [[nodiscard]] SpectraPbrtBounds3 pathtracer_initial_focus_bounds() const;
+        [[nodiscard]] SpectraGpuBounds3 pathtracer_initial_focus_bounds() const;
         [[nodiscard]] vk::Semaphore pathtracer_complete_semaphore() const;
         [[nodiscard]] PathtracerFrameResult render_pathtracer_frame(const FrameState& frame);
         void record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer);
@@ -157,8 +157,8 @@ export namespace xayah {
         } ui;
 
         std::unique_ptr<SpectraScene> spectra_scene{};
-        std::unique_ptr<SpectraPbrtPathtracer> pbrt_pathtracer{};
-        std::unique_ptr<SpectraPbrtRuntime> pbrt_runtime{};
+        std::unique_ptr<SpectraGpuPathtracer> gpu_pathtracer{};
+        std::unique_ptr<SpectraGpuRuntime> gpu_runtime{};
 
         struct {
             bool candidate_known{false};
@@ -176,12 +176,12 @@ export namespace xayah {
             float fov_degrees{60.0f};
             float basis_handedness{1.0f};
             bool mouse_position_known{false};
-            SpectraPbrtPoint3 eye{0.0f, 0.0f, 0.0f};
-            SpectraPbrtPoint3 center{0.0f, 0.0f, 1.0f};
-            SpectraPbrtVector3 up{0.0f, 1.0f, 0.0f};
+            SpectraGpuPoint3 eye{0.0f, 0.0f, 0.0f};
+            SpectraGpuPoint3 center{0.0f, 0.0f, 1.0f};
+            SpectraGpuVector3 up{0.0f, 1.0f, 0.0f};
             std::array<float, 2> mouse_position{0.0f, 0.0f};
-            SpectraPbrtTransform moving_from_camera{};
-            SpectraPbrtTransform camera_from_world{};
+            SpectraGpuTransform moving_from_camera{};
+            SpectraGpuTransform camera_from_world{};
         } camera;
 
         struct RollingFloatAverage {

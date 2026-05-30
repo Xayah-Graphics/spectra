@@ -1,28 +1,28 @@
 module;
 #include <vulkan/vulkan_raii.hpp>
 
-export module pbrt;
+export module spectra_gpu;
 import std;
 
 export namespace xayah {
-    struct SpectraPbrtPoint3 {
+    struct SpectraGpuPoint3 {
         float x{0.0f};
         float y{0.0f};
         float z{0.0f};
     };
 
-    struct SpectraPbrtVector3 {
+    struct SpectraGpuVector3 {
         float x{0.0f};
         float y{0.0f};
         float z{0.0f};
     };
 
-    struct SpectraPbrtBounds3 {
-        SpectraPbrtPoint3 minimum{};
-        SpectraPbrtPoint3 maximum{};
+    struct SpectraGpuBounds3 {
+        SpectraGpuPoint3 minimum{};
+        SpectraGpuPoint3 maximum{};
     };
 
-    struct SpectraPbrtTransform {
+    struct SpectraGpuTransform {
         std::array<float, 16> matrix{
             1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,
@@ -37,16 +37,16 @@ export namespace xayah {
         };
     };
 
-    struct SpectraPbrtFileLocation {
+    struct SpectraGpuFileLocation {
         std::string filename{};
         int line{0};
         int column{0};
     };
 
-    struct SpectraPbrtParameter {
+    struct SpectraGpuParameter {
         std::string type{};
         std::string name{};
-        SpectraPbrtFileLocation location{};
+        SpectraGpuFileLocation location{};
         std::vector<float> floats{};
         std::vector<int> ints{};
         std::vector<std::string> strings{};
@@ -64,49 +64,49 @@ export namespace xayah {
         bool present{false};
         std::string type{};
         std::string name{};
-        SpectraPbrtFileLocation location{};
-        SpectraPbrtTransform transform{};
-        std::vector<SpectraPbrtParameter> parameters{};
+        SpectraGpuFileLocation location{};
+        SpectraGpuTransform transform{};
+        std::vector<SpectraGpuParameter> parameters{};
     };
 
     struct SpectraSceneTexture {
         std::string name{};
         SpectraSceneTextureValueType value_type{SpectraSceneTextureValueType::Unknown};
         std::string implementation{};
-        SpectraPbrtFileLocation location{};
-        SpectraPbrtTransform transform{};
-        std::vector<SpectraPbrtParameter> parameters{};
+        SpectraGpuFileLocation location{};
+        SpectraGpuTransform transform{};
+        std::vector<SpectraGpuParameter> parameters{};
     };
 
     struct SpectraSceneMaterial {
         std::string name{};
         std::string type{};
         bool named{false};
-        SpectraPbrtFileLocation location{};
-        std::vector<SpectraPbrtParameter> parameters{};
+        SpectraGpuFileLocation location{};
+        std::vector<SpectraGpuParameter> parameters{};
     };
 
     struct SpectraSceneMedium {
         std::string name{};
         std::string type{};
-        SpectraPbrtFileLocation location{};
-        SpectraPbrtTransform transform{};
-        std::vector<SpectraPbrtParameter> parameters{};
+        SpectraGpuFileLocation location{};
+        SpectraGpuTransform transform{};
+        std::vector<SpectraGpuParameter> parameters{};
     };
 
     struct SpectraSceneMediumBinding {
         std::string inside{};
         std::string outside{};
-        SpectraPbrtFileLocation location{};
+        SpectraGpuFileLocation location{};
     };
 
     struct SpectraSceneLight {
         std::string type{};
         bool area{false};
         std::string outside_medium{};
-        SpectraPbrtFileLocation location{};
-        SpectraPbrtTransform transform{};
-        std::vector<SpectraPbrtParameter> parameters{};
+        SpectraGpuFileLocation location{};
+        SpectraGpuTransform transform{};
+        std::vector<SpectraGpuParameter> parameters{};
     };
 
     struct SpectraSceneShape {
@@ -119,22 +119,22 @@ export namespace xayah {
         std::string area_light_type{};
         bool reverse_orientation{false};
         bool animated_transform{false};
-        SpectraPbrtFileLocation location{};
-        SpectraPbrtTransform transform{};
-        std::vector<SpectraPbrtParameter> parameters{};
+        SpectraGpuFileLocation location{};
+        SpectraGpuTransform transform{};
+        std::vector<SpectraGpuParameter> parameters{};
     };
 
     struct SpectraSceneObjectDefinition {
         std::string name{};
-        SpectraPbrtFileLocation location{};
+        SpectraGpuFileLocation location{};
         std::vector<std::size_t> shape_indices{};
     };
 
     struct SpectraSceneObjectInstance {
         std::string name{};
         bool animated_transform{false};
-        SpectraPbrtFileLocation location{};
-        SpectraPbrtTransform transform{};
+        SpectraGpuFileLocation location{};
+        SpectraGpuTransform transform{};
     };
 
     struct SpectraScene {
@@ -142,7 +142,7 @@ export namespace xayah {
         std::string scene_label{"No Scene"};
         std::string scene_path_text{};
         std::array<int, 2> film_resolution{0, 0};
-        SpectraPbrtTransform camera_from_world{};
+        SpectraGpuTransform camera_from_world{};
         int sampler_sample_count{0};
         bool parsed{false};
         SpectraSceneRenderSetting pixel_filter{};
@@ -161,39 +161,39 @@ export namespace xayah {
         std::vector<SpectraSceneObjectInstance> object_instances{};
 
         void load(const std::filesystem::path& path);
-        void set_runtime_metadata(const std::array<int, 2>& resolution, int samples_per_pixel, const SpectraPbrtTransform& camera_transform);
+        void set_runtime_metadata(const std::array<int, 2>& resolution, int samples_per_pixel, const SpectraGpuTransform& camera_transform);
         void unload_noexcept() noexcept;
     };
 
     struct SpectraCameraPose {
-        SpectraPbrtPoint3 eye{};
-        SpectraPbrtPoint3 center{};
-        SpectraPbrtVector3 up{};
+        SpectraGpuPoint3 eye{};
+        SpectraGpuPoint3 center{};
+        SpectraGpuVector3 up{};
         float basis_handedness{1.0f};
     };
 
-    struct SpectraPbrtRuntimeState;
+    struct SpectraGpuRuntimeState;
 
-    class SpectraPbrtRuntime {
+    class SpectraGpuRuntime {
     public:
-        SpectraPbrtRuntime();
-        ~SpectraPbrtRuntime() noexcept;
+        SpectraGpuRuntime();
+        ~SpectraGpuRuntime() noexcept;
 
-        SpectraPbrtRuntime(const SpectraPbrtRuntime& other)                = delete;
-        SpectraPbrtRuntime(SpectraPbrtRuntime&& other) noexcept            = delete;
-        SpectraPbrtRuntime& operator=(const SpectraPbrtRuntime& other)     = delete;
-        SpectraPbrtRuntime& operator=(SpectraPbrtRuntime&& other) noexcept = delete;
+        SpectraGpuRuntime(const SpectraGpuRuntime& other)                = delete;
+        SpectraGpuRuntime(SpectraGpuRuntime&& other) noexcept            = delete;
+        SpectraGpuRuntime& operator=(const SpectraGpuRuntime& other)     = delete;
+        SpectraGpuRuntime& operator=(SpectraGpuRuntime&& other) noexcept = delete;
 
         void reset_options_for_scene();
         void wait_gpu_noexcept() const noexcept;
 
     private:
-        std::unique_ptr<SpectraPbrtRuntimeState> state{};
+        std::unique_ptr<SpectraGpuRuntimeState> state{};
     };
 
-    struct SpectraPbrtPathtracerState;
+    struct SpectraGpuPathtracerState;
 
-    class SpectraPbrtPathtracer {
+    class SpectraGpuPathtracer {
     public:
         struct RenderFrameResult {
             std::uint64_t sample_pixels{0};
@@ -201,22 +201,22 @@ export namespace xayah {
             bool reset_accumulation{false};
         };
 
-        SpectraPbrtPathtracer(const SpectraScene& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
-        ~SpectraPbrtPathtracer() noexcept;
+        SpectraGpuPathtracer(const SpectraScene& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        ~SpectraGpuPathtracer() noexcept;
 
-        SpectraPbrtPathtracer(const SpectraPbrtPathtracer& other)                = delete;
-        SpectraPbrtPathtracer(SpectraPbrtPathtracer&& other) noexcept            = delete;
-        SpectraPbrtPathtracer& operator=(const SpectraPbrtPathtracer& other)     = delete;
-        SpectraPbrtPathtracer& operator=(SpectraPbrtPathtracer&& other) noexcept = delete;
+        SpectraGpuPathtracer(const SpectraGpuPathtracer& other)                = delete;
+        SpectraGpuPathtracer(SpectraGpuPathtracer&& other) noexcept            = delete;
+        SpectraGpuPathtracer& operator=(const SpectraGpuPathtracer& other)     = delete;
+        SpectraGpuPathtracer& operator=(SpectraGpuPathtracer&& other) noexcept = delete;
 
         [[nodiscard]] int current_sample() const;
         [[nodiscard]] int sampler_sample_count() const;
         [[nodiscard]] int target_sample_count() const;
         [[nodiscard]] float current_exposure() const;
         [[nodiscard]] float camera_initial_move_scale() const;
-        [[nodiscard]] SpectraPbrtBounds3 camera_initial_focus_bounds() const;
+        [[nodiscard]] SpectraGpuBounds3 camera_initial_focus_bounds() const;
         [[nodiscard]] std::array<int, 2> film_resolution() const;
-        [[nodiscard]] SpectraPbrtTransform camera_from_world_transform() const;
+        [[nodiscard]] SpectraGpuTransform camera_from_world_transform() const;
         [[nodiscard]] std::uint64_t film_pixel_count() const;
         [[nodiscard]] float completion_ratio() const;
         [[nodiscard]] VkDescriptorSet active_descriptor() const;
@@ -226,16 +226,16 @@ export namespace xayah {
         void request_reset_accumulation();
         void release_viewport_descriptors_noexcept() noexcept;
         void create_viewport_descriptors();
-        [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const SpectraPbrtTransform& moving_from_camera);
+        [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const SpectraGpuTransform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
 
     private:
-        std::unique_ptr<SpectraPbrtPathtracerState> state{};
+        std::unique_ptr<SpectraGpuPathtracerState> state{};
     };
 
-    [[nodiscard]] float pbrt_camera_fov_degrees(const SpectraScene& scene);
-    [[nodiscard]] SpectraCameraPose camera_pose_from_base_transform(const SpectraPbrtTransform& camera_from_world, const SpectraPbrtBounds3& focus_bounds);
-    [[nodiscard]] SpectraPbrtTransform moving_from_camera_from_pose(const SpectraPbrtTransform& base_camera_from_world, const SpectraCameraPose& pose);
+    [[nodiscard]] float spectra_camera_fov_degrees(const SpectraScene& scene);
+    [[nodiscard]] SpectraCameraPose camera_pose_from_base_transform(const SpectraGpuTransform& camera_from_world, const SpectraGpuBounds3& focus_bounds);
+    [[nodiscard]] SpectraGpuTransform moving_from_camera_from_pose(const SpectraGpuTransform& base_camera_from_world, const SpectraCameraPose& pose);
     bool camera_pan(SpectraCameraPose& pose, const std::array<float, 2>& displacement, float fov_degrees, const std::array<float, 2>& viewport_size);
     bool camera_dolly(SpectraCameraPose& pose, const std::array<float, 2>& displacement);
     bool camera_orbit(SpectraCameraPose& pose, std::array<float, 2> displacement, bool invert);

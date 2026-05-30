@@ -31,9 +31,6 @@ endif ()
 # ============================================================================
 # Dependencies
 # ============================================================================
-if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu/pbrt.cu")
-    message(FATAL_ERROR "Expected local pbrt_gpu source at '${CMAKE_CURRENT_SOURCE_DIR}/pbrt_gpu'.")
-endif ()
 if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/CMakeLists.txt")
     message(FATAL_ERROR "Expected local PBRT dependencies at '${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt'.")
 endif ()
@@ -61,65 +58,24 @@ add_subdirectory(vendor/pbrt)
 
 
 # ============================================================================
-# PBRT GPU
-# ============================================================================
-add_subdirectory(pbrt_gpu)
-
-
-# ============================================================================
-# Spectra
-# ============================================================================
-add_library(spectra_core)
-target_sources(
-        spectra_core
-        PRIVATE
-        modules/pbrt.cpp
-        modules/spectra.cpp
-
-        vendor/imgui/imgui.cpp
-        vendor/imgui/imgui_draw.cpp
-        vendor/imgui/imgui_tables.cpp
-        vendor/imgui/imgui_widgets.cpp
-        vendor/imgui/backends/imgui_impl_glfw.cpp
-        vendor/imgui/backends/imgui_impl_vulkan.cpp
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        modules/pbrt.ixx
-        modules/spectra.ixx
-)
-target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw pbrt_gpu_lib CUDA::cudart)
-target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
-target_include_directories(
-        spectra_core
-        PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
-)
-set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
-
-
-# ============================================================================
-# Application
-# ============================================================================
-add_executable(spectra main.cpp)
-target_link_libraries(spectra PRIVATE spectra_core)
-set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
-
-
-# ============================================================================
 # Spectra GPU
 # ============================================================================
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
 option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
 set(SPECTRA_OPTIX_PATH "${PBRT_OPTIX_PATH}" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
-set(SPECTRA_OPTIX_SHADER_MODEL "${PBRT_OPTIX_SHADER_MODEL}" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
+set(SPECTRA_OPTIX_SHADER_MODEL "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
+if (SPECTRA_OPTIX_SHADER_MODEL STREQUAL "")
+    set(SPECTRA_OPTIX_SHADER_MODEL "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX" FORCE)
+endif ()
 
 if (SPECTRA_OPTIX_PATH STREQUAL "")
     message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to the OptiX 9.1 SDK root for spectra_gpu.")
 endif ()
 if (NOT EXISTS "${SPECTRA_OPTIX_PATH}/include/optix.h")
     message(FATAL_ERROR "SPECTRA_OPTIX_PATH='${SPECTRA_OPTIX_PATH}' does not contain include/optix.h.")
+endif ()
+if (NOT SPECTRA_OPTIX_SHADER_MODEL MATCHES "^sm_[0-9]+$")
+    message(FATAL_ERROR "SPECTRA_OPTIX_SHADER_MODEL='${SPECTRA_OPTIX_SHADER_MODEL}' must use the form sm_XX.")
 endif ()
 
 set(SPECTRA_GPU_DEFINITIONS PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:PBRT_DEBUG_BUILD>")
@@ -443,3 +399,44 @@ set_target_properties(spectra_gpu_exe PROPERTIES OUTPUT_NAME spectra_gpu)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(spectra_gpu_exe PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
+
+
+# ============================================================================
+# Spectra
+# ============================================================================
+add_library(spectra_core)
+target_sources(
+        spectra_core
+        PRIVATE
+        modules/spectra_gpu.cpp
+        modules/spectra.cpp
+
+        vendor/imgui/imgui.cpp
+        vendor/imgui/imgui_draw.cpp
+        vendor/imgui/imgui_tables.cpp
+        vendor/imgui/imgui_widgets.cpp
+        vendor/imgui/backends/imgui_impl_glfw.cpp
+        vendor/imgui/backends/imgui_impl_vulkan.cpp
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        modules/spectra_gpu.ixx
+        modules/spectra.ixx
+)
+target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw CUDA::cudart spectra::gpu_lib)
+target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(
+        spectra_core
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
+)
+set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
+
+
+# ============================================================================
+# Application
+# ============================================================================
+add_executable(spectra main.cpp)
+target_link_libraries(spectra PRIVATE spectra_core spectra::gpu_lib)
+set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
