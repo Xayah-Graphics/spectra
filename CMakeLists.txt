@@ -440,9 +440,14 @@ add_library(spectra_core)
 target_sources(
         spectra_core
         PRIVATE
-        modules/spectra_gpu.h
-        modules/spectra_gpu.cpp
-        modules/spectra_gpu_plugin.cpp
+        modules/spectra_pathtracer/backend.h
+        modules/spectra_pathtracer/backend.cpp
+        modules/spectra_pathtracer/camera.h
+        modules/spectra_pathtracer/camera.cpp
+        modules/spectra_pathtracer/session.h
+        modules/spectra_pathtracer/session.cpp
+        modules/spectra_pathtracer/panels.cpp
+        modules/spectra_pathtracer/plugin.cpp
         modules/spectra.cpp
 
         vendor/imgui/imgui.cpp
@@ -454,7 +459,7 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         modules/spectra.ixx
-        modules/spectra_gpu.ixx
+        modules/spectra_pathtracer.ixx
 )
 target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw CUDA::cudart spectra::gpu_lib)
 target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)

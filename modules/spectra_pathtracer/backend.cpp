@@ -8,7 +8,7 @@
 #include <unistd.h>
 #endif
 
-#include "spectra_gpu.h"
+#include "backend.h"
 
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
@@ -79,20 +79,20 @@ namespace {
     }
 }
 
-namespace xayah {
+namespace xayah::spectra_pathtracer {
 
-    struct SpectraGpuRuntimeState {
+    struct RuntimeSessionState {
         spectra::SpectraOptions baseline_options{};
         std::unique_ptr<spectra::runtime::Runtime> runtime{};
     };
 
-    SpectraGpuRuntime::SpectraGpuRuntime() : state{std::make_unique<SpectraGpuRuntimeState>()} {
+    RuntimeSession::RuntimeSession() : state{std::make_unique<RuntimeSessionState>()} {
         this->state->baseline_options.nThreads       = 30;
         this->state->baseline_options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
         this->state->runtime = std::make_unique<spectra::runtime::Runtime>(this->state->baseline_options);
     }
 
-    SpectraGpuRuntime::~SpectraGpuRuntime() noexcept {
+    RuntimeSession::~RuntimeSession() noexcept {
         try {
             this->wait_gpu_noexcept();
             if (this->state != nullptr) this->state->runtime.reset();
@@ -100,19 +100,19 @@ namespace xayah {
         }
     }
 
-    void SpectraGpuRuntime::reset_options_for_scene() {
-        if (this->state == nullptr || this->state->runtime == nullptr) throw std::runtime_error("Spectra GPU runtime is not initialized");
+    void RuntimeSession::reset_options_for_scene() {
+        if (this->state == nullptr || this->state->runtime == nullptr) throw std::runtime_error("Spectra pathtracer runtime is not initialized");
         this->state->runtime->ResetOptions(this->state->baseline_options);
     }
 
-    void SpectraGpuRuntime::wait_gpu_noexcept() const noexcept {
+    void RuntimeSession::wait_gpu_noexcept() const noexcept {
         if (this->state != nullptr && this->state->runtime != nullptr) this->state->runtime->WaitGpuNoexcept();
     }
 }
 
 
-namespace xayah {
-    void SpectraScene::load(const std::filesystem::path& path) {
+namespace xayah::spectra_pathtracer {
+    void SceneSession::load(const std::filesystem::path& path) {
         if (!this->scene_path.empty()) throw std::runtime_error("Spectra scene is already loaded");
         if (path.empty()) throw std::runtime_error("Spectra scene path is empty");
         if (!std::filesystem::exists(path)) throw std::runtime_error(std::string{"Spectra scene does not exist: "} + path.string());
@@ -129,15 +129,15 @@ namespace xayah {
         }
     }
 
-    void SpectraScene::set_runtime_metadata(const std::array<int, 2>& resolution, const int samples_per_pixel, const spectra::Transform& camera_transform) {
-        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Spectra GPU film resolution must be positive");
-        if (samples_per_pixel <= 0) throw std::runtime_error("Spectra GPU sampler SPP must be positive");
+    void SceneSession::set_runtime_metadata(const std::array<int, 2>& resolution, const int samples_per_pixel, const spectra::Transform& camera_transform) {
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive");
+        if (samples_per_pixel <= 0) throw std::runtime_error("Spectra pathtracer sampler SPP must be positive");
         this->film_resolution      = resolution;
         this->sampler_sample_count = samples_per_pixel;
         this->camera_from_world    = camera_transform;
     }
 
-    void SpectraScene::unload_noexcept() noexcept {
+    void SceneSession::unload_noexcept() noexcept {
         this->scene_path.clear();
         this->film_resolution      = {0, 0};
         this->camera_from_world    = spectra::Transform{};
@@ -182,8 +182,8 @@ namespace {
 
 }
 
-namespace xayah {
-    struct SpectraGpuPathtracerState {
+namespace xayah::spectra_pathtracer {
+    struct PathtracerSessionState {
         struct FrameResource {
             vk::raii::Buffer interop_buffer{nullptr};
             vk::raii::DeviceMemory interop_memory{nullptr};
@@ -227,13 +227,13 @@ namespace xayah {
 }
 
 namespace {
-    [[nodiscard]] xayah::SpectraGpuPathtracerState& require_pathtracer_state(std::unique_ptr<xayah::SpectraGpuPathtracerState>& state) {
-        if (state == nullptr) throw std::runtime_error("Spectra GPU pathtracer state is null");
+    [[nodiscard]] xayah::spectra_pathtracer::PathtracerSessionState& require_pathtracer_state(std::unique_ptr<xayah::spectra_pathtracer::PathtracerSessionState>& state) {
+        if (state == nullptr) throw std::runtime_error("Spectra pathtracer state is null");
         return *state;
     }
 
-    [[nodiscard]] const xayah::SpectraGpuPathtracerState& require_pathtracer_state(const std::unique_ptr<xayah::SpectraGpuPathtracerState>& state) {
-        if (state == nullptr) throw std::runtime_error("Spectra GPU pathtracer state is null");
+    [[nodiscard]] const xayah::spectra_pathtracer::PathtracerSessionState& require_pathtracer_state(const std::unique_ptr<xayah::spectra_pathtracer::PathtracerSessionState>& state) {
+        if (state == nullptr) throw std::runtime_error("Spectra pathtracer state is null");
         return *state;
     }
 
@@ -256,8 +256,8 @@ namespace {
 #endif
     }
 
-    void release_pathtracer_viewport_descriptors_noexcept(xayah::SpectraGpuPathtracerState& pathtracer) noexcept {
-        for (xayah::SpectraGpuPathtracerState::FrameResource& frame : pathtracer.frames) {
+    void release_pathtracer_viewport_descriptors_noexcept(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) noexcept {
+        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             if (frame.imgui_descriptor != VK_NULL_HANDLE) {
                 ImGui_ImplVulkan_RemoveTexture(frame.imgui_descriptor);
                 frame.imgui_descriptor = VK_NULL_HANDLE;
@@ -265,17 +265,17 @@ namespace {
         }
     }
 
-    void create_pathtracer_viewport_descriptors(xayah::SpectraGpuPathtracerState& pathtracer) {
-        for (xayah::SpectraGpuPathtracerState::FrameResource& frame : pathtracer.frames) {
-            if (frame.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra GPU pathtracer viewport descriptor is already allocated");
+    void create_pathtracer_viewport_descriptors(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) {
+        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
+            if (frame.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra pathtracer viewport descriptor is already allocated");
             frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.sampler), static_cast<VkImageView>(*frame.image_view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            if (frame.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra GPU pathtracer viewport descriptor");
+            if (frame.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra pathtracer viewport descriptor");
         }
     }
 
-    void destroy_pathtracer_frame_resources_noexcept(xayah::SpectraGpuPathtracerState& pathtracer) noexcept {
+    void destroy_pathtracer_frame_resources_noexcept(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) noexcept {
         release_pathtracer_viewport_descriptors_noexcept(pathtracer);
-        for (xayah::SpectraGpuPathtracerState::FrameResource& frame : pathtracer.frames) {
+        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             if (frame.cuda_pixels != nullptr) {
                 cudaFree(frame.cuda_pixels);
                 frame.cuda_pixels = nullptr;
@@ -293,7 +293,7 @@ namespace {
         pathtracer.active_frame_index = 0;
     }
 
-    void create_pathtracer_interop_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::SpectraGpuPathtracerState::FrameResource& frame, const vk::DeviceSize rgba_bytes) {
+    void create_pathtracer_interop_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame, const vk::DeviceSize rgba_bytes) {
         const vk::ExternalMemoryBufferCreateInfo external_buffer_info{spectra_external_memory_handle_type()};
         const vk::BufferCreateInfo buffer_create_info{{}, rgba_bytes, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive, 0, nullptr, &external_buffer_info};
         frame.interop_buffer = vk::raii::Buffer{device, buffer_create_info};
@@ -330,10 +330,10 @@ namespace {
         buffer_desc.offset = 0;
         buffer_desc.size   = static_cast<unsigned long long>(frame.interop_buffer_size);
         CUDA_CHECK(cudaExternalMemoryGetMappedBuffer(reinterpret_cast<void**>(&frame.cuda_pixels), frame.cuda_external_memory, &buffer_desc));
-        if (frame.cuda_pixels == nullptr) throw std::runtime_error("CUDA external memory mapped to a null Spectra GPU RGBA pointer");
+        if (frame.cuda_pixels == nullptr) throw std::runtime_error("CUDA external memory mapped to a null Spectra pathtracer RGBA pointer");
     }
 
-    void create_pathtracer_cuda_complete_semaphore(const vk::raii::Device& device, xayah::SpectraGpuPathtracerState::FrameResource& frame) {
+    void create_pathtracer_cuda_complete_semaphore(const vk::raii::Device& device, xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame) {
         const vk::ExportSemaphoreCreateInfo export_semaphore_info{spectra_external_semaphore_handle_type()};
         const vk::SemaphoreCreateInfo semaphore_create_info{{}, &export_semaphore_info};
         frame.cuda_complete_semaphore = vk::raii::Semaphore{device, semaphore_create_info};
@@ -358,7 +358,7 @@ namespace {
         if (frame.cuda_external_semaphore == nullptr) throw std::runtime_error("CUDA external semaphore import returned null");
     }
 
-    void create_pathtracer_display_image(xayah::SpectraGpuPathtracerState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::SpectraGpuPathtracerState::FrameResource& frame) {
+    void create_pathtracer_display_image(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame) {
         const vk::ImageCreateInfo image_create_info{
             {},
             vk::ImageType::e2D,
@@ -413,22 +413,22 @@ namespace {
         frame.sampler = vk::raii::Sampler{device, sampler_create_info};
     }
 
-    void create_pathtracer_frame_resources(xayah::SpectraGpuPathtracerState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    void create_pathtracer_frame_resources(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         const vk::FormatProperties format_properties = physical_device.getFormatProperties(pathtracer.display_format);
         constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst;
         if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
 
         const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(pathtracer.resolution.x) * static_cast<vk::DeviceSize>(pathtracer.resolution.y);
-        if (rgba_bytes == 0) throw std::runtime_error("Spectra GPU pathtracer interop buffer cannot be zero bytes");
+        if (rgba_bytes == 0) throw std::runtime_error("Spectra pathtracer interop buffer cannot be zero bytes");
         pathtracer.frames.resize(frame_count);
-        for (xayah::SpectraGpuPathtracerState::FrameResource& frame : pathtracer.frames) {
+        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             create_pathtracer_interop_buffer(physical_device, device, frame, rgba_bytes);
             create_pathtracer_cuda_complete_semaphore(device, frame);
             create_pathtracer_display_image(pathtracer, physical_device, device, frame);
         }
     }
 
-    void destroy_pathtracer_resources_noexcept(xayah::SpectraGpuPathtracerState& pathtracer) noexcept {
+    void destroy_pathtracer_resources_noexcept(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) noexcept {
         try {
             if (pathtracer.device != nullptr) pathtracer.device->waitIdle();
             if (spectra::Options != nullptr) spectra::GPUWait();
@@ -442,16 +442,16 @@ namespace {
     }
 }
 
-namespace xayah {
+namespace xayah::spectra_pathtracer {
 
-    SpectraGpuPathtracer::SpectraGpuPathtracer(const SpectraScene& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : state{std::make_unique<SpectraGpuPathtracerState>()} {
+    PathtracerSession::PathtracerSession(const SceneSession& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : state{std::make_unique<PathtracerSessionState>()} {
         try {
-            SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-            if (spectra_scene.scene_path.empty()) throw std::runtime_error("Cannot create Spectra GPU pathtracer without a loaded Spectra scene");
-            if (!std::filesystem::exists(spectra_scene.scene_path)) throw std::runtime_error(std::string{"Spectra GPU scene does not exist: "} + spectra_scene.scene_path.string());
-            if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra GPU pathtracer with a non-positive resolution");
-            if (frame_count == 0) throw std::runtime_error("Spectra GPU pathtracer requires at least one frame in flight");
-            if (spectra::Options == nullptr) throw std::runtime_error("Cannot create Spectra GPU pathtracer before Spectra GPU runtime is initialized");
+            PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+            if (spectra_scene.scene_path.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
+            if (!std::filesystem::exists(spectra_scene.scene_path)) throw std::runtime_error(std::string{"Spectra pathtracer scene does not exist: "} + spectra_scene.scene_path.string());
+            if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
+            if (frame_count == 0) throw std::runtime_error("Spectra pathtracer requires at least one frame in flight");
+            if (spectra::Options == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer before Spectra pathtracer runtime is initialized");
 
             pathtracer.physical_device  = &physical_device;
             pathtracer.device           = &device;
@@ -465,9 +465,9 @@ namespace xayah {
             pathtracer.integrator->PrefetchGPUAllocations();
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
-            if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra GPU film resolution must be positive");
+            if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive");
             pathtracer.max_samples = pathtracer.integrator->sampler.SamplesPerPixel();
-            if (pathtracer.max_samples <= 0) throw std::runtime_error("Spectra GPU sampler SPP must be positive");
+            if (pathtracer.max_samples <= 0) throw std::runtime_error("Spectra pathtracer sampler SPP must be positive");
             pathtracer.target_samples = pathtracer.max_samples;
             pathtracer.integrator->RenderSample(pathtracer.pixel_bounds, spectra::Transform{}, pathtracer.sample_index);
             ++pathtracer.sample_index;
@@ -478,7 +478,7 @@ namespace xayah {
             pathtracer.camera_from_world  = pathtracer.integrator->camera.GetCameraTransform().CameraFromWorld(pathtracer.integrator->camera.SampleTime(0.0f));
             const spectra::Bounds3f scene_bounds = pathtracer.integrator->Bounds();
             pathtracer.initial_move_scale     = spectra::Length(scene_bounds.Diagonal()) / 1000.0f;
-            if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra GPU scene bounds must define a positive interactive move scale");
+            if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra pathtracer scene bounds must define a positive interactive move scale");
             const spectra::Transform world_from_render = spectra::Inverse(pathtracer.render_from_camera * pathtracer.camera_from_world);
             spectra::Bounds3f world_bounds{};
             bool has_world_bounds = false;
@@ -486,14 +486,14 @@ namespace xayah {
                 for (const float y : std::array<float, 2>{scene_bounds.pMin.y, scene_bounds.pMax.y}) {
                     for (const float z : std::array<float, 2>{scene_bounds.pMin.z, scene_bounds.pMax.z}) {
                         const spectra::Point3f corner_world = world_from_render(spectra::Point3f{x, y, z});
-                        validate_finite_point(corner_world, "Spectra GPU scene focus bounds contain a non-finite value");
+                        validate_finite_point(corner_world, "Spectra pathtracer scene focus bounds contain a non-finite value");
                         if (!has_world_bounds) world_bounds = spectra::Bounds3f{corner_world};
                         else world_bounds = spectra::Union(world_bounds, corner_world);
                         has_world_bounds = true;
                     }
                 }
             }
-            if (!has_world_bounds) throw std::runtime_error("Spectra GPU scene focus bounds are unavailable");
+            if (!has_world_bounds) throw std::runtime_error("Spectra pathtracer scene focus bounds are unavailable");
             pathtracer.initial_focus_bounds = world_bounds;
 
             validate_cuda_vulkan_device(physical_device);
@@ -505,109 +505,109 @@ namespace xayah {
         }
     }
 
-    SpectraGpuPathtracer::~SpectraGpuPathtracer() noexcept {
+    PathtracerSession::~PathtracerSession() noexcept {
         if (this->state != nullptr) destroy_pathtracer_resources_noexcept(*this->state);
     }
 
-    [[nodiscard]] int SpectraGpuPathtracer::current_sample() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
+    [[nodiscard]] int PathtracerSession::current_sample() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
         if (pathtracer.reset_requested) return 0;
         return pathtracer.sample_index;
     }
 
-    [[nodiscard]] int SpectraGpuPathtracer::sampler_sample_count() const {
+    [[nodiscard]] int PathtracerSession::sampler_sample_count() const {
         return require_pathtracer_state(this->state).max_samples;
     }
 
-    [[nodiscard]] int SpectraGpuPathtracer::target_sample_count() const {
+    [[nodiscard]] int PathtracerSession::target_sample_count() const {
         return require_pathtracer_state(this->state).target_samples;
     }
 
-    [[nodiscard]] float SpectraGpuPathtracer::current_exposure() const {
+    [[nodiscard]] float PathtracerSession::current_exposure() const {
         return require_pathtracer_state(this->state).exposure;
     }
 
-    [[nodiscard]] float SpectraGpuPathtracer::camera_initial_move_scale() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra GPU pathtracer camera initial move scale must be positive");
+    [[nodiscard]] float PathtracerSession::camera_initial_move_scale() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra pathtracer camera initial move scale must be positive");
         return pathtracer.initial_move_scale;
     }
 
-    [[nodiscard]] spectra::Bounds3f SpectraGpuPathtracer::camera_initial_focus_bounds() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        validate_bounds(pathtracer.initial_focus_bounds, "Spectra GPU pathtracer camera initial focus bounds are invalid");
+    [[nodiscard]] spectra::Bounds3f PathtracerSession::camera_initial_focus_bounds() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        validate_bounds(pathtracer.initial_focus_bounds, "Spectra pathtracer camera initial focus bounds are invalid");
         return pathtracer.initial_focus_bounds;
     }
 
-    [[nodiscard]] std::array<int, 2> SpectraGpuPathtracer::film_resolution() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra GPU film resolution must be positive before metadata is queried");
+    [[nodiscard]] std::array<int, 2> PathtracerSession::film_resolution() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive before metadata is queried");
         return {pathtracer.resolution.x, pathtracer.resolution.y};
     }
 
-    [[nodiscard]] spectra::Transform SpectraGpuPathtracer::camera_from_world_transform() const {
+    [[nodiscard]] spectra::Transform PathtracerSession::camera_from_world_transform() const {
         return require_pathtracer_state(this->state).camera_from_world;
     }
 
-    [[nodiscard]] std::uint64_t SpectraGpuPathtracer::film_pixel_count() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra GPU film resolution must be positive before statistics are queried");
+    [[nodiscard]] std::uint64_t PathtracerSession::film_pixel_count() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive before statistics are queried");
         return static_cast<std::uint64_t>(pathtracer.resolution.x) * static_cast<std::uint64_t>(pathtracer.resolution.y);
     }
 
-    [[nodiscard]] float SpectraGpuPathtracer::completion_ratio() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (pathtracer.target_samples <= 0) throw std::runtime_error("Spectra GPU target sample count must be positive before statistics are queried");
+    [[nodiscard]] float PathtracerSession::completion_ratio() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (pathtracer.target_samples <= 0) throw std::runtime_error("Spectra pathtracer target sample count must be positive before statistics are queried");
         const int visible_sample = this->current_sample();
-        if (visible_sample < 0 || visible_sample > pathtracer.target_samples) throw std::runtime_error("Spectra GPU visible sample count is outside the target sample range");
+        if (visible_sample < 0 || visible_sample > pathtracer.target_samples) throw std::runtime_error("Spectra pathtracer visible sample count is outside the target sample range");
         return static_cast<float>(visible_sample) / static_cast<float>(pathtracer.target_samples);
     }
 
-    [[nodiscard]] VkDescriptorSet SpectraGpuPathtracer::active_descriptor() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
+    [[nodiscard]] VkDescriptorSet PathtracerSession::active_descriptor() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
         if (pathtracer.frames.empty()) return VK_NULL_HANDLE;
         return pathtracer.frames.at(pathtracer.active_frame_index).imgui_descriptor;
     }
 
-    [[nodiscard]] vk::Semaphore SpectraGpuPathtracer::active_cuda_complete_semaphore() const {
-        const SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (pathtracer.frames.empty()) throw std::runtime_error("Spectra GPU completion semaphore requested without frame resources");
+    [[nodiscard]] vk::Semaphore PathtracerSession::active_cuda_complete_semaphore() const {
+        const PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (pathtracer.frames.empty()) throw std::runtime_error("Spectra pathtracer completion semaphore requested without frame resources");
         return *pathtracer.frames.at(pathtracer.active_frame_index).cuda_complete_semaphore;
     }
 
-    void SpectraGpuPathtracer::set_target_sample_count(const int target_sample_count) {
-        SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (target_sample_count < 1 || target_sample_count > pathtracer.max_samples) throw std::runtime_error("Spectra GPU target sample count is outside the sampler SPP range");
+    void PathtracerSession::set_target_sample_count(const int target_sample_count) {
+        PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (target_sample_count < 1 || target_sample_count > pathtracer.max_samples) throw std::runtime_error("Spectra pathtracer target sample count is outside the sampler SPP range");
         if (target_sample_count == pathtracer.target_samples) return;
         pathtracer.target_samples = target_sample_count;
         this->request_reset_accumulation();
     }
 
-    void SpectraGpuPathtracer::set_exposure(const float value) {
-        if (!(value >= 0.001f && value <= 1000.0f)) throw std::runtime_error("Spectra GPU exposure must be in [0.001, 1000]");
+    void PathtracerSession::set_exposure(const float value) {
+        if (!(value >= 0.001f && value <= 1000.0f)) throw std::runtime_error("Spectra pathtracer exposure must be in [0.001, 1000]");
         require_pathtracer_state(this->state).exposure = value;
     }
 
-    void SpectraGpuPathtracer::request_reset_accumulation() {
+    void PathtracerSession::request_reset_accumulation() {
         require_pathtracer_state(this->state).reset_requested = true;
     }
 
-    void SpectraGpuPathtracer::release_viewport_descriptors_noexcept() noexcept {
+    void PathtracerSession::release_viewport_descriptors_noexcept() noexcept {
         if (this->state != nullptr) release_pathtracer_viewport_descriptors_noexcept(*this->state);
     }
 
-    void SpectraGpuPathtracer::create_viewport_descriptors() {
+    void PathtracerSession::create_viewport_descriptors() {
         create_pathtracer_viewport_descriptors(require_pathtracer_state(this->state));
     }
 
-    [[nodiscard]] SpectraGpuPathtracer::RenderFrameResult SpectraGpuPathtracer::render_frame(const std::uint32_t frame_index, const spectra::Transform& moving_from_camera) {
-        SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        if (frame_index >= pathtracer.frames.size()) throw std::runtime_error("Spectra GPU pathtracer frame index is out of range");
+    [[nodiscard]] PathtracerSession::RenderFrameResult PathtracerSession::render_frame(const std::uint32_t frame_index, const spectra::Transform& moving_from_camera) {
+        PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        if (frame_index >= pathtracer.frames.size()) throw std::runtime_error("Spectra pathtracer frame index is out of range");
         pathtracer.active_frame_index = frame_index;
         RenderFrameResult result{};
         const spectra::Transform camera_motion = pathtracer.render_from_camera * moving_from_camera * pathtracer.camera_from_render;
         if (pathtracer.reset_requested) {
-            if (pathtracer.physical_device == nullptr || pathtracer.device == nullptr) throw std::runtime_error("Spectra GPU pathtracer Vulkan handles are not available for reset");
+            if (pathtracer.physical_device == nullptr || pathtracer.device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available for reset");
             pathtracer.device->waitIdle();
             destroy_pathtracer_frame_resources_noexcept(pathtracer);
             pathtracer.integrator->ResetFilm(pathtracer.pixel_bounds);
@@ -629,7 +629,7 @@ namespace xayah {
             result.rendered_sample = true;
             result.sample_pixels   = this->film_pixel_count();
         }
-        SpectraGpuPathtracerState::FrameResource& output_frame = pathtracer.frames.at(frame_index);
+        PathtracerSessionState::FrameResource& output_frame = pathtracer.frames.at(frame_index);
         pathtracer.integrator->UpdateFramebufferFromFilm(pathtracer.pixel_bounds, pathtracer.exposure, output_frame.cuda_pixels);
 
         cudaExternalSemaphoreSignalParams signal_params{};
@@ -637,9 +637,9 @@ namespace xayah {
         return result;
     }
 
-    void SpectraGpuPathtracer::record_copy(const vk::raii::CommandBuffer& command_buffer) {
-        SpectraGpuPathtracerState& pathtracer = require_pathtracer_state(this->state);
-        SpectraGpuPathtracerState::FrameResource& frame = pathtracer.frames.at(pathtracer.active_frame_index);
+    void PathtracerSession::record_copy(const vk::raii::CommandBuffer& command_buffer) {
+        PathtracerSessionState& pathtracer = require_pathtracer_state(this->state);
+        PathtracerSessionState::FrameResource& frame = pathtracer.frames.at(pathtracer.active_frame_index);
         const vk::PipelineStageFlags2 src_image_stage = frame.image_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader;
         const vk::AccessFlags2 src_image_access       = frame.image_layout == vk::ImageLayout::eUndefined ? vk::AccessFlagBits2::eNone : vk::AccessFlagBits2::eShaderSampledRead;
         transition_image_layout(command_buffer, *frame.image, frame.image_layout, vk::ImageLayout::eTransferDstOptimal, vk::ImageAspectFlagBits::eColor, src_image_stage, src_image_access, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
@@ -674,4 +674,4 @@ namespace xayah {
     }
 
 
-} // namespace xayah
+} // namespace xayah::spectra_pathtracer

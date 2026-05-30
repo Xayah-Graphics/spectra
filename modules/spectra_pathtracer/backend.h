@@ -1,5 +1,5 @@
-#ifndef XAYAH_MODULES_SPECTRA_GPU_H
-#define XAYAH_MODULES_SPECTRA_GPU_H
+#ifndef XAYAH_MODULES_SPECTRA_GPU_BACKEND_H
+#define XAYAH_MODULES_SPECTRA_GPU_BACKEND_H
 
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -17,8 +17,8 @@
 #include <filesystem>
 #include <memory>
 
-namespace xayah {
-    struct SpectraScene {
+namespace xayah::spectra_pathtracer {
+    struct SceneSession {
         std::filesystem::path scene_path{};
         std::array<int, 2> film_resolution{0, 0};
         spectra::Transform camera_from_world{};
@@ -30,28 +30,28 @@ namespace xayah {
         void unload_noexcept() noexcept;
     };
 
-    struct SpectraGpuRuntimeState;
+    struct RuntimeSessionState;
 
-    class SpectraGpuRuntime {
+    class RuntimeSession {
     public:
-        SpectraGpuRuntime();
-        ~SpectraGpuRuntime() noexcept;
+        RuntimeSession();
+        ~RuntimeSession() noexcept;
 
-        SpectraGpuRuntime(const SpectraGpuRuntime& other)                = delete;
-        SpectraGpuRuntime(SpectraGpuRuntime&& other) noexcept            = delete;
-        SpectraGpuRuntime& operator=(const SpectraGpuRuntime& other)     = delete;
-        SpectraGpuRuntime& operator=(SpectraGpuRuntime&& other) noexcept = delete;
+        RuntimeSession(const RuntimeSession& other)                = delete;
+        RuntimeSession(RuntimeSession&& other) noexcept            = delete;
+        RuntimeSession& operator=(const RuntimeSession& other)     = delete;
+        RuntimeSession& operator=(RuntimeSession&& other) noexcept = delete;
 
         void reset_options_for_scene();
         void wait_gpu_noexcept() const noexcept;
 
     private:
-        std::unique_ptr<SpectraGpuRuntimeState> state{};
+        std::unique_ptr<RuntimeSessionState> state{};
     };
 
-    struct SpectraGpuPathtracerState;
+    struct PathtracerSessionState;
 
-    class SpectraGpuPathtracer {
+    class PathtracerSession {
     public:
         struct RenderFrameResult {
             std::uint64_t sample_pixels{0};
@@ -59,13 +59,13 @@ namespace xayah {
             bool reset_accumulation{false};
         };
 
-        SpectraGpuPathtracer(const SpectraScene& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
-        ~SpectraGpuPathtracer() noexcept;
+        PathtracerSession(const SceneSession& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        ~PathtracerSession() noexcept;
 
-        SpectraGpuPathtracer(const SpectraGpuPathtracer& other)                = delete;
-        SpectraGpuPathtracer(SpectraGpuPathtracer&& other) noexcept            = delete;
-        SpectraGpuPathtracer& operator=(const SpectraGpuPathtracer& other)     = delete;
-        SpectraGpuPathtracer& operator=(SpectraGpuPathtracer&& other) noexcept = delete;
+        PathtracerSession(const PathtracerSession& other)                = delete;
+        PathtracerSession(PathtracerSession&& other) noexcept            = delete;
+        PathtracerSession& operator=(const PathtracerSession& other)     = delete;
+        PathtracerSession& operator=(PathtracerSession&& other) noexcept = delete;
 
         [[nodiscard]] int current_sample() const;
         [[nodiscard]] int sampler_sample_count() const;
@@ -88,9 +88,9 @@ namespace xayah {
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
 
     private:
-        std::unique_ptr<SpectraGpuPathtracerState> state{};
+        std::unique_ptr<PathtracerSessionState> state{};
     };
 
-} // namespace xayah
+} // namespace xayah::spectra_pathtracer
 
 #endif
