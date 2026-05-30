@@ -4,7 +4,6 @@ module;
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <windows.h>
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>

@@ -6,7 +6,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <windows.h>
 #endif
 
 #include <src/scene.h>
@@ -15,7 +14,6 @@
 #include <vulkan/vulkan_raii.hpp>
 
 #include <array>
-#include <cstdint>
 #include <filesystem>
 #include <memory>
 
