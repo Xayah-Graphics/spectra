@@ -54,10 +54,6 @@ namespace xayah {
         return scene.scene_path.string();
     }
 
-    [[nodiscard]] std::string spectra_scene_full_path(const SpectraScene& scene) {
-        return scene.scene_path.string();
-    }
-
     [[nodiscard]] std::uint32_t find_memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
         const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
@@ -66,10 +62,6 @@ namespace xayah {
             if (supported && matching) return index;
         }
         throw std::runtime_error("No matching Vulkan memory type");
-    }
-
-    [[nodiscard]] ImVec4 imgui_srgb(const float red, const float green, const float blue, const float alpha) {
-        return ImVec4{red, green, blue, alpha};
     }
 
     void load_imgui_fonts() {
@@ -111,14 +103,14 @@ namespace xayah {
         style.FrameBorderSize              = 1.0f;
         style.GrabRounding                 = 4.0f;
         style.IndentSpacing                = 12.0f;
-        style.Colors[ImGuiCol_WindowBg]    = imgui_srgb(0.2f, 0.2f, 0.2f, 1.0f);
-        style.Colors[ImGuiCol_MenuBarBg]   = imgui_srgb(0.2f, 0.2f, 0.2f, 1.0f);
-        style.Colors[ImGuiCol_ScrollbarBg] = imgui_srgb(0.2f, 0.2f, 0.2f, 1.0f);
-        style.Colors[ImGuiCol_PopupBg]     = imgui_srgb(0.135f, 0.135f, 0.135f, 1.0f);
-        style.Colors[ImGuiCol_Border]      = imgui_srgb(0.4f, 0.4f, 0.4f, 0.5f);
-        style.Colors[ImGuiCol_FrameBg]     = imgui_srgb(0.05f, 0.05f, 0.05f, 0.5f);
+        style.Colors[ImGuiCol_WindowBg]    = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
+        style.Colors[ImGuiCol_MenuBarBg]   = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
+        style.Colors[ImGuiCol_PopupBg]     = ImVec4{0.135f, 0.135f, 0.135f, 1.0f};
+        style.Colors[ImGuiCol_Border]      = ImVec4{0.4f, 0.4f, 0.4f, 0.5f};
+        style.Colors[ImGuiCol_FrameBg]     = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
 
-        const ImVec4 normal_color = imgui_srgb(0.465f, 0.465f, 0.525f, 1.0f);
+        const ImVec4 normal_color = ImVec4{0.465f, 0.465f, 0.525f, 1.0f};
         constexpr std::array normal_colors{
             ImGuiCol_Header,
             ImGuiCol_SliderGrab,
@@ -131,7 +123,7 @@ namespace xayah {
         };
         for (const ImGuiCol color_id : normal_colors) style.Colors[color_id] = normal_color;
 
-        const ImVec4 active_color = imgui_srgb(0.365f, 0.365f, 0.425f, 1.0f);
+        const ImVec4 active_color = ImVec4{0.365f, 0.365f, 0.425f, 1.0f};
         constexpr std::array active_colors{
             ImGuiCol_HeaderActive,
             ImGuiCol_SliderGrabActive,
@@ -141,7 +133,7 @@ namespace xayah {
         };
         for (const ImGuiCol color_id : active_colors) style.Colors[color_id] = active_color;
 
-        const ImVec4 hovered_color = imgui_srgb(0.565f, 0.565f, 0.625f, 1.0f);
+        const ImVec4 hovered_color = ImVec4{0.565f, 0.565f, 0.625f, 1.0f};
         constexpr std::array hovered_colors{
             ImGuiCol_HeaderHovered,
             ImGuiCol_ButtonHovered,
@@ -151,12 +143,12 @@ namespace xayah {
         };
         for (const ImGuiCol color_id : hovered_colors) style.Colors[color_id] = hovered_color;
 
-        style.Colors[ImGuiCol_TitleBgActive]    = imgui_srgb(0.465f, 0.465f, 0.465f, 1.0f);
-        style.Colors[ImGuiCol_TitleBg]          = imgui_srgb(0.125f, 0.125f, 0.125f, 1.0f);
-        style.Colors[ImGuiCol_Tab]              = imgui_srgb(0.05f, 0.05f, 0.05f, 0.5f);
-        style.Colors[ImGuiCol_TabHovered]       = imgui_srgb(0.465f, 0.495f, 0.525f, 1.0f);
-        style.Colors[ImGuiCol_TabActive]        = imgui_srgb(0.282f, 0.290f, 0.302f, 1.0f);
-        style.Colors[ImGuiCol_ModalWindowDimBg] = imgui_srgb(0.465f, 0.465f, 0.465f, 0.350f);
+        style.Colors[ImGuiCol_TitleBgActive]    = ImVec4{0.465f, 0.465f, 0.465f, 1.0f};
+        style.Colors[ImGuiCol_TitleBg]          = ImVec4{0.125f, 0.125f, 0.125f, 1.0f};
+        style.Colors[ImGuiCol_Tab]              = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
+        style.Colors[ImGuiCol_TabHovered]       = ImVec4{0.465f, 0.495f, 0.525f, 1.0f};
+        style.Colors[ImGuiCol_TabActive]        = ImVec4{0.282f, 0.290f, 0.302f, 1.0f};
+        style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4{0.465f, 0.465f, 0.465f, 0.350f};
         style.Colors[ImGuiCol_ButtonActive]     = static_cast<ImVec4>(ImColor::HSV(0.3F, 0.5F, 0.5F));
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
         if (viewports) {
@@ -1563,7 +1555,7 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Path");
             ImGui::TableSetColumnIndex(1);
-            const std::string scene_path = spectra_scene_full_path(*this->state->spectra_scene);
+            const std::string scene_path = this->state->spectra_scene->scene_path.string();
             ImGui::TextWrapped("%s", scene_path.c_str());
             draw_statistics_row("Film Resolution", resolution_text(this->state->spectra_scene->film_resolution));
             draw_statistics_row("Sampler SPP", positive_int_text(this->state->spectra_scene->sampler_sample_count));
@@ -1853,7 +1845,7 @@ namespace xayah {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Path");
             ImGui::TableSetColumnIndex(1);
-            const std::string scene_path = spectra_scene_full_path(*this->state->spectra_scene);
+            const std::string scene_path = this->state->spectra_scene->scene_path.string();
             ImGui::TextWrapped("%s", scene_path.c_str());
             draw_statistics_row("Film Resolution", resolution_text(this->state->spectra_scene->film_resolution));
             draw_statistics_row("Sampler SPP", positive_int_text(this->state->spectra_scene->sampler_sample_count));
