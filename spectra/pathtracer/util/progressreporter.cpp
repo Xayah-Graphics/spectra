@@ -3,7 +3,6 @@
 #include <spectra/pathtracer/gpu/util.h>
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 
 #include <cerrno>
 #include <cstdio>

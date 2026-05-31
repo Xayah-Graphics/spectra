@@ -5,7 +5,7 @@
 #include <spectra/pathtracer/util/memory.h>
 
 #include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/hash.h>
 #include <spectra/pathtracer/util/parallel.h>
 #include <spectra/pathtracer/util/pstd.h>
@@ -96,7 +96,7 @@ namespace spectra
                              const FileLoc* loc = nullptr) const
         {
             if (uv.empty())
-                ErrorExit(loc, "Vertex uvs are currently required by Displace(). Sorry.\n");
+                throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex uvs are currently required by Displace(). Sorry.\n"));
 
             // Prepare the output mesh
             TriQuadMesh outputMesh = *this;

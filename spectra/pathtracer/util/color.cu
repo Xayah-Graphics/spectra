@@ -2,8 +2,7 @@
 
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
-#include <spectra/pathtracer/util/print.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/string.h>
 
@@ -209,10 +208,10 @@ namespace spectra
 
             std::vector<std::string> params = SplitStringsFromWhitespace(name);
             if (params.size() != 2 || params[0] != "gamma")
-                ErrorExit("%s: expected \"gamma <value>\" for color encoding", name);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: expected \"gamma <value>\" for color encoding", name));
             Float gamma = atof(params[1].c_str());
             if (gamma == 0)
-                ErrorExit("%s: unable to parse gamma value", params[1]);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: unable to parse gamma value", params[1]));
 
             std::lock_guard<std::mutex> lock(mutex);
             auto iter = cache.find(gamma);

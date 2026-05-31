@@ -5,7 +5,7 @@
 #include <spectra/pathtracer/util/string.h>
 
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 
 #include <utf8proc/utf8proc.h>
 
@@ -200,19 +200,19 @@ namespace spectra
             if (codepoint >= 0xd800 && codepoint <= 0xdbff)
             {
                 if (i + 1 == str.size())
-                    ErrorExit("Invalid UTF-16 string: missing low surrogate");
+                    throw std::runtime_error(spectra::diagnostics::Format("Invalid UTF-16 string: missing low surrogate"));
                 utf8proc_int32_t low = str[++i];
                 if (low < 0xdc00 || low > 0xdfff)
-                    ErrorExit("Invalid UTF-16 string: malformed surrogate pair");
+                    throw std::runtime_error(spectra::diagnostics::Format("Invalid UTF-16 string: malformed surrogate pair"));
                 codepoint = 0x10000 + ((codepoint - 0xd800) << 10) + (low - 0xdc00);
             }
             else if (codepoint >= 0xdc00 && codepoint <= 0xdfff)
-                ErrorExit("Invalid UTF-16 string: unexpected low surrogate");
+                throw std::runtime_error(spectra::diagnostics::Format("Invalid UTF-16 string: unexpected low surrogate"));
 
             utf8proc_uint8_t buffer[4];
             utf8proc_ssize_t length = utf8proc_encode_char(codepoint, buffer);
             if (length <= 0)
-                ErrorExit("Invalid UTF-16 code point: %d", codepoint);
+                throw std::runtime_error(spectra::diagnostics::Format("Invalid UTF-16 code point: %d", codepoint));
             utf8.append(reinterpret_cast<char*>(buffer), length);
         }
         return utf8;
@@ -228,7 +228,7 @@ namespace spectra
             utf8proc_int32_t codepoint;
             utf8proc_ssize_t length = utf8proc_iterate(bytes, remaining, &codepoint);
             if (length < 0)
-                ErrorExit("Invalid UTF-8 string: %s", utf8proc_errmsg(length));
+                throw std::runtime_error(spectra::diagnostics::Format("Invalid UTF-8 string: %s", utf8proc_errmsg(length)));
             if (codepoint <= 0xffff)
                 utf16.push_back(static_cast<char16_t>(codepoint));
             else
@@ -251,8 +251,8 @@ namespace spectra
         utf8proc_ssize_t length =
             utf8proc_map((const unsigned char*)str.data(), str.size(), &result, options);
         if (length < 0)
-            ErrorExit("Unicode normalization error: %s: \"%s\"", utf8proc_errmsg(length),
-                      str);
+            throw std::runtime_error(spectra::diagnostics::Format("Unicode normalization error: %s: \"%s\"", utf8proc_errmsg(length),
+                      str));
 
         str = std::string(result, result + length);
         free(result);

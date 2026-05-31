@@ -24,10 +24,9 @@
 #include <spectra/pathtracer/util/containers.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/image.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/progressreporter.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/sampling.h>
@@ -126,8 +125,8 @@ namespace spectra::pathtracer
 
     GpuRuntime::GpuRuntime(const SpectraOptions& options)
     {
-        if (detail::runtime_initialized) ErrorExit("Spectra GPU runtime cannot initialize more than once per process");
-        if (Options != nullptr) ErrorExit("Spectra GPU runtime cannot initialize while runtime options are active");
+        if (detail::runtime_initialized) throw std::runtime_error(spectra::diagnostics::Format("Spectra GPU runtime cannot initialize more than once per process"));
+        if (Options != nullptr) throw std::runtime_error(spectra::diagnostics::Format("Spectra GPU runtime cannot initialize while runtime options are active"));
 
         Options = new SpectraOptions(options);
 
@@ -137,13 +136,11 @@ namespace spectra::pathtracer
         SetUnhandledExceptionFilter(handle_windows_exception);
         if (Options->gpuDevice && !std::getenv("CUDA_VISIBLE_DEVICES"))
         {
-            std::string env = StringPrintf("CUDA_VISIBLE_DEVICES=%d", *Options->gpuDevice);
+            std::string env = "CUDA_VISIBLE_DEVICES=" + std::to_string(*Options->gpuDevice);
             _putenv(env.c_str());
             *Options->gpuDevice = 0;
         }
 #endif  // SPECTRA_IS_WINDOWS
-
-        if (Options->quiet) SuppressErrorMessages();
 
         const int thread_count = Options->nThreads != 0 ? Options->nThreads : AvailableCores();
         ParallelInit(thread_count);
@@ -174,8 +171,8 @@ namespace spectra::pathtracer
 
     void GpuRuntime::ResetOptions(const SpectraOptions& options)
     {
-        if (!this->initialized) ErrorExit("Spectra GPU runtime is not initialized.");
-        if (Options == nullptr) ErrorExit("Spectra global options are unavailable.");
+        if (!this->initialized) throw std::runtime_error(spectra::diagnostics::Format("Spectra GPU runtime is not initialized."));
+        if (Options == nullptr) throw std::runtime_error(spectra::diagnostics::Format("Spectra global options are unavailable."));
         *Options = options;
         detail::CopyRuntimeOptionsToGPU();
     }
@@ -228,9 +225,9 @@ namespace spectra::pathtracer
         {
             // This is a somewhat odd place for this check, but it's convenient...
             if (!m.CanEvaluateTextures(BasicTextureEvaluator()))
-                ErrorExit("\"mix\" material has a texture that can't be evaluated with the "
+                throw std::runtime_error(spectra::diagnostics::Format("\"mix\" material has a texture that can't be evaluated with the "
                                 "BasicTextureEvaluator, which is all that is currently supported "
-                                "in the Spectra pathtracer.");
+                                "in the Spectra pathtracer."));
 
             updateMaterialNeeds(mix->GetMaterial(0), haveBasicEvalMaterial,
                                 haveUniversalEvalMaterial, haveSubsurface, haveMedia);
@@ -337,7 +334,7 @@ namespace spectra::pathtracer
         for (const auto& m : media)
             haveLights |= m.second.IsEmissive();
         if (!haveLights)
-            ErrorExit("No light sources specified");
+            throw std::runtime_error(spectra::diagnostics::Format("No light sources specified"));
 
         std::string lightSamplerName =
             scene.integrator.parameters.GetOneString("lightsampler", "bvh");
@@ -346,7 +343,7 @@ namespace spectra::pathtracer
         lightSampler = LightSampler::Create(lightSamplerName, allLights, alloc);
 
         if (scene.integrator.name != "path" && scene.integrator.name != "volpath")
-            Warning(&scene.integrator.loc,
+            spectra::diagnostics::PrintWarning(&scene.integrator.loc,
                           "Ignoring specified integrator \"%s\": the Spectra pathtracer "
                           "always uses a \"volpath\" integrator.",
                           scene.integrator.name);
@@ -420,13 +417,6 @@ namespace spectra::pathtracer
                                         Options->quiet, true);
         for (int sampleIndex = firstSampleIndex; sampleIndex < lastSampleIndex; ++sampleIndex)
         {
-            CheckCallbackScope _([&]()
-            {
-                return StringPrintf("Spectra pathtracing failed at sample %d. Debug with "
-                                          "\"--debugstart %d\"\n",
-                                          sampleIndex, sampleIndex);
-            });
-
             RenderSample(pixelBounds, Transform{}, sampleIndex);
             progress.Update();
         }
@@ -816,9 +806,10 @@ namespace spectra::pathtracer
     {
         // Get BSDF for items in _evalQueue_ and sample illumination
         // Construct _desc_ for material/texture evaluation kernel
-        std::string desc = spectra::StringPrintf(
-            "%s + BxDF eval (%s tex)", ConcreteMaterial::Name(),
-            std::is_same_v<TextureEvaluator, BasicTextureEvaluator> ? "Basic" : "Universal");
+        std::string desc = ConcreteMaterial::Name();
+        desc += " + BxDF eval (";
+        desc += std::is_same_v<TextureEvaluator, BasicTextureEvaluator> ? "Basic" : "Universal";
+        desc += " tex)";
 
         RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
         auto queue = evalQueue->Get<MaterialEvalWorkItem<ConcreteMaterial>>();

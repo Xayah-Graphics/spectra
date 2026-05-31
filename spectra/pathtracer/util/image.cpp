@@ -18,11 +18,10 @@
 #include <spectra/pathtracer/util/bluenoise.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/string.h>
 
@@ -32,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <numeric>
 
 // use lodepng and get 16-bit.
@@ -48,22 +48,6 @@
 
 namespace spectra
 {
-    std::string ToString(PixelFormat format)
-    {
-        switch (format)
-        {
-        case PixelFormat::U256:
-            return "U256";
-        case PixelFormat::Half:
-            return "Half";
-        case PixelFormat::Float:
-            return "Float";
-        default:
-            SPECTRA_FATAL("Unhandled PixelFormat in FormatName()");
-            return "";
-        }
-    }
-
     SPECTRA_CPU_GPU int TexelBytes(PixelFormat format)
     {
         switch (format)
@@ -627,7 +611,7 @@ namespace spectra
 
         ImageChannelDesc refDesc = ref.GetChannelDesc(ChannelNames(desc));
         if (!refDesc)
-            ErrorExit("Channels not found in image: %s", ChannelNames(desc));
+            throw std::runtime_error(spectra::diagnostics::Format("Channels not found in image: %s", ChannelNames(desc)));
 
         CHECK_EQ(Resolution(), ref.Resolution());
 
@@ -1014,11 +998,11 @@ namespace spectra
                         };
                     }
                 default:
-                    ErrorExit("%s: %d channel image unsupported.", name, n);
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: %d channel image unsupported.", name, n));
                 }
             }
             else
-                ErrorExit("%s: no support for reading images with this extension", name);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: no support for reading images with this extension", name));
         }
     }
 
@@ -1039,14 +1023,14 @@ namespace spectra
             // all good; onward
             break;
         case 2:
-            Error("%s: unable to write a 2 channel image in this format.", name);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to write a 2 channel image in this format.", name));
             return false;
         case 3:
             {
                 ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
                 if (!desc)
                     // Still go for it with 3 channels.
-                    Warning("%s: image has 3 channels but they are not R, G, and B. Image may be "
+                    spectra::diagnostics::PrintWarning("%s: image has 3 channels but they are not R, G, and B. Image may be "
                             "garbled.",
                             name);
                 else
@@ -1059,7 +1043,7 @@ namespace spectra
                 ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B", "A"});
                 if (!desc)
                     // Still go for it.
-                    Warning(
+                    spectra::diagnostics::PrintWarning(
                         "%s: image has 4 channels but they are not R, G, B, and A. Image may be "
                         "garbled.",
                         name);
@@ -1073,20 +1057,20 @@ namespace spectra
                 ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
                 if (!desc)
                 {
-                    Error("%s: multi-channel image does not have R, G, and B. Unable to write to "
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: multi-channel image does not have R, G, and B. Unable to write to "
                           "this format.",
-                          name);
+                          name));
                     return false;
                 }
                 else
                 {
-                    std::string err = StringPrintf("%s: ignoring additional channels for this "
-                                                   "image format: ",
-                                                   name);
+                    std::string err = std::format("{}: ignoring additional channels for this "
+                                                  "image format: ",
+                                                  name);
                     for (const auto& ch : outImage.ChannelNames())
                         if (ch != "R" && ch != "G" && ch != "B")
-                            err += StringPrintf("\"%s\" ", ch);
-                    Error("%s", err);
+                            err += std::format("\"{}\" ", ch);
+                    throw std::runtime_error(spectra::diagnostics::Format("%s", err));
                 }
 
                 outImage = outImage.SelectChannels(desc);
@@ -1099,7 +1083,7 @@ namespace spectra
         ImageMetadata outMetadata = metadata;
         if (outImage.NChannels() != 1 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB)
         {
-            Warning("%s: converting pixel colors to sRGB to match output image format.",
+            spectra::diagnostics::PrintWarning("%s: converting pixel colors to sRGB to match output image format.",
                     name);
             SquareMatrix<3> m =
                 ConvertRGBColorSpace(*metadata.GetColorSpace(), *RGBColorSpace::sRGB);
@@ -1126,7 +1110,7 @@ namespace spectra
             return outImage.WriteQOI(name, outMetadata);
         else
         {
-            Error("%s: no support for writing images with this extension", name);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: no support for writing images with this extension", name));
             return false;
         }
     }
@@ -1250,7 +1234,7 @@ namespace spectra
                     Point2f(c.blue.x, c.blue.y), Point2f(c.white.x, c.white.y));
                 if (!cs)
                 {
-                    Warning("Couldn't find supported color space that matches "
+                    spectra::diagnostics::PrintWarning("Couldn't find supported color space that matches "
                             "chromaticities: "
                             "r (%f, %f) g (%f, %f) b (%f, %f), w (%f, %f). Using sRGB.",
                             c.red.x, c.red.y, c.green.x, c.green.y, c.blue.x, c.blue.y,
@@ -1293,7 +1277,7 @@ namespace spectra
         }
         catch (const std::exception& e)
         {
-            ErrorExit("Unable to read image file \"%s\": %s", name, e.what());
+            throw std::runtime_error(spectra::diagnostics::Format("Unable to read image file \"%s\": %s", name, e.what()));
         }
 
         return {};
@@ -1390,7 +1374,7 @@ namespace spectra
         }
         catch (const std::exception& exc)
         {
-            Error("%s: error writing EXR: %s", name.c_str(), exc.what());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: error writing EXR: %s", name.c_str(), exc.what()));
             return false;
         }
 
@@ -1414,7 +1398,7 @@ namespace spectra
         unsigned int error = lodepng_inspect(
             &width, &height, &state, (const unsigned char*)contents.data(), contents.size());
         if (error != 0)
-            ErrorExit("%s: %s", name, lodepng_error_text(error));
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", name, lodepng_error_text(error)));
 
         Image image(alloc);
         switch (state.info_png.color.colortype)
@@ -1428,7 +1412,7 @@ namespace spectra
                     lodepng::decode(buf, width, height, (const unsigned char*)contents.data(),
                                     contents.size(), LCT_GREY, bpp);
                 if (error != 0)
-                    ErrorExit("%s: %s", name, lodepng_error_text(error));
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: %s", name, lodepng_error_text(error)));
 
                 if (state.info_png.color.bitdepth == 16)
                 {
@@ -1461,7 +1445,7 @@ namespace spectra
                     lodepng::decode(buf, width, height, (const unsigned char*)contents.data(),
                                     contents.size(), hasAlpha ? LCT_RGBA : LCT_RGB, bpp);
                 if (error != 0)
-                    ErrorExit("%s: %s", name, lodepng_error_text(error));
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: %s", name, lodepng_error_text(error)));
 
                 ImageMetadata metadata;
                 metadata.colorSpace = RGBColorSpace::sRGB;
@@ -1646,7 +1630,7 @@ namespace spectra
         }
 
         if (nOutOfGamut > 0)
-            Warning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
+            spectra::diagnostics::PrintWarning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
                     nOutOfGamut);
 
         if (error == 0)
@@ -1654,13 +1638,13 @@ namespace spectra
             std::string encodedPNG(png, png + pngSize);
             if (!WriteFileContents(filename, encodedPNG))
             {
-                Error("%s: error writing PNG.", filename);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: error writing PNG.", filename));
                 return false;
             }
         }
         else
         {
-            Error("%s: %s", filename, lodepng_error_text(error));
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, lodepng_error_text(error)));
             return false;
         }
 
@@ -1682,7 +1666,7 @@ namespace spectra
         if (Encoding() && !Encoding().Is<LinearColorEncoding>() &&
             !Encoding().Is<sRGBColorEncoding>())
         {
-            Error("%s: only linear and sRGB encodings are supported by QOI.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: only linear and sRGB encodings are supported by QOI.", filename));
             return false;
         }
         desc.colorspace = Encoding().Is<LinearColorEncoding>() ? QOI_LINEAR : QOI_SRGB;
@@ -1704,7 +1688,7 @@ namespace spectra
         }
         else
         {
-            Error("%s: only 3 and 4 channel images are supported for QOI", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: only 3 and 4 channel images are supported for QOI", filename));
             return false;
         }
 
@@ -1715,7 +1699,7 @@ namespace spectra
             int nOutOfGamut = 0;
             std::unique_ptr<uint8_t[]> rgba8 = QuantizePixelsToU256(&nOutOfGamut);
             if (nOutOfGamut > 0)
-                Warning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
+                spectra::diagnostics::PrintWarning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
                         nOutOfGamut);
 
             qoiPixels = qoi_encode(rgba8.get(), &desc, &qoiSize);
@@ -1724,7 +1708,7 @@ namespace spectra
         bool success =
             WriteFileContents(filename, std::string((const char*)qoiPixels, qoiSize));
         if (!success)
-            Error("%s: error writing QOI file.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: error writing QOI file.", filename));
 
         free(qoiPixels);
         return success;
@@ -1810,38 +1794,38 @@ namespace spectra
 
         FILE* fp = FOpenRead(filename);
         if (!fp)
-            ErrorExit("%s: unable to open PFM file", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open PFM file", filename));
 
         // read either "Pf" or "PF"
         if (readWord(fp, buffer, BUFFER_SIZE) == -1)
-            ErrorExit("%s: unable to read PFM file", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to read PFM file", filename));
 
         if (strcmp(buffer, "Pf") == 0)
             nChannels = 1;
         else if (strcmp(buffer, "PF") == 0)
             nChannels = 3;
         else
-            ErrorExit("%s: unable to decode PFM file type \"%c%c\"", filename, buffer[0],
-                      buffer[1]);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to decode PFM file type \"%c%c\"", filename, buffer[0],
+                      buffer[1]));
 
         // read the rest of the header
         // read width
         if (readWord(fp, buffer, BUFFER_SIZE) == -1)
             goto fail;
         if (!Atoi(buffer, &width))
-            ErrorExit("%s: unable to decode width \"%s\"", filename, buffer);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to decode width \"%s\"", filename, buffer));
 
         // read height
         if (readWord(fp, buffer, BUFFER_SIZE) == -1)
             goto fail;
         if (!Atoi(buffer, &height))
-            ErrorExit("%s: unable to decode height \"%s\"", filename, buffer);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to decode height \"%s\"", filename, buffer));
 
         // read scale
         if (readWord(fp, buffer, BUFFER_SIZE) == -1)
             goto fail;
         if (!Atof(buffer, &scale))
-            ErrorExit("%s: unable to decode scale \"%s\"", filename, buffer);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to decode scale \"%s\"", filename, buffer));
 
         // read the data
         nFloats = nChannels * size_t(width) * size_t(height);
@@ -1884,7 +1868,7 @@ namespace spectra
     fail:
         if (fp)
             fclose(fp);
-        ErrorExit("%s: premature end of file in PFM file", filename);
+        throw std::runtime_error(spectra::diagnostics::Format("%s: premature end of file in PFM file", filename));
     }
 
     static ImageAndMetadata ReadHDR(const std::string& filename, Allocator alloc)
@@ -1892,7 +1876,7 @@ namespace spectra
         int x, y, n;
         float* data = stbi_loadf(filename.c_str(), &x, &y, &n, 0);
         if (!data)
-            ErrorExit("%s: %s", filename, stbi_failure_reason());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, stbi_failure_reason()));
 
         pstd::vector<float> pixels(data, data + size_t(x) * size_t(y) * size_t(n), alloc);
         stbi_image_free(data);
@@ -1922,7 +1906,7 @@ namespace spectra
                 };
             }
         default:
-            ErrorExit("%s: %d channel image unsupported.", filename, n);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %d channel image unsupported.", filename, n));
         }
     }
 
@@ -1961,13 +1945,13 @@ namespace spectra
         FILE* fp = FOpenWrite(filename);
         if (!fp)
         {
-            Error("%s: unable to open output PFM file.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open output PFM file.", filename));
             return false;
         }
 
         if (NChannels() != 3)
         {
-            Error("%s: only 3-channel images are supported for PFM.");
+            throw std::runtime_error(spectra::diagnostics::Format("%s: only 3-channel images are supported for PFM."));
             return false;
         }
 
@@ -2019,7 +2003,7 @@ namespace spectra
         return true;
 
     fail:
-        Error("Error writing PFM file \"%s\"", filename);
+        throw std::runtime_error(spectra::diagnostics::Format("Error writing PFM file \"%s\"", filename));
         fclose(fp);
         return false;
     }

@@ -3,12 +3,11 @@
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/lights.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/hash.h>
 #include <spectra/pathtracer/util/lowdiscrepancy.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/sampling.h>
 #include <spectra/pathtracer/util/spectrum.h>
 
@@ -60,9 +59,8 @@ namespace spectra
             return alloc.new_object<ExhaustiveLightSampler>(lights, alloc);
         else
         {
-            Error(R"(Light sample distribution type "%s" unknown. Using "bvh".)",
-                  name.c_str());
-            return alloc.new_object<BVHLightSampler>(lights, alloc);
+            throw std::runtime_error(spectra::diagnostics::Format(R"(Light sample distribution type "%s" unknown.)",
+                  name.c_str()));
         }
     }
 

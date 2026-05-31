@@ -5,7 +5,7 @@
 
 #include <spectra/pathtracer/base/texture.h>
 #include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/spectrum.h>

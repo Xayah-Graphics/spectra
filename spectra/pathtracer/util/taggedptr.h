@@ -4,755 +4,74 @@
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/print.h>
 
 #include <algorithm>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 namespace spectra
 {
     namespace detail
     {
-        // TaggedPointer Helper Templates
         template <typename F, typename R, typename T>
         SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
         {
             DCHECK_EQ(0, index);
-            return func((const T*)ptr);
+            return func(reinterpret_cast<const T*>(ptr));
         }
 
         template <typename F, typename R, typename T>
         SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
         {
             DCHECK_EQ(0, index);
-            return func((T*)ptr);
+            return func(reinterpret_cast<T*>(ptr));
         }
 
-        template <typename F, typename R, typename T0, typename T1>
+        template <typename F, typename R, typename T, typename Next, typename... Rest>
         SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
         {
             DCHECK_GE(index, 0);
-            DCHECK_LT(index, 2);
-
-            if (index == 0)
-                return func((const T0*)ptr);
-            else
-                return func((const T1*)ptr);
+            if (index == 0) return func(reinterpret_cast<const T*>(ptr));
+            return Dispatch<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
-        template <typename F, typename R, typename T0, typename T1>
+        template <typename F, typename R, typename T, typename Next, typename... Rest>
         SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
         {
             DCHECK_GE(index, 0);
-            DCHECK_LT(index, 2);
-
-            if (index == 0)
-                return func((T0*)ptr);
-            else
-                return func((T1*)ptr);
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 3);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            default:
-                return func((const T2*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 3);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            default:
-                return func((T2*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 4);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            default:
-                return func((const T3*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 4);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            default:
-                return func((T3*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 5);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            default:
-                return func((const T4*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 5);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            default:
-                return func((T4*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 6);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            default:
-                return func((const T5*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 6);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            default:
-                return func((T5*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 7);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            case 5:
-                return func((const T5*)ptr);
-            default:
-                return func((const T6*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 7);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            case 5:
-                return func((T5*)ptr);
-            default:
-                return func((T6*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 8);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            case 5:
-                return func((const T5*)ptr);
-            case 6:
-                return func((const T6*)ptr);
-            default:
-                return func((const T7*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 8);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            case 5:
-                return func((T5*)ptr);
-            case 6:
-                return func((T6*)ptr);
-            default:
-                return func((T7*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7, typename... Ts,
-                  typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            case 5:
-                return func((const T5*)ptr);
-            case 6:
-                return func((const T6*)ptr);
-            case 7:
-                return func((const T7*)ptr);
-            default:
-                return Dispatch<F, R, Ts...>(func, ptr, index - 8);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7, typename... Ts,
-                  typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
-        SPECTRA_CPU_GPU R Dispatch(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            case 5:
-                return func((T5*)ptr);
-            case 6:
-                return func((T6*)ptr);
-            case 7:
-                return func((T7*)ptr);
-            default:
-                return Dispatch<F, R, Ts...>(func, ptr, index - 8);
-            }
+            if (index == 0) return func(reinterpret_cast<T*>(ptr));
+            return Dispatch<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
         template <typename F, typename R, typename T>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
+        R DispatchHost(F&& func, const void* ptr, int index)
         {
             DCHECK_EQ(0, index);
-            return func((const T*)ptr);
+            return func(reinterpret_cast<const T*>(ptr));
         }
 
         template <typename F, typename R, typename T>
-        auto DispatchCPU(F&& func, void* ptr, int index)
+        R DispatchHost(F&& func, void* ptr, int index)
         {
             DCHECK_EQ(0, index);
-            return func((T*)ptr);
+            return func(reinterpret_cast<T*>(ptr));
         }
 
-        template <typename F, typename R, typename T0, typename T1>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
+        template <typename F, typename R, typename T, typename Next, typename... Rest>
+        R DispatchHost(F&& func, const void* ptr, int index)
         {
             DCHECK_GE(index, 0);
-            DCHECK_LT(index, 2);
-
-            if (index == 0)
-                return func((const T0*)ptr);
-            else
-                return func((const T1*)ptr);
+            if (index == 0) return func(reinterpret_cast<const T*>(ptr));
+            return DispatchHost<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
-        template <typename F, typename R, typename T0, typename T1>
-        auto DispatchCPU(F&& func, void* ptr, int index)
+        template <typename F, typename R, typename T, typename Next, typename... Rest>
+        R DispatchHost(F&& func, void* ptr, int index)
         {
             DCHECK_GE(index, 0);
-            DCHECK_LT(index, 2);
-
-            if (index == 0)
-                return func((T0*)ptr);
-            else
-                return func((T1*)ptr);
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 3);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            default:
-                return func((const T2*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 3);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            default:
-                return func((T2*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 4);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            default:
-                return func((const T3*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 4);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            default:
-                return func((T3*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 5);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            default:
-                return func((const T4*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 5);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            default:
-                return func((T4*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 6);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            default:
-                return func((const T5*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 6);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            default:
-                return func((T5*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 7);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            case 5:
-                return func((const T5*)ptr);
-            default:
-                return func((const T6*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 7);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            case 5:
-                return func((T5*)ptr);
-            default:
-                return func((T6*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 8);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            case 5:
-                return func((const T5*)ptr);
-            case 6:
-                return func((const T6*)ptr);
-            default:
-                return func((const T7*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-            DCHECK_LT(index, 8);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            case 5:
-                return func((T5*)ptr);
-            case 6:
-                return func((T6*)ptr);
-            default:
-                return func((T7*)ptr);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7, typename... Ts,
-                  typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
-        auto DispatchCPU(F&& func, const void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-
-            switch (index)
-            {
-            case 0:
-                return func((const T0*)ptr);
-            case 1:
-                return func((const T1*)ptr);
-            case 2:
-                return func((const T2*)ptr);
-            case 3:
-                return func((const T3*)ptr);
-            case 4:
-                return func((const T4*)ptr);
-            case 5:
-                return func((const T5*)ptr);
-            case 6:
-                return func((const T6*)ptr);
-            case 7:
-                return func((const T7*)ptr);
-            default:
-                return DispatchCPU<F, R, Ts...>(func, ptr, index - 8);
-            }
-        }
-
-        template <typename F, typename R, typename T0, typename T1, typename T2, typename T3,
-                  typename T4, typename T5, typename T6, typename T7, typename... Ts,
-                  typename = typename std::enable_if_t<(sizeof...(Ts) > 0)>>
-        auto DispatchCPU(F&& func, void* ptr, int index)
-        {
-            DCHECK_GE(index, 0);
-
-            switch (index)
-            {
-            case 0:
-                return func((T0*)ptr);
-            case 1:
-                return func((T1*)ptr);
-            case 2:
-                return func((T2*)ptr);
-            case 3:
-                return func((T3*)ptr);
-            case 4:
-                return func((T4*)ptr);
-            case 5:
-                return func((T5*)ptr);
-            case 6:
-                return func((T6*)ptr);
-            case 7:
-                return func((T7*)ptr);
-            default:
-                return DispatchCPU<F, R, Ts...>(func, ptr, index - 8);
-            }
+            if (index == 0) return func(reinterpret_cast<T*>(ptr));
+            return DispatchHost<F, R, Next, Rest...>(std::forward<F>(func), ptr, index - 1);
         }
 
         template <typename... Ts>
@@ -912,15 +231,15 @@ namespace spectra
         {
             DCHECK(ptr());
             using R = typename detail::ReturnType<F, Ts...>::type;
-            return detail::Dispatch<F, R, Ts...>(func, ptr(), Tag() - 1);
+            return detail::Dispatch<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         SPECTRA_CPU_GPU decltype(auto) Dispatch(F&& func) const
         {
             DCHECK(ptr());
-            using R = typename detail::ReturnType<F, Ts...>::type;
-            return detail::Dispatch<F, R, Ts...>(func, ptr(), Tag() - 1);
+            using R = typename detail::ReturnTypeConst<F, Ts...>::type;
+            return detail::Dispatch<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
@@ -928,7 +247,7 @@ namespace spectra
         {
             DCHECK(ptr());
             using R = typename detail::ReturnType<F, Ts...>::type;
-            return detail::DispatchCPU<F, R, Ts...>(func, ptr(), Tag() - 1);
+            return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
@@ -936,7 +255,7 @@ namespace spectra
         {
             DCHECK(ptr());
             using R = typename detail::ReturnTypeConst<F, Ts...>::type;
-            return detail::DispatchCPU<F, R, Ts...>(func, ptr(), Tag() - 1);
+            return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
     private:

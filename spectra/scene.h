@@ -8,9 +8,7 @@
 #include <spectra/pathtracer/core/paramdict.h>
 #include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/error.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/util/transform.h>
@@ -682,21 +680,6 @@ namespace spectra::scene
             Float transformStartTime = 0, transformEndTime = 1;
         };
 
-        // SceneBuilder Private Methods
-        template <typename... Args>
-        void ErrorExitDeferred(const char* fmt, Args&&... args) const
-        {
-            errorExit = true;
-            spectra::Error(fmt, std::forward<Args>(args)...);
-        }
-
-        template <typename... Args>
-        void ErrorExitDeferred(const FileLoc* loc, const char* fmt, Args&&... args) const
-        {
-            errorExit = true;
-            spectra::Error(loc, fmt, std::forward<Args>(args)...);
-        }
-
         spectra::Transform RenderFromObject(int index) const
         {
             return spectra::Transform((renderFromWorld * graphicsState.ctm[index]).GetMatrix());
@@ -749,7 +732,6 @@ namespace spectra::scene
 
         std::set<std::string> namedMaterialNames, mediumNames;
         std::set<std::string> floatTextureNames, spectrumTextureNames, instanceNames;
-        mutable bool errorExit = false;
         std::optional<Point2i> filmResolutionOverride{};
         bool filmSeen = false;
         int currentMaterialIndex = 0, currentLightIndex = -1;

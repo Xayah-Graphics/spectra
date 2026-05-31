@@ -31,8 +31,6 @@ namespace spectra
             return {};
     }
 
-    std::string ToString(FilterFunction f);
-
     // MIPMapFilterOptions Definition
     struct MIPMapFilterOptions
     {

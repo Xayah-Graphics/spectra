@@ -1,7 +1,6 @@
 #include <spectra/pathtracer/core/filters.h>
 
 #include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/rng.h>
 
 namespace spectra
@@ -123,10 +122,10 @@ namespace spectra
         else if (name == "triangle")
             filter = TriangleFilter::Create(parameters, loc, alloc);
         else
-            ErrorExit(loc, "%s: filter type unknown.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: filter type unknown.", name));
 
         if (!filter)
-            ErrorExit(loc, "%s: unable to create filter.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create filter.", name));
 
         parameters.ReportUnused();
         return filter;

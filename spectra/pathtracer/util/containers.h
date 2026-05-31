@@ -5,7 +5,6 @@
 #include <spectra/pathtracer/util/memory.h>
 
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/vecmath.h>
 
@@ -416,31 +415,6 @@ namespace spectra
             other.ptr = nullptr;
         }
 
-        InlinedVector(InlinedVector&& other, const Allocator& alloc)
-        {
-            SPECTRA_FATAL("TODO");
-
-            if (alloc == other.alloc)
-            {
-                ptr = other.ptr;
-                nAlloc = other.nAlloc;
-                nStored = other.nStored;
-                if (other.nStored <= N)
-                    for (int i = 0; i < other.nStored; ++i)
-                        fixed[i] = std::move(other.fixed[i]);
-
-                other.ptr = nullptr;
-                other.nAlloc = other.nStored = 0;
-            }
-            else
-            {
-                reserve(other.size());
-                for (size_t i = 0; i < other.size(); ++i)
-                    alloc.template construct<T>(begin() + i, std::move(other[i]));
-                nStored = other.size();
-            }
-        }
-
         InlinedVector(std::initializer_list<T> init, const Allocator& alloc = {})
             : InlinedVector(init.begin(), init.end(), alloc)
         {
@@ -510,15 +484,6 @@ namespace spectra
             nStored = count;
         }
 
-        template <class InputIt>
-        void assign(InputIt first, InputIt last)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        void assign(std::initializer_list<T>& init) { assign(init.begin(), init.end()); }
-
         ~InlinedVector()
         {
             clear();
@@ -573,9 +538,6 @@ namespace spectra
             nAlloc = n;
             ptr = ra;
         }
-
-        // TODO: shrink_to_fit
-
         SPECTRA_CPU_GPU
         reference operator[](size_type index)
         {
@@ -610,24 +572,6 @@ namespace spectra
             nStored = 0;
         }
 
-        iterator insert(const_iterator, const T& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        iterator insert(const_iterator, T&& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        iterator insert(const_iterator pos, size_type count, const T& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
         template <class InputIt>
         iterator insert(const_iterator pos, InputIt first, InputIt last)
         {
@@ -642,29 +586,8 @@ namespace spectra
             }
             else
             {
-                // TODO
-                SPECTRA_FATAL("TODO");
+                SPECTRA_FATAL("InlinedVector::insert only supports appending ranges");
             }
-        }
-
-        iterator insert(const_iterator pos, std::initializer_list<T> init)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        template <class... Args>
-        iterator emplace(const_iterator pos, Args&&... args)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        template <class... Args>
-        void emplace_back(Args&&... args)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
         }
 
         iterator erase(const_iterator cpos)
@@ -679,12 +602,6 @@ namespace spectra
             alloc.destroy(pos);
             --nStored;
             return begin() + (cpos - begin());
-        }
-
-        iterator erase(const_iterator first, const_iterator last)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
         }
 
         void push_back(const T& value)
@@ -726,18 +643,6 @@ namespace spectra
                     alloc.construct(begin() + i);
             }
             nStored = n;
-        }
-
-        void resize(size_type count, const value_type& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        void swap(InlinedVector& other)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
         }
 
     private:

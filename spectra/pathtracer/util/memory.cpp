@@ -1,7 +1,6 @@
 #include <spectra/pathtracer/util/memory.h>
 
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/print.h>
 
 #include <cstdlib>
 #ifdef SPECTRA_HAVE_MALLOC_H
@@ -61,12 +60,7 @@ namespace spectra
         fclose(fp);
         return (size_t)rss * (size_t)sysconf(_SC_PAGESIZE);
 #else
-#error "TODO: implement GetCurrentRSS() for this target"
-        return 0;
-        /*    struct rusage rusage;
-        CHECK(getrusage(RUSAGE_SELF, &rusage) == 0);
-        return rusage.ru_idrss;
-        */
+#error "GetCurrentRSS is only implemented for Windows, macOS, and Linux."
 #endif
     }
 } // namespace spectra

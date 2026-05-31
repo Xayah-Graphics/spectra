@@ -9,7 +9,6 @@
 #include <spectra/pathtracer/core/samplers.h>
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/rng.h>
 
 #include <cmath>

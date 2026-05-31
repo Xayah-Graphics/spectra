@@ -4,11 +4,10 @@
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/print.h>
 
 #include <algorithm>
 #include <cmath>
@@ -17,25 +16,6 @@ namespace spectra
 {
     ///////////////////////////////////////////////////////////////////////////
     // MIPMap Helper Declarations
-
-    std::string ToString(FilterFunction f)
-    {
-        switch (f)
-        {
-        case FilterFunction::Point:
-            return "Point";
-        case FilterFunction::Bilinear:
-            return "Bilinear";
-        case FilterFunction::Trilinear:
-            return "Trilinear";
-        case FilterFunction::EWA:
-            return "EWA";
-        default:
-            SPECTRA_FATAL("Unhandled case");
-            return "";
-        }
-    }
-
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -381,7 +361,7 @@ namespace spectra
                 if (rgbDesc)
                     image = image.SelectChannels(rgbDesc, alloc);
                 else
-                    ErrorExit("%s: image doesn't have R, G, and B channels", filename);
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: image doesn't have R, G, and B channels", filename));
             }
         }
 

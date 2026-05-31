@@ -7,7 +7,7 @@
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/parallel.h>
 #include <spectra/pathtracer/util/pstd.h>
@@ -41,8 +41,6 @@ namespace spectra
     {
         return format == PixelFormat::Float;
     }
-
-    std::string ToString(PixelFormat format);
 
     SPECTRA_CPU_GPU
     int TexelBytes(PixelFormat format);
@@ -84,24 +82,6 @@ namespace spectra
             return WrapMode::OctahedralSphere;
         else
             return {};
-    }
-
-    inline std::string ToString(WrapMode mode)
-    {
-        switch (mode)
-        {
-        case WrapMode::Clamp:
-            return "clamp";
-        case WrapMode::Repeat:
-            return "repeat";
-        case WrapMode::Black:
-            return "black";
-        case WrapMode::OctahedralSphere:
-            return "octahedralsphere";
-        default:
-            SPECTRA_FATAL("Unhandled wrap mode");
-            return "";
-        }
     }
 
     // Image Wrapping Inline Functions
@@ -487,7 +467,7 @@ namespace spectra
         if (IsNaN(value))
         {
 #ifndef SPECTRA_IS_GPU_CODE
-            Warning("NaN at pixel %d,%d comp %d", p.x, p.y, c);
+            spectra::diagnostics::PrintWarning("NaN at pixel %d,%d comp %d", p.x, p.y, c);
 #endif
             value = 0;
         }

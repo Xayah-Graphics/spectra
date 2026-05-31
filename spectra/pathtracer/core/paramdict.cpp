@@ -5,10 +5,9 @@
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/spectrum.h>
 
 #include <algorithm>
@@ -185,10 +184,10 @@ namespace spectra
             if (p->type == ParameterTypeTraits<ParameterType::Boolean>::typeName)
             {
                 if (p->bools.empty())
-                    ErrorExit(
+                    throw std::runtime_error(spectra::diagnostics::Format(
                         &p->loc,
                         "\"%s\": non-Boolean values provided for Boolean-valued parameter",
-                        p->name);
+                        p->name));
             }
             else if (p->type == ParameterTypeTraits<ParameterType::Float>::typeName ||
                 p->type == ParameterTypeTraits<ParameterType::Integer>::typeName ||
@@ -200,30 +199,30 @@ namespace spectra
                 p->type == "rgb" || p->type == "blackbody")
             {
                 if (p->ints.empty() && p->floats.empty())
-                    ErrorExit(
+                    throw std::runtime_error(spectra::diagnostics::Format(
                         &p->loc,
                         "\"%s\": non-numeric values provided for numeric-valued parameter",
-                        p->name);
+                        p->name));
             }
             else if (p->type == ParameterTypeTraits<ParameterType::String>::typeName ||
                 p->type == "texture")
             {
                 if (p->strings.empty())
-                    ErrorExit(
+                    throw std::runtime_error(spectra::diagnostics::Format(
                         &p->loc,
                         "\"%s\": non-string values provided for string-valued parameter",
-                        p->name);
+                        p->name));
             }
             else if (p->type == "spectrum")
             {
                 if (p->strings.empty() && p->ints.empty() && p->floats.empty())
-                    ErrorExit(&p->loc,
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                               "\"%s\": expecting string or numeric-valued parameter for "
                               "spectrum parameter",
-                              p->name);
+                              p->name));
             }
             else
-                ErrorExit(&p->loc, "\"%s\": unknown parameter type", p->type);
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "\"%s\": unknown parameter type", p->type));
         }
     }
 
@@ -249,10 +248,10 @@ namespace spectra
 
             // Issue error if an incorrect number of parameter values were provided
             if (values.empty())
-                ErrorExit(&p->loc, "No values provided for parameter \"%s\".", name);
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "No values provided for parameter \"%s\".", name));
             if (values.size() != traits::nPerItem)
-                ErrorExit(&p->loc, "Expected %d values for parameter \"%s\".",
-                          traits::nPerItem, name);
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "Expected %d values for parameter \"%s\".",
+                          traits::nPerItem, name));
 
             // Return parameter values as _ReturnType_
             p->lookedUp = true;
@@ -321,8 +320,8 @@ namespace spectra
             if (!s.empty())
             {
                 if (s.size() > 1)
-                    ErrorExit(&p->loc, "More than one value provided for parameter \"%s\".",
-                              name);
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "More than one value provided for parameter \"%s\".",
+                              name));
                 return s[0];
             }
         }
@@ -342,10 +341,10 @@ namespace spectra
                                                C convert)
     {
         if (values.empty())
-            ErrorExit(&param.loc, "No values provided for \"%s\".", param.name);
+            throw std::runtime_error(spectra::diagnostics::Format(&param.loc, "No values provided for \"%s\".", param.name));
         if (values.size() % nPerItem)
-            ErrorExit(&param.loc, "Number of values provided for \"%s\" not a multiple of %d",
-                      param.name, nPerItem);
+            throw std::runtime_error(spectra::diagnostics::Format(&param.loc, "Number of values provided for \"%s\" not a multiple of %d",
+                      param.name, nPerItem));
 
         param.lookedUp = true;
         size_t n = values.size() / nPerItem;
@@ -451,13 +450,13 @@ namespace spectra
                     const RGBColorSpace& cs =
                         param.colorSpace ? *param.colorSpace : *colorSpace;
                     if (rgb.r < 0 || rgb.g < 0 || rgb.b < 0)
-                        ErrorExit(loc, "RGB parameter \"%s\" has negative component.",
-                                  param.name);
+                        throw std::runtime_error(spectra::diagnostics::Format(loc, "RGB parameter \"%s\" has negative component.",
+                                  param.name));
                     if (spectrumType == SpectrumType::Albedo)
                     {
                         if (rgb.r > 1 || rgb.g > 1 || rgb.b > 1)
-                            ErrorExit(loc, "RGB parameter \"%s\" has > 1 component.",
-                                      param.name);
+                            throw std::runtime_error(spectra::diagnostics::Format(loc, "RGB parameter \"%s\" has > 1 component.",
+                                      param.name));
                         return alloc.new_object<RGBAlbedoSpectrum>(cs, rgb);
                     }
                     else if (spectrumType == SpectrumType::Unbounded)
@@ -480,12 +479,12 @@ namespace spectra
         else if (param.type == "spectrum" && !param.floats.empty())
         {
             if (param.floats.size() % 2 != 0)
-                ErrorExit(&param.loc, "Found odd number of values for \"%s\"", param.name);
+                throw std::runtime_error(spectra::diagnostics::Format(&param.loc, "Found odd number of values for \"%s\"", param.name));
 
             int nSamples = param.floats.size() / 2;
             if (nSamples == 1)
             {
-                Warning(&param.loc, "Specified spectrum is only non-zero at a single wavelength. "
+                spectra::diagnostics::PrintWarning(&param.loc, "Specified spectrum is only non-zero at a single wavelength. "
                         "This is probably unintended.");
             }
             return returnArray<Spectrum>(
@@ -497,10 +496,10 @@ namespace spectra
                     for (int i = 0; i < nSamples; ++i)
                     {
                         if (i > 0 && v[2 * i] <= lambda[i - 1])
-                            ErrorExit(&param.loc,
+                            throw std::runtime_error(spectra::diagnostics::Format(&param.loc,
                                       "Spectrum description invalid: at %d'th entry, "
                                       "wavelengths aren't increasing: %f >= %f.",
-                                      i - 1, lambda[i - 1], v[2 * i]);
+                                      i - 1, lambda[i - 1], v[2 * i]));
                         lambda[i] = v[2 * i];
                         value[i] = v[2 * i + 1];
                     }
@@ -518,7 +517,7 @@ namespace spectra
 
                     spd = readSpectrumFromFile(*s, alloc);
                     if (!spd)
-                        ErrorExit(&param.loc, "%s: unable to read valid spectrum file", *s);
+                        throw std::runtime_error(spectra::diagnostics::Format(&param.loc, "%s: unable to read valid spectrum file", *s));
                     return spd;
                 });
 
@@ -555,10 +554,10 @@ namespace spectra
                 continue;
 
             if (p->strings.empty())
-                ErrorExit(&p->loc, "No string values provided for parameter \"%s\".", name);
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "No string values provided for parameter \"%s\".", name));
             if (p->strings.size() > 1)
-                ErrorExit(&p->loc, "More than one value provided for parameter \"%s\".",
-                          name);
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "More than one value provided for parameter \"%s\".",
+                          name));
             p->lookedUp = true;
             return p->strings[0];
         }
@@ -573,8 +572,8 @@ namespace spectra
             if (p->name == name && p->type == "rgb")
             {
                 if (p->floats.size() % 3)
-                    ErrorExit(&p->loc, "Number of values given for \"rgb\" parameter %d "
-                              "\"name\" isn't a multiple of 3.");
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "Number of values given for \"rgb\" parameter %d "
+                              "\"name\" isn't a multiple of 3."));
 
                 std::vector<RGB> rgb(p->floats.size() / 3);
                 for (int i = 0; i < p->floats.size() / 3; ++i)
@@ -617,7 +616,7 @@ namespace spectra
                 // It's shadowed by another parameter; that's fine.
             }
             else
-                ErrorExit(&p->loc, "\"%s\": unused parameter.", p->name);
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "\"%s\": unused parameter.", p->name));
         }
     }
 
@@ -785,34 +784,34 @@ namespace spectra
             if (p->type == "texture")
             {
                 if (p->strings.empty())
-                    ErrorExit(&p->loc, "No texture name provided for parameter \"%s\".",
-                              name);
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "No texture name provided for parameter \"%s\".",
+                              name));
                 if (p->strings.size() != 1)
-                    ErrorExit(&p->loc,
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                               "More than one texture name provided for parameter \"%s\".",
-                              name);
+                              name));
 
                 p->lookedUp = true;
                 auto iter = spectrumTextures.find(p->strings[0]);
                 if (iter != spectrumTextures.end())
                     return iter->second;
 
-                ErrorExit(&p->loc,
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                           R"(Couldn't find spectrum texture named "%s" for parameter "%s")",
-                          p->strings[0], p->name);
+                          p->strings[0], p->name));
             }
             else if (p->type == "rgb")
             {
                 if (p->floats.size() != 3)
-                    ErrorExit(&p->loc,
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                               "Didn't find three values for \"rgb\" parameter \"%s\".",
-                              p->name);
+                              p->name));
                 p->lookedUp = true;
 
                 RGB rgb(p->floats[0], p->floats[1], p->floats[2]);
                 if (rgb.r < 0 || rgb.g < 0 || rgb.b < 0)
-                    ErrorExit(&p->loc, "Negative value provided for RGB parameter \"%s\".",
-                              p->name);
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "Negative value provided for RGB parameter \"%s\".",
+                              p->name));
                 Spectrum s;
                 if (spectrumType == SpectrumType::Illuminant)
                     s = alloc.new_object<RGBIlluminantSpectrum>(*dict->ColorSpace(), rgb);
@@ -822,9 +821,9 @@ namespace spectra
                 {
                     CHECK(spectrumType == SpectrumType::Albedo);
                     if (rgb.r > 1 || rgb.g > 1 || rgb.b > 1)
-                        ErrorExit(&p->loc,
+                        throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                                   "RGB parameter \"%s\" used as an albedo has > 1 component.",
-                                  p->name);
+                                  p->name));
                     s = alloc.new_object<RGBAlbedoSpectrum>(*dict->ColorSpace(), rgb);
                 }
                 return alloc.new_object<SpectrumConstantTexture>(s);
@@ -859,21 +858,21 @@ namespace spectra
             if (p->type == "texture")
             {
                 if (p->strings.empty())
-                    ErrorExit(&p->loc, "No texture name provided for parameter \"%s\".",
-                              name);
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc, "No texture name provided for parameter \"%s\".",
+                              name));
                 if (p->strings.size() != 1)
-                    ErrorExit(&p->loc,
+                    throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                               "More than one texture name provided for parameter \"%s\".",
-                              name);
+                              name));
 
                 p->lookedUp = true;
                 auto iter = textures->floatTextures.find(p->strings[0]);
                 if (iter != textures->floatTextures.end())
                     return iter->second;
 
-                ErrorExit(&p->loc,
+                throw std::runtime_error(spectra::diagnostics::Format(&p->loc,
                           R"(Couldn't find float texture named "%s" for parameter "%s")",
-                          p->strings[0], p->name);
+                          p->strings[0], p->name));
             }
             else if (p->type == "float")
             {

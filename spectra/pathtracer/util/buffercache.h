@@ -6,7 +6,6 @@
 
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/hash.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/vecmath.h>
 

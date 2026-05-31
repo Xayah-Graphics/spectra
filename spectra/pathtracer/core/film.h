@@ -74,7 +74,7 @@ namespace spectra
             pstd::optional<SquareMatrix<3>> m =
                 LinearLeastSquares(rgbCamera, xyzOutput, nSwatchReflectances);
             if (!m)
-                ErrorExit("Sensor XYZ from RGB matrix could not be solved.");
+                throw std::runtime_error(spectra::diagnostics::Format("Sensor XYZ from RGB matrix could not be solved."));
             XYZFromSensorRGB = *m;
         }
 

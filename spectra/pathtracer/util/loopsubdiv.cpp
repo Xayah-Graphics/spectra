@@ -1,7 +1,7 @@
 #include <spectra/pathtracer/util/loopsubdiv.h>
 
 #include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/mesh.h>
 #include <spectra/pathtracer/util/pstd.h>

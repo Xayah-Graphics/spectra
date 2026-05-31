@@ -8,9 +8,8 @@
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/rng.h>
 #include <spectra/pathtracer/util/sampling.h>
 
@@ -112,14 +111,14 @@ namespace spectra
         std::vector<Float> vals = ReadFloatFile(fn);
         if (vals.empty())
         {
-            Warning("%s: unable to read spectrum file.", fn);
+            spectra::diagnostics::PrintWarning("%s: unable to read spectrum file.", fn);
             return {};
         }
         else
         {
             if (vals.size() % 2 != 0)
             {
-                Warning("%s: extra value found in spectrum file.", fn);
+                spectra::diagnostics::PrintWarning("%s: extra value found in spectrum file.", fn);
                 return {};
             }
             pstd::vector<Float> lambda, v;
@@ -127,7 +126,7 @@ namespace spectra
             {
                 if (i > 0 && vals[2 * i] <= lambda.back())
                 {
-                    Warning("%s: spectrum file invalid: at %d'th entry, "
+                    spectra::diagnostics::PrintWarning("%s: spectrum file invalid: at %d'th entry, "
                             "wavelengths aren't "
                             "increasing: %f >= %f.",
                             fn, int(i), lambda.back(), vals[2 * i]);

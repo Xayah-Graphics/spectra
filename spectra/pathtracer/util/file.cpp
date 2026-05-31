@@ -1,7 +1,7 @@
 #include <spectra/pathtracer/util/file.h>
 
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/parallel.h>
 #include <spectra/pathtracer/util/string.h>
 
@@ -13,9 +13,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
+#ifdef SPECTRA_IS_WINDOWS
+#include <windows.h>
+#endif
 #ifndef SPECTRA_IS_WINDOWS
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -25,18 +29,37 @@
 
 namespace spectra
 {
-    namespace fs = std::filesystem;
-
-    static fs::path PathFromUTF8(const std::string& filename)
+    [[nodiscard]] static std::string SystemErrorString()
     {
 #ifdef SPECTRA_IS_WINDOWS
-        return fs::path(WStringFromUTF8(filename));
+        int error = GetLastError();
+        char* text = nullptr;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                       FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                       reinterpret_cast<LPSTR>(&text), 0, nullptr);
+        std::string message = text != nullptr ? text : "Unknown Windows system error";
+        if (text != nullptr) LocalFree(text);
 #else
-        return fs::path(filename);
+        int error = errno;
+        std::string message = strerror(error);
+#endif
+        message += " (";
+        message += std::to_string(error);
+        message += ")";
+        return message;
+    }
+
+    static std::filesystem::path PathFromUTF8(const std::string& filename)
+    {
+#ifdef SPECTRA_IS_WINDOWS
+        return std::filesystem::path(WStringFromUTF8(filename));
+#else
+        return std::filesystem::path(filename);
 #endif
     }
 
-    static std::string PathToUTF8(const fs::path& path)
+    static std::string PathToUTF8(const std::filesystem::path& path)
     {
 #ifdef SPECTRA_IS_WINDOWS
         return UTF8FromWString(path.wstring());
@@ -45,7 +68,7 @@ namespace spectra
 #endif
     }
 
-    static std::string ExtensionFromPath(const fs::path& path)
+    static std::string ExtensionFromPath(const std::filesystem::path& path)
     {
         std::string filename = PathToUTF8(path.filename());
         size_t pos = filename.find_last_of('.');
@@ -54,13 +77,13 @@ namespace spectra
         return filename.substr(pos + 1);
     }
 
-    static fs::path searchDirectory;
+    static std::filesystem::path searchDirectory;
 
     void SetSearchDirectory(std::string filename)
     {
-        fs::path path = PathFromUTF8(filename);
+        std::filesystem::path path = PathFromUTF8(filename);
         std::error_code ec;
-        if (!fs::is_directory(path, ec))
+        if (!std::filesystem::is_directory(path, ec))
             path = path.parent_path();
         searchDirectory = path;
     }
@@ -103,11 +126,11 @@ namespace spectra
         if (searchDirectory.empty() || filename.empty() || IsAbsolutePath(filename))
             return filename;
 
-        fs::path filepath = searchDirectory / PathFromUTF8(filename);
+        std::filesystem::path filepath = searchDirectory / PathFromUTF8(filename);
         std::error_code ec;
-        if (fs::exists(filepath, ec) && !ec)
+        if (std::filesystem::exists(filepath, ec) && !ec)
         {
-            fs::path absolute = fs::canonical(filepath, ec);
+            std::filesystem::path absolute = std::filesystem::canonical(filepath, ec);
             if (!ec)
                 return PathToUTF8(absolute);
         }
@@ -118,20 +141,20 @@ namespace spectra
     {
         std::vector<std::string> filenames;
 
-        fs::path basePath = PathFromUTF8(filenameBase);
-        fs::path resultDirPath = basePath.parent_path();
-        fs::path iterDirPath = resultDirPath.empty() ? fs::path(".") : resultDirPath;
+        std::filesystem::path basePath = PathFromUTF8(filenameBase);
+        std::filesystem::path resultDirPath = basePath.parent_path();
+        std::filesystem::path iterDirPath = resultDirPath.empty() ? std::filesystem::path(".") : resultDirPath;
 
         std::error_code ec;
-        fs::directory_iterator iter(iterDirPath, ec), end;
+        std::filesystem::directory_iterator iter(iterDirPath, ec), end;
         if (ec)
-            ErrorExit("%s: unable to open directory\n", PathToUTF8(iterDirPath).c_str());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open directory\n", PathToUTF8(iterDirPath).c_str()));
 
         std::string baseName = PathToUTF8(basePath.filename());
         size_t n = baseName.size();
         while (iter != end)
         {
-            const fs::directory_entry& entry = *iter;
+            const std::filesystem::directory_entry& entry = *iter;
             std::error_code entryEc;
             if (!entry.is_regular_file(entryEc) || entryEc)
             {
@@ -175,21 +198,21 @@ namespace spectra
 #ifdef SPECTRA_IS_WINDOWS
         std::ifstream ifs(WStringFromUTF8(filename).c_str(), std::ios::binary);
         if (!ifs)
-            ErrorExit("%s: %s", filename, ErrorString());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
         return std::string((std::istreambuf_iterator<char>(ifs)),
                            (std::istreambuf_iterator<char>()));
 #else
         int fd = open(filename.c_str(), O_RDONLY);
         if (fd == -1)
-            ErrorExit("%s: %s", filename, ErrorString());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
 
         struct stat stat;
         if (fstat(fd, &stat) != 0)
-            ErrorExit("%s: %s", filename, ErrorString());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
 
         std::string contents(stat.st_size, '\0');
         if (read(fd, contents.data(), stat.st_size) == -1)
-            ErrorExit("%s: %s", filename, ErrorString());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
 
         close(fd);
         return contents;
@@ -233,7 +256,7 @@ namespace spectra
                 return decompressed;
 
             case LIBDEFLATE_BAD_DATA:
-                ErrorExit("%s: invalid or corrupt compressed data", filename);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: invalid or corrupt compressed data", filename));
 
             case LIBDEFLATE_INSUFFICIENT_SPACE:
                 // Assume that the decompressed contents are > 4GB and that
@@ -279,7 +302,7 @@ namespace spectra
         FILE* f = FOpenRead(filename);
         if (f == nullptr)
         {
-            Error("%s: unable to open file", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open file", filename));
             return {};
         }
 
@@ -312,8 +335,8 @@ namespace spectra
                     curNumber[curNumberPos++] = '\0';
                     Float v;
                     if (!Atof(curNumber, &v))
-                        ErrorExit("%s: unable to parse float value \"%s\"", filename,
-                                  curNumber);
+                        throw std::runtime_error(spectra::diagnostics::Format("%s: unable to parse float value \"%s\"", filename,
+                                  curNumber));
                     values.push_back(v);
                     inNumber = false;
                     curNumberPos = 0;
@@ -333,8 +356,8 @@ namespace spectra
                 }
                 else if (isspace(c) == 0)
                 {
-                    Error("%s: unexpected character \"%c\" found at line %d.", filename, c,
-                          lineNumber);
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: unexpected character \"%c\" found at line %d.", filename, c,
+                          lineNumber));
                     return {};
                 }
             }
@@ -354,7 +377,7 @@ namespace spectra
         out.close();
         if (!out.good())
         {
-            Error("%s: %s", filename, ErrorString());
+            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
             return false;
         }
         return true;

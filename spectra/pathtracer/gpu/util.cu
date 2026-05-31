@@ -2,8 +2,12 @@
 
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
 #include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/core/diagnostics.h>
+
+#include <cstdio>
+#include <string>
+
 #ifdef NVTX
 #ifdef SPECTRA_IS_WINDOWS
 #include <windows.h>
@@ -28,7 +32,7 @@ namespace spectra
         {
             int major = version / 1000;
             int minor = (version - major * 1000) / 10;
-            return StringPrintf("%d.%d", major, minor);
+            return std::to_string(major) + "." + std::to_string(minor);
         };
 
         int nDevices;
@@ -44,24 +48,27 @@ namespace spectra
             cudaDeviceGetAttribute(&clockRateKHz, cudaDevAttrClockRate, i);
             float clockRate = clockRateKHz;
 
-            std::string deviceString = StringPrintf(
-                "CUDA device %d (%s) with %f MiB, %d SMs running at %f MHz "
+            char deviceString[512];
+            std::snprintf(deviceString, sizeof(deviceString),
+                "CUDA device %d (%s) with %g MiB, %d SMs running at %g MHz "
                 "with shader model %d.%d",
-                i, deviceProperties.name, deviceProperties.totalGlobalMem / (1024. * 1024.),
-                deviceProperties.multiProcessorCount, clockRate / 1000.,
+                i, deviceProperties.name,
+                static_cast<double>(deviceProperties.totalGlobalMem) / (1024. * 1024.),
+                deviceProperties.multiProcessorCount, static_cast<double>(clockRate) / 1000.,
                 deviceProperties.major, deviceProperties.minor);
-            devices += deviceString + "\n";
+            devices += deviceString;
+            devices += "\n";
         }
 
 #ifdef SPECTRA_IS_WINDOWS
         if (nDevices > 1)
-            ErrorExit("Found multiple GPUs.\n"
+            throw std::runtime_error(spectra::diagnostics::Format("Found multiple GPUs.\n"
                       "On Windows, this unfortunately causes a significant slowdown with "
                       "pbrt.\n"
                       "Please select a single GPU and use the --gpu-device command line "
                       "option to specify it.\n"
                       "Found devices:\n%s",
-                      devices);
+                      devices));
 #endif
 
         int device = Options->gpuDevice ? *Options->gpuDevice : 0;

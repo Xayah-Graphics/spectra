@@ -307,13 +307,10 @@ set(SPECTRA_GPU_CORE_SOURCE
         spectra/pathtracer/core/textures.cu
 )
 set(SPECTRA_GPU_UTIL_SOURCE
-        spectra/pathtracer/util/args.cpp
         spectra/pathtracer/util/bluenoise.cu
         spectra/pathtracer/util/buffercache.cpp
-        spectra/pathtracer/util/check.cu
         spectra/pathtracer/util/color.cu
         spectra/pathtracer/util/colorspace.cu
-        spectra/pathtracer/util/error.cu
         spectra/pathtracer/util/file.cpp
         spectra/pathtracer/util/image.cpp
         spectra/pathtracer/util/loopsubdiv.cpp
@@ -326,7 +323,6 @@ set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/parallel.cpp
         spectra/pathtracer/util/pmj02tables.cu
         spectra/pathtracer/util/primes.cu
-        spectra/pathtracer/util/print.cpp
         spectra/pathtracer/util/progressreporter.cpp
         spectra/pathtracer/util/pstd.cu
         spectra/pathtracer/util/sampling.cu

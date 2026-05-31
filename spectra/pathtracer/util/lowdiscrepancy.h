@@ -293,8 +293,6 @@ namespace spectra
     // RandomizeStrategy Definition
     enum class RandomizeStrategy { None, PermuteDigits, FastOwen, Owen };
 
-    std::string ToString(RandomizeStrategy r);
-
     SPECTRA_CPU_GPU
     inline uint64_t SobolIntervalToIndex(uint32_t m, uint64_t frame, Point2i p)
     {

@@ -2,17 +2,13 @@
 
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/lowdiscrepancy.h>
 #include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/scattering.h>
 
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <numeric>
-#include <set>
 
 namespace spectra
 {
@@ -224,8 +220,6 @@ namespace spectra
                                                         Vector3f ey,
                                                         Point3f pRect)
     {
-        // TODO: Delete anything unused in the below...
-
         // SphQuadInit()
         // local reference system 'R'
         Float exl = Length(ex), eyl = Length(ey);
@@ -500,62 +494,6 @@ namespace spectra
         if (pdf)
             *pdf = fhat / maximum;
         return x0 + width * t;
-    }
-
-    pstd::vector<Float> Sample1DFunction(std::function<Float(Float)> f, int nSteps,
-                                         int nSamples, Float min, Float max,
-                                         Allocator alloc)
-    {
-        pstd::vector<Float> values(nSteps, Float(0), alloc);
-        for (int i = 0; i < nSteps; ++i)
-        {
-            double accum = 0;
-            // One extra so that we sample at the very start and the very end.
-            for (int j = 0; j < nSamples + 1; ++j)
-            {
-                Float delta = Float(j) / nSamples;
-                Float v = Lerp((i + delta) / Float(nSteps), min, max);
-                Float fv = std::abs(f(v));
-                accum = std::max<double>(accum, fv);
-            }
-            // There's actually no need for the divide by nSamples, since
-            // these are normalzed into a PDF anyway.
-            values[i] = accum;
-        }
-        return values;
-    }
-
-    Array2D<Float> Sample2DFunction(std::function<Float(Float, Float)> f, int nu, int nv,
-                                    int nSamples, Bounds2f domain, Allocator alloc)
-    {
-        std::vector<Point2f> samples(nSamples);
-        for (int i = 0; i < nSamples; ++i)
-            samples[i] = Point2f(RadicalInverse(0, i), RadicalInverse(1, i));
-        // Check the corners, too.
-        samples.push_back(Point2f(0, 1));
-        samples.push_back(Point2f(1, 0));
-        samples.push_back(Point2f(1, 1));
-
-        Array2D<Float> values(nu, nv, alloc);
-        for (int v = 0; v < nv; ++v)
-        {
-            for (int u = 0; u < nu; ++u)
-            {
-                double accum = 0;
-                for (size_t i = 0; i < samples.size(); ++i)
-                {
-                    Point2f p = domain.Lerp(
-                        Point2f((u + samples[i][0]) / nu, (v + samples[i][1]) / nv));
-                    Float fuv = std::abs(f(p.x, p.y));
-                    accum = std::max<double>(accum, fuv);
-                }
-                // There's actually no need for the divide by nSamples, since
-                // these are normalzed into a PDF anyway.
-                values(u, v) = accum;
-            }
-        }
-
-        return values;
     }
 
     // AliasTable Method Definitions

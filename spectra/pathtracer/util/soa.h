@@ -101,7 +101,8 @@ namespace spectra
             SPECTRA_CPU_GPU
             operator SampledSpectrum() const
             {
-                return soa->Load(index); // (*(const SOA<SampledSpectrum> *)soa)[index];
+                const SOA<SampledSpectrum>* constSoa = soa;
+                return (*constSoa)[index];
             }
 
             SPECTRA_CPU_GPU
@@ -131,13 +132,6 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         GetSetIndirector operator[](int i) { return GetSetIndirector{this, i}; }
-
-        // TODO: get rid of these
-        SPECTRA_CPU_GPU
-        SampledSpectrum Load(int i) const { return (*this)[i]; }
-
-        SPECTRA_CPU_GPU
-        void Store(int i, const SampledSpectrum& s) { (*this)[i] = s; }
 
     private:
         // number of float4s needed per SampledSpectrum
@@ -214,7 +208,8 @@ namespace spectra
             SPECTRA_CPU_GPU
             operator SampledWavelengths() const
             {
-                return soa->Load(index); //  (*(const SOA<SampledWavelengths> *)soa)[index];
+                const SOA<SampledWavelengths>* constSoa = soa;
+                return (*constSoa)[index];
             }
 
             SPECTRA_CPU_GPU
@@ -253,12 +248,6 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         GetSetIndirector operator[](int i) { return GetSetIndirector{this, i}; }
-
-        SPECTRA_CPU_GPU
-        SampledWavelengths Load(int i) const { return (*this)[i]; }
-
-        SPECTRA_CPU_GPU
-        void Store(int i, const SampledWavelengths& wl) { (*this)[i] = wl; }
 
     private:
         static constexpr int n4 = (NSpectrumSamples + 3) / 4;

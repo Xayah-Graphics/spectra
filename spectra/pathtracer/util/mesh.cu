@@ -2,8 +2,7 @@
 
 #include <spectra/pathtracer/util/buffercache.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
-#include <spectra/pathtracer/util/print.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/transform.h>
 
 #include <rply/rply.h>
@@ -73,13 +72,13 @@ namespace spectra
 
     static void PlyErrorCallback(p_ply, const char* message)
     {
-        Error("PLY writing error: %s", message);
+        throw std::runtime_error(spectra::diagnostics::Format("PLY writing error: %s", message));
     }
 
     bool TriangleMesh::WritePLY(std::string filename) const
     {
         if (s)
-            Warning(R"(%s: PLY mesh will be missing tangent vectors "S".)", filename);
+            spectra::diagnostics::PrintWarning(R"(%s: PLY mesh will be missing tangent vectors "S".)", filename);
 
         return spectra::WritePLY(
             filename, pstd::span<const int>(vertexIndices, 3 * nTriangles),
@@ -225,7 +224,7 @@ namespace spectra
 
     void rply_message_callback(p_ply ply, const char* message)
     {
-        Warning("rply: %s", message);
+        spectra::diagnostics::PrintWarning("rply: %s", message);
     }
 
     /* Callback to handle vertex data from RPly */
@@ -257,7 +256,7 @@ namespace spectra
 
         if (length != 3 && length != 4)
         {
-            Warning("plymesh: Ignoring face with %i vertices (only triangles and quads "
+            spectra::diagnostics::PrintWarning("plymesh: Ignoring face with %i vertices (only triangles and quads "
                     "are supported!)",
                     (int)length);
             return 1;
@@ -307,10 +306,10 @@ namespace spectra
 
         p_ply ply = ply_open(filename.c_str(), rply_message_callback, 0, nullptr);
         if (!ply)
-            ErrorExit("Couldn't open PLY file \"%s\"", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("Couldn't open PLY file \"%s\"", filename));
 
         if (ply_read_header(ply) == 0)
-            ErrorExit("Unable to read the header of PLY file \"%s\"", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("Unable to read the header of PLY file \"%s\"", filename));
 
         p_ply_element element = nullptr;
         size_t vertexCount = 0, faceCount = 0;
@@ -329,7 +328,7 @@ namespace spectra
         }
 
         if (vertexCount == 0 || faceCount == 0)
-            ErrorExit("%s: PLY file is invalid! No face/vertex elements found!", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: PLY file is invalid! No face/vertex elements found!", filename));
 
         mesh.p.resize(vertexCount);
         if (ply_set_read_cb(ply, "vertex", "x", rply_vertex_callback, mesh.p.data(), 0x30) ==
@@ -339,7 +338,7 @@ namespace spectra
             ply_set_read_cb(ply, "vertex", "z", rply_vertex_callback, mesh.p.data(), 0x32) ==
             0)
         {
-            ErrorExit("%s: Vertex coordinate property not found!", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: Vertex coordinate property not found!", filename));
         }
 
         mesh.n.resize(vertexCount);
@@ -378,14 +377,14 @@ namespace spectra
         context.quadIndices.reserve(faceCount * 4);
         if (ply_set_read_cb(ply, "face", "vertex_indices", rply_face_callback, &context, 0) ==
             0)
-            ErrorExit("%s: vertex indices not found in PLY file", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: vertex indices not found in PLY file", filename));
 
         if (ply_set_read_cb(ply, "face", "face_indices", rply_faceindex_callback,
                             &mesh.faceIndices, 0) != 0)
             mesh.faceIndices.reserve(faceCount);
 
         if (ply_read(ply) == 0)
-            ErrorExit("%s: unable to read the contents of PLY file", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to read the contents of PLY file", filename));
 
         mesh.triIndices = std::move(context.triIndices);
         mesh.quadIndices = std::move(context.quadIndices);
@@ -394,14 +393,14 @@ namespace spectra
 
         for (int idx : mesh.triIndices)
             if (idx < 0 || idx >= mesh.p.size())
-                ErrorExit("plymesh: Vertex index %i is out of bounds! "
+                throw std::runtime_error(spectra::diagnostics::Format("plymesh: Vertex index %i is out of bounds! "
                           "Valid range is [0..%i)",
-                          idx, int(mesh.p.size()));
+                          idx, int(mesh.p.size())));
         for (int idx : mesh.quadIndices)
             if (idx < 0 || idx >= mesh.p.size())
-                ErrorExit("plymesh: Vertex index %i is out of bounds! "
+                throw std::runtime_error(spectra::diagnostics::Format("plymesh: Vertex index %i is out of bounds! "
                           "Valid range is [0..%i)",
-                          idx, int(mesh.p.size()));
+                          idx, int(mesh.p.size())));
 
         return mesh;
     }

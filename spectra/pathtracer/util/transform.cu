@@ -2,9 +2,8 @@
 
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/print.h>
 
 #include <algorithm>
 #include <cmath>

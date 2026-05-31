@@ -9,7 +9,7 @@
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/util/bluenoise.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/hash.h>
 #include <spectra/pathtracer/util/lowdiscrepancy.h>
 #include <spectra/pathtracer/util/math.h>
@@ -167,7 +167,7 @@ namespace spectra
             : samplesPerPixel(samplesPerPixel), randomize(randomizer), seed(seed)
         {
             if (!IsPowerOf2(samplesPerPixel))
-                Warning(
+                spectra::diagnostics::PrintWarning(
                     "Sobol samplers with non power-of-two sample counts (%d) are suboptimal.",
                     samplesPerPixel);
         }
@@ -249,7 +249,7 @@ namespace spectra
             : randomize(randomize), seed(seed)
         {
             if (!IsPowerOf2(samplesPerPixel))
-                Warning(
+                spectra::diagnostics::PrintWarning(
                     "Sobol samplers with non power-of-two sample counts (%d) are suboptimal.",
                     samplesPerPixel);
             log2SamplesPerPixel = Log2Int(samplesPerPixel);
@@ -529,7 +529,7 @@ namespace spectra
             : samplesPerPixel(samplesPerPixel), seed(seed), randomize(randomize)
         {
             if (!IsPowerOf2(samplesPerPixel))
-                Warning("Non power-of-two sample count %d will perform suboptimally with the "
+                spectra::diagnostics::PrintWarning("Non power-of-two sample count %d will perform suboptimally with the "
                         "SobolSampler.",
                         samplesPerPixel);
             scale = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));

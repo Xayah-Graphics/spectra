@@ -1,5 +1,4 @@
 #include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <spectra/pathtracer/util/vecmath.h>
 

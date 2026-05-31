@@ -9,7 +9,7 @@
 #include <spectra/pathtracer/core/materials.h>
 #include <spectra/scene.h>
 #include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/loopsubdiv.h>
 #include <spectra/pathtracer/util/mesh.h>
@@ -189,7 +189,7 @@ namespace spectra::optix
         {
             auto iter = namedMaterials.find(shape.materialName);
             if (iter == namedMaterials.end())
-                ErrorExit(&shape.loc, "%s: material not defined", shape.materialName);
+                throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: material not defined", shape.materialName));
             return iter->second;
         }
         else
@@ -217,7 +217,7 @@ namespace spectra::optix
         {
             auto iter = floatTextures.find(alphaTexName);
             if (iter == floatTextures.end())
-                ErrorExit(&shape.loc, "%s: alpha texture not defined.", alphaTexName);
+                throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: alpha texture not defined.", alphaTexName));
 
             alphaTexture = iter->second;
         }
@@ -226,9 +226,9 @@ namespace spectra::optix
         {
             // It would be nice to just use the spectra::UniversalTextureEvaluator (maybe
             // always), but optix complains "spectra::Error: Found call graph recursion"...
-            ErrorExit(&shape.loc,
+            throw std::runtime_error(spectra::diagnostics::Format(&shape.loc,
                       "%s: alpha texture too complex for spectra::BasicTextureEvaluator.",
-                      alphaTexName);
+                      alphaTexName));
         }
 
         return alphaTexture;
@@ -257,7 +257,7 @@ namespace spectra::optix
 
             auto iter = media.find(name);
             if (iter == media.end())
-                ErrorExit(&shape.loc, "%s: medium not defined", name);
+                throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: medium not defined", name));
             return iter->second;
         };
 
@@ -280,7 +280,7 @@ namespace spectra::optix
             std::string filename =
                 ResolveFilename(shape.parameters.GetOneString("filename", ""));
             if (filename.empty())
-                ErrorExit(&shape.loc, "plymesh: \"filename\" must be provided.");
+                throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "plymesh: \"filename\" must be provided."));
             TriQuadMesh plyMesh = TriQuadMesh::ReadPLY(filename); // todo: alloc
             if (!plyMesh.triIndices.empty() || !plyMesh.quadIndices.empty())
             {
@@ -295,8 +295,8 @@ namespace spectra::optix
                 {
                     auto iter = floatTextures.find(displacementTexName);
                     if (iter == floatTextures.end())
-                        ErrorExit(&shape.loc, "%s: no such texture defined.",
-                                  displacementTexName);
+                        throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: no such texture defined.",
+                                  displacementTexName));
                     FloatTexture displacement = iter->second;
 
 
@@ -398,13 +398,13 @@ namespace spectra::optix
                 int nLevels = shape.parameters.GetOneInt("levels", 3);
                 std::vector<int> vertexIndices = shape.parameters.GetIntArray("indices");
                 if (vertexIndices.empty())
-                    ErrorExit(&shape.loc, "Vertex indices \"indices\" not "
-                              "provided for LoopSubdiv shape.");
+                    throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Vertex indices \"indices\" not "
+                              "provided for LoopSubdiv shape."));
 
                 std::vector<Point3f> P = shape.parameters.GetPoint3fArray("P");
                 if (P.empty())
-                    ErrorExit(&shape.loc, "Vertex positions \"P\" not provided "
-                              "for LoopSubdiv shape.");
+                    throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Vertex positions \"P\" not provided "
+                              "for LoopSubdiv shape."));
 
                 // don't actually use this for now...
                 std::string scheme = shape.parameters.GetOneString("scheme", "loop");
@@ -427,12 +427,12 @@ namespace spectra::optix
                     // shapes earlier, we're not expecting this..
                     std::string filename =
                         ResolveFilename(shape.parameters.GetOneString("filename", ""));
-                    ErrorExit(&shape.loc,
+                    throw std::runtime_error(spectra::diagnostics::Format(&shape.loc,
                               "%s: PLY file being used as an area light has quads--"
                               "this is currently unsupported. Please replace them with "
                               "\"bilinearmesh\" "
                               "shapes as a workaround. (Sorry!).",
-                              filename);
+                              filename));
                 }
 
                 mesh = alloc.new_object<TriangleMesh>(
@@ -531,7 +531,7 @@ namespace spectra::optix
                 if (shape.lightIndex != -1)
                 {
                     if (!material)
-                        Warning(&shape.loc, "Ignoring area light specification for shape "
+                        spectra::diagnostics::PrintWarning(&shape.loc, "Ignoring area light specification for shape "
                                 "with \"interface\" material.");
                     else
                     {
@@ -586,18 +586,18 @@ namespace spectra::optix
         int degree = parameters.GetOneInt("degree", 3);
         if (degree != 2 && degree != 3)
         {
-            Error(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.",
-                  degree);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.",
+                  degree));
             return {};
         }
 
         std::string basis = parameters.GetOneString("basis", "bezier");
         if (basis != "bezier" && basis != "bspline")
         {
-            Error(loc,
+            throw std::runtime_error(spectra::diagnostics::Format(loc,
                   "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
                   "supported.",
-                  basis);
+                  basis));
             return {};
         }
 
@@ -611,10 +611,10 @@ namespace spectra::optix
             // one and then use degree more control points.
             if (((cp.size() - 1 - degree) % degree) != 0)
             {
-                Error(loc,
+                throw std::runtime_error(spectra::diagnostics::Format(loc,
                       "Invalid number of control points %d: for the degree %d "
                       "Bezier basis %d + n * %d are required, for n >= 0.",
-                      (int)cp.size(), degree, degree + 1, degree);
+                      (int)cp.size(), degree, degree + 1, degree));
                 return {};
             }
             nSegments = (cp.size() - 1) / degree;
@@ -623,10 +623,10 @@ namespace spectra::optix
         {
             if (cp.size() < degree + 1)
             {
-                Error(loc,
+                throw std::runtime_error(spectra::diagnostics::Format(loc,
                       "Invalid number of control points %d: for the degree %d "
                       "b-spline basis, must have >= %d.",
-                      int(cp.size()), degree, degree + 1);
+                      int(cp.size()), degree, degree + 1));
                 return {};
             }
             nSegments = cp.size() - degree;
@@ -642,8 +642,7 @@ namespace spectra::optix
             type = CurveType::Cylinder;
         else
         {
-            Error(loc, R"(Unknown curve type "%s".  Using "cylinder".)", curveType);
-            type = CurveType::Cylinder;
+            throw std::runtime_error(spectra::diagnostics::Format(loc, R"(Unknown curve type "%s".)", curveType));
         }
 
         std::vector<Normal3f> n = parameters.GetNormal3fArray("N");
@@ -651,15 +650,15 @@ namespace spectra::optix
         {
             if (type != CurveType::Ribbon)
             {
-                Warning("Curve normals are only used with \"ribbon\" type curves.");
+                spectra::diagnostics::PrintWarning("Curve normals are only used with \"ribbon\" type curves.");
                 n = {};
             }
             else if (n.size() != nSegments + 1)
             {
-                Error(loc,
+                throw std::runtime_error(spectra::diagnostics::Format(loc,
                       "Invalid number of normals %d: must provide %d normals for "
                       "ribbon curves with %d segments.",
-                      int(n.size()), nSegments + 1, nSegments);
+                      int(n.size()), nSegments + 1, nSegments));
                 return {};
             }
             for (Normal3f& nn : n)
@@ -667,8 +666,8 @@ namespace spectra::optix
         }
         else if (type == CurveType::Ribbon)
         {
-            Error(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
-                  "curves.");
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
+                  "curves."));
             return {};
         }
 
@@ -938,7 +937,7 @@ namespace spectra::optix
             if (shape.lightIndex != -1)
             {
                 if (!material)
-                    Warning(&shape.loc, "Ignoring area light specification for shape with "
+                    spectra::diagnostics::PrintWarning(&shape.loc, "Ignoring area light specification for shape with "
                             "\"interface\" material.");
                 else
                 {
@@ -1058,7 +1057,7 @@ namespace spectra::optix
             if (s.lightIndex != -1)
             {
                 if (!material)
-                    Warning(&s.loc, "Ignoring area light specification for shape with "
+                    spectra::diagnostics::PrintWarning(&s.loc, "Ignoring area light specification for shape with "
                             "\"interface\" material.");
                 else
                 {
@@ -1100,7 +1099,7 @@ namespace spectra::optix
                                         void* cbdata)
     {
         static_cast<void>(cbdata);
-        if (level <= 2) Error("OptiX: %s: %s", tag, message);
+        if (level <= 2) throw std::runtime_error(spectra::diagnostics::Format("OptiX: %s: %s", tag, message));
     }
 
     int SpectraOptiXAggregate::addHGRecords(const BVH& bvh)
@@ -1494,7 +1493,7 @@ namespace spectra::optix
                 shape.name != "trianglemesh" && shape.name != "plymesh" &&
                 shape.name != "loopsubdiv" && shape.name != "bilinearmesh" &&
                 shape.name != "curve")
-                ErrorExit(&shape.loc, "%s: unknown shape", shape.name);
+                throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: unknown shape", shape.name));
 
         std::map<int, TriQuadMesh> plyMeshes =
             PreparePLYMeshes(scene.shapes, textures.floatTextures);
@@ -1564,7 +1563,7 @@ namespace spectra::optix
             const auto& def = *iter;
 
             if (!def.second->animatedShapes.empty())
-                Warning("Ignoring %d animated shapes in instance \"%s\".",
+                spectra::diagnostics::PrintWarning("Ignoring %d animated shapes in instance \"%s\".",
                         def.second->animatedShapes.size(), def.first);
 
             Instance inst;
@@ -1693,12 +1692,12 @@ namespace spectra::optix
                 const auto& sceneInstance = scene.instances[index];
                 auto iter = instanceMapIters[index];
                 if (iter == instanceMap.end())
-                    ErrorExit(&sceneInstance.loc, "%s: object instance not defined.",
-                              sceneInstance.name);
+                    throw std::runtime_error(spectra::diagnostics::Format(&sceneInstance.loc, "%s: object instance not defined.",
+                              sceneInstance.name));
 
                 if (sceneInstance.renderFromInstance == nullptr)
                 {
-                    Warning(&sceneInstance.loc,
+                    spectra::diagnostics::PrintWarning(&sceneInstance.loc,
                             "%s: object instance has animated transformation. TODO",
                             sceneInstance.name);
                     continue;
@@ -1757,7 +1756,7 @@ namespace spectra::optix
 
 
         if (!scene.animatedShapes.empty())
-            Warning("Ignoring %d animated shapes", scene.animatedShapes.size());
+            spectra::diagnostics::PrintWarning("Ignoring %d animated shapes", scene.animatedShapes.size());
 
         ///////////////////////////////////////////////////////////////////////////
         // Final SBT initialization

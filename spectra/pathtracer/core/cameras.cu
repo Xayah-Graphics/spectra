@@ -6,13 +6,12 @@
 #include <spectra/pathtracer/core/filters.h>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/image.h>
 #include <spectra/pathtracer/util/lowdiscrepancy.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 
 #include <algorithm>
 
@@ -149,7 +148,7 @@ namespace spectra
           medium(p.medium)
     {
         if (cameraTransform.CameraFromRenderHasScale())
-            Warning("Scaling detected in rendering space to camera space transformation!\n"
+            spectra::diagnostics::PrintWarning("Scaling detected in rendering space to camera space transformation!\n"
                 "The system has numerous assumptions, implicit and explicit,\n"
                 "that this transform will have no scale factors in it.\n"
                 "Proceed at your own risk; your image may have errors or\n"
@@ -284,10 +283,10 @@ namespace spectra
             camera = SphericalCamera::Create(parameters, cameraTransform, film, medium, loc,
                                              alloc);
         else
-            ErrorExit(loc, "%s: camera type unknown.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: camera type unknown.", name));
 
         if (!camera)
-            ErrorExit(loc, "%s: unable to create camera.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create camera.", name));
 
         parameters.ReportUnused();
         return camera;
@@ -304,7 +303,7 @@ namespace spectra
         shutterClose = parameters.GetOneFloat("shutterclose", 1.f);
         if (shutterClose < shutterOpen)
         {
-            Warning(loc, "Shutter close time %f < shutter open %f.  Swapping them.",
+            spectra::diagnostics::PrintWarning(loc, "Shutter close time %f < shutter open %f.  Swapping them.",
                     shutterClose, shutterOpen);
             pstd::swap(shutterClose, shutterOpen);
         }
@@ -429,7 +428,7 @@ namespace spectra
             }
             else
             {
-                Error("\"screenwindow\" should have four values");
+                throw std::runtime_error(spectra::diagnostics::Format("\"screenwindow\" should have four values"));
             }
         }
         return alloc.new_object<OrthographicCamera>(cameraBaseParameters, screen, lensradius,
@@ -560,7 +559,7 @@ namespace spectra
             }
             else
             {
-                Error(loc, "\"screenwindow\" should have four values");
+                throw std::runtime_error(spectra::diagnostics::Format(loc, "\"screenwindow\" should have four values"));
             }
         }
         Float fov = parameters.GetOneFloat("fov", 90.);
@@ -718,7 +717,7 @@ namespace spectra
             }
             else
             {
-                Error(loc, "\"screenwindow\" should have four values");
+                throw std::runtime_error(spectra::diagnostics::Format(loc, "\"screenwindow\" should have four values"));
             }
         }
         (void)lensradius; // don't need this
@@ -731,10 +730,10 @@ namespace spectra
         else if (m == "equirectangular")
             mapping = EquiRectangular;
         else
-            ErrorExit(loc,
+            throw std::runtime_error(spectra::diagnostics::Format(loc,
                       "%s: unknown mapping for spherical camera. (Must be "
                       "\"equalarea\" or \"equirectangular\".)",
-                      m);
+                      m));
 
         return alloc.new_object<SphericalCamera>(cameraBaseParameters, mapping);
     }
@@ -771,7 +770,7 @@ namespace spectra
                 // Set aperture stop diameter
                 setApertureDiameter /= 1000;
                 if (setApertureDiameter > apertureDiameter)
-                    Warning("Aperture diameter %f is greater than maximum possible %f. "
+                    spectra::diagnostics::PrintWarning("Aperture diameter %f is greater than maximum possible %f. "
                             "Clamping it.",
                             setApertureDiameter, apertureDiameter);
                 else
@@ -889,15 +888,15 @@ namespace spectra
         Ray rScene(Point3f(x, 0, LensFrontZ() + 1), Vector3f(0, 0, -1));
         Ray rFilm;
         if (!TraceLensesFromScene(rScene, &rFilm))
-            ErrorExit("Unable to trace ray from scene to film for thick lens "
-                "approximation. Is aperture stop extremely small?");
+            throw std::runtime_error(spectra::diagnostics::Format("Unable to trace ray from scene to film for thick lens "
+                "approximation. Is aperture stop extremely small?"));
         ComputeCardinalPoints(rScene, rFilm, &pz[0], &fz[0]);
 
         // Compute cardinal points for scene side of lens system
         rFilm = Ray(Point3f(x, 0, LensRearZ() - 1), Vector3f(0, 0, 1));
         if (TraceLensesFromFilm(rFilm, &rScene) == 0)
-            ErrorExit("Unable to trace ray from film to scene for thick lens "
-                "approximation. Is aperture stop extremely small?");
+            throw std::runtime_error(spectra::diagnostics::Format("Unable to trace ray from film to scene for thick lens "
+                "approximation. Is aperture stop extremely small?"));
         ComputeCardinalPoints(rFilm, rScene, &pz[1], &fz[1]);
     }
 
@@ -910,9 +909,9 @@ namespace spectra
         Float z = -focusDistance;
         Float c = (pz[1] - z - pz[0]) * (pz[1] - z - 4 * f - pz[0]);
         if (c <= 0)
-            ErrorExit("Coefficient must be positive. It looks focusDistance %f "
+            throw std::runtime_error(spectra::diagnostics::Format("Coefficient must be positive. It looks focusDistance %f "
                       " is too short for a given lenses configuration",
-                      focusDistance);
+                      focusDistance));
         Float delta = (pz[1] - z + pz[0] - std::sqrt(c)) / 2;
 
         return elementInterfaces.back().thickness + delta;
@@ -1400,22 +1399,22 @@ namespace spectra
 
         if (lensFile.empty())
         {
-            Error(loc, "No lens description file supplied!");
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "No lens description file supplied!"));
             return nullptr;
         }
         // Load element data from lens description file
         std::vector<Float> lensParameters = ReadFloatFile(lensFile);
         if (lensParameters.empty())
         {
-            Error(loc, "Error reading lens specification file \"%s\".", lensFile);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "Error reading lens specification file \"%s\".", lensFile));
             return nullptr;
         }
         if (lensParameters.size() % 4 != 0)
         {
-            Error(loc,
+            throw std::runtime_error(spectra::diagnostics::Format(loc,
                   "%s: excess values in lens specification file; "
                   "must be multiple-of-four values, read %d.",
-                  lensFile, (int)lensParameters.size());
+                  lensFile, (int)lensParameters.size()));
             return nullptr;
         }
 
@@ -1516,9 +1515,9 @@ namespace spectra
                 {
                     ImageChannelDesc rgbDesc = apertureImage.GetChannelDesc({"R", "G", "B"});
                     if (!rgbDesc)
-                        ErrorExit("%s: didn't find R, G, B channels to average for "
+                        throw std::runtime_error(spectra::diagnostics::Format("%s: didn't find R, G, B channels to average for "
                                   "aperture image.",
-                                  apertureName);
+                                  apertureName));
 
                     Image mono(PixelFormat::Float, apertureImage.Resolution(), {"Y"}, nullptr,
                                alloc);

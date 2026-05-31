@@ -532,15 +532,6 @@ namespace pstd
                 push_back(value);
         }
 
-        template <class InputIt>
-        void assign(InputIt first, InputIt last)
-        {
-            SPECTRA_FATAL("TODO");
-            // TODO
-        }
-
-        void assign(std::initializer_list<T>& init) { assign(init.begin(), init.end()); }
-
         ~vector()
         {
             clear();
@@ -606,9 +597,6 @@ namespace pstd
             nAlloc = n;
             ptr = ra;
         }
-
-        // TODO: shrink_to_fit
-
         SPECTRA_CPU_GPU
         reference operator[](size_type index)
         {
@@ -648,24 +636,6 @@ namespace pstd
             nStored = 0;
         }
 
-        iterator insert(const_iterator, const T& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        iterator insert(const_iterator, T&& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        iterator insert(const_iterator pos, size_type count, const T& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
         template <class InputIt>
         iterator insert(const_iterator pos, InputIt first, InputIt last)
         {
@@ -677,20 +647,7 @@ namespace pstd
                 return begin() + firstOffset;
             }
             else
-                SPECTRA_FATAL("TODO");
-        }
-
-        iterator insert(const_iterator pos, std::initializer_list<T> init)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        template <class... Args>
-        iterator emplace(const_iterator pos, Args&&... args)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
+                SPECTRA_FATAL("pstd::vector::insert only supports appending ranges");
         }
 
         template <class... Args>
@@ -701,18 +658,6 @@ namespace pstd
 
             alloc.construct(ptr + nStored, std::forward<Args>(args)...);
             ++nStored;
-        }
-
-        iterator erase(const_iterator pos)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
-        iterator erase(const_iterator first, const_iterator last)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
         }
 
         void push_back(const T& value)
@@ -762,15 +707,9 @@ namespace pstd
             nStored = n;
         }
 
-        void resize(size_type count, const value_type& value)
-        {
-            // TODO
-            SPECTRA_FATAL("TODO");
-        }
-
         void swap(vector& other)
         {
-            CHECK(alloc == other.alloc); // TODO: handle this
+            CHECK(alloc == other.alloc);
             std::swap(ptr, other.ptr);
             std::swap(nAlloc, other.nAlloc);
             std::swap(nStored, other.nStored);

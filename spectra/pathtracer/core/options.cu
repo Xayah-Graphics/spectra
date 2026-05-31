@@ -1,7 +1,6 @@
 #include <spectra/pathtracer/core/options.h>
 
 #include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/print.h>
 
 namespace spectra
 {

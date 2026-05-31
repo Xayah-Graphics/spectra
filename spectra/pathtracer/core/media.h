@@ -8,10 +8,9 @@
 #include <spectra/pathtracer/core/paramdict.h>
 #include <spectra/pathtracer/core/textures.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/scattering.h>
 #include <spectra/pathtracer/util/spectrum.h>
@@ -570,7 +569,7 @@ namespace spectra
             if (abort)
                 SPECTRA_FATAL("%p: %s (%s:%d)", ptr, msg, file, line);
             else
-                Warning("%p: %s (%s:%d)", ptr, msg, file, line);
+                spectra::diagnostics::PrintWarning("%p: %s (%s:%d)", ptr, msg, file, line);
         }
 
         NanoVDBBuffer() = default;

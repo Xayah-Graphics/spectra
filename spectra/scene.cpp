@@ -11,7 +11,6 @@
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/mesh.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/progressreporter.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/string.h>
@@ -20,6 +19,7 @@
 #include <double-conversion/double-conversion.h>
 
 #include <atomic>
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +34,7 @@
 #elif defined(SPECTRA_IS_WINDOWS)
 #include <windows.h>
 #endif
+#include <format>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -73,6 +74,27 @@ namespace spectra
 
 namespace spectra::scene
 {
+    [[nodiscard]] static std::string SystemErrorString()
+    {
+#ifdef SPECTRA_IS_WINDOWS
+        int error = GetLastError();
+        char* text = nullptr;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                       FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                       reinterpret_cast<LPSTR>(&text), 0, nullptr);
+        std::string message = text != nullptr ? text : "Unknown Windows system error";
+        if (text != nullptr) LocalFree(text);
+#else
+        int error = errno;
+        std::string message = strerror(error);
+#endif
+        message += " (";
+        message += std::to_string(error);
+        message += ")";
+        return message;
+    }
+
     struct Token
     {
         Token() = default;
@@ -156,7 +178,7 @@ namespace spectra::scene
         switch (ch)
         {
         case EOF:
-            ErrorExit(&loc, "premature EOF after character escape '\\'");
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "premature EOF after character escape '\\'"));
         case 'b':
             return '\b';
         case 'f':
@@ -174,7 +196,7 @@ namespace spectra::scene
         case '\"':
             return '\"';
         default:
-            ErrorExit(&loc, "unexpected escaped character \"%c\"", ch);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "unexpected escaped character \"%c\"", ch));
         }
         return 0; // NOTREACHED
     }
@@ -209,14 +231,16 @@ namespace spectra::scene
         int fd = open(filename.c_str(), O_RDONLY);
         if (fd == -1)
         {
-            errorCallback(spectra::StringPrintf("%s: %s", filename, spectra::ErrorString()).c_str(), nullptr);
+            std::string message = std::format("{}: {}", filename, SystemErrorString());
+            errorCallback(message.c_str(), nullptr);
             return nullptr;
         }
 
         struct stat stat;
         if (fstat(fd, &stat) != 0)
         {
-            errorCallback(spectra::StringPrintf("%s: %s", filename, spectra::ErrorString()).c_str(), nullptr);
+            std::string message = std::format("{}: {}", filename, SystemErrorString());
+            errorCallback(message.c_str(), nullptr);
             return nullptr;
         }
 
@@ -232,11 +256,15 @@ namespace spectra::scene
 
         void* ptr = mmap(nullptr, len, PROT_READ, MAP_PRIVATE | MAP_NORESERVE, fd, 0);
         if (ptr == MAP_FAILED)
-            errorCallback(spectra::StringPrintf("%s: %s", filename, spectra::ErrorString()).c_str(), nullptr);
+        {
+            std::string message = std::format("{}: {}", filename, SystemErrorString());
+            errorCallback(message.c_str(), nullptr);
+        }
 
         if (close(fd) != 0)
         {
-            errorCallback(spectra::StringPrintf("%s: %s", filename, spectra::ErrorString()).c_str(), nullptr);
+            std::string message = std::format("{}: {}", filename, SystemErrorString());
+            errorCallback(message.c_str(), nullptr);
             return nullptr;
         }
 
@@ -250,7 +278,8 @@ namespace spectra::scene
                            NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
                            (LPSTR)&messageBuffer, 0, NULL);
 
-            errorCallback(StringPrintf("%s: %s", filename, messageBuffer).c_str(), nullptr);
+            std::string message = std::format("{}: {}", filename, messageBuffer);
+            errorCallback(message.c_str(), nullptr);
 
             LocalFree(messageBuffer);
             return nullptr;
@@ -319,11 +348,16 @@ namespace spectra::scene
 #ifdef SPECTRA_HAVE_MMAP
         if (unmapPtr && unmapLength > 0)
             if (munmap(unmapPtr, unmapLength) != 0)
-                errorCallback(spectra::StringPrintf("munmap: %s", spectra::ErrorString()).c_str(), nullptr);
+            {
+                std::string message = std::format("munmap: {}", SystemErrorString());
+                errorCallback(message.c_str(), nullptr);
+            }
 #elif defined(SPECTRA_IS_WINDOWS)
         if (unmapPtr && UnmapViewOfFile(unmapPtr) == 0)
-            errorCallback(StringPrintf("UnmapViewOfFile: %s", ErrorString()).c_str(),
-                          nullptr);
+        {
+            std::string message = std::format("UnmapViewOfFile: {}", SystemErrorString());
+            errorCallback(message.c_str(), nullptr);
+        }
 #endif
     }
 
@@ -446,15 +480,17 @@ namespace spectra::scene
         while (index < t.token.size())
         {
             if (!(t.token[index] >= '0' && t.token[index] <= '9'))
-                ErrorExit(&t.loc, "\"%c\": expected a number", t.token[index]);
+                throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "\"%c\": expected a number", t.token[index]));
             value = 10 * value + (t.token[index] - '0');
             ++index;
 
             if (value > std::numeric_limits<int>::max())
-                ErrorExit(&t.loc,
-                          "Numeric value too large to represent as a 32-bit integer.");
+                throw std::runtime_error(spectra::diagnostics::Format(&t.loc,
+                          "Numeric value too large to represent as a 32-bit integer."));
             else if (value < std::numeric_limits<int>::lowest())
-                Warning(&t.loc, "Numeric value %d too low to represent as a 32-bit integer.");
+                spectra::diagnostics::PrintWarning(&t.loc,
+                    "Numeric value %lld too low to represent as a 32-bit integer.",
+                    static_cast<long long>(value));
         }
 
         return negate ? -value : value;
@@ -466,7 +502,7 @@ namespace spectra::scene
         if (t.token.size() == 1)
         {
             if (!(t.token[0] >= '0' && t.token[0] <= '9'))
-                ErrorExit(&t.loc, "\"%c\": expected a number", t.token[0]);
+                throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "\"%c\": expected a number", t.token[0]));
             return t.token[0] - '0';
         }
 
@@ -497,7 +533,7 @@ namespace spectra::scene
             val = floatParser.StringToDouble(bufp, t.token.size(), &length);
 
         if (length == 0)
-            ErrorExit(&t.loc, "%s: expected a number", toString(t.token));
+            throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "%s: expected a number", toString(t.token)));
 
         return val;
     }
@@ -510,7 +546,7 @@ namespace spectra::scene
     static std::string_view dequoteString(const Token& t)
     {
         if (!isQuotedString(t.token))
-            ErrorExit(&t.loc, "\"%s\": expected quoted string", toString(t.token));
+            throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "\"%s\": expected quoted string", toString(t.token)));
 
         std::string_view str = t.token;
         str.remove_prefix(1);
@@ -560,8 +596,8 @@ namespace spectra::scene
 
             auto typeBegin = skipSpace(decl.begin());
             if (typeBegin == decl.end())
-                ErrorExit(&t->loc, "Parameter \"%s\" doesn't have a type declaration?!",
-                          std::string(decl.begin(), decl.end()));
+                throw std::runtime_error(spectra::diagnostics::Format(&t->loc, "Parameter \"%s\" doesn't have a type declaration?!",
+                          std::string(decl.begin(), decl.end())));
 
             // Find end of type declaration
             auto typeEnd = skipToSpace(typeBegin);
@@ -569,8 +605,8 @@ namespace spectra::scene
 
             auto nameBegin = skipSpace(typeEnd);
             if (nameBegin == decl.end())
-                ErrorExit(&t->loc, "Unable to find parameter name from \"%s\"",
-                          std::string(decl.begin(), decl.end()));
+                throw std::runtime_error(spectra::diagnostics::Format(&t->loc, "Unable to find parameter name from \"%s\"",
+                          std::string(decl.begin(), decl.end())));
 
             auto nameEnd = skipToSpace(nameBegin);
             param->name.assign(nameBegin, nameEnd);
@@ -700,7 +736,7 @@ namespace spectra::scene
 
         auto parseError = [&](const char* msg, const FileLoc* loc)
         {
-            ErrorExit(loc, "%s", msg);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg));
         };
 
         // nextToken is a little helper function that handles the file stack,
@@ -716,7 +752,7 @@ namespace spectra::scene
             {
                 if ((flags & TokenRequired) != 0)
                 {
-                    ErrorExit("premature end of file");
+                    throw std::runtime_error(spectra::diagnostics::Format("premature end of file"));
                 }
                 return {};
             }
@@ -759,7 +795,7 @@ namespace spectra::scene
                 nextToken, unget, [&](const Token& t, const char* msg)
                 {
                     std::string token = toString(t.token);
-                    std::string str = StringPrintf("%s: %s", token, msg);
+                    std::string str = std::format("{}: {}", token, msg);
                     parseError(str.c_str(), &t.loc);
                 });
             (target->*apiFunc)(n, std::move(parameterVector), loc);
@@ -767,7 +803,7 @@ namespace spectra::scene
 
         auto syntaxError = [&](const Token& t)
         {
-            ErrorExit(&t.loc, "Unknown directive: %s", toString(t.token));
+            throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "Unknown directive: %s", toString(t.token)));
         };
 
         pstd::optional<Token> tok;
@@ -867,8 +903,8 @@ namespace spectra::scene
                     Token filenameToken = *nextToken(TokenRequired);
                     std::string filename = toString(dequoteString(filenameToken));
                     if (!target->IsImportAllowed())
-                        ErrorExit(&tok->loc, "Import statement only allowed inside world "
-                                  "definition block.");
+                        throw std::runtime_error(spectra::diagnostics::Format(&tok->loc, "Import statement only allowed inside world "
+                                  "definition block."));
 
                     filename = ResolveFilename(filename);
                     std::unique_ptr<Target> importBuilder = target->CopyForImport();
@@ -1027,7 +1063,7 @@ namespace spectra::scene
                 {
                     if (!warnedTransformBeginEndDeprecated)
                     {
-                        Warning(&tok->loc, "TransformBegin/End are deprecated and should "
+                        spectra::diagnostics::PrintWarning(&tok->loc, "TransformBegin/End are deprecated and should "
                                 "be replaced with AttributeBegin/End");
                         warnedTransformBeginEndDeprecated = true;
                     }
@@ -1076,7 +1112,7 @@ namespace spectra::scene
                         nextToken, unget, [&](const Token& t, const char* msg)
                         {
                             std::string token = toString(t.token);
-                            std::string str = StringPrintf("%s: %s", token, msg);
+                            std::string str = std::format("{}: {}", token, msg);
                             parseError(str.c_str(), &t.loc);
                         });
 
@@ -1110,7 +1146,7 @@ namespace spectra::scene
     {
         auto tokError = [](const char* msg, const FileLoc* loc)
         {
-            ErrorExit(loc, "%s", msg);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg));
         };
 
         // Process scene description
@@ -1142,7 +1178,7 @@ namespace spectra::scene
     {
         auto tokError = [](const char* msg, const FileLoc* loc)
         {
-            ErrorExit(loc, "%s", msg);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg));
         };
         std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromString(std::move(str), tokError);
         if (!t)
@@ -1156,7 +1192,7 @@ namespace spectra::scene
     {
         auto tokError = [](const char* msg, const FileLoc* loc)
         {
-            ErrorExit(loc, "%s", msg);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg));
         };
 
         if (filenames.empty())
@@ -1185,7 +1221,7 @@ namespace spectra::scene
     {
         auto tokError = [](const char* msg, const FileLoc* loc)
         {
-            ErrorExit(loc, "%s", msg);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg));
         };
         std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromString(std::move(str), tokError);
         if (!t)
@@ -1221,18 +1257,18 @@ namespace spectra::scene
     // API State Macros
 #define VERIFY_OPTIONS(func)                                   \
     if (currentBlock == BlockState::WorldBlock) {              \
-        spectra::ErrorExit(&loc,                                        \
+        throw std::runtime_error(spectra::diagnostics::Format(&loc,                                        \
                   "Options cannot be set inside world block; " \
                   "\"%s\" is not allowed.",                    \
-                  func);                                       \
+                  func));                                       \
         return;                                                \
     } else /* swallow trailing semicolon */
 #define VERIFY_WORLD(func)                                         \
     if (currentBlock == BlockState::OptionsBlock) {                \
-        spectra::ErrorExit(&loc,                                            \
+        throw std::runtime_error(spectra::diagnostics::Format(&loc,                                            \
                   "Scene description must be inside world block; " \
                   "\"%s\" is not allowed.",                        \
-                  func);                                           \
+                  func));                                           \
         return;                                                    \
     } else /* swallow trailing semicolon */
 
@@ -1248,12 +1284,12 @@ namespace spectra::scene
     [[nodiscard]] ParsedParameterVector ApplyFilmResolutionOverride(ParsedParameterVector parameters, Point2i resolution, const FileLoc& location)
     {
         if (resolution.x <= 0 || resolution.y <= 0)
-            ErrorExit(&location, "Spectra interactive film resolution must be positive.");
+            throw std::runtime_error(spectra::diagnostics::Format(&location, "Spectra interactive film resolution must be positive."));
         for (auto iterator = parameters.begin(); iterator != parameters.end();)
         {
             ParsedParameter* parameter = *iterator;
             if (parameter == nullptr)
-                ErrorExit(&location, "Film parameter list contains a null parameter.");
+                throw std::runtime_error(spectra::diagnostics::Format(&location, "Film parameter list contains a null parameter."));
             if (parameter->name == "xresolution" || parameter->name == "yresolution")
             {
                 delete parameter;
@@ -1290,7 +1326,7 @@ namespace spectra::scene
         : SceneBuilder(scene)
     {
         if (filmResolutionOverride.x <= 0 || filmResolutionOverride.y <= 0)
-            ErrorExit("Spectra interactive film resolution must be positive.");
+            throw std::runtime_error(spectra::diagnostics::Format("Spectra interactive film resolution must be positive."));
         this->filmResolutionOverride = filmResolutionOverride;
     }
 
@@ -1305,7 +1341,7 @@ namespace spectra::scene
         if (const RGBColorSpace* cs = RGBColorSpace::GetNamed(name))
             graphicsState.colorSpace = cs;
         else
-            Error(&loc, "%s: color space unknown", name);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: color space unknown", name));
     }
 
     void SceneBuilder::Identity(FileLoc loc)
@@ -1331,7 +1367,7 @@ namespace spectra::scene
         if (namedCoordinateSystems.find(name) != namedCoordinateSystems.end())
             graphicsState.ctm = namedCoordinateSystems[name];
         else
-            Warning(&loc, "Couldn't find named coordinate system \"%s\"", name);
+            spectra::diagnostics::PrintWarning(&loc, "Couldn't find named coordinate system \"%s\"", name);
     }
 
     void SceneBuilder::Camera(const std::string& name, ParsedParameterVector params,
@@ -1367,7 +1403,7 @@ namespace spectra::scene
         // Issue error on unmatched _AttributeEnd_
         if (pushedGraphicsStates.empty())
         {
-            Error(&loc, "Unmatched AttributeEnd encountered. Ignoring it.");
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Unmatched AttributeEnd encountered. Ignoring it."));
             return;
         }
 
@@ -1376,9 +1412,11 @@ namespace spectra::scene
         pushedGraphicsStates.pop_back();
 
         if (pushStack.back().first == 'o')
-            ErrorExitDeferred(&loc,
+            throw std::runtime_error(spectra::diagnostics::Format(&loc,
                               "Mismatched nesting: open ObjectBegin from %s at AttributeEnd",
-                              pushStack.back().second.ToString());
+                              std::format("{}:{}:{}", pushStack.back().second.filename,
+                                          pushStack.back().second.line,
+                                          pushStack.back().second.column)));
         else
             SPECTRA_CHECK_EQ(pushStack.back().first, 'a');
         pushStack.pop_back();
@@ -1410,11 +1448,11 @@ namespace spectra::scene
         }
         else
         {
-            ErrorExitDeferred(
+            throw std::runtime_error(spectra::diagnostics::Format(
                 &loc,
                 "Unknown attribute target \"%s\". Must be \"shape\", \"light\", "
                 "\"material\", \"medium\", or \"texture\".",
-                target);
+                target));
             return;
         }
 
@@ -1459,7 +1497,7 @@ namespace spectra::scene
         // Issue error if medium _name_ is multiply defined
         if (mediumNames.find(name) != mediumNames.end())
         {
-            ErrorExitDeferred(&loc, "Named medium \"%s\" redefined.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Named medium \"%s\" redefined.", name));
             return;
         }
         mediumNames.insert(name);
@@ -1495,7 +1533,7 @@ namespace spectra::scene
                                                              graphicsState.areaLightParams,
                                                              graphicsState.areaLightLoc));
             if (activeInstanceDefinition)
-                Warning(&loc, "Area lights not supported with object instancing");
+                spectra::diagnostics::PrintWarning(&loc, "Area lights not supported with object instancing");
         }
 
         if (CTMIsAnimated())
@@ -1548,13 +1586,13 @@ namespace spectra::scene
 
         if (activeInstanceDefinition)
         {
-            ErrorExitDeferred(&loc, "ObjectBegin called inside of instance definition");
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectBegin called inside of instance definition"));
             return;
         }
 
         if (instanceNames.find(name) != instanceNames.end())
         {
-            ErrorExitDeferred(&loc, "%s: trying to redefine an object instance", name);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: trying to redefine an object instance", name));
             return;
         }
         instanceNames.insert(name);
@@ -1567,12 +1605,12 @@ namespace spectra::scene
         VERIFY_WORLD("ObjectEnd");
         if (!activeInstanceDefinition)
         {
-            ErrorExitDeferred(&loc, "ObjectEnd called outside of instance definition");
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectEnd called outside of instance definition"));
             return;
         }
         if (activeInstanceDefinition->parent)
         {
-            ErrorExitDeferred(&loc, "ObjectEnd called inside Import for instance definition");
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectEnd called inside Import for instance definition"));
             return;
         }
 
@@ -1581,9 +1619,11 @@ namespace spectra::scene
         pushedGraphicsStates.pop_back();
 
         if (pushStack.back().first == 'a')
-            ErrorExitDeferred(&loc,
+            throw std::runtime_error(spectra::diagnostics::Format(&loc,
                               "Mismatched nesting: open AttributeBegin from %s at ObjectEnd",
-                              pushStack.back().second.ToString());
+                              std::format("{}:{}:{}", pushStack.back().second.filename,
+                                          pushStack.back().second.line,
+                                          pushStack.back().second.column)));
         else
             SPECTRA_CHECK_EQ(pushStack.back().first, 'o');
         pushStack.pop_back();
@@ -1605,8 +1645,8 @@ namespace spectra::scene
 
         if (activeInstanceDefinition)
         {
-            ErrorExitDeferred(&loc,
-                              "ObjectInstance can't be called inside instance definition");
+            throw std::runtime_error(spectra::diagnostics::Format(&loc,
+                              "ObjectInstance can't be called inside instance definition"));
             return;
         }
 
@@ -1637,17 +1677,14 @@ namespace spectra::scene
     void SceneBuilder::EndOfFiles()
     {
         if (currentBlock != BlockState::WorldBlock)
-            ErrorExitDeferred("End of files before \"WorldBegin\".");
+            throw std::runtime_error(spectra::diagnostics::Format("End of files before \"WorldBegin\"."));
 
         // Ensure there are no pushed graphics states
         while (!pushedGraphicsStates.empty())
         {
-            ErrorExitDeferred("Missing end to AttributeBegin");
+            throw std::runtime_error(spectra::diagnostics::Format("Missing end to AttributeBegin"));
             pushedGraphicsStates.pop_back();
         }
-
-        if (errorExit)
-            ErrorExit("Fatal errors during scene construction");
 
         if (!shapes.empty())
             scene->AddShapes(shapes);
@@ -1696,11 +1733,9 @@ namespace spectra::scene
     {
         while (!imported->pushedGraphicsStates.empty())
         {
-            ErrorExitDeferred("Missing end to AttributeBegin");
+            throw std::runtime_error(spectra::diagnostics::Format("Missing end to AttributeBegin"));
             imported->pushedGraphicsStates.pop_back();
         }
-
-        errorExit |= imported->errorExit;
 
         if (!imported->shapes.empty())
             scene->AddShapes(imported->shapes);
@@ -1740,7 +1775,7 @@ namespace spectra::scene
             for (const auto& item : imported)
             {
                 if (base.find(item) != base.end())
-                    ErrorExitDeferred("%s: multiply defined %s.", item, name);
+                    throw std::runtime_error(spectra::diagnostics::Format("%s: multiply defined %s.", item, name));
                 base.insert(std::move(item));
             }
             imported.clear();
@@ -1787,7 +1822,7 @@ namespace spectra::scene
         for (const ParsedParameter* parameter : parameters)
         {
             if (parameter == nullptr)
-                ErrorExit("Scene description parser produced a null parameter.");
+                throw std::runtime_error(spectra::diagnostics::Format("Scene description parser produced a null parameter."));
             SceneDescriptionParameter copiedParameter{};
             copiedParameter.type = parameter->type;
             copiedParameter.name = parameter->name;
@@ -2019,7 +2054,7 @@ namespace spectra::scene
         : state(std::make_unique<SceneDescriptionBuilderState>(description))
     {
         if (description == nullptr)
-            ErrorExit("SceneDescriptionBuilder requires a non-null SceneDescription.");
+            throw std::runtime_error(spectra::diagnostics::Format("SceneDescriptionBuilder requires a non-null SceneDescription."));
     }
 
     SceneDescriptionBuilder::~SceneDescriptionBuilder() = default;
@@ -2344,11 +2379,11 @@ namespace spectra::scene
     void SceneDescriptionBuilder::EndOfFiles()
     {
         if (!state->pushedGraphicsStates.empty())
-            ErrorExit("Missing AttributeEnd before EndOfFiles in Spectra scene description parser.");
+            throw std::runtime_error(spectra::diagnostics::Format("Missing AttributeEnd before EndOfFiles in Spectra scene description parser."));
         if (state->rootBuilder)
         {
             if (state->description == nullptr)
-                ErrorExit("SceneDescriptionBuilder has no target description at EndOfFiles.");
+                throw std::runtime_error(spectra::diagnostics::Format("SceneDescriptionBuilder has no target description at EndOfFiles."));
             AppendSceneDescriptionBuildChunk(*state->description, std::move(state->chunk));
         }
     }
@@ -2361,7 +2396,7 @@ namespace spectra::scene
     std::unique_ptr<SceneDescriptionBuilder> SceneDescriptionBuilder::CopyForImport()
     {
         if (state->description == nullptr)
-            ErrorExit("Cannot copy Spectra scene description import target without a description.");
+            throw std::runtime_error(spectra::diagnostics::Format("Cannot copy Spectra scene description import target without a description."));
         std::unique_ptr<SceneDescriptionBuilder> builder = std::make_unique<SceneDescriptionBuilder>(state->description);
         builder->state = std::make_unique<SceneDescriptionBuilderState>(state->description, state->graphicsState, state->pushedGraphicsStates, state->namedCoordinateSystems, state->activeObjectDefinitionName, state->materialIndexBase + state->chunk.materials.size(), state->worldBegun);
         return builder;
@@ -2370,7 +2405,7 @@ namespace spectra::scene
     void SceneDescriptionBuilder::MergeImported(std::unique_ptr<SceneDescriptionBuilder> imported)
     {
         if (imported == nullptr || imported->state == nullptr)
-            ErrorExit("Spectra scene description import target is null.");
+            throw std::runtime_error(spectra::diagnostics::Format("Spectra scene description import target is null."));
         state->MergeChunk(imported->state->chunk);
         state->importedBuilders.push_back(std::move(imported));
     }
@@ -2387,8 +2422,8 @@ namespace spectra::scene
             else if (value == "false")
                 Options->disablePixelJitter = false;
             else
-                ErrorExitDeferred(&loc, "%s: expected \"true\" or \"false\" for option value",
-                                  value);
+                throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: expected \"true\" or \"false\" for option value",
+                                  value));
         }
         else if (nName == "disabletexturefiltering")
         {
@@ -2397,8 +2432,8 @@ namespace spectra::scene
             else if (value == "false")
                 Options->disableTextureFiltering = false;
             else
-                ErrorExitDeferred(&loc, "%s: expected \"true\" or \"false\" for option value",
-                                  value);
+                throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: expected \"true\" or \"false\" for option value",
+                                  value));
         }
         else if (nName == "disablewavelengthjitter")
         {
@@ -2407,18 +2442,18 @@ namespace spectra::scene
             else if (value == "false")
                 Options->disableWavelengthJitter = false;
             else
-                ErrorExitDeferred(&loc, "%s: expected \"true\" or \"false\" for option value",
-                                  value);
+                throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: expected \"true\" or \"false\" for option value",
+                                  value));
         }
         else if (nName == "displacementedgescale")
         {
             if (!Atof(value, &Options->displacementEdgeScale))
-                ErrorExitDeferred(&loc, "%s: expected floating-point option value", value);
+                throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: expected floating-point option value", value));
         }
         else if (nName == "rendercoordsys")
         {
             if (value.size() < 3 || value.front() != '"' || value.back() != '"')
-                ErrorExitDeferred(&loc, "%s: expected quoted string for option value", value);
+                throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: expected quoted string for option value", value));
             std::string renderCoordSys = value.substr(1, value.size() - 2);
             if (renderCoordSys == "camera")
                 Options->renderingSpace = RenderingCoordinateSystem::Camera;
@@ -2427,14 +2462,14 @@ namespace spectra::scene
             else if (renderCoordSys == "world")
                 Options->renderingSpace = RenderingCoordinateSystem::World;
             else
-                ErrorExit("%s: unknown rendering coordinate system.", renderCoordSys);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: unknown rendering coordinate system.", renderCoordSys));
         }
         else if (nName == "seed")
         {
             Options->seed = std::atoi(value.c_str());
         }
         else
-            ErrorExitDeferred(&loc, "%s: unknown option", name);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: unknown option", name));
 
         CopyOptionsToGPU();
     }
@@ -2555,8 +2590,8 @@ namespace spectra::scene
 
         if (type != "float" && type != "spectrum")
         {
-            ErrorExitDeferred(
-                &loc, "%s: texture type unknown. Must be \"float\" or \"spectrum\".", type);
+            throw std::runtime_error(spectra::diagnostics::Format(
+                &loc, "%s: texture type unknown. Must be \"float\" or \"spectrum\".", type));
             return;
         }
 
@@ -2564,7 +2599,7 @@ namespace spectra::scene
             (type == "float") ? floatTextureNames : spectrumTextureNames;
         if (names.find(name) != names.end())
         {
-            ErrorExitDeferred(&loc, "Redefining texture \"%s\".", name);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Redefining texture \"%s\".", name));
             return;
         }
         names.insert(name);
@@ -2601,7 +2636,7 @@ namespace spectra::scene
 
         if (namedMaterialNames.find(name) != namedMaterialNames.end())
         {
-            ErrorExitDeferred(&loc, "%s: named material redefined.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: named material redefined.", name));
             return;
         }
         namedMaterialNames.insert(name);
@@ -2648,9 +2683,9 @@ namespace spectra::scene
         Float exposureTime = camera.parameters.GetOneFloat("shutterclose", 1.f) -
             camera.parameters.GetOneFloat("shutteropen", 0.f);
         if (exposureTime <= 0)
-            ErrorExit(&camera.loc,
+            throw std::runtime_error(spectra::diagnostics::Format(&camera.loc,
                       "The specified camera shutter times imply that the shutter "
-                      "does not open.  A black image will result.");
+                      "does not open.  A black image will result."));
 
         this->film = Film::Create(film.name, film.parameters, exposureTime,
                                   camera.cameraTransform, filt, &film.loc, alloc);
@@ -2710,9 +2745,9 @@ namespace spectra::scene
             std::string type = medium.parameters.GetOneString("type", "");
             // Check for missing medium ``type'' or animated medium transform
             if (type.empty())
-                ErrorExit(&medium.loc, "No parameter \"string type\" found for medium.");
+                throw std::runtime_error(spectra::diagnostics::Format(&medium.loc, "No parameter \"string type\" found for medium."));
             if (medium.renderFromObject.IsAnimated())
-                Warning(&medium.loc, "Animated transformation provided for medium. Only the "
+                spectra::diagnostics::PrintWarning(&medium.loc, "Animated transformation provided for medium. Only the "
                         "start transform will be used.");
 
             return Medium::Create(type, medium.parameters,
@@ -2742,7 +2777,7 @@ namespace spectra::scene
             {
                 auto fiter = mediumJobs.find(name);
                 if (fiter == mediumJobs.end())
-                    ErrorExit(loc, "%s: medium is not defined.", name);
+                    throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: medium is not defined.", name));
 
                 pstd::optional<Medium> m = fiter->second->TryGetResult(&mediaMutex);
                 if (m)
@@ -2822,7 +2857,7 @@ namespace spectra::scene
             Image& image = immeta.image;
             ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
             if (!rgbDesc)
-                ErrorExit("%s: normal map image must contain R, G, and B channels", filename);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: normal map image must contain R, G, and B channels", filename));
             Image* normalMap = alloc.new_object<Image>(alloc);
             *normalMap = image.SelectChannels(rgbDesc);
 
@@ -2834,7 +2869,7 @@ namespace spectra::scene
     void Scene::AddFloatTexture(std::string name, TextureSceneEntity texture)
     {
         if (texture.renderFromObject.IsAnimated())
-            Warning(&texture.loc, "Animated world to texture transforms are not supported. "
+            spectra::diagnostics::PrintWarning(&texture.loc, "Animated world to texture transforms are not supported. "
                     "Using start transform.");
 
         std::lock_guard<std::mutex> lock(textureMutex);
@@ -2849,13 +2884,13 @@ namespace spectra::scene
             ResolveFilename(texture.parameters.GetOneString("filename", ""));
         if (filename.empty())
         {
-            Error(&texture.loc, "\"string filename\" not provided for image texture.");
+            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "\"string filename\" not provided for image texture."));
             ++nMissingTextures;
             return;
         }
         if (!FileExists(filename))
         {
-            Error(&texture.loc, "%s: file not found.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "%s: file not found.", filename));
             ++nMissingTextures;
             return;
         }
@@ -2897,13 +2932,13 @@ namespace spectra::scene
             ResolveFilename(texture.parameters.GetOneString("filename", ""));
         if (filename.empty())
         {
-            Error(&texture.loc, "\"string filename\" not provided for image texture.");
+            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "\"string filename\" not provided for image texture."));
             ++nMissingTextures;
             return;
         }
         if (!FileExists(filename))
         {
-            Error(&texture.loc, "%s: file not found.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "%s: file not found.", filename));
             ++nMissingTextures;
             return;
         }
@@ -2939,7 +2974,7 @@ namespace spectra::scene
         std::lock_guard<std::mutex> lock(lightMutex);
 
         if (light.renderFromObject.IsAnimated())
-            Warning(&light.loc,
+            spectra::diagnostics::PrintWarning(&light.loc,
                     "Animated lights aren't supported. Using the start transform.");
 
         auto create = [this, light, lightMedium]()
@@ -3007,16 +3042,16 @@ namespace spectra::scene
 
             if (namedMaterialsOut->find(name) != namedMaterialsOut->end())
             {
-                ErrorExit(&mtl.loc, "%s: trying to redefine named material.", name);
+                throw std::runtime_error(spectra::diagnostics::Format(&mtl.loc, "%s: trying to redefine named material.", name));
                 continue;
             }
 
             std::string type = mtl.parameters.GetOneString("type", "");
             if (type.empty())
             {
-                ErrorExit(&mtl.loc,
+                throw std::runtime_error(spectra::diagnostics::Format(&mtl.loc,
                           "%s: \"string type\" not provided in named material's parameters.",
-                          name);
+                          name));
                 continue;
             }
 
@@ -3060,7 +3095,7 @@ namespace spectra::scene
         NamedTextures textures;
 
         if (nMissingTextures > 0)
-            ErrorExit("%d missing textures", nMissingTextures);
+            throw std::runtime_error(spectra::diagnostics::Format("%d missing textures", nMissingTextures));
 
         // Consume futures
         // The lock shouldn't be necessary since only the main thread should be
@@ -3113,7 +3148,7 @@ namespace spectra::scene
             Allocator alloc = threadAllocators.Get();
 
             if (tex.second.renderFromObject.IsAnimated())
-                Warning(&tex.second.loc, "Animated world to texture transform not supported. "
+                spectra::diagnostics::PrintWarning(&tex.second.loc, "Animated world to texture transform not supported. "
                         "Using start transform.");
 
             Transform renderFromTexture = tex.second.renderFromObject.startTransform;
@@ -3147,7 +3182,7 @@ namespace spectra::scene
 
             auto iter = mediaMap.find(s);
             if (iter == mediaMap.end())
-                ErrorExit(loc, "%s: medium not defined", s);
+                throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: medium not defined", s));
             return iter->second;
         };
 
@@ -3168,8 +3203,8 @@ namespace spectra::scene
                     return iter->second;
                 }
                 else
-                    ErrorExit(loc, "%s: couldn't find float texture for \"alpha\" parameter.",
-                              alphaTexName);
+                    throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: couldn't find float texture for \"alpha\" parameter.",
+                              alphaTexName));
             }
             else if (Float alpha = parameters.GetOneFloat("alpha", 1.f); alpha < 1.f)
                 return alloc.new_object<FloatConstantTexture>(alpha);
@@ -3193,7 +3228,7 @@ namespace spectra::scene
                     std::find_if(namedMaterials.begin(), namedMaterials.end(),
                                  [&](auto iter) { return iter.first == sh.materialName; });
                 if (iter == namedMaterials.end())
-                    ErrorExit(&sh.loc, "%s: no named material defined.", sh.materialName);
+                    throw std::runtime_error(spectra::diagnostics::Format(&sh.loc, "%s: no named material defined.", sh.materialName));
                 SPECTRA_CHECK(iter->second.parameters.GetStringArray("type").size() > 0);
                 materialName = iter->second.parameters.GetOneString("type", "");
             }
@@ -3204,7 +3239,7 @@ namespace spectra::scene
             }
             if (materialName == "interface" || materialName == "none" || materialName == "")
             {
-                Warning(&sh.loc, "Ignoring area light specification for shape "
+                spectra::diagnostics::PrintWarning(&sh.loc, "Ignoring area light specification for shape "
                         "with \"interface\" material.");
                 continue;
             }

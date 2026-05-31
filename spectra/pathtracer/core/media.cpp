@@ -6,7 +6,7 @@
 #include <spectra/pathtracer/core/textures.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/sampling.h>
@@ -147,7 +147,7 @@ namespace spectra
         if (!preset.empty())
         {
             if (!GetMediumScatteringProperties(preset, &sig_a, &sig_s, alloc))
-                Warning(loc, "Material preset \"%s\" not found.", preset);
+                spectra::diagnostics::PrintWarning(loc, "Material preset \"%s\" not found.", preset);
         }
         if (!sig_a)
         {
@@ -224,22 +224,22 @@ namespace spectra
 
         size_t nDensity;
         if (density.empty())
-            ErrorExit(loc, "No \"density\" value provided for grid medium.");
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "No \"density\" value provided for grid medium."));
         nDensity = density.size();
 
         if (!temperature.empty())
             if (nDensity != temperature.size())
-                ErrorExit(loc,
+                throw std::runtime_error(spectra::diagnostics::Format(loc,
                           "Different number of samples (%d vs %d) provided for "
                           "\"density\" and \"temperature\".",
-                          nDensity, temperature.size());
+                          nDensity, temperature.size()));
 
         int nx = parameters.GetOneInt("nx", 1);
         int ny = parameters.GetOneInt("ny", 1);
         int nz = parameters.GetOneInt("nz", 1);
         if (nDensity != nx * ny * nz)
-            ErrorExit(loc, "Grid medium has %d density values; expected nx*ny*nz = %d",
-                      nDensity, nx * ny * nz);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "Grid medium has %d density values; expected nx*ny*nz = %d",
+                      nDensity, nx * ny * nz));
 
         // Create Density Grid
         SampledGrid<Float> densityGrid = SampledGrid<Float>(density, nx, ny, nz, alloc);
@@ -252,7 +252,7 @@ namespace spectra
             parameters.GetOneSpectrum("Le", nullptr, SpectrumType::Illuminant, alloc);
 
         if (Le && !temperature.empty())
-            ErrorExit(loc, "Both \"Le\" and \"temperature\" values were provided.");
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "Both \"Le\" and \"temperature\" values were provided."));
 
         Float LeNorm = 1;
         if (!Le || Le.MaxValue() == 0)
@@ -268,9 +268,9 @@ namespace spectra
         else
         {
             if (LeScale.size() != nx * ny * nz)
-                ErrorExit("Expected %d x %d %d = %d values for \"Lescale\" but were "
+                throw std::runtime_error(spectra::diagnostics::Format("Expected %d x %d %d = %d values for \"Lescale\" but were "
                           "given %d.",
-                          nx, ny, nz, nx * ny * nz, LeScale.size());
+                          nx, ny, nz, nx * ny * nz, LeScale.size()));
             for (int i = 0; i < nx * ny * nz; ++i)
                 LeScale[i] *= LeNorm;
             LeGrid = SampledGrid<Float>(LeScale, nx, ny, nz, alloc);
@@ -348,35 +348,35 @@ namespace spectra
         std::vector<RGB> Le = parameters.GetRGBArray("Le");
 
         if (sigma_a.empty() && sigma_s.empty())
-            ErrorExit(loc,
-                      "RGB grid requires \"sigma_a\" and/or \"sigma_s\" parameter values.");
+            throw std::runtime_error(spectra::diagnostics::Format(loc,
+                      "RGB grid requires \"sigma_a\" and/or \"sigma_s\" parameter values."));
 
         size_t nDensity;
         if (!sigma_a.empty())
         {
             nDensity = sigma_a.size();
             if (!sigma_s.empty() && nDensity != sigma_s.size())
-                ErrorExit(loc,
+                throw std::runtime_error(spectra::diagnostics::Format(loc,
                           "Different number of samples (%d vs %d) provided for \"sigma_a\" "
                           "and \"sigma_s\".",
-                          nDensity, sigma_s.size());
+                          nDensity, sigma_s.size()));
         }
         else
             nDensity = sigma_s.size();
 
         if (!Le.empty() && sigma_a.empty())
-            ErrorExit(loc, "RGB grid requires \"sigma_a\" if \"Le\" value provided.");
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "RGB grid requires \"sigma_a\" if \"Le\" value provided."));
 
         if (!Le.empty() && nDensity != Le.size())
-            ErrorExit("Expected %d values for \"Le\" parameter but were given %d.", nDensity,
-                      Le.size());
+            throw std::runtime_error(spectra::diagnostics::Format("Expected %d values for \"Le\" parameter but were given %d.", nDensity,
+                      Le.size()));
 
         int nx = parameters.GetOneInt("nx", 1);
         int ny = parameters.GetOneInt("ny", 1);
         int nz = parameters.GetOneInt("nz", 1);
         if (nDensity != nx * ny * nz)
-            ErrorExit(loc, "RGB grid medium has %d density values; expected nx*ny*nz = %d",
-                      nDensity, nx * ny * nz);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "RGB grid medium has %d density values; expected nx*ny*nz = %d",
+                      nDensity, nx * ny * nz));
 
         pstd::optional<SampledGrid<RGBUnboundedSpectrum>> sigma_aGrid, sigma_sGrid;
         pstd::optional<SampledGrid<RGBIlluminantSpectrum>> LeGrid;
@@ -462,13 +462,13 @@ namespace spectra
         }
         catch (const std::exception& e)
         {
-            ErrorExit("nanovdb: %s: %s", filename, e.what());
+            throw std::runtime_error(spectra::diagnostics::Format("nanovdb: %s: %s", filename, e.what()));
         }
 
         if (grid)
         {
             if (!grid.gridMetaData()->isFogVolume() && !grid.gridMetaData()->isUnknown())
-                ErrorExit(loc, "%s: \"%s\" isn't a FogVolume grid?", filename, gridName);
+                throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: \"%s\" isn't a FogVolume grid?", filename, gridName));
 
         }
 
@@ -583,13 +583,13 @@ namespace spectra
     {
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
         if (filename.empty())
-            ErrorExit(loc, "Must supply \"filename\" to \"nanovdb\" medium.");
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "Must supply \"filename\" to \"nanovdb\" medium."));
 
         nanovdb::GridHandle<NanoVDBBuffer> densityGrid;
         std::string gridname = parameters.GetOneString("gridname", "density");
         densityGrid = readGrid<NanoVDBBuffer>(filename, gridname, loc, alloc);
         if (!densityGrid)
-            ErrorExit(loc, "%s: didn't find \"density\" grid.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: didn't find \"density\" grid.", filename));
 
         nanovdb::GridHandle<NanoVDBBuffer> temperatureGrid;
         std::string temperaturename =
@@ -641,10 +641,10 @@ namespace spectra
             m = NanoVDBMedium::Create(parameters, renderFromMedium, loc, alloc);
         }
         else
-            ErrorExit(loc, "%s: medium unknown.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: medium unknown.", name));
 
         if (!m)
-            ErrorExit(loc, "%s: unable to create medium.", name);
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create medium.", name));
 
         parameters.ReportUnused();
         return m;

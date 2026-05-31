@@ -2,29 +2,9 @@
 
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/primes.h>
-#include <spectra/pathtracer/util/print.h>
 
 namespace spectra
 {
-
-    std::string ToString(RandomizeStrategy r)
-    {
-        switch (r)
-        {
-        case RandomizeStrategy::None:
-            return "None";
-        case RandomizeStrategy::PermuteDigits:
-            return "PermuteDigits";
-        case RandomizeStrategy::FastOwen:
-            return "FastOwen";
-        case RandomizeStrategy::Owen:
-            return "Owen";
-        default:
-            SPECTRA_FATAL("Unhandled RandomizeStrategy");
-            return "";
-        }
-    }
-
     // Low Discrepancy Function Definitions
     pstd::vector<DigitPermutation>* ComputeRadicalInversePermutations(uint32_t seed,
                                                                       Allocator alloc)

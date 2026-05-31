@@ -7,13 +7,12 @@
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/hash.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/print.h>
 #include <spectra/pathtracer/util/sampling.h>
 
 #include <unordered_map>
@@ -747,7 +746,7 @@ namespace spectra
     do {                                             \
         if (!(cond)) {                               \
             fclose(file);                            \
-            ErrorExit("%s: Tensor: " msg, filename); \
+            throw std::runtime_error(spectra::diagnostics::Format("%s: Tensor: " msg, filename)); \
         }                                            \
     } while (0)
 
@@ -756,7 +755,7 @@ namespace spectra
 
         FILE* file = FOpenRead(filename);
         if (file == NULL)
-            ErrorExit("%s: unable to open file", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open file", filename));
 
         ASSERT(!fseek(file, 0, SEEK_END), "Unable to seek to end of file.");
 
@@ -910,7 +909,7 @@ namespace spectra
             jacobian.shape.size() == 1 && jacobian.shape[0] == 1 &&
             jacobian.dtype == Tensor::UInt8))
         {
-            Error("%s: invalid BRDF file structure.", filename);
+            throw std::runtime_error(spectra::diagnostics::Format("%s: invalid BRDF file structure.", filename));
             return nullptr;
         }
 
@@ -924,7 +923,7 @@ namespace spectra
             int reduction =
                 (int)std::rint((2 * Pi) / (phi_i_data[phi_i.shape[0] - 1] - phi_i_data[0]));
             if (reduction != 1)
-                ErrorExit("%s: reduction %d (!= 1) not supported", filename, reduction);
+                throw std::runtime_error(spectra::diagnostics::Format("%s: reduction %d (!= 1) not supported", filename, reduction));
         }
 
         /* Construct NDF interpolant data structure */

@@ -2,8 +2,9 @@
 
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/gpu/memory.h>
-#include <spectra/pathtracer/util/args.h>
-#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/integrator.h>
 #include <spectra/scene.h>
 
@@ -13,6 +14,11 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef SPECTRA_IS_WINDOWS
+#include <Windows.h>
+#include <shellapi.h>
+#endif
 
 namespace
 {
@@ -53,13 +59,34 @@ namespace
         }
         return value;
     }
+
+    [[nodiscard]] std::vector<std::string> command_line_arguments(char* argv[])
+    {
+        std::vector<std::string> arguments;
+#ifdef SPECTRA_IS_WINDOWS
+        int argc = 0;
+        LPWSTR* argvw = CommandLineToArgvW(GetCommandLineW(), &argc);
+        CHECK(argvw != nullptr);
+        for (int index = 1; index < argc; ++index)
+            arguments.push_back(spectra::UTF8FromWString(argvw[index]));
+        CHECK(LocalFree(argvw) == nullptr);
+#else
+        ++argv;
+        while (*argv != nullptr)
+        {
+            arguments.emplace_back(*argv);
+            ++argv;
+        }
+#endif
+        return arguments;
+    }
 }
 
-int main(int argc, char* argv[])
+int run_spectra_gpu(int argc, char* argv[])
 {
     static_cast<void>(argc);
 
-    std::vector<std::string> arguments = spectra::GetCommandLineArguments(argv);
+    std::vector<std::string> arguments = command_line_arguments(argv);
     if (arguments.empty())
     {
         usage("missing scene filename");
@@ -157,4 +184,17 @@ int main(int argc, char* argv[])
     metadata.samplesPerPixel = pathtracer->sampler.SamplesPerPixel();
     pathtracer->film.WriteImage(metadata);
     return 0;
+}
+
+int main(int argc, char* argv[])
+{
+    try
+    {
+        return run_spectra_gpu(argc, argv);
+    }
+    catch (const std::exception& error)
+    {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
 }
