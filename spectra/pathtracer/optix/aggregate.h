@@ -1,0 +1,209 @@
+// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
+// The pbrt source code is licensed under the Apache License, Version 2.0.
+// SPDX: Apache-2.0
+
+#ifndef SPECTRA_OPTIX_AGGREGATE_H
+#define SPECTRA_OPTIX_AGGREGATE_H
+
+#include <src/util/float.h>
+
+#include <src/gpu/memory.h>
+#include <spectra/pathtracer/optix/optix.h>
+#include <spectra/scene.h>
+#include <src/util/containers.h>
+#include <src/util/pstd.h>
+#include <src/util/soa.h>
+#include <src/util/vecmath.h>
+#include <spectra/pathtracer/wavefront/workitems.h>
+
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <optix.h>
+
+namespace spectra::optix
+{
+    class SpectraOptiXAggregate
+    {
+    public:
+        SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource,
+                       NamedTextures& textures,
+                       const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights,
+                       const std::map<std::string, Medium>& media,
+                       const std::map<std::string, Material>& namedMaterials,
+                       const std::vector<Material>& materials);
+        ~SpectraOptiXAggregate();
+
+        Bounds3f Bounds() const { return bounds; }
+
+        void IntersectClosest(int maxRays, const RayQueue* rayQueue,
+                              EscapedRayQueue* escapedRayQueue,
+                              HitAreaLightQueue* hitAreaLightQueue,
+                              MaterialEvalQueue* basicEvalMaterialQueue,
+                              MaterialEvalQueue* universalEvalMaterialQueue,
+                              MediumSampleQueue* mediumSampleQueue,
+                              RayQueue* nextRayQueue) const;
+
+        void IntersectShadow(int maxRays, ShadowRayQueue* shadowRayQueue,
+                             SOA<PixelSampleState>* pixelSampleState) const;
+
+        void IntersectShadowTr(int maxRays, ShadowRayQueue* shadowRayQueue,
+                               SOA<PixelSampleState>* pixelSampleState) const;
+
+        void IntersectOneRandom(int maxRays,
+                                SubsurfaceScatterQueue* subsurfaceScatterQueue) const;
+
+        // WAR: The enclosing parent function ("PreparePLYMeshes") for an
+        // extended __device__ lambda cannot have private or protected access
+        // within its class, so it's public...
+        static std::map<int, TriQuadMesh> PreparePLYMeshes(
+            const std::vector<scene::ShapeSceneEntity>& shapes,
+            const std::map<std::string, FloatTexture>& floatTextures);
+
+    private:
+        struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) HitgroupRecord
+        {
+            HitgroupRecord()
+            {
+            }
+
+            HitgroupRecord(const HitgroupRecord& r)
+            {
+                std::memcpy(this, &r, sizeof(HitgroupRecord));
+            }
+
+            HitgroupRecord& operator=(const HitgroupRecord& r)
+            {
+                if (this != &r)
+                    std::memcpy(this, &r, sizeof(HitgroupRecord));
+                return *this;
+            }
+
+            alignas(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+
+            union
+            {
+                TriangleMeshRecord triRec;
+                BilinearMeshRecord bilinearRec;
+                QuadricRecord quadricRec;
+            };
+        };
+
+        struct BVH
+        {
+            BVH() = default;
+            BVH(size_t size);
+
+            BVH(const BVH&) = delete;
+            BVH& operator=(const BVH&) = delete;
+            BVH(BVH&&);
+            BVH& operator=(BVH&&);
+            ~BVH();
+
+            OptixTraversableHandle traversableHandle = {};
+            CUdeviceptr accelBuffer = 0;
+            std::vector<HitgroupRecord> intersectHGRecords;
+            std::vector<HitgroupRecord> shadowHGRecords;
+            std::vector<HitgroupRecord> randomHitHGRecords;
+            Bounds3f bounds;
+        };
+
+        struct Accel
+        {
+            OptixTraversableHandle traversableHandle = {};
+            CUdeviceptr buffer = 0;
+        };
+
+        static BVH buildBVHForTriangles(
+            const std::vector<scene::ShapeSceneEntity>& shapes,
+            const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext,
+            const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG,
+            const OptixProgramGroup& randomHitPG,
+            const std::map<std::string, FloatTexture>& floatTextures,
+            const std::map<std::string, Material>& namedMaterials,
+            const std::vector<Material>& materials,
+            const std::map<std::string, Medium>& media,
+            const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights,
+            ThreadLocal<Allocator>& threadAllocators,
+            ThreadLocal<cudaStream_t>& threadCUDAStreams);
+
+        static BilinearPatchMesh* diceCurveToBLP(const scene::ShapeSceneEntity& shape, int nDiceU,
+                                                 int nDiceV, Allocator alloc);
+
+        static BVH buildBVHForBLPs(
+            const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext,
+            const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG,
+            const OptixProgramGroup& randomHitPG,
+            const std::map<std::string, FloatTexture>& floatTextures,
+            const std::map<std::string, Material>& namedMaterials,
+            const std::vector<Material>& materials,
+            const std::map<std::string, Medium>& media,
+            const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights,
+            ThreadLocal<Allocator>& threadAllocators,
+            ThreadLocal<cudaStream_t>& threadCUDAStreams);
+
+        static BVH buildBVHForQuadrics(
+            const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext,
+            const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG,
+            const OptixProgramGroup& randomHitPG,
+            const std::map<std::string, FloatTexture>& floatTextures,
+            const std::map<std::string, Material>& namedMaterials,
+            const std::vector<Material>& materials,
+            const std::map<std::string, Medium>& media,
+            const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights,
+            ThreadLocal<Allocator>& threadAllocators,
+            ThreadLocal<cudaStream_t>& threadCUDAStreams);
+
+        int addHGRecords(const BVH& bvh);
+
+        static OptixModule createOptiXModule(OptixDeviceContext optixContext,
+                                             const char* input, size_t inputSize);
+        static OptixPipelineCompileOptions getPipelineCompileOptions();
+
+        OptixProgramGroup createRaygenPG(const char* entrypoint);
+        OptixProgramGroup createMissPG(const char* entrypoint);
+        OptixProgramGroup createIntersectionPG(const char* closest, const char* any,
+                                               const char* intersect);
+
+        static Accel buildOptixBVH(
+            OptixDeviceContext optixContext, const std::vector<OptixBuildInput>& buildInputs,
+            ThreadLocal<cudaStream_t>& threadCUDAStreams);
+
+        CUDATrackedMemoryResource* memoryResource;
+        std::mutex boundsMutex;
+        Bounds3f bounds;
+        CUstream cudaStream = nullptr;
+        OptixDeviceContext optixContext = nullptr;
+        OptixModule optixModule = nullptr;
+        OptixPipeline optixPipeline = nullptr;
+        std::vector<OptixProgramGroup> programGroups;
+        std::vector<CUdeviceptr> accelBuffers;
+        std::vector<CUdeviceptr> sbtBuffers;
+
+        struct ParamBufferState
+        {
+            bool used = false;
+            cudaEvent_t finishedEvent = nullptr;
+            CUdeviceptr ptr = 0;
+            void* hostPtr = nullptr;
+        };
+
+        mutable std::vector<ParamBufferState> paramsPool;
+        mutable size_t nextParamOffset = 0;
+
+        ParamBufferState& getParamBuffer(const RayIntersectParameters&) const;
+
+        pstd::vector<HitgroupRecord> intersectHGRecords;
+        pstd::vector<HitgroupRecord> shadowHGRecords;
+        pstd::vector<HitgroupRecord> randomHitHGRecords;
+        OptixShaderBindingTable intersectSBT = {}, shadowSBT = {}, shadowTrSBT = {};
+        OptixShaderBindingTable randomHitSBT = {};
+        OptixTraversableHandle rootTraversable = {};
+    };
+} // namespace spectra::optix
+
+#endif  // PBRT_GPU_AGGREGATE_H

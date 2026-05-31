@@ -3,7 +3,7 @@
 
 #include "spectra.h"
 
-#include <spectra/pathtracer/wavefront.h>
+#include <spectra/pathtracer/integrator.h>
 
 #include <array>
 #include <cstddef>

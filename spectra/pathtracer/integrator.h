@@ -2,8 +2,8 @@
 // The pbrt source code is licensed under the Apache License, Version 2.0.
 // SPDX: Apache-2.0
 
-#ifndef SPECTRA_PATHTRACER_WAVEFRONT_H
-#define SPECTRA_PATHTRACER_WAVEFRONT_H
+#ifndef SPECTRA_PATHTRACER_INTEGRATOR_H
+#define SPECTRA_PATHTRACER_INTEGRATOR_H
 
 #include <src/base/bxdf.h>
 #include <src/base/camera.h>
@@ -17,8 +17,8 @@
 #include <src/util/float.h>
 #include <src/util/parallel.h>
 #include <src/util/pstd.h>
-#include <src/wavefront/workitems.h>
-#include <src/wavefront/workqueue.h>
+#include <spectra/pathtracer/wavefront/workitems.h>
+#include <spectra/pathtracer/wavefront/workqueue.h>
 
 namespace spectra::scene
 {

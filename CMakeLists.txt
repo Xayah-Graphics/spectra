@@ -238,8 +238,8 @@ add_custom_command(
 add_custom_command(
         OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
-        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/wavefront/workitems.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
-        DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/wavefront/workitems.soa
+        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/wavefront/workitems.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+        DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/wavefront/workitems.soa
         VERBATIM
 )
 set(SPECTRA_GPU_SOA_GENERATED
@@ -342,7 +342,7 @@ set(SPECTRA_GPU_DEVICE_SOURCE
         src/gpu/util.cu
 )
 
-add_library(spectra_gpu_optix_input OBJECT src/optix/optix.cu)
+add_library(spectra_gpu_optix_input OBJECT spectra/pathtracer/optix/optix.cu)
 set_property(TARGET spectra_gpu_optix_input PROPERTY CUDA_OPTIX_COMPILATION ON)
 set_property(TARGET spectra_gpu_optix_input PROPERTY CUDA_ARCHITECTURES OFF)
 target_compile_definitions(spectra_gpu_optix_input PRIVATE ${SPECTRA_GPU_DEFINITIONS} CCCL_DISABLE_INT128_SUPPORT)
@@ -384,8 +384,8 @@ add_library(
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
         spectra/scene.cpp
-        src/optix/aggregate.cu
-        spectra/pathtracer/wavefront.cu
+        spectra/pathtracer/optix/aggregate.cu
+        spectra/pathtracer/integrator.cu
 )
 add_library(spectra::gpu_lib ALIAS spectra_gpu_lib)
 add_dependencies(spectra_gpu_lib spectra_gpu_soa_generated)
@@ -436,7 +436,7 @@ target_sources(
         PRIVATE
         spectra/pathtracer.h
         spectra/pathtracer.cpp
-        spectra/pathtracer/wavefront.h
+        spectra/pathtracer/integrator.h
         spectra/spectra.h
         spectra/spectra.cpp
 

@@ -2,7 +2,7 @@
 // The pbrt source code is licensed under the Apache License, Version 2.0.
 // SPDX: Apache-2.0
 
-#include <spectra/pathtracer/wavefront.h>
+#include <spectra/pathtracer/integrator.h>
 
 #include <src/base/bxdf.h>
 #include <src/base/medium.h>
@@ -40,7 +40,7 @@
 #include <src/util/taggedptr.h>
 #include <src/util/vecmath.h>
 #include <src/core/diagnostics.h>
-#include <src/optix/aggregate.h>
+#include <spectra/pathtracer/optix/aggregate.h>
 #include <spectra/scene.h>
 
 #include <cstring>
