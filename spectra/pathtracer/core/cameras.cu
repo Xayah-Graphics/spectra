@@ -18,6 +18,53 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU pstd::optional<CameraRay> Camera::GenerateRay(
+        CameraSample sample, SampledWavelengths& lambda) const
+    {
+        auto generate = [&](auto ptr) { return ptr->GenerateRay(sample, lambda); };
+        return Dispatch(generate);
+    }
+
+    SPECTRA_CPU_GPU Film Camera::GetFilm() const
+    {
+        auto getfilm = [&](auto ptr) { return ptr->GetFilm(); };
+        return Dispatch(getfilm);
+    }
+
+    SPECTRA_CPU_GPU Float Camera::SampleTime(Float u) const
+    {
+        auto sample = [&](auto ptr) { return ptr->SampleTime(u); };
+        return Dispatch(sample);
+    }
+
+    SPECTRA_CPU_GPU const CameraTransform& Camera::GetCameraTransform() const
+    {
+        auto gtc = [&](auto ptr) -> const CameraTransform&
+        {
+            return ptr->GetCameraTransform();
+        };
+        return Dispatch(gtc);
+    }
+
+    SPECTRA_CPU_GPU void Camera::Approximate_dp_dxy(Point3f p, Normal3f n, Float time,
+                                                    int samplesPerPixel, Vector3f* dpdx,
+                                                    Vector3f* dpdy) const
+    {
+        if constexpr (AllInheritFrom<CameraBase>(Types()))
+        {
+            return ((const CameraBase*)ptr())
+                ->Approximate_dp_dxy(p, n, time, samplesPerPixel, dpdx, dpdy);
+        }
+        else
+        {
+            auto approx = [&](auto ptr)
+            {
+                return ptr->Approximate_dp_dxy(p, n, time, samplesPerPixel, dpdx, dpdy);
+            };
+            return Dispatch(approx);
+        }
+    }
+
     // CameraTransform Method Definitions
     CameraTransform::CameraTransform(const AnimatedTransform& worldFromCamera)
     {

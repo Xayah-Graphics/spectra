@@ -27,6 +27,32 @@
 namespace spectra
 {
     // Spectrum Function Definitions
+    SPECTRA_CPU_GPU Float InnerProduct(Spectrum f, Spectrum g)
+    {
+        Float integral = 0;
+        for (Float lambda = Lambda_min; lambda <= Lambda_max; ++lambda)
+            integral += f(lambda) * g(lambda);
+        return integral;
+    }
+
+    SPECTRA_CPU_GPU Float Spectrum::operator()(Float lambda) const
+    {
+        auto op = [&](auto ptr) { return (*ptr)(lambda); };
+        return Dispatch(op);
+    }
+
+    SPECTRA_CPU_GPU SampledSpectrum Spectrum::Sample(const SampledWavelengths& lambda) const
+    {
+        auto samp = [&](auto ptr) { return ptr->Sample(lambda); };
+        return Dispatch(samp);
+    }
+
+    SPECTRA_CPU_GPU Float Spectrum::MaxValue() const
+    {
+        auto max = [&](auto ptr) { return ptr->MaxValue(); };
+        return Dispatch(max);
+    }
+
     Float SpectrumToPhotometric(Spectrum s)
     {
         // We have to handle RGBIlluminantSpectrum separately here as it's composed of an

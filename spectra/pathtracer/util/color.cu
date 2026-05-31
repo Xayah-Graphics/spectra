@@ -15,6 +15,25 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU void ColorEncoding::ToLinear(pstd::span<const uint8_t> vin,
+                                                 pstd::span<Float> vout) const
+    {
+        auto tolin = [&](auto ptr) { return ptr->ToLinear(vin, vout); };
+        Dispatch(tolin);
+    }
+
+    SPECTRA_CPU_GPU Float ColorEncoding::ToFloatLinear(Float v) const
+    {
+        auto tfl = [&](auto ptr) { return ptr->ToFloatLinear(v); };
+        return Dispatch(tfl);
+    }
+
+    SPECTRA_CPU_GPU void ColorEncoding::FromLinear(pstd::span<const Float> vin,
+                                                   pstd::span<uint8_t> vout) const
+    {
+        auto fl = [&](auto ptr) { return ptr->FromLinear(vin, vout); };
+        Dispatch(fl);
+    }
 
 
     // RGBToSpectrumTable Method Definitions

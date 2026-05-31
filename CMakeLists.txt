@@ -299,6 +299,7 @@ set(SPECTRA_GPU_CORE_SOURCE
         spectra/pathtracer/core/lightsamplers.cu
         spectra/pathtracer/core/materials.cu
         spectra/pathtracer/core/media.cpp
+        spectra/pathtracer/core/media.cu
         spectra/pathtracer/core/options.cu
         spectra/pathtracer/core/paramdict.cpp
         spectra/pathtracer/core/samplers.cu

@@ -24,11 +24,11 @@ namespace spectra
         // BSSRDF Interface
         using TaggedPointer::TaggedPointer;
 
-        SPECTRA_CPU_GPU inline pstd::optional<BSSRDFProbeSegment> SampleSp(Float u1,
-                                                                        Point2f u2) const;
+        SPECTRA_CPU_GPU pstd::optional<BSSRDFProbeSegment> SampleSp(Float u1,
+                                                                    Point2f u2) const;
 
-        inline BSSRDFSample ProbeIntersectionToSample(const SubsurfaceInteraction& si,
-                                                      ScratchBuffer& scratchBuffer) const;
+        BSSRDFSample ProbeIntersectionToSample(const SubsurfaceInteraction& si,
+                                               ScratchBuffer& scratchBuffer) const;
     };
 } // namespace spectra
 

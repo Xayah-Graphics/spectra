@@ -50,15 +50,15 @@ namespace spectra
         static Sampler Create(const std::string& name, const ParameterDictionary& parameters,
                               Point2i fullResolution, const FileLoc* loc, Allocator alloc);
 
-        SPECTRA_CPU_GPU inline int SamplesPerPixel() const;
+        SPECTRA_CPU_GPU int SamplesPerPixel() const;
 
-        SPECTRA_CPU_GPU inline void StartPixelSample(Point2i p, int sampleIndex,
-                                                  int dimension = 0);
+        SPECTRA_CPU_GPU void StartPixelSample(Point2i p, int sampleIndex,
+                                              int dimension = 0);
 
-        SPECTRA_CPU_GPU inline Float Get1D();
-        SPECTRA_CPU_GPU inline Point2f Get2D();
+        SPECTRA_CPU_GPU Float Get1D();
+        SPECTRA_CPU_GPU Point2f Get2D();
 
-        SPECTRA_CPU_GPU inline Point2f GetPixel2D();
+        SPECTRA_CPU_GPU Point2f GetPixel2D();
 
         Sampler Clone(Allocator alloc = {});
 

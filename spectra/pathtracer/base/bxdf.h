@@ -189,19 +189,19 @@ namespace spectra
     {
     public:
         // BxDF Interface
-        SPECTRA_CPU_GPU inline BxDFFlags Flags() const;
+        SPECTRA_CPU_GPU BxDFFlags Flags() const;
 
         using TaggedPointer::TaggedPointer;
 
 
-        SPECTRA_CPU_GPU inline SampledSpectrum f(Vector3f wo, Vector3f wi,
-                                              TransportMode mode) const;
+        SPECTRA_CPU_GPU SampledSpectrum f(Vector3f wo, Vector3f wi,
+                                          TransportMode mode) const;
 
-        SPECTRA_CPU_GPU inline pstd::optional<BSDFSample> Sample_f(
+        SPECTRA_CPU_GPU pstd::optional<BSDFSample> Sample_f(
             Vector3f wo, Float uc, Point2f u, TransportMode mode = TransportMode::Radiance,
             BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const;
 
-        SPECTRA_CPU_GPU inline Float PDF(
+        SPECTRA_CPU_GPU Float PDF(
             Vector3f wo, Vector3f wi, TransportMode mode,
             BxDFReflTransFlags sampleFlags = BxDFReflTransFlags::All) const;
 
@@ -211,7 +211,7 @@ namespace spectra
         SampledSpectrum rho(pstd::span<const Point2f> u1, pstd::span<const Float> uc2,
                             pstd::span<const Point2f> u2) const;
 
-        SPECTRA_CPU_GPU inline void Regularize();
+        SPECTRA_CPU_GPU void Regularize();
     };
 } // namespace spectra
 

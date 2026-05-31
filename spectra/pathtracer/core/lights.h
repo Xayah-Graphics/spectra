@@ -139,36 +139,7 @@ namespace spectra
         bool twoSided;
     };
 
-    // LightBounds Inline Methods
-    inline LightBounds::LightBounds(const Bounds3f& b, Vector3f w, Float phi,
-                                    Float cosTheta_o, Float cosTheta_e, bool twoSided)
-        : bounds(b),
-          w(Normalize(w)),
-          phi(phi),
-          cosTheta_o(cosTheta_o),
-          cosTheta_e(cosTheta_e),
-          twoSided(twoSided)
-    {
-    }
-
-    inline LightBounds Union(const LightBounds& a, const LightBounds& b)
-    {
-        // If one _LightBounds_ has zero power, return the other
-        if (a.phi == 0)
-            return b;
-        if (b.phi == 0)
-            return a;
-
-        // Find average direction and updated angles for _LightBounds_
-        DirectionCone cone =
-            Union(DirectionCone(a.w, a.cosTheta_o), DirectionCone(b.w, b.cosTheta_o));
-        Float cosTheta_o = cone.cosTheta;
-        Float cosTheta_e = std::min(a.cosTheta_e, b.cosTheta_e);
-
-        // Return final _LightBounds_ union
-        return LightBounds(Union(a.bounds, b.bounds), cone.w, a.phi + b.phi, cosTheta_o,
-                           cosTheta_e, a.twoSided | b.twoSided);
-    }
+    LightBounds Union(const LightBounds& a, const LightBounds& b);
 
     // LightBase Definition
     class LightBase
@@ -852,44 +823,6 @@ namespace spectra
         Float scale, cosFalloffStart, cosFalloffEnd;
     };
 
-    SPECTRA_CPU_GPU inline pstd::optional<LightLiSample> Light::SampleLi(LightSampleContext ctx, Point2f u,
-                                                                      SampledWavelengths lambda,
-                                                                      bool allowIncompletePDF) const
-    {
-        auto sample = [&](auto ptr)
-        {
-            return ptr->SampleLi(ctx, u, lambda, allowIncompletePDF);
-        };
-        return Dispatch(sample);
-    }
-
-    SPECTRA_CPU_GPU inline Float Light::PDF_Li(LightSampleContext ctx, Vector3f wi,
-                                            bool allowIncompletePDF) const
-    {
-        auto pdf = [&](auto ptr) { return ptr->PDF_Li(ctx, wi, allowIncompletePDF); };
-        return Dispatch(pdf);
-    }
-
-    SPECTRA_CPU_GPU inline SampledSpectrum Light::L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
-                                                 const SampledWavelengths& lambda) const
-    {
-        CHECK(Type() == LightType::Area);
-        auto l = [&](auto ptr) { return ptr->L(p, n, uv, w, lambda); };
-        return Dispatch(l);
-    }
-
-    SPECTRA_CPU_GPU inline SampledSpectrum Light::Le(const Ray& ray,
-                                                  const SampledWavelengths& lambda) const
-    {
-        auto le = [&](auto ptr) { return ptr->Le(ray, lambda); };
-        return Dispatch(le);
-    }
-
-    SPECTRA_CPU_GPU inline LightType Light::Type() const
-    {
-        auto t = [&](auto ptr) { return ptr->Type(); };
-        return Dispatch(t);
-    }
 } // namespace spectra
 
 namespace std

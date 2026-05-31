@@ -37,12 +37,12 @@ namespace spectra
         using TaggedPointer::TaggedPointer;
 
 
-        SPECTRA_CPU_GPU inline Float p(Vector3f wo, Vector3f wi) const;
+        SPECTRA_CPU_GPU Float p(Vector3f wo, Vector3f wi) const;
 
-        SPECTRA_CPU_GPU inline pstd::optional<PhaseFunctionSample> Sample_p(Vector3f wo,
-                                                                         Point2f u) const;
+        SPECTRA_CPU_GPU pstd::optional<PhaseFunctionSample> Sample_p(Vector3f wo,
+                                                                     Point2f u) const;
 
-        SPECTRA_CPU_GPU inline Float PDF(Vector3f wo, Vector3f wi) const;
+        SPECTRA_CPU_GPU Float PDF(Vector3f wo, Vector3f wi) const;
     };
 
     class HomogeneousMedium;

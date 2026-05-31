@@ -66,23 +66,23 @@ namespace spectra
 
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
-        SPECTRA_CPU_GPU inline LightType Type() const;
+        SPECTRA_CPU_GPU LightType Type() const;
 
-        SPECTRA_CPU_GPU inline pstd::optional<LightLiSample> SampleLi(
+        SPECTRA_CPU_GPU pstd::optional<LightLiSample> SampleLi(
             LightSampleContext ctx, Point2f u, SampledWavelengths lambda,
             bool allowIncompletePDF = false) const;
 
-        SPECTRA_CPU_GPU inline Float PDF_Li(LightSampleContext ctx, Vector3f wi,
-                                         bool allowIncompletePDF = false) const;
+        SPECTRA_CPU_GPU Float PDF_Li(LightSampleContext ctx, Vector3f wi,
+                                     bool allowIncompletePDF = false) const;
 
 
         // AreaLights only
-        SPECTRA_CPU_GPU inline SampledSpectrum L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
-                                              const SampledWavelengths& lambda) const;
+        SPECTRA_CPU_GPU SampledSpectrum L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
+                                          const SampledWavelengths& lambda) const;
 
         // InfiniteLights only
-        SPECTRA_CPU_GPU inline SampledSpectrum Le(const Ray& ray,
-                                               const SampledWavelengths& lambda) const;
+        SPECTRA_CPU_GPU SampledSpectrum Le(const Ray& ray,
+                                           const SampledWavelengths& lambda) const;
 
         void Preprocess(const Bounds3f& sceneBounds);
 

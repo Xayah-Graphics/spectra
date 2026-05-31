@@ -28,6 +28,84 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU SampledWavelengths Film::SampleWavelengths(Float u) const
+    {
+        auto sample = [&](auto ptr) { return ptr->SampleWavelengths(u); };
+        return Dispatch(sample);
+    }
+
+    SPECTRA_CPU_GPU Bounds2f Film::SampleBounds() const
+    {
+        auto sb = [&](auto ptr) { return ptr->SampleBounds(); };
+        return Dispatch(sb);
+    }
+
+    SPECTRA_CPU_GPU Bounds2i Film::PixelBounds() const
+    {
+        auto pb = [&](auto ptr) { return ptr->PixelBounds(); };
+        return Dispatch(pb);
+    }
+
+    SPECTRA_CPU_GPU Point2i Film::FullResolution() const
+    {
+        auto fr = [&](auto ptr) { return ptr->FullResolution(); };
+        return Dispatch(fr);
+    }
+
+    SPECTRA_CPU_GPU Float Film::Diagonal() const
+    {
+        auto diag = [&](auto ptr) { return ptr->Diagonal(); };
+        return Dispatch(diag);
+    }
+
+    SPECTRA_CPU_GPU Filter Film::GetFilter() const
+    {
+        auto filter = [&](auto ptr) { return ptr->GetFilter(); };
+        return Dispatch(filter);
+    }
+
+    SPECTRA_CPU_GPU bool Film::UsesVisibleSurface() const
+    {
+        auto uses = [&](auto ptr) { return ptr->UsesVisibleSurface(); };
+        return Dispatch(uses);
+    }
+
+    SPECTRA_CPU_GPU RGB Film::GetPixelRGB(Point2i p, Float splatScale) const
+    {
+        auto get = [&](auto ptr) { return ptr->GetPixelRGB(p, splatScale); };
+        return Dispatch(get);
+    }
+
+    SPECTRA_CPU_GPU RGB Film::ToOutputRGB(SampledSpectrum L,
+                                          const SampledWavelengths& lambda) const
+    {
+        auto out = [&](auto ptr) { return ptr->ToOutputRGB(L, lambda); };
+        return Dispatch(out);
+    }
+
+    SPECTRA_CPU_GPU void Film::AddSample(Point2i pFilm, SampledSpectrum L,
+                                         const SampledWavelengths& lambda,
+                                         const VisibleSurface* visibleSurface, Float weight)
+    {
+        auto add = [&](auto ptr)
+        {
+            return ptr->AddSample(pFilm, L, lambda, visibleSurface, weight);
+        };
+        return Dispatch(add);
+    }
+
+    SPECTRA_CPU_GPU const PixelSensor* Film::GetPixelSensor() const
+    {
+        auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
+        return Dispatch(filter);
+    }
+
+    SPECTRA_CPU_GPU void Film::ResetPixel(Point2i p)
+    {
+        auto rp = [&](auto ptr) { ptr->ResetPixel(p); };
+        return Dispatch(rp);
+    }
+
     SPECTRA_CPU_GPU void Film::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda)
     {
         auto splat = [&](auto ptr) { return ptr->AddSplat(p, v, lambda); };

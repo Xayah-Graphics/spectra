@@ -849,6 +849,8 @@ namespace spectra
 
     std::string FindMatchingNamedSpectrum(Spectrum s);
 
+    SPECTRA_CPU_GPU Float InnerProduct(Spectrum f, Spectrum g);
+
     namespace Spectra
     {
         SPECTRA_CPU_GPU inline const DenselySampledSpectrum& X();
@@ -856,33 +858,6 @@ namespace spectra
         SPECTRA_CPU_GPU inline const DenselySampledSpectrum& Z();
     } // namespace Spectra
 
-    // Spectrum Inline Functions
-    SPECTRA_CPU_GPU inline Float InnerProduct(Spectrum f, Spectrum g)
-    {
-        Float integral = 0;
-        for (Float lambda = Lambda_min; lambda <= Lambda_max; ++lambda)
-            integral += f(lambda) * g(lambda);
-        return integral;
-    }
-
-    // Spectrum Inline Method Definitions
-    SPECTRA_CPU_GPU inline Float Spectrum::operator()(Float lambda) const
-    {
-        auto op = [&](auto ptr) { return (*ptr)(lambda); };
-        return Dispatch(op);
-    }
-
-    SPECTRA_CPU_GPU inline SampledSpectrum Spectrum::Sample(const SampledWavelengths& lambda) const
-    {
-        auto samp = [&](auto ptr) { return ptr->Sample(lambda); };
-        return Dispatch(samp);
-    }
-
-    SPECTRA_CPU_GPU inline Float Spectrum::MaxValue() const
-    {
-        auto max = [&](auto ptr) { return ptr->MaxValue(); };
-        return Dispatch(max);
-    }
 } // namespace spectra
 
 namespace std

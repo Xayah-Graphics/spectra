@@ -34,13 +34,13 @@ namespace spectra
                                    Allocator alloc);
 
 
-        SPECTRA_CPU_GPU inline pstd::optional<SampledLight> Sample(const LightSampleContext& ctx,
-                                                                Float u) const;
+        SPECTRA_CPU_GPU pstd::optional<SampledLight> Sample(const LightSampleContext& ctx,
+                                                            Float u) const;
 
-        SPECTRA_CPU_GPU inline Float PMF(const LightSampleContext& ctx, Light light) const;
+        SPECTRA_CPU_GPU Float PMF(const LightSampleContext& ctx, Light light) const;
 
-        SPECTRA_CPU_GPU inline pstd::optional<SampledLight> Sample(Float u) const;
-        SPECTRA_CPU_GPU inline Float PMF(Light light) const;
+        SPECTRA_CPU_GPU pstd::optional<SampledLight> Sample(Float u) const;
+        SPECTRA_CPU_GPU Float PMF(Light light) const;
     };
 } // namespace spectra
 

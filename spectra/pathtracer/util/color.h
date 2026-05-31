@@ -485,12 +485,12 @@ namespace spectra
     public:
         using TaggedPointer::TaggedPointer;
         // ColorEncoding Interface
-        SPECTRA_CPU_GPU inline void ToLinear(pstd::span<const uint8_t> vin,
-                                          pstd::span<Float> vout) const;
-        SPECTRA_CPU_GPU inline void FromLinear(pstd::span<const Float> vin,
-                                            pstd::span<uint8_t> vout) const;
+        SPECTRA_CPU_GPU void ToLinear(pstd::span<const uint8_t> vin,
+                                      pstd::span<Float> vout) const;
+        SPECTRA_CPU_GPU void FromLinear(pstd::span<const Float> vin,
+                                        pstd::span<uint8_t> vout) const;
 
-        SPECTRA_CPU_GPU inline Float ToFloatLinear(Float v) const;
+        SPECTRA_CPU_GPU Float ToFloatLinear(Float v) const;
 
 
         static const ColorEncoding Get(const std::string& name, Allocator alloc);
@@ -557,26 +557,6 @@ namespace spectra
         pstd::array<Float, 256> applyLUT;
         pstd::array<Float, 1024> inverseLUT;
     };
-
-    inline void ColorEncoding::ToLinear(pstd::span<const uint8_t> vin,
-                                        pstd::span<Float> vout) const
-    {
-        auto tolin = [&](auto ptr) { return ptr->ToLinear(vin, vout); };
-        Dispatch(tolin);
-    }
-
-    inline Float ColorEncoding::ToFloatLinear(Float v) const
-    {
-        auto tfl = [&](auto ptr) { return ptr->ToFloatLinear(v); };
-        return Dispatch(tfl);
-    }
-
-    inline void ColorEncoding::FromLinear(pstd::span<const Float> vin,
-                                          pstd::span<uint8_t> vout) const
-    {
-        auto fl = [&](auto ptr) { return ptr->FromLinear(vin, vout); };
-        Dispatch(fl);
-    }
 
     SPECTRA_CPU_GPU
     inline Float LinearToSRGB(Float value)

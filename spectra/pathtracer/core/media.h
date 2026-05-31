@@ -731,56 +731,6 @@ namespace spectra
         Float LeScale, temperatureOffset, temperatureScale;
     };
 
-    SPECTRA_CPU_GPU inline Float PhaseFunction::p(Vector3f wo, Vector3f wi) const
-    {
-        auto p = [&](auto ptr) { return ptr->p(wo, wi); };
-        return Dispatch(p);
-    }
-
-    SPECTRA_CPU_GPU inline pstd::optional<PhaseFunctionSample> PhaseFunction::Sample_p(Vector3f wo,
-                                                                                    Point2f u) const
-    {
-        auto sample = [&](auto ptr) { return ptr->Sample_p(wo, u); };
-        return Dispatch(sample);
-    }
-
-    SPECTRA_CPU_GPU inline Float PhaseFunction::PDF(Vector3f wo, Vector3f wi) const
-    {
-        auto pdf = [&](auto ptr) { return ptr->PDF(wo, wi); };
-        return Dispatch(pdf);
-    }
-
-    SPECTRA_CPU_GPU inline pstd::optional<RayMajorantSegment> RayMajorantIterator::Next()
-    {
-        auto next = [](auto ptr) { return ptr->Next(); };
-        return Dispatch(next);
-    }
-
-    SPECTRA_CPU_GPU inline MediumProperties Medium::SamplePoint(Point3f p,
-                                                             const SampledWavelengths& lambda) const
-    {
-        auto sample = [&](auto ptr) { return ptr->SamplePoint(p, lambda); };
-        return Dispatch(sample);
-    }
-
-    // Medium Sampling Function Definitions
-    inline RayMajorantIterator Medium::SampleRay(Ray ray, Float tMax,
-                                                 const SampledWavelengths& lambda,
-                                                 ScratchBuffer& buf) const
-    {
-        // Explicit capture to work around MSVC weirdness; it doesn't see |buf| otherwise...
-        auto sample = [ray, tMax, lambda, &buf](auto medium)
-        {
-            // Return _RayMajorantIterator_ for medium's majorant iterator
-            using ConcreteMedium = typename std::remove_reference_t<decltype(*medium)>;
-            using Iter = typename ConcreteMedium::MajorantIterator;
-            Iter* iter = (Iter*)buf.Alloc(sizeof(Iter), alignof(Iter));
-            *iter = medium->SampleRay(ray, tMax, lambda);
-            return RayMajorantIterator(iter);
-        };
-        return DispatchCPU(sample);
-    }
-
     template <typename F>
     SPECTRA_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG& rng,
                                              const SampledWavelengths& lambda, F callback)

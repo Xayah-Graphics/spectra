@@ -11,6 +11,39 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension)
+    {
+        auto start = [&](auto ptr)
+        {
+            return ptr->StartPixelSample(p, sampleIndex, dimension);
+        };
+        return Dispatch(start);
+    }
+
+    SPECTRA_CPU_GPU int Sampler::SamplesPerPixel() const
+    {
+        auto spp = [&](auto ptr) { return ptr->SamplesPerPixel(); };
+        return Dispatch(spp);
+    }
+
+    SPECTRA_CPU_GPU Float Sampler::Get1D()
+    {
+        auto get = [&](auto ptr) { return ptr->Get1D(); };
+        return Dispatch(get);
+    }
+
+    SPECTRA_CPU_GPU Point2f Sampler::Get2D()
+    {
+        auto get = [&](auto ptr) { return ptr->Get2D(); };
+        return Dispatch(get);
+    }
+
+    SPECTRA_CPU_GPU Point2f Sampler::GetPixel2D()
+    {
+        auto get = [&](auto ptr) { return ptr->GetPixel2D(); };
+        return Dispatch(get);
+    }
+
     Sampler Sampler::Clone(Allocator alloc)
     {
         auto clone = [&](auto ptr) { return ptr->Clone(alloc); };

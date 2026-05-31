@@ -6,6 +6,30 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU Float Filter::Evaluate(Point2f p) const
+    {
+        auto eval = [&](auto ptr) { return ptr->Evaluate(p); };
+        return Dispatch(eval);
+    }
+
+    SPECTRA_CPU_GPU FilterSample Filter::Sample(Point2f u) const
+    {
+        auto sample = [&](auto ptr) { return ptr->Sample(u); };
+        return Dispatch(sample);
+    }
+
+    SPECTRA_CPU_GPU Vector2f Filter::Radius() const
+    {
+        auto radius = [&](auto ptr) { return ptr->Radius(); };
+        return Dispatch(radius);
+    }
+
+    SPECTRA_CPU_GPU Float Filter::Integral() const
+    {
+        auto integral = [&](auto ptr) { return ptr->Integral(); };
+        return Dispatch(integral);
+    }
+
 
     // Box Filter Method Definitions
 

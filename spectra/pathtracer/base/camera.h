@@ -48,20 +48,20 @@ namespace spectra
                              const FileLoc* loc, Allocator alloc);
 
 
-        SPECTRA_CPU_GPU inline pstd::optional<CameraRay> GenerateRay(
+        SPECTRA_CPU_GPU pstd::optional<CameraRay> GenerateRay(
             CameraSample sample, SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
         pstd::optional<CameraRayDifferential> GenerateRayDifferential(
             CameraSample sample, SampledWavelengths& lambda) const;
 
-        SPECTRA_CPU_GPU inline Film GetFilm() const;
+        SPECTRA_CPU_GPU Film GetFilm() const;
 
-        SPECTRA_CPU_GPU inline Float SampleTime(Float u) const;
+        SPECTRA_CPU_GPU Float SampleTime(Float u) const;
 
         void InitMetadata(ImageMetadata* metadata) const;
 
-        SPECTRA_CPU_GPU inline const CameraTransform& GetCameraTransform() const;
+        SPECTRA_CPU_GPU const CameraTransform& GetCameraTransform() const;
 
         SPECTRA_CPU_GPU
         void Approximate_dp_dxy(Point3f p, Normal3f n, Float time, int samplesPerPixel,

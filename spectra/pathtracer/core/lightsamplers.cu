@@ -19,6 +19,31 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU pstd::optional<SampledLight> LightSampler::Sample(
+        const LightSampleContext& ctx, Float u) const
+    {
+        auto s = [&](auto ptr) { return ptr->Sample(ctx, u); };
+        return Dispatch(s);
+    }
+
+    SPECTRA_CPU_GPU Float LightSampler::PMF(const LightSampleContext& ctx, Light light) const
+    {
+        auto pdf = [&](auto ptr) { return ptr->PMF(ctx, light); };
+        return Dispatch(pdf);
+    }
+
+    SPECTRA_CPU_GPU pstd::optional<SampledLight> LightSampler::Sample(Float u) const
+    {
+        auto sample = [&](auto ptr) { return ptr->Sample(u); };
+        return Dispatch(sample);
+    }
+
+    SPECTRA_CPU_GPU Float LightSampler::PMF(Light light) const
+    {
+        auto pdf = [&](auto ptr) { return ptr->PMF(light); };
+        return Dispatch(pdf);
+    }
+
 
 
 

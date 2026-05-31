@@ -20,6 +20,43 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU SampledSpectrum BxDF::f(Vector3f wo, Vector3f wi,
+                                            TransportMode mode) const
+    {
+        auto f = [&](auto ptr) -> SampledSpectrum { return ptr->f(wo, wi, mode); };
+        return Dispatch(f);
+    }
+
+    SPECTRA_CPU_GPU pstd::optional<BSDFSample> BxDF::Sample_f(
+        Vector3f wo, Float uc, Point2f u, TransportMode mode,
+        BxDFReflTransFlags sampleFlags) const
+    {
+        auto sample_f = [&](auto ptr) -> pstd::optional<BSDFSample>
+        {
+            return ptr->Sample_f(wo, uc, u, mode, sampleFlags);
+        };
+        return Dispatch(sample_f);
+    }
+
+    SPECTRA_CPU_GPU Float BxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
+                                    BxDFReflTransFlags sampleFlags) const
+    {
+        auto pdf = [&](auto ptr) { return ptr->PDF(wo, wi, mode, sampleFlags); };
+        return Dispatch(pdf);
+    }
+
+    SPECTRA_CPU_GPU BxDFFlags BxDF::Flags() const
+    {
+        auto flags = [&](auto ptr) { return ptr->Flags(); };
+        return Dispatch(flags);
+    }
+
+    SPECTRA_CPU_GPU void BxDF::Regularize()
+    {
+        auto regularize = [&](auto ptr) { ptr->Regularize(); };
+        return Dispatch(regularize);
+    }
+
     std::string ToString(BxDFReflTransFlags flags)
     {
         if (flags == BxDFReflTransFlags::Unset)

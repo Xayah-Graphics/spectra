@@ -29,6 +29,45 @@ namespace spectra
 {
     // Light Method Definitions
 
+    SPECTRA_CPU_GPU pstd::optional<LightLiSample> Light::SampleLi(
+        LightSampleContext ctx, Point2f u, SampledWavelengths lambda,
+        bool allowIncompletePDF) const
+    {
+        auto sample = [&](auto ptr)
+        {
+            return ptr->SampleLi(ctx, u, lambda, allowIncompletePDF);
+        };
+        return Dispatch(sample);
+    }
+
+    SPECTRA_CPU_GPU Float Light::PDF_Li(LightSampleContext ctx, Vector3f wi,
+                                        bool allowIncompletePDF) const
+    {
+        auto pdf = [&](auto ptr) { return ptr->PDF_Li(ctx, wi, allowIncompletePDF); };
+        return Dispatch(pdf);
+    }
+
+    SPECTRA_CPU_GPU SampledSpectrum Light::L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
+                                             const SampledWavelengths& lambda) const
+    {
+        CHECK(Type() == LightType::Area);
+        auto l = [&](auto ptr) { return ptr->L(p, n, uv, w, lambda); };
+        return Dispatch(l);
+    }
+
+    SPECTRA_CPU_GPU SampledSpectrum Light::Le(const Ray& ray,
+                                              const SampledWavelengths& lambda) const
+    {
+        auto le = [&](auto ptr) { return ptr->Le(ray, lambda); };
+        return Dispatch(le);
+    }
+
+    SPECTRA_CPU_GPU LightType Light::Type() const
+    {
+        auto t = [&](auto ptr) { return ptr->Type(); };
+        return Dispatch(t);
+    }
+
 
     std::string ToString(LightType lf)
     {
@@ -78,6 +117,33 @@ namespace spectra
 
 
     // LightBounds Method Definitions
+    LightBounds::LightBounds(const Bounds3f& b, Vector3f w, Float phi, Float cosTheta_o,
+                             Float cosTheta_e, bool twoSided)
+        : bounds(b),
+          w(Normalize(w)),
+          phi(phi),
+          cosTheta_o(cosTheta_o),
+          cosTheta_e(cosTheta_e),
+          twoSided(twoSided)
+    {
+    }
+
+    LightBounds Union(const LightBounds& a, const LightBounds& b)
+    {
+        if (a.phi == 0)
+            return b;
+        if (b.phi == 0)
+            return a;
+
+        DirectionCone cone =
+            Union(DirectionCone(a.w, a.cosTheta_o), DirectionCone(b.w, b.cosTheta_o));
+        Float cosTheta_o = cone.cosTheta;
+        Float cosTheta_e = std::min(a.cosTheta_e, b.cosTheta_e);
+
+        return LightBounds(Union(a.bounds, b.bounds), cone.w, a.phi + b.phi, cosTheta_o,
+                           cosTheta_e, a.twoSided | b.twoSided);
+    }
+
     SPECTRA_CPU_GPU Float LightBounds::Importance(Point3f p, Normal3f n) const
     {
         // Return importance for light bounds at reference point

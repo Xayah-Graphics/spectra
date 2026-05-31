@@ -12,6 +12,26 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU pstd::optional<BSSRDFProbeSegment> BSSRDF::SampleSp(Float u1,
+                                                                        Point2f u2) const
+    {
+        auto sample = [&](auto ptr) { return ptr->SampleSp(u1, u2); };
+        return Dispatch(sample);
+    }
+
+    BSSRDFSample BSSRDF::ProbeIntersectionToSample(
+        const SubsurfaceInteraction& si, ScratchBuffer& scratchBuffer) const
+    {
+        auto pits = [&](auto ptr)
+        {
+            typename std::remove_reference_t<decltype(*ptr)>::BxDF* bxdf =
+                (typename std::remove_reference_t<decltype(*ptr)>::BxDF*)scratchBuffer.Alloc(
+                    sizeof(typename std::remove_reference_t<decltype(*ptr)>::BxDF),
+                    alignof(typename std::remove_reference_t<decltype(*ptr)>::BxDF));
+            return ptr->ProbeIntersectionToSample(si, bxdf);
+        };
+        return DispatchCPU(pits);
+    }
 
     // BSSRDF Function Definitions
     Float BeamDiffusionMS(Float sigma_s, Float sigma_a, Float g, Float eta, Float r)

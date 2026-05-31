@@ -33,13 +33,13 @@ namespace spectra
         static Filter Create(const std::string& name, const ParameterDictionary& parameters,
                              const FileLoc* loc, Allocator alloc);
 
-        SPECTRA_CPU_GPU inline Vector2f Radius() const;
+        SPECTRA_CPU_GPU Vector2f Radius() const;
 
-        SPECTRA_CPU_GPU inline Float Evaluate(Point2f p) const;
+        SPECTRA_CPU_GPU Float Evaluate(Point2f p) const;
 
-        SPECTRA_CPU_GPU inline Float Integral() const;
+        SPECTRA_CPU_GPU Float Integral() const;
 
-        SPECTRA_CPU_GPU inline FilterSample Sample(Point2f u) const;
+        SPECTRA_CPU_GPU FilterSample Sample(Point2f u) const;
 
     };
 } // namespace spectra

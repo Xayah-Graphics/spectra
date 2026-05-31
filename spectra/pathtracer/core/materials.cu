@@ -21,7 +21,23 @@
 
 namespace spectra
 {
+    SPECTRA_CPU_GPU void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx,
+                                   Vector3f* dpdu, Vector3f* dpdv)
+    {
+        WrapMode2D wrap(WrapMode::Repeat);
+        Point2f uv(ctx.uv[0], 1 - ctx.uv[1]);
+        Vector3f ns(2 * normalMap.BilerpChannel(uv, 0, wrap) - 1,
+                    2 * normalMap.BilerpChannel(uv, 1, wrap) - 1,
+                    2 * normalMap.BilerpChannel(uv, 2, wrap) - 1);
+        ns = Normalize(ns);
 
+        Frame frame = Frame::FromXZ(Normalize(ctx.shading.dpdu), Vector3f(ctx.shading.n));
+        ns = frame.FromLocal(ns);
+
+        Float ulen = Length(ctx.shading.dpdu), vlen = Length(ctx.shading.dpdv);
+        *dpdu = Normalize(GramSchmidt(ctx.shading.dpdu, ns)) * ulen;
+        *dpdv = Normalize(Cross(ns, *dpdu)) * vlen;
+    }
 
     // DielectricMaterial Method Definitions
 
