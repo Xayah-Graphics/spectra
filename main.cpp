@@ -1,4 +1,4 @@
-#include "spectra/pathtracer/pathtracer.h"
+#include "spectra/pathtracer.h"
 #include "spectra/spectra.h"
 
 #include <exception>

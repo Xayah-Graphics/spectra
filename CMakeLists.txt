@@ -437,15 +437,8 @@ add_library(spectra_core)
 target_sources(
         spectra_core
         PRIVATE
-        spectra/pathtracer/pathtracer.h
-        spectra/pathtracer/pathtracer.cpp
-        spectra/pathtracer/render_backend.h
-        spectra/pathtracer/render_backend.cpp
-        spectra/pathtracer/camera_controller.h
-        spectra/pathtracer/camera_controller.cpp
-        spectra/pathtracer/session.h
-        spectra/pathtracer/session.cpp
-        spectra/pathtracer/panels.cpp
+        spectra/pathtracer.h
+        spectra/pathtracer.cpp
         spectra/spectra.h
         spectra/spectra.cpp
 

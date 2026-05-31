@@ -36,8 +36,10 @@
 #include <utility>
 #include <vector>
 
-namespace {
-    void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
+namespace
+{
+    void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access)
+    {
         const vk::ImageMemoryBarrier2 image_memory_barrier{
             src_stage,
             src_access,
@@ -54,27 +56,29 @@ namespace {
         command_buffer.pipelineBarrier2(dependency_info);
     }
 
-    VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
+    VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*)
+    {
         if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
         return VK_FALSE;
     }
 
-    void load_imgui_fonts() {
+    void load_imgui_fonts()
+    {
         ImGuiIO& io = ImGui::GetIO();
         if (io.Fonts == nullptr) throw std::runtime_error("ImGui font atlas is unavailable");
 
         ImFontConfig font_config{};
-        font_config.OversampleH   = 3;
-        font_config.OversampleV   = 3;
+        font_config.OversampleH = 3;
+        font_config.OversampleV = 3;
         constexpr float font_size = 15.0f;
-        ImFont* default_font      = io.Fonts->AddFontFromMemoryCompressedTTF(g_roboto_regular_compressed_data, g_roboto_regular_compressed_size, font_size, &font_config);
+        ImFont* default_font = io.Fonts->AddFontFromMemoryCompressedTTF(g_roboto_regular_compressed_data, g_roboto_regular_compressed_size, font_size, &font_config);
         if (default_font == nullptr) throw std::runtime_error("Failed to load Roboto regular font");
 
         ImFontConfig icon_config{};
-        icon_config.MergeMode     = true;
-        icon_config.PixelSnapH    = true;
-        icon_config.OversampleH   = 3;
-        icon_config.OversampleV   = 3;
+        icon_config.MergeMode = true;
+        icon_config.PixelSnapH = true;
+        icon_config.OversampleH = 3;
+        icon_config.OversampleV = 3;
         constexpr float icon_size = 1.28571429f * font_size;
         icon_config.GlyphOffset.x = icon_size * 0.01f;
         icon_config.GlyphOffset.y = icon_size * 0.2f;
@@ -88,22 +92,23 @@ namespace {
         io.FontDefault = default_font;
     }
 
-    void apply_imgui_style() {
+    void apply_imgui_style()
+    {
         ImGui::StyleColorsDark();
-        ImGuiStyle& style                  = ImGui::GetStyle();
-        style.WindowRounding               = 0.0f;
-        style.WindowBorderSize             = 0.0f;
-        style.ColorButtonPosition          = ImGuiDir_Right;
-        style.FrameRounding                = 2.0f;
-        style.FrameBorderSize              = 1.0f;
-        style.GrabRounding                 = 4.0f;
-        style.IndentSpacing                = 12.0f;
-        style.Colors[ImGuiCol_WindowBg]    = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
-        style.Colors[ImGuiCol_MenuBarBg]   = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 0.0f;
+        style.WindowBorderSize = 0.0f;
+        style.ColorButtonPosition = ImGuiDir_Right;
+        style.FrameRounding = 2.0f;
+        style.FrameBorderSize = 1.0f;
+        style.GrabRounding = 4.0f;
+        style.IndentSpacing = 12.0f;
+        style.Colors[ImGuiCol_WindowBg] = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
+        style.Colors[ImGuiCol_MenuBarBg] = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
         style.Colors[ImGuiCol_ScrollbarBg] = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
-        style.Colors[ImGuiCol_PopupBg]     = ImVec4{0.135f, 0.135f, 0.135f, 1.0f};
-        style.Colors[ImGuiCol_Border]      = ImVec4{0.4f, 0.4f, 0.4f, 0.5f};
-        style.Colors[ImGuiCol_FrameBg]     = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
+        style.Colors[ImGuiCol_PopupBg] = ImVec4{0.135f, 0.135f, 0.135f, 1.0f};
+        style.Colors[ImGuiCol_Border] = ImVec4{0.4f, 0.4f, 0.4f, 0.5f};
+        style.Colors[ImGuiCol_FrameBg] = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
 
         const ImVec4 normal_color = ImVec4{0.465f, 0.465f, 0.525f, 1.0f};
         constexpr std::array normal_colors{
@@ -138,46 +143,54 @@ namespace {
         };
         for (const ImGuiCol color_id : hovered_colors) style.Colors[color_id] = hovered_color;
 
-        style.Colors[ImGuiCol_TitleBgActive]    = ImVec4{0.465f, 0.465f, 0.465f, 1.0f};
-        style.Colors[ImGuiCol_TitleBg]          = ImVec4{0.125f, 0.125f, 0.125f, 1.0f};
-        style.Colors[ImGuiCol_Tab]              = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
-        style.Colors[ImGuiCol_TabHovered]       = ImVec4{0.465f, 0.495f, 0.525f, 1.0f};
-        style.Colors[ImGuiCol_TabActive]        = ImVec4{0.282f, 0.290f, 0.302f, 1.0f};
+        style.Colors[ImGuiCol_TitleBgActive] = ImVec4{0.465f, 0.465f, 0.465f, 1.0f};
+        style.Colors[ImGuiCol_TitleBg] = ImVec4{0.125f, 0.125f, 0.125f, 1.0f};
+        style.Colors[ImGuiCol_Tab] = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
+        style.Colors[ImGuiCol_TabHovered] = ImVec4{0.465f, 0.495f, 0.525f, 1.0f};
+        style.Colors[ImGuiCol_TabActive] = ImVec4{0.282f, 0.290f, 0.302f, 1.0f};
         style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4{0.465f, 0.465f, 0.465f, 0.350f};
-        style.Colors[ImGuiCol_ButtonActive]     = static_cast<ImVec4>(ImColor::HSV(0.3F, 0.5F, 0.5F));
+        style.Colors[ImGuiCol_ButtonActive] = static_cast<ImVec4>(ImColor::HSV(0.3F, 0.5F, 0.5F));
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
 } // namespace
 
-namespace xayah {
-    struct Spectra::FrameState {
+namespace xayah
+{
+    struct Spectra::FrameState
+    {
         std::uint32_t frame_index{0};
         std::uint32_t image_index{0};
         bool recreate_after_present{false};
         std::vector<vk::SemaphoreSubmitInfo> external_waits{};
     };
 
-    const vk::raii::PhysicalDevice& Spectra::physical_device() const {
+    const vk::raii::PhysicalDevice& Spectra::physical_device() const
+    {
         return this->context.physical_device;
     }
 
-    const vk::raii::Device& Spectra::device() const {
+    const vk::raii::Device& Spectra::device() const
+    {
         return this->context.device;
     }
 
-    std::uint32_t Spectra::frame_count() const {
+    std::uint32_t Spectra::frame_count() const
+    {
         return this->sync.frame_count;
     }
 
-    vk::Extent2D Spectra::swapchain_extent() const {
+    vk::Extent2D Spectra::swapchain_extent() const
+    {
         return this->swapchain.extent;
     }
 
-    void Spectra::register_panel(SpectraPanel panel) {
+    void Spectra::register_panel(SpectraPanel panel)
+    {
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
         if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
         if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");
-        for (const SpectraPanel& existing_panel : this->panels) {
+        for (const SpectraPanel& existing_panel : this->panels)
+        {
             if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
             if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
         }
@@ -185,11 +198,13 @@ namespace xayah {
         this->dock_layout_initialized = false;
     }
 
-    void Spectra::set_window_detail(std::string detail) {
+    void Spectra::set_window_detail(std::string detail)
+    {
         this->window_title.detail = std::move(detail);
     }
 
-    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
+    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try
+    {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
         const std::string app_name_string{app_name};
@@ -209,17 +224,19 @@ namespace xayah {
 
         {
             std::uint32_t glfw_extension_count = 0;
-            const char** glfw_extensions       = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
+            const char** glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
             if (glfw_extensions == nullptr) throw std::runtime_error("Failed to get GLFW Vulkan instance extensions");
             enabled_instance_extensions = {glfw_extensions, glfw_extensions + glfw_extension_count};
             enabled_instance_extensions.push_back(vk::EXTDebugUtilsExtensionName);
 
             const std::vector<vk::LayerProperties> available_layers = this->context.context.enumerateInstanceLayerProperties();
-            for (const char* required_layer : enabled_instance_layers) {
+            for (const char* required_layer : enabled_instance_layers)
+            {
                 if (const auto found = std::ranges::find(available_layers, std::string_view{required_layer}, [](const vk::LayerProperties& layer) { return std::string_view{layer.layerName.data()}; }); found == available_layers.end()) throw std::runtime_error(std::string{"Required Vulkan layer not supported: "} + required_layer);
             }
             const std::vector<vk::ExtensionProperties> available_extensions = this->context.context.enumerateInstanceExtensionProperties();
-            for (const char* required_extension : enabled_instance_extensions) {
+            for (const char* required_extension : enabled_instance_extensions)
+            {
                 if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) throw std::runtime_error(std::string{"Required Vulkan instance extension not supported: "} + required_extension);
             }
 
@@ -251,28 +268,31 @@ namespace xayah {
             this->surface.surface = vk::raii::SurfaceKHR{this->context.instance, surface};
         }
         {
-            int width  = 0;
+            int width = 0;
             int height = 0;
             glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
             if (width <= 0 || height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size");
         }
         {
             bool selected = false;
-            for (const vk::raii::PhysicalDevice& physical_device : this->context.instance.enumeratePhysicalDevices()) {
+            for (const vk::raii::PhysicalDevice& physical_device : this->context.instance.enumeratePhysicalDevices())
+            {
                 if (physical_device.getProperties().apiVersion < VK_API_VERSION_1_4) continue;
 
                 const std::vector<vk::ExtensionProperties> available_extensions = physical_device.enumerateDeviceExtensionProperties();
                 bool required_extensions_available = true;
-                for (const char* required_extension : enabled_device_extensions) {
+                for (const char* required_extension : enabled_device_extensions)
+                {
                     if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) required_extensions_available = false;
                 }
                 if (!required_extensions_available) continue;
 
                 const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
-                for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
+                for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index)
+                {
                     if (!static_cast<bool>(queue_families[queue_family_index].queueFlags & vk::QueueFlagBits::eGraphics)) continue;
                     if (!physical_device.getSurfaceSupportKHR(queue_family_index, this->surface.surface)) continue;
-                    this->context.physical_device      = physical_device;
+                    this->context.physical_device = physical_device;
                     this->context.graphics_queue_index = queue_family_index;
                     selected = true;
                     break;
@@ -293,7 +313,7 @@ namespace xayah {
             constexpr std::array queue_priorities{1.0f};
             const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
             const vk::DeviceCreateInfo device_create_info{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_device_extensions.size()), enabled_device_extensions.data(), nullptr, &enabled_features.get<vk::PhysicalDeviceFeatures2>()};
-            this->context.device         = vk::raii::Device{this->context.physical_device, device_create_info};
+            this->context.device = vk::raii::Device{this->context.physical_device, device_create_info};
             this->context.graphics_queue = vk::raii::Queue{this->context.device, this->context.graphics_queue_index, 0};
         }
         {
@@ -310,22 +330,29 @@ namespace xayah {
 
             this->sync.image_available_semaphores.reserve(this->sync.frame_count);
             this->sync.in_flight_fences.reserve(this->sync.frame_count);
-            for (std::uint32_t frame_index = 0; frame_index < this->sync.frame_count; ++frame_index) {
+            for (std::uint32_t frame_index = 0; frame_index < this->sync.frame_count; ++frame_index)
+            {
                 this->sync.image_available_semaphores.emplace_back(this->context.device, semaphore_create_info);
                 this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
             }
         }
         this->create_imgui();
-    } catch (...) {
+    }
+    catch (...)
+    {
         this->destroy_imgui();
         if (this->surface.glfw_initialized) glfwTerminate();
         throw;
     }
 
-    Spectra::~Spectra() noexcept {
-        try {
+    Spectra::~Spectra() noexcept
+    {
+        try
+        {
             if (*this->context.device) this->context.device.waitIdle();
-        } catch (...) {
+        }
+        catch (...)
+        {
         }
 
         this->detach_plugins_noexcept();
@@ -340,22 +367,24 @@ namespace xayah {
         this->swapchain.handle = nullptr;
         this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
-        this->context.graphics_queue  = nullptr;
-        this->context.device          = nullptr;
-        this->surface.surface         = nullptr;
-        this->surface.window          = nullptr;
+        this->context.graphics_queue = nullptr;
+        this->context.device = nullptr;
+        this->surface.surface = nullptr;
+        this->surface.window = nullptr;
         this->context.physical_device = nullptr;
         this->context.debug_messenger = nullptr;
-        this->context.instance        = nullptr;
+        this->context.instance = nullptr;
         if (this->surface.glfw_initialized) glfwTerminate();
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::register_plugin(std::unique_ptr<SpectraPlugin> plugin) {
+    void Spectra::register_plugin(std::unique_ptr<SpectraPlugin> plugin)
+    {
         if (plugin == nullptr) throw std::runtime_error("Cannot register a null Spectra plugin");
         const std::string_view plugin_name = plugin->name();
         if (plugin_name.empty()) throw std::runtime_error("Spectra plugin name must not be empty");
-        for (const std::unique_ptr<SpectraPlugin>& existing_plugin : this->plugins) {
+        for (const std::unique_ptr<SpectraPlugin>& existing_plugin : this->plugins)
+        {
             if (existing_plugin->name() == plugin_name) throw std::runtime_error(std::string{"Duplicate Spectra plugin name: "} + std::string{plugin_name});
         }
         plugin->attach(*this);
@@ -363,8 +392,10 @@ namespace xayah {
         this->plugins.push_back(std::move(plugin));
     }
 
-    void Spectra::run() {
-        while (!glfwWindowShouldClose(this->surface.window.get())) {
+    void Spectra::run()
+    {
+        while (!glfwWindowShouldClose(this->surface.window.get()))
+        {
             FrameState frame{};
             if (!this->begin_frame(frame)) continue;
             this->record_frame(frame);
@@ -373,15 +404,17 @@ namespace xayah {
         this->context.device.waitIdle();
     }
 
-    void Spectra::create_imgui() {
+    void Spectra::create_imgui()
+    {
         if (this->imgui.initialized) throw std::runtime_error("ImGui is already initialized");
         if (this->surface.window.get() == nullptr) throw std::runtime_error("Cannot initialize ImGui without a GLFW window");
         if (this->swapchain.images.empty()) throw std::runtime_error("Cannot initialize ImGui without swapchain images");
 
-        bool context_created            = false;
-        bool glfw_backend_initialized   = false;
+        bool context_created = false;
+        bool glfw_backend_initialized = false;
         bool vulkan_backend_initialized = false;
-        try {
+        try
+        {
             constexpr std::array descriptor_pool_sizes{
                 vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1000},
                 vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 1000},
@@ -416,22 +449,22 @@ namespace xayah {
 
             auto color_attachment_format = static_cast<VkFormat>(imgui_color_format);
             VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
-            pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-            pipeline_rendering_create_info.colorAttachmentCount    = 1;
+            pipeline_rendering_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+            pipeline_rendering_create_info.colorAttachmentCount = 1;
             pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
 
             ImGui_ImplVulkan_InitInfo init_info{};
-            init_info.ApiVersion                                   = VK_API_VERSION_1_4;
-            init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
-            init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
-            init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
-            init_info.QueueFamily                                  = this->context.graphics_queue_index;
-            init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
-            init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
-            init_info.MinImageCount                                = imgui_min_image_count;
-            init_info.ImageCount                                   = imgui_image_count;
-            init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
-            init_info.UseDynamicRendering                          = true;
+            init_info.ApiVersion = VK_API_VERSION_1_4;
+            init_info.Instance = static_cast<VkInstance>(*this->context.instance);
+            init_info.PhysicalDevice = static_cast<VkPhysicalDevice>(*this->context.physical_device);
+            init_info.Device = static_cast<VkDevice>(*this->context.device);
+            init_info.QueueFamily = this->context.graphics_queue_index;
+            init_info.Queue = static_cast<VkQueue>(*this->context.graphics_queue);
+            init_info.DescriptorPool = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
+            init_info.MinImageCount = imgui_min_image_count;
+            init_info.ImageCount = imgui_image_count;
+            init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+            init_info.UseDynamicRendering = true;
             init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
             if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
             vulkan_backend_initialized = true;
@@ -439,46 +472,60 @@ namespace xayah {
             this->imgui_shutdown_notified = false;
             for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins)
                 plugin->after_imgui_created(*this);
-        } catch (...) {
+        }
+        catch (...)
+        {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
             if (context_created) ImGui::DestroyContext();
             this->imgui.descriptor_pool = nullptr;
-            this->imgui.initialized     = false;
+            this->imgui.initialized = false;
             this->imgui_shutdown_notified = false;
             throw;
         }
     }
 
-    void Spectra::notify_plugins_before_imgui_shutdown() noexcept {
+    void Spectra::notify_plugins_before_imgui_shutdown() noexcept
+    {
         if (this->imgui_shutdown_notified) return;
-        for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin) {
-            try {
+        for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin)
+        {
+            try
+            {
                 (*plugin)->before_imgui_shutdown(*this);
-            } catch (...) {
+            }
+            catch (...)
+            {
             }
         }
         this->imgui_shutdown_notified = true;
     }
 
-    void Spectra::destroy_imgui() noexcept {
+    void Spectra::destroy_imgui() noexcept
+    {
         this->notify_plugins_before_imgui_shutdown();
-        if (this->imgui.initialized) {
+        if (this->imgui.initialized)
+        {
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
         }
         this->imgui.descriptor_pool = nullptr;
-        this->imgui.initialized     = false;
+        this->imgui.initialized = false;
         this->dock_layout_initialized = false;
     }
 
-    void Spectra::detach_plugins_noexcept() noexcept {
+    void Spectra::detach_plugins_noexcept() noexcept
+    {
         this->notify_plugins_before_imgui_shutdown();
-        for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin) {
-            try {
+        for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin)
+        {
+            try
+            {
                 (*plugin)->detach(*this);
-            } catch (...) {
+            }
+            catch (...)
+            {
             }
         }
         this->plugins.clear();
@@ -486,9 +533,11 @@ namespace xayah {
         this->dock_layout_initialized = false;
     }
 
-    bool Spectra::begin_frame(FrameState& frame) {
+    bool Spectra::begin_frame(FrameState& frame)
+    {
         glfwPollEvents();
-        if (this->surface.resize_requested) {
+        if (this->surface.resize_requested)
+        {
             this->recreate_swapchain();
             return false;
         }
@@ -497,17 +546,21 @@ namespace xayah {
         frame.frame_index = this->sync.frame_index;
         if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
 
-        try {
+        try
+        {
             const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame.frame_index], nullptr);
             if (acquired_image.result != vk::Result::eSuccess && acquired_image.result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
             frame.recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
             frame.image_index = acquired_image.value;
-        } catch (const vk::OutOfDateKHRError&) {
+        }
+        catch (const vk::OutOfDateKHRError&)
+        {
             this->recreate_swapchain();
             return false;
         }
 
-        if (const std::uint32_t previous_frame_index = this->sync.image_in_flight_frame.at(frame.image_index); previous_frame_index != std::numeric_limits<std::uint32_t>::max()) {
+        if (const std::uint32_t previous_frame_index = this->sync.image_in_flight_frame.at(frame.image_index); previous_frame_index != std::numeric_limits<std::uint32_t>::max())
+        {
             if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
         }
         this->sync.image_in_flight_frame.at(frame.image_index) = frame.frame_index;
@@ -521,9 +574,11 @@ namespace xayah {
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
 
         const SpectraFrameInfo frame_info{frame.frame_index, frame.image_index};
-        for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins) {
+        for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins)
+        {
             SpectraFrameResult frame_result = plugin->begin_frame(*this, frame_info);
-            if (frame_result.completion_semaphore.has_value()) {
+            if (frame_result.completion_semaphore.has_value())
+            {
                 if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
                 frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
             }
@@ -533,7 +588,8 @@ namespace xayah {
         return true;
     }
 
-    void Spectra::record_frame(FrameState& frame) {
+    void Spectra::record_frame(FrameState& frame)
+    {
         this->draw_main_menu();
         this->draw_dockspace();
         this->draw_registered_panels();
@@ -601,7 +657,8 @@ namespace xayah {
         command_buffer.end();
     }
 
-    void Spectra::end_frame(FrameState& frame) {
+    void Spectra::end_frame(FrameState& frame)
+    {
         std::vector<vk::SemaphoreSubmitInfo> wait_semaphore_infos{};
         wait_semaphore_infos.reserve(frame.external_waits.size() + 1u);
         wait_semaphore_infos.emplace_back(*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands);
@@ -615,27 +672,38 @@ namespace xayah {
         const vk::SwapchainKHR swapchain = *this->swapchain.handle;
         const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
         bool frame_presented = true;
-        try {
+        try
+        {
             if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
                 frame.recreate_after_present = true;
-            else if (present_result == vk::Result::eErrorSurfaceLostKHR) {
+            else if (present_result == vk::Result::eErrorSurfaceLostKHR)
+            {
                 frame.recreate_after_present = true;
                 frame_presented = false;
-            } else if (present_result != vk::Result::eSuccess)
+            }
+            else if (present_result != vk::Result::eSuccess)
                 throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
-        } catch (const vk::OutOfDateKHRError&) {
+        }
+        catch (const vk::OutOfDateKHRError&)
+        {
             frame.recreate_after_present = true;
             frame_presented = false;
-        } catch (const vk::SystemError& error) {
-            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR)) {
+        }
+        catch (const vk::SystemError& error)
+        {
+            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR))
+            {
                 frame.recreate_after_present = true;
                 frame_presented = false;
-            } else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
+            }
+            else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
                 frame.recreate_after_present = true;
-            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR)) {
+            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR))
+            {
                 frame.recreate_after_present = true;
                 frame_presented = false;
-            } else
+            }
+            else
                 throw;
         }
         if (frame.recreate_after_present) this->recreate_swapchain();
@@ -644,21 +712,27 @@ namespace xayah {
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
 
-    void Spectra::draw_main_menu() {
+    void Spectra::draw_main_menu()
+    {
         ImGuiIO& io = ImGui::GetIO();
-        if (!io.WantTextInput) {
-            for (SpectraPanel& panel : this->panels) {
+        if (!io.WantTextInput)
+        {
+            for (SpectraPanel& panel : this->panels)
+            {
                 if (panel.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(panel.shortcut_key, false)) panel.visible = !panel.visible;
             }
         }
 
         if (!ImGui::BeginMainMenuBar()) return;
-        if (ImGui::BeginMenu("File")) {
+        if (ImGui::BeginMenu("File"))
+        {
             if (ImGui::MenuItem(ICON_MS_CLOSE " Exit", "Esc")) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Windows")) {
-            for (SpectraPanel& panel : this->panels) {
+        if (ImGui::BeginMenu("Windows"))
+        {
+            for (SpectraPanel& panel : this->panels)
+            {
                 if (!panel.show_in_menu) continue;
                 const std::string label = panel.icon.empty() ? panel.title : panel.icon + " " + panel.title;
                 const char* shortcut = panel.shortcut_label.empty() ? nullptr : panel.shortcut_label.c_str();
@@ -670,22 +744,25 @@ namespace xayah {
         ImGui::EndMainMenuBar();
     }
 
-    void Spectra::draw_menu_toolbar() {
+    void Spectra::draw_menu_toolbar()
+    {
         std::vector<SpectraPanel*> toolbar_panels{};
-        for (SpectraPanel& panel : this->panels) {
+        for (SpectraPanel& panel : this->panels)
+        {
             if (panel.show_in_toolbar) toolbar_panels.push_back(&panel);
         }
         if (toolbar_panels.empty()) return;
 
-        const float button_size  = ImGui::GetFrameHeight();
-        const float total_width  = 2.0f + static_cast<float>(toolbar_panels.size()) * button_size + static_cast<float>(toolbar_panels.size() + 1) * 2.0f;
+        const float button_size = ImGui::GetFrameHeight();
+        const float total_width = 2.0f + static_cast<float>(toolbar_panels.size()) * button_size + static_cast<float>(toolbar_panels.size() + 1) * 2.0f;
         const float window_width = ImGui::GetWindowWidth();
         if (window_width <= total_width + 180.0f) return;
 
         ImGui::SameLine(window_width * 0.5f - total_width * 0.5f);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
-        for (SpectraPanel* panel : toolbar_panels) {
+        for (SpectraPanel* panel : toolbar_panels)
+        {
             const char* label = panel->icon.empty() ? panel->title.c_str() : panel->icon.c_str();
             ImGui::PushStyleColor(ImGuiCol_Button, panel->visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
             if (ImGui::Button(label, ImVec2{button_size, button_size})) panel->visible = !panel->visible;
@@ -696,7 +773,8 @@ namespace xayah {
         }
     }
 
-    void Spectra::draw_dockspace() {
+    void Spectra::draw_dockspace()
+    {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (main_viewport->WorkSize.x <= 640.0f || main_viewport->WorkSize.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
@@ -715,8 +793,8 @@ namespace xayah {
         ImGui::DockBuilderSetNodeSize(dockspace_id, main_viewport->WorkSize);
 
         ImGuiID center_id = dockspace_id;
-        ImGuiID left_id   = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.25f, nullptr, &center_id);
-        ImGuiID right_id  = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.25f, nullptr, &center_id);
+        ImGuiID left_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.25f, nullptr, &center_id);
+        ImGuiID right_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.25f, nullptr, &center_id);
         ImGuiID bottom_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.35f, nullptr, &center_id);
         if (left_id == 0 || right_id == 0 || bottom_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra dock layout");
 
@@ -724,15 +802,23 @@ namespace xayah {
         ImGuiID right_bottom_id = ImGui::DockBuilderSplitNode(right_id, ImGuiDir_Down, 0.35f, nullptr, &right_id);
         if (left_bottom_id == 0 || right_bottom_id == 0 || left_id == 0 || right_id == 0) throw std::runtime_error("Failed to build Spectra side panels");
 
-        for (const SpectraPanel& panel : this->panels) {
-            switch (panel.dock_slot) {
-                case SpectraDockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
-                case SpectraDockSlot::Left: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_id); break;
-                case SpectraDockSlot::LeftBottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_bottom_id); break;
-                case SpectraDockSlot::Right: ImGui::DockBuilderDockWindow(panel.title.c_str(), right_id); break;
-                case SpectraDockSlot::RightBottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), right_bottom_id); break;
-                case SpectraDockSlot::Bottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), bottom_id); break;
-                case SpectraDockSlot::Floating: break;
+        for (const SpectraPanel& panel : this->panels)
+        {
+            switch (panel.dock_slot)
+            {
+            case SpectraDockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id);
+                break;
+            case SpectraDockSlot::Left: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_id);
+                break;
+            case SpectraDockSlot::LeftBottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_bottom_id);
+                break;
+            case SpectraDockSlot::Right: ImGui::DockBuilderDockWindow(panel.title.c_str(), right_id);
+                break;
+            case SpectraDockSlot::RightBottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), right_bottom_id);
+                break;
+            case SpectraDockSlot::Bottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), bottom_id);
+                break;
+            case SpectraDockSlot::Floating: break;
             }
         }
         ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
@@ -742,8 +828,10 @@ namespace xayah {
         this->dock_layout_initialized = true;
     }
 
-    void Spectra::draw_registered_panels() {
-        for (SpectraPanel& panel : this->panels) {
+    void Spectra::draw_registered_panels()
+    {
+        for (SpectraPanel& panel : this->panels)
+        {
             if (!panel.visible) continue;
             if (panel.zero_window_padding) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
             bool open = panel.visible;
@@ -755,7 +843,8 @@ namespace xayah {
         }
     }
 
-    void Spectra::update_window_title(const float delta_seconds) {
+    void Spectra::update_window_title(const float delta_seconds)
+    {
         if (this->surface.window == nullptr) throw std::runtime_error("Cannot update window title without a GLFW window");
 
         ++this->window_title.frame_count;
@@ -766,34 +855,41 @@ namespace xayah {
         if (io.Framerate <= 0.0f) return;
 
         const std::string title = this->window_title.detail.empty()
-            ? std::format("{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count)
-            : std::format("{} - {} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, this->window_title.detail, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
+                                      ? std::format("{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count)
+                                      : std::format("{} - {} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, this->window_title.detail, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
     }
 
-    void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
+    void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain)
+    {
         const std::vector<vk::SurfaceFormatKHR> surface_formats = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
         if (surface_formats.empty()) throw std::runtime_error("Vulkan surface has no supported formats");
         const std::vector<vk::PresentModeKHR> present_modes = this->context.physical_device.getSurfacePresentModesKHR(this->surface.surface);
         if (present_modes.empty()) throw std::runtime_error("Vulkan surface has no supported present modes");
         const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
 
-        if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined) {
-            this->swapchain.format      = vk::Format::eB8G8R8A8Unorm;
+        if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined)
+        {
+            this->swapchain.format = vk::Format::eB8G8R8A8Unorm;
             this->swapchain.color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
-        } else {
-            this->swapchain.format      = surface_formats.front().format;
+        }
+        else
+        {
+            this->swapchain.format = surface_formats.front().format;
             this->swapchain.color_space = surface_formats.front().colorSpace;
             bool selected = false;
             constexpr std::array preferred_surface_formats{
                 vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
                 vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
             };
-            for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_surface_formats) {
-                for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
-                    if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace) {
-                        this->swapchain.format      = surface_format.format;
+            for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_surface_formats)
+            {
+                for (const vk::SurfaceFormatKHR& surface_format : surface_formats)
+                {
+                    if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace)
+                    {
+                        this->swapchain.format = surface_format.format;
                         this->swapchain.color_space = surface_format.colorSpace;
                         selected = true;
                         break;
@@ -804,21 +900,26 @@ namespace xayah {
         }
 
         this->swapchain.present_mode = vk::PresentModeKHR::eFifo;
-        for (const vk::PresentModeKHR present_mode : present_modes) {
-            if (present_mode == vk::PresentModeKHR::eMailbox) {
+        for (const vk::PresentModeKHR present_mode : present_modes)
+        {
+            if (present_mode == vk::PresentModeKHR::eMailbox)
+            {
                 this->swapchain.present_mode = present_mode;
                 break;
             }
             if (present_mode == vk::PresentModeKHR::eImmediate) this->swapchain.present_mode = present_mode;
         }
 
-        int framebuffer_width  = 0;
+        int framebuffer_width = 0;
         int framebuffer_height = 0;
         glfwGetFramebufferSize(this->surface.window.get(), &framebuffer_width, &framebuffer_height);
         if (framebuffer_width <= 0 || framebuffer_height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size during swapchain creation");
-        if (surface_capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
+        if (surface_capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
+        {
             this->swapchain.extent = surface_capabilities.currentExtent;
-        } else {
+        }
+        else
+        {
             const std::uint32_t width = std::clamp(static_cast<std::uint32_t>(framebuffer_width), surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width);
             const std::uint32_t height = std::clamp(static_cast<std::uint32_t>(framebuffer_height), surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height);
             this->swapchain.extent = vk::Extent2D{width, height};
@@ -841,7 +942,8 @@ namespace xayah {
         this->swapchain.image_views.clear();
         this->swapchain.image_views.reserve(this->swapchain.images.size());
         this->swapchain.image_layouts.assign(this->swapchain.images.size(), vk::ImageLayout::eUndefined);
-        for (const vk::Image image : this->swapchain.images) {
+        for (const vk::Image image : this->swapchain.images)
+        {
             const vk::ImageViewCreateInfo image_view_create_info{{}, image, vk::ImageViewType::e2D, this->swapchain.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
             this->swapchain.image_views.emplace_back(this->context.device, image_view_create_info);
         }
@@ -854,12 +956,15 @@ namespace xayah {
             this->sync.render_finished_semaphores.emplace_back(this->context.device, semaphore_create_info);
     }
 
-    void Spectra::recreate_swapchain() {
+    void Spectra::recreate_swapchain()
+    {
         int width = 0;
         int height = 0;
-        while (width == 0 || height == 0) {
+        while (width == 0 || height == 0)
+        {
             glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
-            if (width == 0 || height == 0) {
+            if (width == 0 || height == 0)
+            {
                 glfwWaitEvents();
                 if (glfwWindowShouldClose(this->surface.window.get())) return;
             }
