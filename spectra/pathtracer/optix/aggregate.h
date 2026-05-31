@@ -1,19 +1,15 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #ifndef SPECTRA_OPTIX_AGGREGATE_H
 #define SPECTRA_OPTIX_AGGREGATE_H
 
-#include <src/util/float.h>
+#include <spectra/pathtracer/util/float.h>
 
-#include <src/gpu/memory.h>
+#include <spectra/pathtracer/gpu/memory.h>
 #include <spectra/pathtracer/optix/optix.h>
 #include <spectra/scene.h>
-#include <src/util/containers.h>
-#include <src/util/pstd.h>
-#include <src/util/soa.h>
-#include <src/util/vecmath.h>
+#include <spectra/pathtracer/util/containers.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/soa.h>
+#include <spectra/pathtracer/util/vecmath.h>
 #include <spectra/pathtracer/wavefront/workitems.h>
 
 #include <cstring>
@@ -206,4 +202,4 @@ namespace spectra::optix
     };
 } // namespace spectra::optix
 
-#endif  // PBRT_GPU_AGGREGATE_H
+#endif  // SPECTRA_OPTIX_AGGREGATE_H

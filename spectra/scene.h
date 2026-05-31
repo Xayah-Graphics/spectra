@@ -1,23 +1,19 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #ifndef SPECTRA_SCENE_H
 #define SPECTRA_SCENE_H
 
-#include <src/util/float.h>
-#include <src/util/memory.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/memory.h>
 
-#include <src/core/cameras.h>
-#include <src/core/paramdict.h>
-#include <src/core/diagnostics.h>
-#include <src/util/containers.h>
-#include <src/util/error.h>
-#include <src/util/parallel.h>
-#include <src/util/print.h>
-#include <src/util/pstd.h>
-#include <src/util/string.h>
-#include <src/util/transform.h>
+#include <spectra/pathtracer/core/cameras.h>
+#include <spectra/pathtracer/core/paramdict.h>
+#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/util/containers.h>
+#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/util/print.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/string.h>
+#include <spectra/pathtracer/util/transform.h>
 
 #include <atomic>
 #include <array>

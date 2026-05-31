@@ -1,25 +1,21 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #include <spectra/scene.h>
 
-#include <src/gpu/memory.h>
-#include <src/core/materials.h>
-#include <src/core/options.h>
-#include <src/core/paramdict.h>
-#include <src/core/shapes.h>
-#include <src/util/color.h>
-#include <src/util/colorspace.h>
-#include <src/util/file.h>
-#include <src/util/memory.h>
-#include <src/util/mesh.h>
-#include <src/util/parallel.h>
-#include <src/util/print.h>
-#include <src/util/progressreporter.h>
-#include <src/util/spectrum.h>
-#include <src/util/string.h>
-#include <src/util/transform.h>
+#include <spectra/pathtracer/gpu/memory.h>
+#include <spectra/pathtracer/core/materials.h>
+#include <spectra/pathtracer/core/options.h>
+#include <spectra/pathtracer/core/paramdict.h>
+#include <spectra/pathtracer/core/shapes.h>
+#include <spectra/pathtracer/util/color.h>
+#include <spectra/pathtracer/util/colorspace.h>
+#include <spectra/pathtracer/util/file.h>
+#include <spectra/pathtracer/util/memory.h>
+#include <spectra/pathtracer/util/mesh.h>
+#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/util/print.h>
+#include <spectra/pathtracer/util/progressreporter.h>
+#include <spectra/pathtracer/util/spectrum.h>
+#include <spectra/pathtracer/util/string.h>
+#include <spectra/pathtracer/util/transform.h>
 
 #include <double-conversion/double-conversion.h>
 
@@ -29,13 +25,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#ifdef PBRT_HAVE_MMAP
+#ifdef SPECTRA_HAVE_MMAP
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#elif defined(PBRT_IS_WINDOWS)
+#elif defined(SPECTRA_IS_WINDOWS)
 #include <windows.h>
 #endif
 #include <functional>
@@ -95,7 +91,7 @@ namespace spectra::scene
     public:
         Tokenizer(std::string str, std::string filename,
                   std::function<void(const char*, const FileLoc*)> errorCallback);
-#if defined(PBRT_HAVE_MMAP) || defined(PBRT_IS_WINDOWS)
+#if defined(SPECTRA_HAVE_MMAP) || defined(SPECTRA_IS_WINDOWS)
         Tokenizer(void* ptr, size_t len, std::string filename,
                   std::function<void(const char*, const FileLoc*)> errorCallback);
 #endif
@@ -137,7 +133,7 @@ namespace spectra::scene
 
         std::function<void(const char*, const FileLoc*)> errorCallback;
 
-#if defined(PBRT_HAVE_MMAP) || defined(PBRT_IS_WINDOWS)
+#if defined(SPECTRA_HAVE_MMAP) || defined(SPECTRA_IS_WINDOWS)
         void* unmapPtr = nullptr;
         size_t unmapLength = 0;
 #endif
@@ -209,7 +205,7 @@ namespace spectra::scene
                                                std::move(errorCallback));
         }
 
-#ifdef PBRT_HAVE_MMAP
+#ifdef SPECTRA_HAVE_MMAP
         int fd = open(filename.c_str(), O_RDONLY);
         if (fd == -1)
         {
@@ -245,7 +241,7 @@ namespace spectra::scene
         }
 
         return std::make_unique<Tokenizer>(ptr, len, filename, std::move(errorCallback));
-#elif defined(PBRT_IS_WINDOWS)
+#elif defined(SPECTRA_IS_WINDOWS)
         auto errorReportLambda = [&errorCallback, &filename]() -> std::unique_ptr<Tokenizer>
         {
             LPSTR messageBuffer = nullptr;
@@ -303,7 +299,7 @@ namespace spectra::scene
         CheckUTF(contents.data(), contents.size());
     }
 
-#if defined(PBRT_HAVE_MMAP) || defined(PBRT_IS_WINDOWS)
+#if defined(SPECTRA_HAVE_MMAP) || defined(SPECTRA_IS_WINDOWS)
     Tokenizer::Tokenizer(void* ptr, size_t len, std::string filename,
                          std::function<void(const char*, const FileLoc*)> errorCallback)
         : errorCallback(std::move(errorCallback)), unmapPtr(ptr), unmapLength(len)
@@ -320,11 +316,11 @@ namespace spectra::scene
 
     Tokenizer::~Tokenizer()
     {
-#ifdef PBRT_HAVE_MMAP
+#ifdef SPECTRA_HAVE_MMAP
         if (unmapPtr && unmapLength > 0)
             if (munmap(unmapPtr, unmapLength) != 0)
                 errorCallback(spectra::StringPrintf("munmap: %s", spectra::ErrorString()).c_str(), nullptr);
-#elif defined(PBRT_IS_WINDOWS)
+#elif defined(SPECTRA_IS_WINDOWS)
         if (unmapPtr && UnmapViewOfFile(unmapPtr) == 0)
             errorCallback(StringPrintf("UnmapViewOfFile: %s", ErrorString()).c_str(),
                           nullptr);

@@ -1,25 +1,21 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #include <spectra/pathtracer/optix/aggregate.h>
 
 #include <spectra_optix_config.h>
 
 #include <spectra/pathtracer/optix/optix.h>
-#include <src/core/diagnostics.h>
-#include <src/gpu/util.h>
-#include <src/core/lights.h>
-#include <src/core/materials.h>
+#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/gpu/util.h>
+#include <spectra/pathtracer/core/lights.h>
+#include <spectra/pathtracer/core/materials.h>
 #include <spectra/scene.h>
-#include <src/core/textures.h>
-#include <src/util/error.h>
-#include <src/util/file.h>
-#include <src/util/loopsubdiv.h>
-#include <src/util/mesh.h>
-#include <src/util/parallel.h>
-#include <src/util/pstd.h>
-#include <src/util/splines.h>
+#include <spectra/pathtracer/core/textures.h>
+#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/util/file.h>
+#include <spectra/pathtracer/util/loopsubdiv.h>
+#include <spectra/pathtracer/util/mesh.h>
+#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/splines.h>
 #include <spectra/pathtracer/wavefront/intersect.h>
 
 #include <atomic>
@@ -327,7 +323,7 @@ namespace spectra::optix
                             std::memcpy(uv, uvCPU, nVertices * sizeof(Point2f));
 
                             GPUParallelFor(
-                                "Evaluate Displacement", nVertices, [=] PBRT_GPU(int i)
+                                "Evaluate Displacement", nVertices, [=] SPECTRA_GPU(int i)
                                 {
                                     TextureEvalContext ctx;
                                     ctx.p = p[i];
@@ -478,7 +474,7 @@ namespace spectra::optix
 
                 input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
                 input.triangleArray.numVertices = mesh->nVertices;
-#ifdef PBRT_FLOAT_AS_DOUBLE
+#ifdef SPECTRA_FLOAT_AS_DOUBLE
                 // Convert the vertex positions to 32-bit floats before giving
                 // them to OptiX, since it doesn't support double-precision
                 // geometry.
@@ -1297,7 +1293,7 @@ namespace spectra::optix
         SPECTRA_CU_CHECK(cuCtxGetCurrent(&cudaContext));
         SPECTRA_CHECK(cudaContext != nullptr);
 
-#ifdef PBRT_IS_WINDOWS
+#ifdef SPECTRA_IS_WINDOWS
         // On Windows, it is unfortunately necessary to disable
         // multithreading here.  The issue is that GPU managed memory can
         // only be accessed by one of the CPU or the GPU at a time; the
@@ -1306,7 +1302,7 @@ namespace spectra::optix
         // the CPU and storing them in managed memory while an OptiX
         // kernel is running on the GPU to build a BVH... (Issue #164).
         DisableThreadPool();
-#endif  // PBRT_IS_WINDOWS
+#endif  // SPECTRA_IS_WINDOWS
 
         ThreadLocal<cudaStream_t> threadCUDAStreams([]()
         {
@@ -1795,9 +1791,9 @@ namespace spectra::optix
             SPECTRA_CUDA_CHECK(cudaStreamDestroy(stream));
         });
 
-#ifdef PBRT_IS_WINDOWS
+#ifdef SPECTRA_IS_WINDOWS
         ReenableThreadPool();
-#endif  // PBRT_IS_WINDOWS
+#endif  // SPECTRA_IS_WINDOWS
     }
 
     SpectraOptiXAggregate::~SpectraOptiXAggregate()

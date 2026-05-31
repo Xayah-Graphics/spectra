@@ -1,22 +1,18 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #ifndef SPECTRA_PATHTRACER_INTEGRATOR_H
 #define SPECTRA_PATHTRACER_INTEGRATOR_H
 
-#include <src/base/bxdf.h>
-#include <src/base/camera.h>
-#include <src/base/film.h>
-#include <src/base/filter.h>
-#include <src/base/light.h>
-#include <src/base/lightsampler.h>
-#include <src/base/sampler.h>
-#include <src/core/options.h>
-#include <src/gpu/util.h>
-#include <src/util/float.h>
-#include <src/util/parallel.h>
-#include <src/util/pstd.h>
+#include <spectra/pathtracer/base/bxdf.h>
+#include <spectra/pathtracer/base/camera.h>
+#include <spectra/pathtracer/base/film.h>
+#include <spectra/pathtracer/base/filter.h>
+#include <spectra/pathtracer/base/light.h>
+#include <spectra/pathtracer/base/lightsampler.h>
+#include <spectra/pathtracer/base/sampler.h>
+#include <spectra/pathtracer/core/options.h>
+#include <spectra/pathtracer/gpu/util.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/wavefront/workitems.h>
 #include <spectra/pathtracer/wavefront/workqueue.h>
 

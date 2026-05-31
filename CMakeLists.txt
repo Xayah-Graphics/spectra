@@ -29,7 +29,7 @@ endif ()
 # Dependencies
 # ============================================================================
 if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/CMakeLists.txt")
-    message(FATAL_ERROR "Expected local PBRT dependencies at '${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt'.")
+    message(FATAL_ERROR "Expected local renderer dependencies at '${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt'.")
 endif ()
 
 find_package(Vulkan 1.4 REQUIRED)
@@ -59,7 +59,7 @@ add_subdirectory(vendor/pbrt)
 # ============================================================================
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
 option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
-set(SPECTRA_OPTIX_PATH "${PBRT_OPTIX_PATH}" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
+set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
 set(SPECTRA_OPTIX_GPU_ARCH "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
 set(SPECTRA_OPTIX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for spectra_gpu")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for spectra_gpu")
@@ -90,9 +90,9 @@ if (SPECTRA_OPTIX_VERSION LESS 90100)
 endif ()
 math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
-set(SPECTRA_GPU_DEFINITIONS PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:PBRT_DEBUG_BUILD>")
+set(SPECTRA_GPU_DEFINITIONS PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:SPECTRA_DEBUG_BUILD>")
 if (SPECTRA_FLOAT_AS_DOUBLE)
-    list(APPEND SPECTRA_GPU_DEFINITIONS PBRT_FLOAT_AS_DOUBLE)
+    list(APPEND SPECTRA_GPU_DEFINITIONS SPECTRA_FLOAT_AS_DOUBLE)
 endif ()
 if (SPECTRA_NVTX)
     list(APPEND SPECTRA_GPU_DEFINITIONS NVTX)
@@ -103,25 +103,25 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
         message(FATAL_ERROR "Windows builds require MSVC.")
     endif ()
     list(APPEND SPECTRA_GPU_DEFINITIONS
-            PBRT_IS_WINDOWS
-            PBRT_IS_MSVC
+            SPECTRA_IS_WINDOWS
+            SPECTRA_IS_MSVC
             UNICODE
             _UNICODE
             NOMINMAX
             _CRT_SECURE_NO_WARNINGS
             _ENABLE_EXTENDED_ALIGNED_STORAGE
-            PBRT_HAS_INTRIN_H
-            "PBRT_NOINLINE=__declspec(noinline)"
-            "PBRT_RESTRICT=__restrict"
-            PBRT_HAVE__ALIGNED_MALLOC
+            SPECTRA_HAS_INTRIN_H
+            "SPECTRA_NOINLINE=__declspec(noinline)"
+            "SPECTRA_RESTRICT=__restrict"
+            SPECTRA_HAVE__ALIGNED_MALLOC
     )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND SPECTRA_GPU_DEFINITIONS
-            PBRT_IS_LINUX
-            PBRT_HAVE_MMAP
-            "PBRT_NOINLINE=__attribute__((noinline))"
-            "PBRT_RESTRICT=__restrict__"
-            PBRT_HAVE_POSIX_MEMALIGN
+            SPECTRA_IS_LINUX
+            SPECTRA_HAVE_MMAP
+            "SPECTRA_NOINLINE=__attribute__((noinline))"
+            "SPECTRA_RESTRICT=__restrict__"
+            SPECTRA_HAVE_POSIX_MEMALIGN
     )
 else ()
     message(FATAL_ERROR "Only Linux/WSL and Windows/MSVC are supported by spectra_gpu.")
@@ -224,15 +224,15 @@ endif()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
 
-add_executable(spectra_gpu_soac src/cmd/soac.cpp)
+add_executable(spectra_gpu_soac spectra/pathtracer/cmd/soac.cpp)
 target_compile_definitions(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 
 add_custom_command(
         OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
-        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spectra.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
-        DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spectra.soa
+        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/core/spectra.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
+        DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/core/spectra.soa
         VERBATIM
 )
 add_custom_command(
@@ -248,7 +248,7 @@ set(SPECTRA_GPU_SOA_GENERATED
 )
 add_custom_target(spectra_gpu_soa_generated DEPENDS ${SPECTRA_GPU_SOA_GENERATED})
 
-add_executable(spectra_gpu_rgb2spec_opt src/cmd/rgb2spec_opt.cpp)
+add_executable(spectra_gpu_rgb2spec_opt spectra/pathtracer/cmd/rgb2spec_opt.cpp)
 target_compile_definitions(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 target_link_libraries(spectra_gpu_rgb2spec_opt PRIVATE Threads::Threads)
@@ -289,57 +289,57 @@ add_custom_command(
 )
 
 set(SPECTRA_GPU_CORE_SOURCE
-        src/core/bssrdf.cu
-        src/core/bxdfs.cu
-        src/core/cameras.cu
-        src/core/film.cu
-        src/core/filters.cu
-        src/core/interaction.cu
-        src/core/lights.cu
-        src/core/lightsamplers.cu
-        src/core/materials.cu
-        src/core/media.cpp
-        src/core/options.cu
-        src/core/paramdict.cpp
-        src/core/samplers.cu
-        src/core/shapes.cu
-        src/core/textures.cu
+        spectra/pathtracer/core/bssrdf.cu
+        spectra/pathtracer/core/bxdfs.cu
+        spectra/pathtracer/core/cameras.cu
+        spectra/pathtracer/core/film.cu
+        spectra/pathtracer/core/filters.cu
+        spectra/pathtracer/core/interaction.cu
+        spectra/pathtracer/core/lights.cu
+        spectra/pathtracer/core/lightsamplers.cu
+        spectra/pathtracer/core/materials.cu
+        spectra/pathtracer/core/media.cpp
+        spectra/pathtracer/core/options.cu
+        spectra/pathtracer/core/paramdict.cpp
+        spectra/pathtracer/core/samplers.cu
+        spectra/pathtracer/core/shapes.cu
+        spectra/pathtracer/core/textures.cu
 )
 set(SPECTRA_GPU_UTIL_SOURCE
-        src/util/args.cpp
-        src/util/bluenoise.cu
-        src/util/buffercache.cpp
-        src/util/check.cu
-        src/util/color.cu
-        src/util/colorspace.cu
-        src/util/error.cu
-        src/util/file.cpp
-        src/util/image.cpp
-        src/util/loopsubdiv.cpp
-        src/util/lowdiscrepancy.cu
-        src/util/math.cu
-        src/util/memory.cpp
-        src/util/mesh.cu
-        src/util/mipmap.cpp
-        src/util/noise.cu
-        src/util/parallel.cpp
-        src/util/pmj02tables.cu
-        src/util/primes.cu
-        src/util/print.cpp
-        src/util/progressreporter.cpp
-        src/util/pstd.cu
-        src/util/sampling.cu
-        src/util/scattering.cu
-        src/util/sobolmatrices.cu
-        src/util/spectrum.cu
-        src/util/stbimage.cpp
-        src/util/string.cpp
-        src/util/transform.cu
-        src/util/vecmath.cu
+        spectra/pathtracer/util/args.cpp
+        spectra/pathtracer/util/bluenoise.cu
+        spectra/pathtracer/util/buffercache.cpp
+        spectra/pathtracer/util/check.cu
+        spectra/pathtracer/util/color.cu
+        spectra/pathtracer/util/colorspace.cu
+        spectra/pathtracer/util/error.cu
+        spectra/pathtracer/util/file.cpp
+        spectra/pathtracer/util/image.cpp
+        spectra/pathtracer/util/loopsubdiv.cpp
+        spectra/pathtracer/util/lowdiscrepancy.cu
+        spectra/pathtracer/util/math.cu
+        spectra/pathtracer/util/memory.cpp
+        spectra/pathtracer/util/mesh.cu
+        spectra/pathtracer/util/mipmap.cpp
+        spectra/pathtracer/util/noise.cu
+        spectra/pathtracer/util/parallel.cpp
+        spectra/pathtracer/util/pmj02tables.cu
+        spectra/pathtracer/util/primes.cu
+        spectra/pathtracer/util/print.cpp
+        spectra/pathtracer/util/progressreporter.cpp
+        spectra/pathtracer/util/pstd.cu
+        spectra/pathtracer/util/sampling.cu
+        spectra/pathtracer/util/scattering.cu
+        spectra/pathtracer/util/sobolmatrices.cu
+        spectra/pathtracer/util/spectrum.cu
+        spectra/pathtracer/util/stbimage.cpp
+        spectra/pathtracer/util/string.cpp
+        spectra/pathtracer/util/transform.cu
+        spectra/pathtracer/util/vecmath.cu
 )
 set(SPECTRA_GPU_DEVICE_SOURCE
-        src/gpu/memory.cu
-        src/gpu/util.cu
+        spectra/pathtracer/gpu/memory.cu
+        spectra/pathtracer/gpu/util.cu
 )
 
 add_library(spectra_gpu_optix_input OBJECT spectra/pathtracer/optix/optix.cu)
@@ -418,7 +418,7 @@ endif ()
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-add_executable(spectra_gpu_exe src/cmd/spectra_gpu.cpp)
+add_executable(spectra_gpu_exe spectra/pathtracer/cmd/spectra_gpu.cpp)
 add_executable(spectra::gpu ALIAS spectra_gpu_exe)
 target_link_libraries(spectra_gpu_exe PRIVATE spectra_gpu_lib Threads::Threads)
 set_target_properties(spectra_gpu_exe PROPERTIES OUTPUT_NAME spectra_gpu)

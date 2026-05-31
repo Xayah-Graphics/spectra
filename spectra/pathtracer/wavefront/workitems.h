@@ -1,21 +1,17 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #ifndef SPECTRA_PATHTRACER_WAVEFRONT_WORKITEMS_H
 #define SPECTRA_PATHTRACER_WAVEFRONT_WORKITEMS_H
 
-#include <src/util/float.h>
-#include <src/util/memory.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/memory.h>
 
-#include <src/base/sampler.h>
-#include <src/core/film.h>
-#include <src/core/lightsamplers.h>
-#include <src/core/materials.h>
-#include <src/core/ray.h>
-#include <src/util/containers.h>
-#include <src/util/pstd.h>
-#include <src/util/soa.h>
+#include <spectra/pathtracer/base/sampler.h>
+#include <spectra/pathtracer/core/film.h>
+#include <spectra/pathtracer/core/lightsamplers.h>
+#include <spectra/pathtracer/core/materials.h>
+#include <spectra/pathtracer/core/ray.h>
+#include <spectra/pathtracer/util/containers.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/soa.h>
 #include <spectra/pathtracer/wavefront/workqueue.h>
 
 namespace spectra
@@ -60,7 +56,7 @@ namespace spectra
             mediaMode = alloc.allocate_object<Float>(size);
         }
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         RaySamples operator[](int i) const
         {
             RaySamples rs;
@@ -87,10 +83,10 @@ namespace spectra
 
         struct GetSetIndirector
         {
-            PBRT_CPU_GPU
+            SPECTRA_CPU_GPU
             operator RaySamples() const { return (*(const SOA*)soa)[index]; }
 
-            PBRT_CPU_GPU
+            SPECTRA_CPU_GPU
             void operator=(RaySamples rs)
             {
                 int flags = rs.haveSubsurface ? 1 : 0;
@@ -109,14 +105,14 @@ namespace spectra
             int index;
         };
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         GetSetIndirector operator[](int i) { return GetSetIndirector{this, i}; }
 
     private:
-        Float4*PBRT_RESTRICT direct;
-        Float4*PBRT_RESTRICT indirect;
-        Float4*PBRT_RESTRICT subsurface;
-        Float *PBRT_RESTRICT mediaDist, *PBRT_RESTRICT mediaMode;
+        Float4*SPECTRA_RESTRICT direct;
+        Float4*SPECTRA_RESTRICT indirect;
+        Float4*SPECTRA_RESTRICT subsurface;
+        Float *SPECTRA_RESTRICT mediaDist, *SPECTRA_RESTRICT mediaMode;
     };
 
     // PixelSampleState Definition
@@ -195,7 +191,7 @@ namespace spectra
     // GetBSSRDFAndProbeRayWorkItem Definition
     struct GetBSSRDFAndProbeRayWorkItem
     {
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         MaterialEvalContext GetMaterialEvalContext() const
         {
             MaterialEvalContext ctx;
@@ -292,7 +288,7 @@ namespace spectra
     struct MaterialEvalWorkItem
     {
         // MaterialEvalWorkItem Public Methods
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         NormalBumpEvalContext GetNormalBumpEvalContext(Float dudx, Float dudy, Float dvdx,
                                                        Float dvdy) const
         {
@@ -312,7 +308,7 @@ namespace spectra
             return ctx;
         }
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         MaterialEvalContext GetMaterialEvalContext(Float dudx, Float dudy, Float dvdx,
                                                    Float dvdy, Normal3f ns,
                                                    Vector3f dpdus) const
@@ -361,10 +357,10 @@ namespace spectra
     public:
         using WorkQueue::WorkQueue;
         // RayQueue Public Methods
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int PushCameraRay(const Ray& ray, const SampledWavelengths& lambda, int pixelIndex);
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int PushIndirectRay(const Ray& ray, int depth, const LightSampleContext& prevIntrCtx,
                             const SampledSpectrum& beta, const SampledSpectrum& r_u,
                             const SampledSpectrum& r_l, const SampledWavelengths& lambda,
@@ -373,7 +369,7 @@ namespace spectra
     };
 
     // RayQueue Inline Methods
-    PBRT_CPU_GPU inline int RayQueue::PushCameraRay(const Ray& ray, const SampledWavelengths& lambda,
+    SPECTRA_CPU_GPU inline int RayQueue::PushCameraRay(const Ray& ray, const SampledWavelengths& lambda,
                                                     int pixelIndex)
     {
         int index = AllocateEntry();
@@ -391,7 +387,7 @@ namespace spectra
         return index;
     }
 
-    PBRT_CPU_GPU
+    SPECTRA_CPU_GPU
     inline int RayQueue::PushIndirectRay(
         const Ray& ray, int depth, const LightSampleContext& prevIntrCtx,
         const SampledSpectrum& beta, const SampledSpectrum& r_u,
@@ -422,7 +418,7 @@ namespace spectra
     {
     public:
         // EscapedRayQueue Public Methods
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int Push(RayWorkItem r);
 
         using WorkQueue::WorkQueue;
@@ -430,7 +426,7 @@ namespace spectra
         using WorkQueue::Push;
     };
 
-    PBRT_CPU_GPU inline int EscapedRayQueue::Push(RayWorkItem r)
+    SPECTRA_CPU_GPU inline int EscapedRayQueue::Push(RayWorkItem r)
     {
         return Push(EscapedRayWorkItem{
             r.ray.o, r.ray.d, r.depth, r.lambda, r.pixelIndex,
@@ -445,7 +441,7 @@ namespace spectra
     public:
         using WorkQueue::WorkQueue;
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int Push(Material material, SampledWavelengths lambda, SampledSpectrum beta,
                  SampledSpectrum r_u, Point3f p, Vector3f wo, Normal3f n, Normal3f ns,
                  Vector3f dpdus, Point2f uv, int depth, MediumInterface mediumInterface,
@@ -476,7 +472,7 @@ namespace spectra
     public:
         using WorkQueue::WorkQueue;
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int Push(Point3f p0, Point3f p1, int depth, Material material, TabulatedBSSRDF bssrdf,
                  SampledWavelengths lambda, SampledSpectrum beta, SampledSpectrum r_u,
                  MediumInterface mediumInterface, Float etaScale, int pixelIndex)
@@ -505,7 +501,7 @@ namespace spectra
 
         using WorkQueue::Push;
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int Push(Ray ray, Float tMax, SampledWavelengths lambda, SampledSpectrum beta,
                  SampledSpectrum r_u, SampledSpectrum r_l, int pixelIndex,
                  LightSampleContext prevIntrCtx, int specularBounce,
@@ -526,7 +522,7 @@ namespace spectra
             return index;
         }
 
-        PBRT_CPU_GPU
+        SPECTRA_CPU_GPU
         int Push(RayWorkItem r, Float tMax)
         {
             return Push(r.ray, tMax, r.lambda, r.beta, r.r_u, r.r_l, r.pixelIndex,
@@ -543,4 +539,4 @@ namespace spectra
         typename MapType<MaterialEvalWorkItem, typename Material::Types>::type>;
 } // namespace spectra
 
-#endif  // PBRT_WAVEFRONT_WORKITEMS_H
+#endif  // SPECTRA_PATHTRACER_WAVEFRONT_WORKITEMS_H

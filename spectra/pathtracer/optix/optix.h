@@ -1,18 +1,14 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #ifndef SPECTRA_OPTIX_OPTIX_H
 #define SPECTRA_OPTIX_OPTIX_H
 
-#include <src/util/float.h>
+#include <spectra/pathtracer/util/float.h>
 
-#include <src/base/light.h>
-#include <src/base/material.h>
-#include <src/base/medium.h>
-#include <src/base/shape.h>
-#include <src/base/texture.h>
-#include <src/util/pstd.h>
+#include <spectra/pathtracer/base/light.h>
+#include <spectra/pathtracer/base/material.h>
+#include <spectra/pathtracer/base/medium.h>
+#include <spectra/pathtracer/base/shape.h>
+#include <spectra/pathtracer/base/texture.h>
+#include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/wavefront/workitems.h>
 #include <spectra/pathtracer/wavefront/workqueue.h>
 

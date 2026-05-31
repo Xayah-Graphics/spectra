@@ -1,45 +1,41 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #include <spectra/pathtracer/integrator.h>
 
-#include <src/base/bxdf.h>
-#include <src/base/medium.h>
-#include <src/core/bssrdf.h>
-#include <src/core/bxdfs.h>
-#include <src/core/cameras.h>
-#include <src/core/film.h>
-#include <src/core/filters.h>
-#include <src/gpu/memory.h>
-#include <src/core/interaction.h>
-#include <src/core/lights.h>
-#include <src/core/lightsamplers.h>
-#include <src/core/materials.h>
-#include <src/core/media.h>
-#include <src/core/options.h>
-#include <src/core/samplers.h>
-#include <src/core/shapes.h>
-#include <src/core/textures.h>
-#include <src/util/buffercache.h>
-#include <src/util/bluenoise.h>
-#include <src/util/color.h>
-#include <src/util/colorspace.h>
-#include <src/util/containers.h>
-#include <src/util/file.h>
-#include <src/util/image.h>
-#include <src/util/error.h>
-#include <src/util/memory.h>
-#include <src/util/parallel.h>
-#include <src/util/print.h>
-#include <src/util/progressreporter.h>
-#include <src/util/pstd.h>
-#include <src/util/sampling.h>
-#include <src/util/spectrum.h>
-#include <src/util/string.h>
-#include <src/util/taggedptr.h>
-#include <src/util/vecmath.h>
-#include <src/core/diagnostics.h>
+#include <spectra/pathtracer/base/bxdf.h>
+#include <spectra/pathtracer/base/medium.h>
+#include <spectra/pathtracer/core/bssrdf.h>
+#include <spectra/pathtracer/core/bxdfs.h>
+#include <spectra/pathtracer/core/cameras.h>
+#include <spectra/pathtracer/core/film.h>
+#include <spectra/pathtracer/core/filters.h>
+#include <spectra/pathtracer/gpu/memory.h>
+#include <spectra/pathtracer/core/interaction.h>
+#include <spectra/pathtracer/core/lights.h>
+#include <spectra/pathtracer/core/lightsamplers.h>
+#include <spectra/pathtracer/core/materials.h>
+#include <spectra/pathtracer/core/media.h>
+#include <spectra/pathtracer/core/options.h>
+#include <spectra/pathtracer/core/samplers.h>
+#include <spectra/pathtracer/core/shapes.h>
+#include <spectra/pathtracer/core/textures.h>
+#include <spectra/pathtracer/util/buffercache.h>
+#include <spectra/pathtracer/util/bluenoise.h>
+#include <spectra/pathtracer/util/color.h>
+#include <spectra/pathtracer/util/colorspace.h>
+#include <spectra/pathtracer/util/containers.h>
+#include <spectra/pathtracer/util/file.h>
+#include <spectra/pathtracer/util/image.h>
+#include <spectra/pathtracer/util/error.h>
+#include <spectra/pathtracer/util/memory.h>
+#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/util/print.h>
+#include <spectra/pathtracer/util/progressreporter.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/sampling.h>
+#include <spectra/pathtracer/util/spectrum.h>
+#include <spectra/pathtracer/util/string.h>
+#include <spectra/pathtracer/util/taggedptr.h>
+#include <spectra/pathtracer/util/vecmath.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/optix/aggregate.h>
 #include <spectra/scene.h>
 
@@ -56,9 +52,9 @@
 
 #include <ImfThreading.h>
 
-#ifdef PBRT_IS_WINDOWS
+#ifdef SPECTRA_IS_WINDOWS
 #include <Windows.h>
-#endif  // PBRT_IS_WINDOWS
+#endif  // SPECTRA_IS_WINDOWS
 
 #ifdef interface
 #undef interface
@@ -97,7 +93,7 @@ namespace spectra::pathtracer::detail
 
 namespace spectra::pathtracer
 {
-#ifdef PBRT_IS_WINDOWS
+#ifdef SPECTRA_IS_WINDOWS
     static void report_windows_exception(const char* message)
     {
         std::fprintf(stderr, "Spectra: %s\n", message);
@@ -126,7 +122,7 @@ namespace spectra::pathtracer
         }
         return EXCEPTION_EXECUTE_HANDLER;
     }
-#endif  // PBRT_IS_WINDOWS
+#endif  // SPECTRA_IS_WINDOWS
 
     GpuRuntime::GpuRuntime(const SpectraOptions& options)
     {
@@ -137,7 +133,7 @@ namespace spectra::pathtracer
 
         Imf::setGlobalThreadCount(options.nThreads ? options.nThreads : AvailableCores());
 
-#ifdef PBRT_IS_WINDOWS
+#ifdef SPECTRA_IS_WINDOWS
         SetUnhandledExceptionFilter(handle_windows_exception);
         if (Options->gpuDevice && !std::getenv("CUDA_VISIBLE_DEVICES"))
         {
@@ -145,7 +141,7 @@ namespace spectra::pathtracer
             _putenv(env.c_str());
             *Options->gpuDevice = 0;
         }
-#endif  // PBRT_IS_WINDOWS
+#endif  // SPECTRA_IS_WINDOWS
 
         if (Options->quiet) SuppressErrorMessages();
 
@@ -204,7 +200,7 @@ namespace spectra::pathtracer
     template <typename F>
     void WavefrontPathtracer::Do(const char* description, F&& func)
     {
-        spectra::GPUParallelFor(description, 1, [=] PBRT_GPU(int) mutable { func(); });
+        spectra::GPUParallelFor(description, 1, [=] SPECTRA_GPU(int) mutable { func(); });
     }
 
     Bounds3f WavefrontPathtracer::Bounds() const
@@ -452,7 +448,7 @@ namespace spectra::pathtracer
         {
             RayQueue* cameraRayQueue = CurrentRayQueue(0);
             Do(
-                "Reset ray queue", PBRT_CPU_GPU_LAMBDA()
+                "Reset ray queue", SPECTRA_CPU_GPU_LAMBDA()
                 {
                     cameraRayQueue->Reset();
                 });
@@ -463,7 +459,7 @@ namespace spectra::pathtracer
             {
                 RayQueue* nextQueue = NextRayQueue(wavefrontDepth);
                 Do(
-                    "Reset queues before tracing rays", PBRT_CPU_GPU_LAMBDA()
+                    "Reset queues before tracing rays", SPECTRA_CPU_GPU_LAMBDA()
                     {
                         nextQueue->Reset();
                         if (mediumSampleQueue)
@@ -516,7 +512,7 @@ namespace spectra::pathtracer
         Vector2i resolution = pixelBounds.Diagonal();
         ParallelFor(
             "Reset pixels", resolution.x * resolution.y,
-            PBRT_CPU_GPU_LAMBDA(int i)
+            SPECTRA_CPU_GPU_LAMBDA(int i)
             {
                 int x = i % resolution.x, y = i / resolution.x;
                 film.ResetPixel(pixelBounds.pMin + Vector2i(x, y));
@@ -529,7 +525,7 @@ namespace spectra::pathtracer
             return;
         ForAllQueued(
             "Handle escaped rays", escapedRayQueue, maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(const spectra::EscapedRayWorkItem w)
+            SPECTRA_CPU_GPU_LAMBDA(const spectra::EscapedRayWorkItem w)
             {
                 // Compute weighted radiance for escaped ray
                 SampledSpectrum L(0.f);
@@ -569,7 +565,7 @@ namespace spectra::pathtracer
     {
         ForAllQueued(
             "Handle emitters hit by indirect rays", hitAreaLightQueue, maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(const spectra::HitAreaLightWorkItem w)
+            SPECTRA_CPU_GPU_LAMBDA(const spectra::HitAreaLightWorkItem w)
             {
                 // Find emitted radiance from surface that ray hit
                 SampledSpectrum Le = w.areaLight.L(w.p, w.n, w.uv, w.wo, w.lambda);
@@ -610,7 +606,7 @@ namespace spectra::pathtracer
             aggregate->IntersectShadow(maxQueueSize, shadowRayQueue, &pixelSampleState);
         // Reset shadow ray queue
         Do(
-            "Reset shadowRayQueue", PBRT_CPU_GPU_LAMBDA()
+            "Reset shadowRayQueue", SPECTRA_CPU_GPU_LAMBDA()
             {
                 shadowRayQueue->Reset();
             });
@@ -675,7 +671,7 @@ namespace spectra::pathtracer
     {
         RayQueue* rayQueue = CurrentRayQueue(0);
         ParallelFor(
-            "Generate camera rays", maxQueueSize, PBRT_CPU_GPU_LAMBDA(int pixelIndex)
+            "Generate camera rays", maxQueueSize, SPECTRA_CPU_GPU_LAMBDA(int pixelIndex)
             {
                 // Enqueue camera ray and set pixel state for sample
                 // Compute pixel coordinates for _pixelIndex_
@@ -744,7 +740,7 @@ namespace spectra::pathtracer
 
         RayQueue* rayQueue = CurrentRayQueue(wavefrontDepth);
         spectra::ForAllQueued(
-            desc.c_str(), rayQueue, maxQueueSize, PBRT_CPU_GPU_LAMBDA(const spectra::RayWorkItem w)
+            desc.c_str(), rayQueue, maxQueueSize, SPECTRA_CPU_GPU_LAMBDA(const spectra::RayWorkItem w)
             {
                 // Generate samples for ray segment at current sample index
                 // Find first sample dimension
@@ -828,7 +824,7 @@ namespace spectra::pathtracer
         auto queue = evalQueue->Get<MaterialEvalWorkItem<ConcreteMaterial>>();
         spectra::ForAllQueued(
             desc.c_str(), queue, maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(const spectra::MaterialEvalWorkItem<ConcreteMaterial> w)
+            SPECTRA_CPU_GPU_LAMBDA(const spectra::MaterialEvalWorkItem<ConcreteMaterial> w)
             {
                 // Evaluate material and BSDF for ray intersection
                 TextureEvaluator texEval;
@@ -1100,7 +1096,7 @@ namespace spectra::pathtracer
         RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
         ForAllQueued(
             "Sample medium interaction", mediumSampleQueue, maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(spectra::MediumSampleWorkItem w)
+            SPECTRA_CPU_GPU_LAMBDA(spectra::MediumSampleWorkItem w)
             {
                 Ray ray = w.ray;
                 Float tMax = w.tMax;
@@ -1325,7 +1321,7 @@ namespace spectra::pathtracer
             desc.c_str(),
             mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(),
             maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(const spectra::MediumScatterWorkItem<ConcretePhaseFunction> w)
+            SPECTRA_CPU_GPU_LAMBDA(const spectra::MediumScatterWorkItem<ConcretePhaseFunction> w)
             {
                 RaySamples raySamples = pixelSampleState.samples[w.pixelIndex];
                 Vector3f wo = w.wo;
@@ -1410,7 +1406,7 @@ namespace spectra::pathtracer
 
         ForAllQueued(
             "Get BSSRDF and enqueue probe ray", bssrdfEvalQueue, maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(const spectra::GetBSSRDFAndProbeRayWorkItem w)
+            SPECTRA_CPU_GPU_LAMBDA(const spectra::GetBSSRDFAndProbeRayWorkItem w)
             {
                 const SubsurfaceMaterial* material = w.material.Cast<SubsurfaceMaterial>();
                 MaterialEvalContext ctx = w.GetMaterialEvalContext();
@@ -1433,7 +1429,7 @@ namespace spectra::pathtracer
 
         ForAllQueued(
             "Handle out-scattering after SSS", subsurfaceScatterQueue, maxQueueSize,
-            PBRT_CPU_GPU_LAMBDA(spectra::SubsurfaceScatterWorkItem w)
+            SPECTRA_CPU_GPU_LAMBDA(spectra::SubsurfaceScatterWorkItem w)
             {
                 if (w.reservoirPDF == 0)
                     return;
@@ -1572,7 +1568,7 @@ namespace spectra::pathtracer
     void WavefrontPathtracer::UpdateFilm()
     {
         ParallelFor(
-            "Update film", maxQueueSize, PBRT_CPU_GPU_LAMBDA(int pixelIndex)
+            "Update film", maxQueueSize, SPECTRA_CPU_GPU_LAMBDA(int pixelIndex)
             {
                 // Check pixel against film bounds
                 Point2i pPixel = pixelSampleState.pPixel[pixelIndex];
@@ -1604,7 +1600,7 @@ namespace spectra::pathtracer
         Vector2i resolution = pixelBounds.Diagonal();
         ParallelFor(
             "Update RGBA framebuffer", resolution.x * resolution.y,
-            PBRT_CPU_GPU_LAMBDA(int index)
+            SPECTRA_CPU_GPU_LAMBDA(int index)
             {
                 Point2i p(index % resolution.x, index / resolution.x);
                 RGB rgb = exposure * film.GetPixelRGB(p + pixelBounds.pMin);

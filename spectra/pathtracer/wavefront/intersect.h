@@ -1,19 +1,15 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
 #ifndef SPECTRA_PATHTRACER_WAVEFRONT_INTERSECT_H
 #define SPECTRA_PATHTRACER_WAVEFRONT_INTERSECT_H
 
-#include <src/util/float.h>
+#include <spectra/pathtracer/util/float.h>
 
-#include <src/util/spectrum.h>
+#include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/wavefront/workitems.h>
 
 namespace spectra
 {
     // Wavefront Ray Intersection Enqueuing Functions
-    inline PBRT_CPU_GPU void EnqueueWorkAfterMiss(RayWorkItem r,
+    inline SPECTRA_CPU_GPU void EnqueueWorkAfterMiss(RayWorkItem r,
                                                   MediumSampleQueue* mediumSampleQueue,
                                                   EscapedRayQueue* escapedRayQueue)
     {
@@ -27,7 +23,7 @@ namespace spectra
         }
     }
 
-    inline PBRT_CPU_GPU void RecordShadowRayResult(const ShadowRayWorkItem w,
+    inline SPECTRA_CPU_GPU void RecordShadowRayResult(const ShadowRayWorkItem w,
                                                    SOA<PixelSampleState>* pixelSampleState,
                                                    bool foundIntersection)
     {
@@ -41,7 +37,7 @@ namespace spectra
         pixelSampleState->L[w.pixelIndex] = Lpixel + Ld;
     }
 
-    inline PBRT_CPU_GPU void EnqueueWorkAfterIntersection(
+    inline SPECTRA_CPU_GPU void EnqueueWorkAfterIntersection(
         RayWorkItem r, Medium rayMedium, float tMax, SurfaceInteraction intr,
         MediumSampleQueue* mediumSampleQueue, RayQueue* nextRayQueue,
         HitAreaLightQueue* hitAreaLightQueue, MaterialEvalQueue* basicEvalMaterialQueue,
@@ -161,7 +157,7 @@ namespace spectra
     };
 
     template <typename T, typename S>
-    inline PBRT_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
+    inline SPECTRA_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
                                                 SOA<PixelSampleState>* pixelSampleState,
                                                 T trace, S spawnTo)
     {
@@ -247,4 +243,4 @@ namespace spectra
     }
 } // namespace spectra
 
-#endif  // PBRT_WAVEFRONT_INTERSECT_H
+#endif  // SPECTRA_PATHTRACER_WAVEFRONT_INTERSECT_H

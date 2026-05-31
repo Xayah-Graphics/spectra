@@ -1,28 +1,24 @@
-// pbrt is Copyright(c) 1998-2020 Matt Pharr, Wenzel Jakob, and Greg Humphreys.
-// The pbrt source code is licensed under the Apache License, Version 2.0.
-// SPDX: Apache-2.0
-
-#include <src/util/float.h>
+#include <spectra/pathtracer/util/float.h>
 
 #include <spectra/pathtracer/optix/aggregate.h>
 #include <spectra/pathtracer/optix/optix.h>
-#include <src/core/interaction.h>
-#include <src/core/materials.h>
-#include <src/core/media.h>
-#include <src/core/shapes.h>
-#include <src/core/textures.h>
-#include <src/util/rng.h>
-#include <src/util/transform.h>
-#include <src/util/vecmath.h>
+#include <spectra/pathtracer/core/interaction.h>
+#include <spectra/pathtracer/core/materials.h>
+#include <spectra/pathtracer/core/media.h>
+#include <spectra/pathtracer/core/shapes.h>
+#include <spectra/pathtracer/core/textures.h>
+#include <spectra/pathtracer/util/rng.h>
+#include <spectra/pathtracer/util/transform.h>
+#include <spectra/pathtracer/util/vecmath.h>
 #include <spectra/pathtracer/wavefront/intersect.h>
 
 // Make shader support functions visible to OptiX-IR, which is compiled as a
 // separate device module from spectra_gpu_lib.
-#include <src/util/color.cu>
-#include <src/util/colorspace.cu>
-#include <src/util/noise.cu>
-#include <src/util/spectrum.cu>
-#include <src/util/transform.cu>
+#include <spectra/pathtracer/util/color.cu>
+#include <spectra/pathtracer/util/colorspace.cu>
+#include <spectra/pathtracer/util/noise.cu>
+#include <spectra/pathtracer/util/spectrum.cu>
+#include <spectra/pathtracer/util/transform.cu>
 
 #include <optix_device.h>
 

@@ -16,14 +16,14 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <material_symbols/IconsMaterialSymbols.h>
-#include <src/base/film.h>
-#include <src/base/sampler.h>
-#include <src/core/options.h>
-#include <src/gpu/memory.h>
-#include <src/gpu/util.h>
+#include <spectra/pathtracer/base/film.h>
+#include <spectra/pathtracer/base/sampler.h>
+#include <spectra/pathtracer/core/options.h>
+#include <spectra/pathtracer/gpu/memory.h>
+#include <spectra/pathtracer/gpu/util.h>
 #include <spectra/scene.h>
-#include <src/util/transform.h>
-#include <src/util/vecmath.h>
+#include <spectra/pathtracer/util/transform.h>
+#include <spectra/pathtracer/util/vecmath.h>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <algorithm>
