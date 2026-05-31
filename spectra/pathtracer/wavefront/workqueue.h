@@ -12,9 +12,8 @@
 #include <atomic>
 #include <utility>
 
-#ifdef __CUDACC__
-
-#ifdef SPECTRA_IS_WINDOWS
+#if defined(__CUDA_ARCH__)
+#if defined(SPECTRA_IS_WINDOWS)
 #if (__CUDA_ARCH__ < 700)
 #define SPECTRA_USE_LEGACY_CUDA_ATOMICS
 #endif
@@ -27,8 +26,7 @@
 #ifndef SPECTRA_USE_LEGACY_CUDA_ATOMICS
 #include <cuda/atomic>
 #endif
-
-#endif  // __CUDACC__
+#endif  // __CUDA_ARCH__
 
 namespace spectra
 {
@@ -47,7 +45,7 @@ namespace spectra
         WorkQueue& operator=(const WorkQueue& w)
         {
             SOA<WorkItem>::operator=(w);
-#if defined(SPECTRA_IS_GPU_CODE) && defined(SPECTRA_USE_LEGACY_CUDA_ATOMICS)
+#if defined(__CUDA_ARCH__) && defined(SPECTRA_USE_LEGACY_CUDA_ATOMICS)
             size = w.size;
 #else
             size.store(w.size.load());
@@ -58,7 +56,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         int Size() const
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
             return size;
 #else
@@ -72,7 +70,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         void Reset()
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
             size = 0;
 #else
@@ -96,7 +94,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         int AllocateEntry()
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
             return atomicAdd(&size, 1);
 #else
@@ -109,7 +107,7 @@ namespace spectra
 
     private:
         // WorkQueue Private Members
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
         int size = 0;
 #else
@@ -117,7 +115,7 @@ namespace spectra
 #endif
 #else
         std::atomic<int> size{0};
-#endif  // SPECTRA_IS_GPU_CODE
+#endif  // __CUDA_ARCH__
     };
 
     // WorkQueue Inline Functions

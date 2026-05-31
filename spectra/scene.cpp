@@ -11,7 +11,6 @@
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/mesh.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/progressreporter.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/util/transform.h>
@@ -922,7 +921,6 @@ namespace spectra::scene
                     {
                         auto job = [=](std::string filename)
                         {
-                            Timer timer;
                             std::unique_ptr<Tokenizer> timport =
                                 Tokenizer::CreateFromFile(filename, parseError);
                             if (timport)

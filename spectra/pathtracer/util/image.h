@@ -466,7 +466,7 @@ namespace spectra
         // CHECK(!IsNaN(value));
         if (IsNaN(value))
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             spectra::diagnostics::PrintWarning("NaN at pixel %d,%d comp %d", p.x, p.y, c);
 #endif
             value = 0;

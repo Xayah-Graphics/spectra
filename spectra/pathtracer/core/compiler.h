@@ -1,14 +1,10 @@
 #ifndef SPECTRA_COMPILER_H
 #define SPECTRA_COMPILER_H
 
-#if defined(__CUDA_ARCH__)
-#define SPECTRA_IS_GPU_CODE
-#endif
-
 #if defined(__CUDACC__)
 #define SPECTRA_CPU_GPU __host__ __device__
 #define SPECTRA_GPU __device__
-#if defined(SPECTRA_IS_GPU_CODE)
+#if defined(__CUDA_ARCH__)
 #define SPECTRA_CONST __device__ const
 #else
 #define SPECTRA_CONST const

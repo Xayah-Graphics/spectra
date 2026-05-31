@@ -6,7 +6,6 @@
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/progressreporter.h>
 
 #include <map>
 #include <typeindex>

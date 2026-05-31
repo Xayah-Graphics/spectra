@@ -794,7 +794,7 @@ namespace spectra
         Float Get1D()
         {
             int index = GetNextIndex();
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             return 0;
 #else
             DCHECK_LT(index, u.size());

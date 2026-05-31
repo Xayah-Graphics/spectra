@@ -605,7 +605,7 @@ namespace spectra
         RGB eumelaninSigma_a(0.419f, 0.697f, 1.37f);
         RGB pheomelaninSigma_a(0.187f, 0.4f, 1.05f);
         RGB sigma_a = ce * eumelaninSigma_a + cp * pheomelaninSigma_a;
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return RGBUnboundedSpectrum(*RGBColorSpace_sRGB, sigma_a);
 #else
         return RGBUnboundedSpectrum(*RGBColorSpace::sRGB, sigma_a);

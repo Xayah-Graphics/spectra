@@ -23,7 +23,7 @@ namespace spectra
     template <typename T>
     struct SOA;
 
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 
 #define ShadowEpsilon 0.0001f
 #define Pi Float(3.14159265358979323846)
@@ -53,7 +53,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline uint32_t ReverseBits32(uint32_t n)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __brev(n);
 #else
         n = (n << 16) | (n >> 16);
@@ -68,7 +68,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline uint64_t ReverseBits64(uint64_t n)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __brevll(n);
 #else
         uint64_t n0 = ReverseBits32((uint32_t)n);
@@ -448,7 +448,7 @@ namespace spectra
 
     SPECTRA_CPU_GPU inline int Log2Int(uint32_t v)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return 31 - __clz(v);
 #elif defined(SPECTRA_HAS_INTRIN_H)
         unsigned long lz = 0;
@@ -469,7 +469,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline int Log2Int(uint64_t v)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return 64 - __clzll(v);
 #elif defined(SPECTRA_HAS_INTRIN_H)
         unsigned long lz = 0;
@@ -502,7 +502,7 @@ namespace spectra
     // https://stackoverflow.com/a/10792321
     SPECTRA_CPU_GPU inline float FastExp(float x)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __expf(x);
 #else
         // Compute $x'$ such that $\roman{e}^x = 2^{x'}$
@@ -841,7 +841,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline Float ErfInv(Float a)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return erfinv(a);
 #else
         // https://stackoverflow.com/a/49743348
@@ -876,7 +876,7 @@ namespace spectra
             p = FMA(p, t, 8.86226892e-1f); //  0x1.c5bf88p-1
         }
         return a * p;
-#endif  // SPECTRA_IS_GPU_CODE
+#endif  // __CUDA_ARCH__
     }
 
     SPECTRA_CPU_GPU
@@ -1076,7 +1076,7 @@ namespace spectra
             return *this;
         }
 
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
         static const Interval Pi;
 #endif
 

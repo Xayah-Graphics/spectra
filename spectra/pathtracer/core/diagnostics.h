@@ -220,7 +220,7 @@ namespace spectra::diagnostics
     }
 } // namespace spectra::diagnostics
 
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #define SPECTRA_FATAL(...) \
     do {                   \
         assert(false);     \

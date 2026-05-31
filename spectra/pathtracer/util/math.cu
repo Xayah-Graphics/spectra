@@ -123,7 +123,7 @@ namespace spectra
         return x;
     }
 
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
     const Interval Interval::Pi(3.1415926535897931, 3.1415926535897936);
 #else

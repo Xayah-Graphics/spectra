@@ -26,7 +26,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline Float4 Load4(const Float4* p)
     {
-#if defined(SPECTRA_IS_GPU_CODE) && !defined(SPECTRA_FLOAT_AS_DOUBLE)
+#if defined(__CUDA_ARCH__) && !defined(SPECTRA_FLOAT_AS_DOUBLE)
         float4 v = *(const float4*)p;
         return {{v.x, v.y, v.z, v.w}};
 #else
@@ -37,7 +37,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline void Store4(Float4* p, Float4 v)
     {
-#if defined(SPECTRA_IS_GPU_CODE) && !defined(SPECTRA_FLOAT_AS_DOUBLE)
+#if defined(__CUDA_ARCH__) && !defined(SPECTRA_FLOAT_AS_DOUBLE)
         *(float4*)p = make_float4(v.v[0], v.v[1], v.v[2], v.v[3]);
 #else
         *p = v;

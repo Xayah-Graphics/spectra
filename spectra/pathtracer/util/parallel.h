@@ -135,7 +135,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         explicit AtomicFloat(float v = 0)
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             value = v;
 #else
             bits = FloatToBits(v);
@@ -145,7 +145,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         operator float() const
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             return value;
 #else
             return BitsToFloat(bits);
@@ -155,7 +155,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         Float operator=(float v)
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             value = v;
             return value;
 #else
@@ -167,7 +167,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         void Add(float v)
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             atomicAdd(&value, v);
 #else
             FloatBits oldBits = bits, newBits;
@@ -182,7 +182,7 @@ namespace spectra
 
     private:
         // AtomicFloat Private Members
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         float value;
 #else
         std::atomic<FloatBits> bits;

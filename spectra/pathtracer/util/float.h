@@ -11,7 +11,7 @@
 #include <limits>
 #include <string>
 
-#if defined(SPECTRA_IS_GPU_CODE)
+#if defined(__CUDA_ARCH__)
 #include <cuda_fp16.h>
 #endif
 
@@ -27,7 +27,7 @@ namespace spectra
     static_assert(sizeof(Float) == sizeof(FloatBits),
                   "Float and FloatBits must have the same size");
 
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 
 #define DoubleOneMinusEpsilon 0x1.fffffffffffffp-1
 #define FloatOneMinusEpsilon float(0x1.fffffep-1)
@@ -56,14 +56,14 @@ namespace spectra
     static constexpr float OneMinusEpsilon = FloatOneMinusEpsilon;
 #endif
 
-#endif  // SPECTRA_IS_GPU_CODE
+#endif  // __CUDA_ARCH__
 
     // Floating-point Inline Functions
     template <typename T>
     inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsNaN(
         T v)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return isnan(v);
 #else
         return std::isnan(v);
@@ -80,7 +80,7 @@ namespace spectra
     inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsInf(
         T v)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return isinf(v);
 #else
         return std::isinf(v);
@@ -97,7 +97,7 @@ namespace spectra
     inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsFinite(
         T v)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return isfinite(v);
 #else
         return std::isfinite(v);
@@ -129,7 +129,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline uint32_t FloatToBits(float f)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __float_as_uint(f);
 #else
         return pstd::bit_cast<uint32_t>(f);
@@ -139,7 +139,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline float BitsToFloat(uint32_t ui)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __uint_as_float(ui);
 #else
         return pstd::bit_cast<float>(ui);
@@ -167,7 +167,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline uint64_t FloatToBits(double f)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __double_as_longlong(f);
 #else
         return pstd::bit_cast<uint64_t>(f);
@@ -177,7 +177,7 @@ namespace spectra
     SPECTRA_CPU_GPU
     inline double BitsToFloat(uint64_t ui)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return __longlong_as_double(ui);
 #else
         return pstd::bit_cast<double>(ui);
@@ -225,7 +225,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float AddRoundUp(Float a, Float b)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __dadd_ru(a, b);
 #else
@@ -238,7 +238,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float AddRoundDown(Float a, Float b)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __dadd_rd(a, b);
 #else
@@ -261,7 +261,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float MulRoundUp(Float a, Float b)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __dmul_ru(a, b);
 #else
@@ -274,7 +274,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float MulRoundDown(Float a, Float b)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __dmul_rd(a, b);
 #else
@@ -287,7 +287,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float DivRoundUp(Float a, Float b)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __ddiv_ru(a, b);
 #else
@@ -300,7 +300,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float DivRoundDown(Float a, Float b)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __ddiv_rd(a, b);
 #else
@@ -313,7 +313,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float SqrtRoundUp(Float a)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __dsqrt_ru(a);
 #else
@@ -326,7 +326,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float SqrtRoundDown(Float a)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __dsqrt_rd(a);
 #else
@@ -339,7 +339,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float FMARoundUp(Float a, Float b, Float c)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __fma_ru(a, b, c); // FIXME: what to do here?
 #else
@@ -352,7 +352,7 @@ namespace spectra
 
     inline SPECTRA_CPU_GPU Float FMARoundDown(Float a, Float b, Float c)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
         return __fma_rd(a, b, c); // FIXME: what to do here?
 #else
@@ -469,7 +469,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         explicit Half(float ff)
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             h = __half_as_ushort(__float2half(ff));
 #else
             // Rounding ties to nearest even instead of towards +inf
@@ -532,7 +532,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         explicit operator float() const
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             return __half2float(__ushort_as_half(h));
 #else
             FP16 h;
@@ -567,7 +567,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         bool operator==(const Half& v) const
         {
-#if defined(SPECTRA_IS_GPU_CODE) && __CUDA_ARCH__ >= 530
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 530
             return __ushort_as_half(h) == __ushort_as_half(v.h);
 #else
             if (Bits() == v.Bits())

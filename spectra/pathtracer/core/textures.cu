@@ -295,7 +295,7 @@ namespace spectra
     SampledSpectrum SpectrumImageTexture::Evaluate(TextureEvalContext ctx,
                                                    SampledWavelengths lambda) const
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         assert(!"Should not be called in GPU code");
         return SampledSpectrum(0);
 #else
@@ -421,7 +421,7 @@ namespace spectra
         t = t * nSeg - first;
         RGB rgb = 1.5f * EvaluateCubicBezier(pstd::span(colors + first, 4), t);
 
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         return RGBAlbedoSpectrum(*RGBColorSpace_sRGB, rgb).Sample(lambda);
 #else
         return RGBAlbedoSpectrum(*RGBColorSpace::sRGB, rgb).Sample(lambda);
@@ -584,7 +584,7 @@ namespace spectra
 
     Float FloatPtexTexture::Evaluate(TextureEvalContext ctx) const
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         SPECTRA_FATAL("Ptex not supported with GPU renderer");
         return 0;
 #else
@@ -600,7 +600,7 @@ namespace spectra
     SampledSpectrum SpectrumPtexTexture::Evaluate(TextureEvalContext ctx,
                                                   SampledWavelengths lambda) const
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         SPECTRA_FATAL("Ptex not supported with GPU renderer");
         return SampledSpectrum(0);
 #else

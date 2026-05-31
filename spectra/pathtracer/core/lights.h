@@ -501,11 +501,11 @@ namespace spectra
         {
             if (!alpha)
                 return false;
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             Float a = BasicTextureEvaluator()(alpha, intr);
 #else
             Float a = UniversalTextureEvaluator()(alpha, intr);
-#endif  // SPECTRA_IS_GPU_CODE
+#endif  // __CUDA_ARCH__
             if (a >= 1)
                 return false;
             if (a <= 0)

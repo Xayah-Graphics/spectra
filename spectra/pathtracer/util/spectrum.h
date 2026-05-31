@@ -810,7 +810,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         inline const DenselySampledSpectrum& X()
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             extern SPECTRA_GPU DenselySampledSpectrum* xGPU;
             return *xGPU;
 #else
@@ -822,7 +822,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         inline const DenselySampledSpectrum& Y()
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             extern SPECTRA_GPU DenselySampledSpectrum* yGPU;
             return *yGPU;
 #else
@@ -834,7 +834,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         inline const DenselySampledSpectrum& Z()
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             extern SPECTRA_GPU DenselySampledSpectrum* zGPU;
             return *zGPU;
 #else

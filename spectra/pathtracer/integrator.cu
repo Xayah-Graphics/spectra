@@ -27,17 +27,16 @@
 #include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/progressreporter.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/sampling.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/util/taggedptr.h>
 #include <spectra/pathtracer/util/vecmath.h>
-#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/optix/aggregate.h>
 #include <spectra/scene.h>
 
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -407,24 +406,53 @@ namespace spectra::pathtracer
     {
         Bounds2i pixelBounds = film.PixelBounds();
 
-        Timer timer;
+        std::chrono::steady_clock::time_point renderStart = std::chrono::steady_clock::now();
         // Prefetch allocations to GPU memory
         PrefetchGPUAllocations();
 
         // Loop over sample indices and evaluate pixel samples
         int firstSampleIndex = 0, lastSampleIndex = samplesPerPixel;
-        ProgressReporter progress(lastSampleIndex - firstSampleIndex, "Rendering",
-                                        Options->quiet, true);
+        int totalSamples = lastSampleIndex - firstSampleIndex;
+        if (!Options->quiet)
+        {
+            Vector2i resolution = pixelBounds.Diagonal();
+            std::fprintf(stdout, "Rendering %d samples at %dx%d\n", totalSamples,
+                         resolution.x, resolution.y);
+            std::fflush(stdout);
+        }
+
+        std::chrono::steady_clock::time_point lastProgressReport =
+            std::chrono::steady_clock::now();
         for (int sampleIndex = firstSampleIndex; sampleIndex < lastSampleIndex; ++sampleIndex)
         {
             RenderSample(pixelBounds, Transform{}, sampleIndex);
-            progress.Update();
+
+            if (!Options->quiet)
+            {
+                std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                bool lastSample = sampleIndex + 1 == lastSampleIndex;
+                if (lastSample || now - lastProgressReport >= std::chrono::seconds(1))
+                {
+                    int completedSamples = sampleIndex - firstSampleIndex + 1;
+                    double elapsedSeconds =
+                        std::chrono::duration<double>(now - renderStart).count();
+                    std::fprintf(stdout, "Rendering sample %d/%d, elapsed %.1fs\n",
+                                 completedSamples, totalSamples, elapsedSeconds);
+                    std::fflush(stdout);
+                    lastProgressReport = now;
+                }
+            }
         }
 
-        progress.Done();
-
         GPUWait();
-        Float seconds = timer.ElapsedSeconds();
+        Float seconds = Float(std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - renderStart)
+                                  .count());
+        if (!Options->quiet)
+        {
+            std::fprintf(stdout, "Rendering completed in %.1fs\n", seconds);
+            std::fflush(stdout);
+        }
 
         return seconds;
     }

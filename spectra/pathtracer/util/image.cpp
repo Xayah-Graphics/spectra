@@ -1,4 +1,4 @@
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
 // OpenEXR's Imath half alias must be declared before CUDA's fp16 headers.
 #include <ImfChannelList.h>
 #include <ImfChromaticitiesAttribute.h>
@@ -1117,7 +1117,7 @@ namespace spectra
 
     ///////////////////////////////////////////////////////////////////////////
     // OpenEXR
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
     static Imf::FrameBuffer imageToFrameBuffer(const Image& image,
                                                const ImageChannelDesc& desc,
                                                const Imath::Box2i& dataWindow)

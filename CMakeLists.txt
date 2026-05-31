@@ -323,7 +323,6 @@ set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/parallel.cpp
         spectra/pathtracer/util/pmj02tables.cu
         spectra/pathtracer/util/primes.cu
-        spectra/pathtracer/util/progressreporter.cpp
         spectra/pathtracer/util/pstd.cu
         spectra/pathtracer/util/sampling.cu
         spectra/pathtracer/util/scattering.cu

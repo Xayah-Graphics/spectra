@@ -51,7 +51,7 @@ namespace spectra
 
     SPECTRA_CPU_GPU inline const BasicSpectraOptions& GetOptions()
     {
-#if defined(SPECTRA_IS_GPU_CODE)
+#if defined(__CUDA_ARCH__)
         return OptionsGPU;
 #else
         return *Options;

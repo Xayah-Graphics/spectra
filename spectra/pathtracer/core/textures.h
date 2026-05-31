@@ -211,7 +211,6 @@ namespace spectra
             return TexCoord2D{st, dsdx, dsdy, dtdx, dtdy};
         }
 
-
     private:
         // PlanarMapping Private Members
         Transform textureFromRender;
@@ -312,7 +311,6 @@ namespace spectra
                                             const TextureParameterDictionary& parameters,
                                             const FileLoc* loc, Allocator alloc);
 
-
     private:
         Float value;
     };
@@ -363,7 +361,6 @@ namespace spectra
                                           const TextureParameterDictionary& parameters,
                                           const FileLoc* loc, Allocator alloc);
 
-
     private:
         // BilerpTexture Private Data
         TextureMapping2D mapping;
@@ -394,7 +391,6 @@ namespace spectra
                                              const TextureParameterDictionary& parameters,
                                              SpectrumType spectrumType, const FileLoc* loc,
                                              Allocator alloc);
-
 
     private:
         // BilerpTexture Private Data
@@ -430,7 +426,6 @@ namespace spectra
         static FloatCheckerboardTexture* Create(const Transform& renderFromTexture,
                                                 const TextureParameterDictionary& parameters,
                                                 const FileLoc* loc, Allocator alloc);
-
 
     private:
         TextureMapping2D map2D;
@@ -496,7 +491,6 @@ namespace spectra
                                         const TextureParameterDictionary& parameters,
                                         const FileLoc* loc, Allocator alloc);
 
-
     private:
         // DotsTexture Private Data
         TextureMapping2D mapping;
@@ -528,7 +522,6 @@ namespace spectra
                                            SpectrumType spectrumType, const FileLoc* loc,
                                            Allocator alloc);
 
-
     private:
         // SpectrumDotsTexture Private Members
         TextureMapping2D mapping;
@@ -555,7 +548,6 @@ namespace spectra
         static FBmTexture* Create(const Transform& renderFromTexture,
                                   const TextureParameterDictionary& parameters,
                                   const FileLoc* loc, Allocator alloc);
-
 
     private:
         TextureMapping3D mapping;
@@ -650,7 +642,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         Float Evaluate(TextureEvalContext ctx) const
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             assert(!"Should not be called in GPU code");
             return 0;
 #else
@@ -666,7 +658,6 @@ namespace spectra
         static FloatImageTexture* Create(const Transform& renderFromTexture,
                                          const TextureParameterDictionary& parameters,
                                          const FileLoc* loc, Allocator alloc);
-
     };
 
     // SpectrumImageTexture Definition
@@ -691,7 +682,6 @@ namespace spectra
                                             const TextureParameterDictionary& parameters,
                                             SpectrumType spectrumType, const FileLoc* loc,
                                             Allocator alloc);
-
 
     private:
         // SpectrumImageTexture Private Members
@@ -720,7 +710,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
             return SampledSpectrum(0);
 #else
@@ -789,7 +779,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         Float Evaluate(TextureEvalContext ctx) const
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
             return 0;
 #else
@@ -836,7 +826,6 @@ namespace spectra
             SPECTRA_FATAL("GPUSpectrumImageTexture::Create called outside CUDA texture implementation.");
             return nullptr;
         }
-
     };
 
     class GPUFloatImageTexture
@@ -855,7 +844,6 @@ namespace spectra
             SPECTRA_FATAL("GPUFloatImageTexture::Create called outside CUDA texture implementation.");
             return nullptr;
         }
-
     };
 
 #endif  // __NVCC__
@@ -881,7 +869,6 @@ namespace spectra
         static MarbleTexture* Create(const Transform& renderFromTexture,
                                      const TextureParameterDictionary& parameters,
                                      const FileLoc* loc, Allocator alloc);
-
 
     private:
         // MarbleTexture Private Members
@@ -916,7 +903,6 @@ namespace spectra
                                        const TextureParameterDictionary& parameters,
                                        const FileLoc* loc, Allocator alloc);
 
-
     private:
         FloatTexture tex1, tex2;
         FloatTexture amount;
@@ -947,7 +933,6 @@ namespace spectra
         static FloatDirectionMixTexture* Create(const Transform& renderFromTexture,
                                                 const TextureParameterDictionary& parameters,
                                                 const FileLoc* loc, Allocator alloc);
-
 
     private:
         // FloatDirectionMixTexture Private Members
@@ -981,7 +966,6 @@ namespace spectra
                                           SpectrumType spectrumType, const FileLoc* loc,
                                           Allocator alloc);
 
-
     private:
         SpectrumTexture tex1, tex2;
         FloatTexture amount;
@@ -1012,7 +996,6 @@ namespace spectra
         static SpectrumDirectionMixTexture* Create(
             const Transform& renderFromTexture, const TextureParameterDictionary& parameters,
             SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
-
 
     private:
         // SpectrumDirectionMixTexture Private Members
@@ -1069,7 +1052,6 @@ namespace spectra
                                            SpectrumType spectrumType, const FileLoc* loc,
                                            Allocator alloc);
 
-
     private:
         SpectrumType spectrumType;
     };
@@ -1108,7 +1090,7 @@ namespace spectra
 
             RGB rgb = faceValues[ctx.faceIndex];
             const RGBColorSpace* sRGB =
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
                 RGBColorSpace_sRGB;
 #else
                 RGBColorSpace::sRGB;
@@ -1125,7 +1107,6 @@ namespace spectra
                                               const TextureParameterDictionary& parameters,
                                               SpectrumType spectrumType, const FileLoc* loc,
                                               Allocator alloc);
-
 
     private:
         SpectrumType spectrumType;
@@ -1154,7 +1135,6 @@ namespace spectra
             return tex.Evaluate(ctx) * sc;
         }
 
-
     private:
         FloatTexture tex, scale;
     };
@@ -1181,7 +1161,6 @@ namespace spectra
                                       const TextureParameterDictionary& parameters,
                                       SpectrumType spectrumType, const FileLoc* loc,
                                       Allocator alloc);
-
 
     private:
         SpectrumTexture tex;
@@ -1210,7 +1189,6 @@ namespace spectra
                                     const TextureParameterDictionary& parameters,
                                     const FileLoc* loc, Allocator alloc);
 
-
     private:
         TextureMapping3D mapping;
     };
@@ -1235,7 +1213,6 @@ namespace spectra
         static WrinkledTexture* Create(const Transform& renderFromTexture,
                                        const TextureParameterDictionary& parameters,
                                        const FileLoc* loc, Allocator alloc);
-
 
     private:
         // WrinkledTexture Private Data

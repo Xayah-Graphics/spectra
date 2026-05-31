@@ -1259,7 +1259,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         const TriangleMesh* GetMesh() const
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             return (*allTriangleMeshesGPU)[meshIndex];
 #else
             return (*allMeshes)[meshIndex];
@@ -1595,7 +1595,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         const BilinearPatchMesh* GetMesh() const
         {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
             return (*allBilinearMeshesGPU)[meshIndex];
 #else
             return (*allMeshes)[meshIndex];

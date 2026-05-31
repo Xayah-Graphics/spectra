@@ -307,7 +307,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         FloatTexture GetDisplacement() const
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
 #endif
             return nullptr;
@@ -316,7 +316,7 @@ namespace spectra
         SPECTRA_CPU_GPU
         const Image* GetNormalMap() const
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
 #endif
             return nullptr;
@@ -330,7 +330,7 @@ namespace spectra
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
                                     SampledWavelengths& lambda) const
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
 #endif
         }
@@ -348,7 +348,7 @@ namespace spectra
         SPECTRA_CPU_GPU void GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
                                   SampledWavelengths& lambda) const
         {
-#ifndef SPECTRA_IS_GPU_CODE
+#if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("MixMaterial::GetBxDF() shouldn't be called");
 #endif
         }

@@ -347,7 +347,7 @@ namespace spectra
 
     SPECTRA_CPU_GPU void MLTSampler::EnsureReady(int index)
     {
-#ifdef SPECTRA_IS_GPU_CODE
+#if defined(__CUDA_ARCH__)
         SPECTRA_FATAL("MLTSampler not supported on GPU--needs vector resize...");
         return;
 #else
