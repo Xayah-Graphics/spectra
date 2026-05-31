@@ -19,11 +19,8 @@
 
 namespace xayah {
     class Spectra;
-    class SpectraContext;
-    class SpectraFrameContext;
     struct SpectraFrameState;
     class SpectraPanelContext;
-    class SpectraRecordContext;
 
     enum class SpectraDockSlot {
         Center,
@@ -49,19 +46,6 @@ namespace xayah {
         bool show_in_toolbar{true};
         bool zero_window_padding{false};
         std::move_only_function<void(SpectraPanelContext&)> draw{};
-    };
-
-    class SpectraPlugin {
-    public:
-        virtual ~SpectraPlugin() = default;
-
-        [[nodiscard]] virtual std::string_view name() const = 0;
-        virtual void attach(SpectraContext& context) = 0;
-        virtual void detach(SpectraContext& context) noexcept;
-        virtual void before_imgui_shutdown(SpectraContext& context) noexcept;
-        virtual void after_imgui_created(SpectraContext& context);
-        virtual void begin_frame(SpectraFrameContext& context);
-        virtual void record_frame(SpectraRecordContext& context);
     };
 
     class SpectraContext {
@@ -137,6 +121,19 @@ namespace xayah {
 
         Spectra* spectra = nullptr;
         SpectraPanel* panel = nullptr;
+    };
+
+    class SpectraPlugin {
+    public:
+        virtual ~SpectraPlugin() = default;
+
+        [[nodiscard]] virtual std::string_view name() const = 0;
+        virtual void attach(SpectraContext& context) = 0;
+        virtual void detach(SpectraContext& context) noexcept;
+        virtual void before_imgui_shutdown(SpectraContext& context) noexcept;
+        virtual void after_imgui_created(SpectraContext& context);
+        virtual void begin_frame(SpectraFrameContext& context);
+        virtual void record_frame(SpectraRecordContext& context);
     };
 
     class Spectra {
