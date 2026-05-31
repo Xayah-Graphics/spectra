@@ -383,12 +383,9 @@ add_library(
         ${SPECTRA_GPU_DEVICE_SOURCE}
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
-        src/scene.cpp
+        spectra/scene.cpp
         src/optix/aggregate.cu
-        src/runtime.cpp
-        src/runtime.cu
-        src/pathtracer.cpp
-        src/pathtracer.cu
+        spectra/pathtracer/wavefront.cu
 )
 add_library(spectra::gpu_lib ALIAS spectra_gpu_lib)
 add_dependencies(spectra_gpu_lib spectra_gpu_soa_generated)
@@ -439,6 +436,7 @@ target_sources(
         PRIVATE
         spectra/pathtracer.h
         spectra/pathtracer.cpp
+        spectra/pathtracer/wavefront.h
         spectra/spectra.h
         spectra/spectra.cpp
 
@@ -450,7 +448,11 @@ target_sources(
         vendor/imgui/backends/imgui_impl_vulkan.cpp
 )
 target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw CUDA::cudart spectra::gpu_lib)
-target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_compile_definitions(
+        spectra_core
+        PRIVATE
+        IMGUI_DEFINE_MATH_OPERATORS
+)
 target_include_directories(
         spectra_core
         PUBLIC
