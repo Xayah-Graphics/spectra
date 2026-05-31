@@ -1,12 +1,10 @@
 #include "pathtracer.h"
-#include "session.h"
 
 #include <imgui.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 
 #include <array>
 #include <filesystem>
-#include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -27,43 +25,10 @@ namespace {
         void (xayah::pathtracer::InteractiveSession::*draw)();
     };
 
-    [[nodiscard]] xayah::pathtracer::HostContext pathtracer_host_context(const xayah::SpectraContext& context) {
-        return {
-            &context.physical_device(),
-            &context.device(),
-            context.frame_count(),
-            context.swapchain_extent(),
-        };
-    }
-
-    void register_pathtracer_panel(xayah::SpectraContext& context, xayah::pathtracer::InteractiveSession& session, const PanelDefinition& definition) {
-        if (definition.id == nullptr || definition.title == nullptr || definition.draw == nullptr) throw std::runtime_error("Invalid Spectra pathtracer panel definition");
-
-        xayah::SpectraPanel panel{};
-        panel.id                  = definition.id;
-        panel.title               = definition.title;
-        panel.icon                = definition.icon == nullptr ? "" : definition.icon;
-        panel.shortcut_label      = definition.shortcut_label == nullptr ? "" : definition.shortcut_label;
-        panel.shortcut_key        = definition.shortcut_key;
-        panel.dock_slot           = definition.dock_slot;
-        panel.window_flags        = definition.window_flags;
-        panel.closable            = definition.closable;
-        panel.show_in_menu        = definition.show_in_menu;
-        panel.show_in_toolbar     = definition.show_in_toolbar;
-        panel.zero_window_padding = definition.zero_window_padding;
-        panel.draw                = [&session, draw = definition.draw](xayah::SpectraPanelContext&) { (session.*draw)(); };
-        context.register_panel(std::move(panel));
-    }
 } // namespace
 
 namespace xayah {
-    struct SpectraPathtracer::State {
-        explicit State(std::filesystem::path scene_path) : session{std::make_unique<xayah::pathtracer::InteractiveSession>(std::move(scene_path))} {}
-
-        std::unique_ptr<xayah::pathtracer::InteractiveSession> session{};
-    };
-
-    SpectraPathtracer::SpectraPathtracer(std::filesystem::path scene_path) : state{std::make_unique<State>(std::move(scene_path))} {
+    SpectraPathtracer::SpectraPathtracer(std::filesystem::path scene_path) : session{std::move(scene_path)} {
     }
 
     SpectraPathtracer::~SpectraPathtracer() noexcept = default;
@@ -73,36 +38,34 @@ namespace xayah {
     }
 
     void SpectraPathtracer::attach(xayah::SpectraContext& context) {
-        this->state->session->attach(pathtracer_host_context(context));
+        this->session.attach(xayah::pathtracer::HostContext{&context.physical_device(), &context.device(), context.frame_count(), context.swapchain_extent()});
         this->register_panels(context);
-        context.set_window_detail(this->state->session->window_detail());
+        context.set_window_detail(this->session.window_detail());
     }
 
     void SpectraPathtracer::detach(xayah::SpectraContext&) noexcept {
-        this->state->session->detach();
+        this->session.detach();
     }
 
     void SpectraPathtracer::before_imgui_shutdown(xayah::SpectraContext&) noexcept {
-        this->state->session->before_imgui_shutdown();
+        this->session.before_imgui_shutdown();
     }
 
     void SpectraPathtracer::after_imgui_created(xayah::SpectraContext&) {
-        this->state->session->after_imgui_created();
+        this->session.after_imgui_created();
     }
 
     void SpectraPathtracer::begin_frame(xayah::SpectraFrameContext& context) {
-        this->state->session->update_host(pathtracer_host_context(context.app()));
-        const xayah::pathtracer::FrameOutput output = this->state->session->begin_frame(xayah::pathtracer::FrameInput{context.frame_index(), context.image_index()});
-        if (output.uses_external_completion) context.request_external_completion(output.completion_semaphore);
-        if (this->state->session->close_requested()) {
-            context.request_close();
-            this->state->session->clear_close_request();
-        }
-        context.set_window_detail(this->state->session->window_detail());
+        const xayah::SpectraContext app = context.app();
+        this->session.update_host(xayah::pathtracer::HostContext{&app.physical_device(), &app.device(), app.frame_count(), app.swapchain_extent()});
+        const xayah::pathtracer::FrameOutput output = this->session.begin_frame(xayah::pathtracer::FrameInput{context.frame_index(), context.image_index()});
+        if (output.completion_semaphore.has_value()) context.request_external_completion(*output.completion_semaphore);
+        if (output.close_requested) context.request_close();
+        context.set_window_detail(this->session.window_detail());
     }
 
     void SpectraPathtracer::record_frame(xayah::SpectraRecordContext& context) {
-        this->state->session->record_frame(context.command_buffer());
+        this->session.record_frame(context.command_buffer());
     }
 
     void SpectraPathtracer::register_panels(xayah::SpectraContext& context) {
@@ -221,7 +184,22 @@ namespace xayah {
             },
         };
 
-        for (const PanelDefinition& panel : panels)
-            register_pathtracer_panel(context, *this->state->session, panel);
+        for (const PanelDefinition& definition : panels) {
+            if (definition.id == nullptr || definition.title == nullptr || definition.draw == nullptr) throw std::runtime_error("Invalid Spectra pathtracer panel definition");
+            xayah::SpectraPanel panel{};
+            panel.id                  = definition.id;
+            panel.title               = definition.title;
+            panel.icon                = definition.icon == nullptr ? "" : definition.icon;
+            panel.shortcut_label      = definition.shortcut_label == nullptr ? "" : definition.shortcut_label;
+            panel.shortcut_key        = definition.shortcut_key;
+            panel.dock_slot           = definition.dock_slot;
+            panel.window_flags        = definition.window_flags;
+            panel.closable            = definition.closable;
+            panel.show_in_menu        = definition.show_in_menu;
+            panel.show_in_toolbar     = definition.show_in_toolbar;
+            panel.zero_window_padding = definition.zero_window_padding;
+            panel.draw                = [this, draw = definition.draw] { (this->session.*draw)(); };
+            context.register_panel(std::move(panel));
+        }
     }
 } // namespace xayah

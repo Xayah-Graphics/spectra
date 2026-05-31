@@ -20,7 +20,6 @@
 namespace xayah {
     class Spectra;
     struct SpectraFrameState;
-    class SpectraPanelContext;
 
     enum class SpectraDockSlot {
         Center,
@@ -45,7 +44,7 @@ namespace xayah {
         bool show_in_menu{true};
         bool show_in_toolbar{true};
         bool zero_window_padding{false};
-        std::move_only_function<void(SpectraPanelContext&)> draw{};
+        std::move_only_function<void()> draw{};
     };
 
     class SpectraContext {
@@ -56,7 +55,6 @@ namespace xayah {
         [[nodiscard]] const vk::raii::Device& device() const;
         [[nodiscard]] std::uint32_t frame_count() const;
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
-        [[nodiscard]] vk::Format swapchain_format() const;
         void register_panel(SpectraPanel panel) const;
         void request_close() const;
         void set_window_detail(std::string detail) const;
@@ -64,7 +62,6 @@ namespace xayah {
     private:
         friend class Spectra;
         friend class SpectraFrameContext;
-        friend class SpectraPanelContext;
         friend class SpectraRecordContext;
         explicit SpectraContext(Spectra& spectra);
 
@@ -76,7 +73,6 @@ namespace xayah {
         [[nodiscard]] SpectraContext app() const;
         [[nodiscard]] std::uint32_t frame_index() const;
         [[nodiscard]] std::uint32_t image_index() const;
-        [[nodiscard]] float delta_seconds() const;
         void request_external_completion(vk::Semaphore semaphore) const;
         void request_close() const;
         void set_window_detail(std::string detail) const;
@@ -92,35 +88,14 @@ namespace xayah {
 
     class SpectraRecordContext {
     public:
-        [[nodiscard]] SpectraContext app() const;
-        [[nodiscard]] std::uint32_t frame_index() const;
-        [[nodiscard]] std::uint32_t image_index() const;
         [[nodiscard]] const vk::raii::CommandBuffer& command_buffer() const;
 
     private:
         friend class Spectra;
 
-        SpectraRecordContext(Spectra& spectra, SpectraFrameState& frame, const vk::raii::CommandBuffer& command_buffer);
+        explicit SpectraRecordContext(const vk::raii::CommandBuffer& command_buffer);
 
-        Spectra* spectra = nullptr;
-        SpectraFrameState* frame = nullptr;
         const vk::raii::CommandBuffer* command_buffer_value = nullptr;
-    };
-
-    class SpectraPanelContext {
-    public:
-        [[nodiscard]] SpectraContext app() const;
-        [[nodiscard]] std::string_view panel_id() const;
-        [[nodiscard]] std::string_view panel_title() const;
-        void request_close() const;
-
-    private:
-        friend class Spectra;
-
-        SpectraPanelContext(Spectra& spectra, SpectraPanel& panel);
-
-        Spectra* spectra = nullptr;
-        SpectraPanel* panel = nullptr;
     };
 
     class SpectraPlugin {
@@ -129,11 +104,11 @@ namespace xayah {
 
         [[nodiscard]] virtual std::string_view name() const = 0;
         virtual void attach(SpectraContext& context) = 0;
-        virtual void detach(SpectraContext& context) noexcept;
-        virtual void before_imgui_shutdown(SpectraContext& context) noexcept;
-        virtual void after_imgui_created(SpectraContext& context);
-        virtual void begin_frame(SpectraFrameContext& context);
-        virtual void record_frame(SpectraRecordContext& context);
+        virtual void detach(SpectraContext& context) noexcept = 0;
+        virtual void before_imgui_shutdown(SpectraContext& context) noexcept = 0;
+        virtual void after_imgui_created(SpectraContext& context) = 0;
+        virtual void begin_frame(SpectraFrameContext& context) = 0;
+        virtual void record_frame(SpectraRecordContext& context) = 0;
     };
 
     class Spectra {
@@ -152,7 +127,6 @@ namespace xayah {
     private:
         friend class SpectraContext;
         friend class SpectraFrameContext;
-        friend class SpectraPanelContext;
         friend class SpectraRecordContext;
 
         void create_imgui();
@@ -161,7 +135,6 @@ namespace xayah {
         void destroy_imgui() noexcept;
         void detach_plugins_noexcept() noexcept;
 
-        void render_loop();
         bool begin_frame(SpectraFrameState& frame);
         void record_frame(SpectraFrameState& frame);
         void end_frame(SpectraFrameState& frame);

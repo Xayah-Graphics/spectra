@@ -76,7 +76,6 @@ namespace xayah::pathtracer {
         [[nodiscard]] spectra::Bounds3f camera_initial_focus_bounds() const;
         [[nodiscard]] std::array<int, 2> film_resolution() const;
         [[nodiscard]] spectra::Transform camera_from_world_transform() const;
-        [[nodiscard]] std::uint64_t film_pixel_count() const;
         [[nodiscard]] float completion_ratio() const;
         [[nodiscard]] VkDescriptorSet active_descriptor() const;
         [[nodiscard]] vk::Semaphore active_cuda_complete_semaphore() const;

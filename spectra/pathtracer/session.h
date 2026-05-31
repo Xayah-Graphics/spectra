@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace xayah::pathtracer {
@@ -26,8 +27,8 @@ namespace xayah::pathtracer {
     };
 
     struct FrameOutput {
-        vk::Semaphore completion_semaphore{};
-        bool uses_external_completion{false};
+        std::optional<vk::Semaphore> completion_semaphore{};
+        bool close_requested{false};
     };
 
     [[nodiscard]] std::string scene_title_text(const SceneSession& scene);
@@ -50,8 +51,6 @@ namespace xayah::pathtracer {
         [[nodiscard]] FrameOutput begin_frame(const FrameInput& frame);
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
         [[nodiscard]] std::string window_detail() const;
-        [[nodiscard]] bool close_requested() const;
-        void clear_close_request();
 
         void draw_viewport_window();
         void draw_camera_window();
@@ -63,14 +62,7 @@ namespace xayah::pathtracer {
         void draw_statistics_window();
 
     private:
-        struct PathtracerFrameResult {
-            std::uint64_t sample_pixels{0};
-            bool rendered_sample{false};
-            bool reset_accumulation{false};
-        };
-
         struct PathtracerStatus {
-            std::array<int, 2> sample_range{0, 0};
             bool uses_external_completion{false};
             std::string state{};
         };
@@ -93,7 +85,6 @@ namespace xayah::pathtracer {
             std::filesystem::path scene_path{};
             HostContext host{};
             bool attached{false};
-            bool close_requested{false};
 
             struct {
                 bool viewport_known{false};
@@ -152,12 +143,7 @@ namespace xayah::pathtracer {
         void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
         void synchronize_render_resolution();
         [[nodiscard]] bool pathtracer_ready() const;
-        [[nodiscard]] VkDescriptorSet pathtracer_viewport_descriptor() const;
         [[nodiscard]] std::array<int, 2> pathtracer_sample_range() const;
-        [[nodiscard]] float pathtracer_initial_move_scale() const;
-        [[nodiscard]] vk::Semaphore pathtracer_complete_semaphore() const;
-        [[nodiscard]] PathtracerFrameResult render_pathtracer_frame(const FrameInput& frame);
-        void record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer);
         void request_pathtracer_accumulation_reset();
         void initialize_camera_state();
         void set_camera_speed(float speed);
@@ -165,7 +151,7 @@ namespace xayah::pathtracer {
         void clear_pathtracer_throughput_statistics();
         void update_frame_statistics(const FrameInput& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
         [[nodiscard]] PathtracerStatus pathtracer_status() const;
-        void process_camera_input();
+        [[nodiscard]] bool process_camera_input();
 
         std::unique_ptr<SessionState> state{};
     };

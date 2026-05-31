@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <format>
 #include <iostream>
@@ -36,23 +35,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-namespace xayah {
-    void SpectraPlugin::detach(SpectraContext&) noexcept {
-    }
-
-    void SpectraPlugin::before_imgui_shutdown(SpectraContext&) noexcept {
-    }
-
-    void SpectraPlugin::after_imgui_created(SpectraContext&) {
-    }
-
-    void SpectraPlugin::begin_frame(SpectraFrameContext&) {
-    }
-
-    void SpectraPlugin::record_frame(SpectraRecordContext&) {
-    }
-} // namespace xayah
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -268,11 +250,6 @@ namespace xayah {
         return this->spectra->state->swapchain.extent;
     }
 
-    vk::Format SpectraContext::swapchain_format() const {
-        if (this->spectra == nullptr) throw std::runtime_error("Spectra context is null");
-        return this->spectra->state->swapchain.format;
-    }
-
     void SpectraContext::register_panel(SpectraPanel panel) const {
         if (this->spectra == nullptr) throw std::runtime_error("Spectra context is null");
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
@@ -314,12 +291,6 @@ namespace xayah {
         return this->frame->image_index;
     }
 
-    float SpectraFrameContext::delta_seconds() const {
-        const float delta_seconds = ImGui::GetIO().DeltaTime;
-        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0f) throw std::runtime_error("ImGui delta time is invalid");
-        return delta_seconds;
-    }
-
     void SpectraFrameContext::request_external_completion(const vk::Semaphore semaphore) const {
         if (this->frame == nullptr) throw std::runtime_error("Spectra frame context frame is null");
         if (semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
@@ -327,56 +298,21 @@ namespace xayah {
     }
 
     void SpectraFrameContext::request_close() const {
-        this->app().request_close();
+        if (this->spectra == nullptr) throw std::runtime_error("Spectra frame context is null");
+        glfwSetWindowShouldClose(this->spectra->state->surface.window.get(), GLFW_TRUE);
     }
 
     void SpectraFrameContext::set_window_detail(std::string detail) const {
-        this->app().set_window_detail(std::move(detail));
+        if (this->spectra == nullptr) throw std::runtime_error("Spectra frame context is null");
+        this->spectra->state->window_title.detail = std::move(detail);
     }
 
-    SpectraRecordContext::SpectraRecordContext(Spectra& spectra, SpectraFrameState& frame, const vk::raii::CommandBuffer& command_buffer) : spectra{&spectra}, frame{&frame}, command_buffer_value{&command_buffer} {
-    }
-
-    SpectraContext SpectraRecordContext::app() const {
-        if (this->spectra == nullptr) throw std::runtime_error("Spectra record context is null");
-        return SpectraContext{*this->spectra};
-    }
-
-    std::uint32_t SpectraRecordContext::frame_index() const {
-        if (this->frame == nullptr) throw std::runtime_error("Spectra record context frame is null");
-        return this->frame->frame_index;
-    }
-
-    std::uint32_t SpectraRecordContext::image_index() const {
-        if (this->frame == nullptr) throw std::runtime_error("Spectra record context frame is null");
-        return this->frame->image_index;
+    SpectraRecordContext::SpectraRecordContext(const vk::raii::CommandBuffer& command_buffer) : command_buffer_value{&command_buffer} {
     }
 
     const vk::raii::CommandBuffer& SpectraRecordContext::command_buffer() const {
         if (this->command_buffer_value == nullptr) throw std::runtime_error("Spectra record context command buffer is null");
         return *this->command_buffer_value;
-    }
-
-    SpectraPanelContext::SpectraPanelContext(Spectra& spectra, SpectraPanel& panel) : spectra{&spectra}, panel{&panel} {
-    }
-
-    SpectraContext SpectraPanelContext::app() const {
-        if (this->spectra == nullptr) throw std::runtime_error("Spectra panel context is null");
-        return SpectraContext{*this->spectra};
-    }
-
-    std::string_view SpectraPanelContext::panel_id() const {
-        if (this->panel == nullptr) throw std::runtime_error("Spectra panel context panel is null");
-        return this->panel->id;
-    }
-
-    std::string_view SpectraPanelContext::panel_title() const {
-        if (this->panel == nullptr) throw std::runtime_error("Spectra panel context panel is null");
-        return this->panel->title;
-    }
-
-    void SpectraPanelContext::request_close() const {
-        this->app().request_close();
     }
 
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try : state{std::make_unique<SpectraState>()} {
@@ -556,7 +492,12 @@ namespace xayah {
     }
 
     void Spectra::run() {
-        this->render_loop();
+        while (!glfwWindowShouldClose(this->state->surface.window.get())) {
+            SpectraFrameState frame{};
+            if (!this->begin_frame(frame)) continue;
+            this->record_frame(frame);
+            this->end_frame(frame);
+        }
         this->state->context.device.waitIdle();
     }
 
@@ -687,16 +628,6 @@ namespace xayah {
         this->state->dock_layout_initialized = false;
     }
 
-    void Spectra::render_loop() {
-        while (!glfwWindowShouldClose(this->state->surface.window.get())) {
-            SpectraFrameState frame{};
-            if (!this->begin_frame(frame)) continue;
-            this->record_frame(frame);
-            this->end_frame(frame);
-        }
-        this->state->context.device.waitIdle();
-    }
-
     bool Spectra::begin_frame(SpectraFrameState& frame) {
         glfwPollEvents();
         if (this->state->surface.resize_requested) {
@@ -747,7 +678,7 @@ namespace xayah {
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
 
-        SpectraRecordContext context{*this, frame, command_buffer};
+        SpectraRecordContext context{command_buffer};
         for (std::unique_ptr<SpectraPlugin>& plugin : this->state->plugins)
             plugin->record_frame(context);
 
@@ -959,10 +890,7 @@ namespace xayah {
             bool open = panel.visible;
             const bool began = panel.closable ? ImGui::Begin(panel.title.c_str(), &open, panel.window_flags) : ImGui::Begin(panel.title.c_str(), nullptr, panel.window_flags);
             panel.visible = open;
-            if (began) {
-                SpectraPanelContext context{*this, panel};
-                panel.draw(context);
-            }
+            if (began) panel.draw();
             ImGui::End();
             if (panel.zero_window_padding) ImGui::PopStyleVar();
         }

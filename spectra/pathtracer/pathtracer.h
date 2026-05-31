@@ -2,9 +2,9 @@
 #define XAYAH_SPECTRA_PATHTRACER_PATHTRACER_H
 
 #include "../spectra.h"
+#include "session.h"
 
 #include <filesystem>
-#include <memory>
 #include <string_view>
 
 namespace xayah {
@@ -27,11 +27,9 @@ namespace xayah {
         void record_frame(SpectraRecordContext& context) override;
 
     private:
-        struct State;
-
         void register_panels(SpectraContext& context);
 
-        std::unique_ptr<State> state{};
+        xayah::pathtracer::InteractiveSession session;
     };
 } // namespace xayah
 

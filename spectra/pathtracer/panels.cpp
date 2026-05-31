@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <format>
 #include <stdexcept>
 #include <string>
@@ -107,7 +108,8 @@ namespace xayah::pathtracer {
         this->state->ui.viewport_focused  = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
         this->observe_viewport_render_resolution(viewport_framebuffer_size);
         if (this->pathtracer_ready()) {
-            const VkDescriptorSet descriptor = this->pathtracer_viewport_descriptor();
+            if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer viewport descriptor requested without an active Spectra pathtracer session");
+            const VkDescriptorSet descriptor = this->state->gpu_pathtracer->active_descriptor();
             if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra pathtracer viewport descriptor is null");
             const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
             ImGui::Image(ImTextureRef{texture_id}, viewport_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});

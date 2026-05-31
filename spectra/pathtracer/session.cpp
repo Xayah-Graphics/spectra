@@ -56,7 +56,6 @@ namespace xayah::pathtracer {
         if (this->state->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
         this->update_host(host);
         this->state->attached = true;
-        this->state->close_requested = false;
         try {
             this->state->gpu_runtime = std::make_unique<RuntimeSession>();
             std::unique_ptr<SceneSession> loaded_scene = std::make_unique<SceneSession>();
@@ -83,7 +82,6 @@ namespace xayah::pathtracer {
         this->state->gpu_runtime.reset();
         this->state->host = HostContext{};
         this->state->attached = false;
-        this->state->close_requested = false;
     }
 
     void InteractiveSession::update_host(HostContext host) {
@@ -107,10 +105,9 @@ namespace xayah::pathtracer {
         FrameOutput output{};
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
-            this->process_camera_input();
-            const PathtracerFrameResult render_result = this->render_pathtracer_frame(frame);
-            output.uses_external_completion = true;
-            output.completion_semaphore = this->pathtracer_complete_semaphore();
+            output.close_requested = this->process_camera_input();
+            const PathtracerSession::RenderFrameResult render_result = this->state->gpu_pathtracer->render_frame(frame.frame_index, this->state->camera.moving_from_camera);
+            output.completion_semaphore = this->state->gpu_pathtracer->active_cuda_complete_semaphore();
             this->update_frame_statistics(frame, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
         } else {
             this->update_frame_statistics(frame, false, false, 0);
@@ -119,7 +116,7 @@ namespace xayah::pathtracer {
     }
 
     void InteractiveSession::record_frame(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->pathtracer_ready()) this->record_pathtracer_output(command_buffer);
+        if (this->pathtracer_ready()) this->state->gpu_pathtracer->record_copy(command_buffer);
     }
 
     std::string InteractiveSession::window_detail() const {
@@ -135,14 +132,6 @@ namespace xayah::pathtracer {
         const std::string scene_title = this->state->spectra_scene == nullptr ? "No Scene" : scene_title_text(*this->state->spectra_scene);
         const std::array<int, 2> sample_range = this->state->spectra_scene == nullptr ? std::array<int, 2>{0, 0} : this->pathtracer_sample_range();
         return std::format("{} | Spectra Pathtracer | {}x{} | sample {}/{}", scene_title, width, height, sample_range[0], sample_range[1]);
-    }
-
-    bool InteractiveSession::close_requested() const {
-        return this->state->close_requested;
-    }
-
-    void InteractiveSession::clear_close_request() {
-        this->state->close_requested = false;
     }
 
     void InteractiveSession::unload_spectra_scene_noexcept() noexcept {
@@ -244,35 +233,9 @@ namespace xayah::pathtracer {
         return this->state->render_resolution_sync.pathtracer_created && this->state->gpu_pathtracer != nullptr;
     }
 
-    [[nodiscard]] VkDescriptorSet InteractiveSession::pathtracer_viewport_descriptor() const {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer viewport descriptor requested without an active Spectra pathtracer session");
-        return this->state->gpu_pathtracer->active_descriptor();
-    }
-
     [[nodiscard]] std::array<int, 2> InteractiveSession::pathtracer_sample_range() const {
         if (this->state->gpu_pathtracer == nullptr) return {0, 0};
         return {this->state->gpu_pathtracer->current_sample(), this->state->gpu_pathtracer->target_sample_count()};
-    }
-
-    [[nodiscard]] float InteractiveSession::pathtracer_initial_move_scale() const {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera move scale requested without an active Spectra pathtracer session");
-        return this->state->gpu_pathtracer->camera_initial_move_scale();
-    }
-
-    [[nodiscard]] vk::Semaphore InteractiveSession::pathtracer_complete_semaphore() const {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer completion semaphore requested without an active Spectra pathtracer session");
-        return this->state->gpu_pathtracer->active_cuda_complete_semaphore();
-    }
-
-    [[nodiscard]] InteractiveSession::PathtracerFrameResult InteractiveSession::render_pathtracer_frame(const FrameInput& frame) {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot render Spectra pathtracer without an active Spectra pathtracer session");
-        const PathtracerSession::RenderFrameResult render_result = this->state->gpu_pathtracer->render_frame(frame.frame_index, this->state->camera.moving_from_camera);
-        return {render_result.sample_pixels, render_result.rendered_sample, render_result.reset_accumulation};
-    }
-
-    void InteractiveSession::record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot record Spectra pathtracer output without an active Spectra pathtracer session");
-        this->state->gpu_pathtracer->record_copy(command_buffer);
     }
 
     void InteractiveSession::request_pathtracer_accumulation_reset() {
@@ -283,10 +246,10 @@ namespace xayah::pathtracer {
 
     void InteractiveSession::initialize_camera_state() {
         if (this->state->spectra_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
-        const float initial_move_scale = this->pathtracer_initial_move_scale();
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active Spectra pathtracer session");
+        const float initial_move_scale = this->state->gpu_pathtracer->camera_initial_move_scale();
         if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
         this->state->camera.camera_from_world = this->state->spectra_scene->camera_from_world;
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active Spectra pathtracer session");
         const InteractiveCameraPose pose   = interactive_camera_pose_from_base_transform(this->state->camera.camera_from_world, this->state->gpu_pathtracer->camera_initial_focus_bounds());
         this->state->camera.initialized       = true;
         this->state->camera.input_enabled     = false;
@@ -350,7 +313,7 @@ namespace xayah::pathtracer {
 
     [[nodiscard]] InteractiveSession::PathtracerStatus InteractiveSession::pathtracer_status() const {
         PathtracerStatus status{};
-        status.sample_range = this->pathtracer_sample_range();
+        const std::array<int, 2> sample_range = this->pathtracer_sample_range();
         if (this->state->render_resolution_sync.rebuilding) {
             status.state = "Rebuilding";
             return status;
@@ -364,26 +327,26 @@ namespace xayah::pathtracer {
             status.state = "Unavailable";
             return status;
         }
-        status.state = status.sample_range[0] >= status.sample_range[1] ? "Completed" : "Sampling";
+        status.state = sample_range[0] >= sample_range[1] ? "Completed" : "Sampling";
         return status;
     }
 
-    void InteractiveSession::process_camera_input() {
+    bool InteractiveSession::process_camera_input() {
         ImGuiIO& io = ImGui::GetIO();
-        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) this->state->close_requested = true;
+        const bool close_requested = !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
         const ImVec2 mouse_position = io.MousePos;
         const bool in_viewport_rect = this->state->ui.viewport_known && mouse_position.x >= this->state->ui.viewport_position[0] && mouse_position.x < this->state->ui.viewport_position[0] + this->state->ui.viewport_size[0] && mouse_position.y >= this->state->ui.viewport_position[1] && mouse_position.y < this->state->ui.viewport_position[1] + this->state->ui.viewport_size[1];
         this->state->camera.input_enabled  = in_viewport_rect && (this->state->ui.viewport_hovered || this->state->ui.viewport_focused) && !io.WantTextInput;
         if (!this->state->camera.input_enabled) {
             this->state->camera.mouse_position_known = false;
-            return;
+            return close_requested;
         }
         if (!this->state->camera.initialized) throw std::runtime_error("Cannot process camera input before camera state is initialized");
 
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
             this->reset_camera();
-            return;
+            return close_requested;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) this->set_camera_speed(this->state->camera.speed * 2.0f);
         if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) this->set_camera_speed(this->state->camera.speed * 0.5f);
@@ -456,6 +419,7 @@ namespace xayah::pathtracer {
             this->state->camera.moving_from_camera   = moving_from_camera_from_interactive_pose(this->state->camera.camera_from_world, pose);
             this->request_pathtracer_accumulation_reset();
         }
+        return close_requested;
     }
 
 } // namespace xayah::pathtracer
