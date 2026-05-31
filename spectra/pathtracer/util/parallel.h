@@ -179,7 +179,6 @@ namespace spectra
 #endif
         }
 
-
     private:
         // AtomicFloat Private Members
 #if defined(__CUDA_ARCH__)
@@ -249,7 +248,6 @@ namespace spectra
             while (!bits.compare_exchange_weak(oldBits, newBits));
 #endif
         }
-
 
     private:
         // AtomicDouble Private Data
@@ -355,7 +353,6 @@ namespace spectra
 
         void ForEachThread(std::function<void(void)> func);
 
-
     private:
         // ThreadPool Private Methods
         void Worker();
@@ -438,7 +435,6 @@ namespace spectra
             result = r;
             cv.notify_all();
         }
-
 
     private:
         // AsyncJob Private Members

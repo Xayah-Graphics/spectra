@@ -239,7 +239,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                           BxDFReflTransFlags sampleFlags) const
+                                              BxDFReflTransFlags sampleFlags) const
     {
         if (eta == 1 || mfDistrib.EffectivelySmooth())
             return 0;
@@ -291,11 +291,9 @@ namespace spectra
     }
 
 
-
-
     // HairBxDF Method Definitions
     SPECTRA_CPU_GPU HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum& sigma_a, Float beta_m,
-                                    Float beta_n, Float alpha)
+                                       Float beta_n, Float alpha)
         : h(h), eta(eta), sigma_a(sigma_a), beta_m(beta_m), beta_n(beta_n)
     {
         CHECK(h >= -1 && h <= 1);
@@ -428,8 +426,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
-                                                               TransportMode mode,
-                                                               BxDFReflTransFlags sampleFlags) const
+                                                                  TransportMode mode,
+                                                                  BxDFReflTransFlags sampleFlags) const
     {
         // Compute hair coordinate system terms related to _wo_
         Float sinTheta_o = wo.x;
@@ -537,7 +535,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                     BxDFReflTransFlags sampleFlags) const
+                                        BxDFReflTransFlags sampleFlags) const
     {
         // TODO? flags...
 
@@ -613,7 +611,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum& c, Float beta_n,
-                                                                 const SampledWavelengths& lambda)
+                                                                    const SampledWavelengths& lambda)
     {
         SampledSpectrum sigma_a;
         for (int i = 0; i < NSpectrumSamples; ++i)
@@ -978,7 +976,7 @@ namespace spectra
 
     // MeasuredBxDF Method Definitions
     SPECTRA_CPU_GPU SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi,
-                                                 TransportMode mode) const
+                                                    TransportMode mode) const
     {
         // Check for valid reflection configurations
         if (!SameHemisphere(wo, wi))
@@ -1017,8 +1015,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
-                                                                   TransportMode mode,
-                                                                   BxDFReflTransFlags sampleFlags) const
+                                                                      TransportMode mode,
+                                                                      BxDFReflTransFlags sampleFlags) const
     {
         // Check flags and detect interactions in lower hemisphere
         if (!(sampleFlags & BxDFReflTransFlags::Reflection))
@@ -1070,7 +1068,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                         BxDFReflTransFlags sampleFlags) const
+                                            BxDFReflTransFlags sampleFlags) const
     {
         if (!(sampleFlags & BxDFReflTransFlags::Reflection))
             return 0;
@@ -1107,10 +1105,9 @@ namespace spectra
     }
 
 
-
     // BxDF Method Definitions
     SPECTRA_CPU_GPU SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc,
-                                           pstd::span<const Point2f> u2) const
+                                              pstd::span<const Point2f> u2) const
     {
         if (wo.z == 0)
             return {};

@@ -55,7 +55,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         Float PMF(const LightSampleContext& ctx, Light light) const { return PMF(light); }
 
-
     private:
         // UniformLightSampler Private Members
         pstd::vector<Light> lights;
@@ -94,7 +93,6 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         Float PMF(const LightSampleContext& ctx, Light light) const { return PMF(light); }
-
 
     private:
         // PowerLightSampler Private Members
@@ -419,7 +417,6 @@ namespace spectra
             return 1.f / lights.size();
         }
 
-
     private:
         // BVHLightSampler Private Methods
         std::pair<int, LightBounds> buildBVH(
@@ -480,13 +477,11 @@ namespace spectra
             return 1.f / lights.size();
         }
 
-
     private:
         pstd::vector<Light> lights, boundedLights, infiniteLights;
         pstd::vector<LightBounds> lightBounds;
         HashMap<Light, size_t> lightToBoundedIndex;
     };
-
 } // namespace spectra
 
 #endif  // SPECTRA_PATHTRACER_CORE_LIGHTSAMPLERS_H

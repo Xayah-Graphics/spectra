@@ -22,9 +22,6 @@
 
 namespace spectra
 {
-
-
-
     TextureMapping2D TextureMapping2D::Create(const ParameterDictionary& parameters,
                                               const Transform& renderFromTexture,
                                               const FileLoc* loc, Allocator alloc)
@@ -61,13 +58,6 @@ namespace spectra
     {
         return alloc.new_object<PointTransformMapping>(Inverse(renderFromTexture));
     }
-
-
-
-
-
-
-
 
 
     FloatConstantTexture* FloatConstantTexture::Create(
@@ -325,8 +315,6 @@ namespace spectra
     }
 
 
-
-
     std::mutex ImageTextureBase::textureCacheMutex;
     std::map<TexInfo, MIPMap*> ImageTextureBase::textureCache;
 
@@ -467,7 +455,6 @@ namespace spectra
     }
 
 
-
     FloatDirectionMixTexture* FloatDirectionMixTexture::Create(
         const Transform& renderFromTexture, const TextureParameterDictionary& parameters,
         const FileLoc* loc, Allocator alloc)
@@ -514,7 +501,7 @@ namespace spectra
             bool premultiply = true;
 
             cache = PtexCache::create(maxFiles, maxMem, premultiply, nullptr,
-                                            &errorHandler);
+                                      &errorHandler);
             // TODO? cache->setSearchPath(...);
         }
         ptexMutex.unlock();
@@ -578,8 +565,6 @@ namespace spectra
 
         return nc;
     }
-
-
 
 
     Float FloatPtexTexture::Evaluate(TextureEvalContext ctx) const
@@ -1300,7 +1285,7 @@ namespace spectra
                 }
                 else
                     throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: %d channel image, without RGB channels.", filename,
-                              image.NChannels()));
+                                                                          image.NChannels()));
             }
 
             mipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);

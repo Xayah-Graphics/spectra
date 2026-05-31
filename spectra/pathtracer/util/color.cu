@@ -162,10 +162,9 @@ namespace spectra
     }
 
 
-
     // ColorEncoding Method Definitions
     SPECTRA_CPU_GPU void sRGBColorEncoding::FromLinear(pstd::span<const Float> vin,
-                                                    pstd::span<uint8_t> vout) const
+                                                       pstd::span<uint8_t> vout) const
     {
         DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i)
@@ -173,7 +172,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void sRGBColorEncoding::ToLinear(pstd::span<const uint8_t> vin,
-                                                  pstd::span<Float> vout) const
+                                                     pstd::span<Float> vout) const
     {
         DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i)
@@ -239,7 +238,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void GammaColorEncoding::ToLinear(pstd::span<const uint8_t> vin,
-                                                   pstd::span<Float> vout) const
+                                                      pstd::span<Float> vout) const
     {
         DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i)
@@ -252,7 +251,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void GammaColorEncoding::FromLinear(pstd::span<const Float> vin,
-                                                     pstd::span<uint8_t> vout) const
+                                                        pstd::span<uint8_t> vout) const
     {
         DCHECK_EQ(vin.size(), vout.size());
         for (size_t i = 0; i < vin.size(); ++i)

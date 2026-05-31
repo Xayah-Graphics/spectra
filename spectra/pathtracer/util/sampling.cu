@@ -14,7 +14,7 @@ namespace spectra
 {
     // Sampling Function Definitions
     SPECTRA_CPU_GPU pstd::array<Float, 3> SampleSphericalTriangle(const pstd::array<Point3f, 3>& v, Point3f p,
-                                                               Point2f u, Float* pdf)
+                                                                  Point2f u, Float* pdf)
     {
         if (pdf)
             *pdf = 0;
@@ -100,7 +100,7 @@ namespace spectra
 
     // Via Jim Arvo's SphTri.C
     SPECTRA_CPU_GPU Point2f InvertSphericalTriangleSample(const pstd::array<Point3f, 3>& v, Point3f p,
-                                                       Vector3f w)
+                                                          Vector3f w)
     {
         // Compute vectors _a_, _b_, and _c_ to spherical triangle vertices
         Vector3f a(v[0] - p), b(v[1] - p), c(v[2] - p);
@@ -155,7 +155,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Point3f SampleSphericalRectangle(Point3f pRef, Point3f s, Vector3f ex, Vector3f ey,
-                                                  Point2f u, Float* pdf)
+                                                     Point2f u, Float* pdf)
     {
         // Compute local reference frame and transform rectangle coordinates
         Float exl = Length(ex), eyl = Length(ey);
@@ -217,8 +217,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Point2f InvertSphericalRectangleSample(Point3f pRef, Point3f s, Vector3f ex,
-                                                        Vector3f ey,
-                                                        Point3f pRect)
+                                                           Vector3f ey,
+                                                           Point3f pRect)
     {
         // SphQuadInit()
         // local reference system 'R'
@@ -389,7 +389,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float SampleCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f,
-                                        pstd::span<const Float> F, Float u, Float* fval, Float* pdf)
+                                           pstd::span<const Float> F, Float u, Float* fval, Float* pdf)
     {
         CHECK_EQ(nodes.size(), f.size());
         CHECK_EQ(f.size(), F.size());
@@ -432,8 +432,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float SampleCatmullRom2D(pstd::span<const Float> nodes1, pstd::span<const Float> nodes2,
-                                          pstd::span<const Float> values, pstd::span<const Float> cdf,
-                                          Float alpha, Float u, Float* fval, Float* pdf)
+                                             pstd::span<const Float> values, pstd::span<const Float> cdf,
+                                             Float alpha, Float u, Float* fval, Float* pdf)
     {
         // Determine offset and coefficients for the _alpha_ parameter
         int offset;
@@ -590,6 +590,4 @@ namespace spectra
             return alias;
         }
     }
-
-
 } // namespace spectra

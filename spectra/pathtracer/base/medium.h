@@ -72,7 +72,6 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         pstd::optional<RayMajorantSegment> Next();
-
     };
 
     // Medium Definition

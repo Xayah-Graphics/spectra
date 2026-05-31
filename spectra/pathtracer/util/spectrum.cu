@@ -127,9 +127,9 @@ namespace spectra
                 if (i > 0 && vals[2 * i] <= lambda.back())
                 {
                     spectra::diagnostics::PrintWarning("%s: spectrum file invalid: at %d'th entry, "
-                            "wavelengths aren't "
-                            "increasing: %f >= %f.",
-                            fn, int(i), lambda.back(), vals[2 * i]);
+                                                       "wavelengths aren't "
+                                                       "increasing: %f >= %f.",
+                                                       fn, int(i), lambda.back(), vals[2 * i]);
                     return {};
                 }
                 lambda.push_back(vals[2 * i]);
@@ -182,9 +182,6 @@ namespace spectra
     }
 
 
-
-
-
     SPECTRA_CPU_GPU XYZ SampledSpectrum::ToXYZ(const SampledWavelengths& lambda) const
     {
         // Sample the $X$, $Y$, and $Z$ matching curves at _lambda_
@@ -207,7 +204,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU RGB SampledSpectrum::ToRGB(const SampledWavelengths& lambda,
-                                            const RGBColorSpace& cs) const
+                                               const RGBColorSpace& cs) const
     {
         XYZ xyz = ToXYZ(lambda);
         return cs.ToRGB(xyz);
@@ -234,8 +231,6 @@ namespace spectra
         scale = 2 * m;
         rsp = cs.ToRGBCoeffs(scale ? rgb / scale : RGB(0, 0, 0));
     }
-
-
 
 
     namespace

@@ -127,8 +127,8 @@ namespace spectra
 
     // Triangle Functions
     SPECTRA_CPU_GPU pstd::optional<TriangleIntersection> IntersectTriangle(const Ray& ray, Float tMax,
-                                                                        Point3f p0, Point3f p1,
-                                                                        Point3f p2)
+                                                                           Point3f p0, Point3f p1,
+                                                                           Point3f p2)
     {
         // Return no intersection if triangle is degenerate
         if (LengthSquared(Cross(p2 - p0, p1 - p0)) == 0)
@@ -330,15 +330,15 @@ namespace spectra
             else
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
-                      "triangle mesh."));
+                                                                      "triangle mesh."));
                 return {};
             }
         }
         else if ((vi.size() % 3) != 0u)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "Number of vertex indices %d not a multiple of 3.",
-                  int(vi.size())));
+                                                                  "Number of vertex indices %d not a multiple of 3.",
+                                                                  int(vi.size())));
         }
 
         if (P.empty())
@@ -350,7 +350,7 @@ namespace spectra
         if (!uvs.empty() && uvs.size() != P.size())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"uv\"s for triangle mesh must match \"P\"s. "
-                  "Discarding uvs."));
+                                                                  "Discarding uvs."));
             uvs = {};
         }
 
@@ -358,14 +358,14 @@ namespace spectra
         if (!S.empty() && S.size() != P.size())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"S\"s for triangle mesh must match \"P\"s. "
-                  "Discarding \"S\"s."));
+                                                                  "Discarding \"S\"s."));
             S = {};
         }
         std::vector<Normal3f> N = parameters.GetNormal3fArray("N");
         if (!N.empty() && N.size() != P.size())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"N\"s for triangle mesh must match \"P\"s. "
-                  "Discarding \"N\"s."));
+                                                                  "Discarding \"N\"s."));
             N = {};
         }
 
@@ -373,9 +373,9 @@ namespace spectra
             if (vi[i] >= P.size())
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "trianglemesh has out of-bounds vertex index %d (%d \"P\" "
-                      "values were given. Discarding this mesh.",
-                      vi[i], (int)P.size()));
+                                                                      "trianglemesh has out of-bounds vertex index %d (%d \"P\" "
+                                                                      "values were given. Discarding this mesh.",
+                                                                      vi[i], (int)P.size()));
                 return {};
             }
 
@@ -383,9 +383,9 @@ namespace spectra
         if (!faceIndices.empty() && faceIndices.size() != vi.size() / 3)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "Number of face indices %d does not match number of triangles %d. "
-                  "Discarding face indices.",
-                  int(faceIndices.size()), int(vi.size() / 3)));
+                                                                  "Number of face indices %d does not match number of triangles %d. "
+                                                                  "Discarding face indices.",
+                                                                  int(faceIndices.size()), int(vi.size() / 3)));
             faceIndices = {};
         }
 
@@ -706,7 +706,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<ShapeSample> Curve::Sample(const ShapeSampleContext& ctx,
-                                                           Point2f u) const
+                                                              Point2f u) const
     {
         SPECTRA_FATAL("Curve::Sample not implemented.");
         return {};
@@ -733,7 +733,7 @@ namespace spectra
         if (degree != 2 && degree != 3)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.",
-                  degree));
+                                                                  degree));
             return {};
         }
 
@@ -741,9 +741,9 @@ namespace spectra
         if (basis != "bezier" && basis != "bspline")
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
-                  "supported.",
-                  basis));
+                                                                  "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
+                                                                  "supported.",
+                                                                  basis));
             return {};
         }
 
@@ -757,9 +757,9 @@ namespace spectra
             if (((cp.size() - 1 - degree) % degree) != 0)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Invalid number of control points %d: for the degree %d "
-                      "Bezier basis %d + n * %d are required, for n >= 0.",
-                      (int)cp.size(), degree, degree + 1, degree));
+                                                                      "Invalid number of control points %d: for the degree %d "
+                                                                      "Bezier basis %d + n * %d are required, for n >= 0.",
+                                                                      (int)cp.size(), degree, degree + 1, degree));
                 return {};
             }
             nSegments = (cp.size() - 1) / degree;
@@ -769,9 +769,9 @@ namespace spectra
             if (cp.size() < degree + 1)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Invalid number of control points %d: for the degree %d "
-                      "b-spline basis, must have >= %d.",
-                      int(cp.size()), degree, degree + 1));
+                                                                      "Invalid number of control points %d: for the degree %d "
+                                                                      "b-spline basis, must have >= %d.",
+                                                                      int(cp.size()), degree, degree + 1));
                 return {};
             }
             nSegments = cp.size() - degree;
@@ -801,17 +801,17 @@ namespace spectra
             else if (n.size() != nSegments + 1)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Invalid number of normals %d: must provide %d normals for "
-                      "ribbon "
-                      "curves with %d segments.",
-                      int(n.size()), nSegments + 1, nSegments));
+                                                                      "Invalid number of normals %d: must provide %d normals for "
+                                                                      "ribbon "
+                                                                      "curves with %d segments.",
+                                                                      int(n.size()), nSegments + 1, nSegments));
                 return {};
             }
         }
         else if (type == CurveType::Ribbon)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
-                  "curves."));
+                                                                  "curves."));
             return {};
         }
 
@@ -822,7 +822,7 @@ namespace spectra
         if (type == CurveType::Ribbon && n.empty())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
-                  "curves."));
+                                                                  "curves."));
             return {};
         }
 
@@ -904,28 +904,28 @@ namespace spectra
             else
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
-                      "bilinear patch mesh shape."));
+                                                                      "bilinear patch mesh shape."));
                 return {};
             }
         }
         else if ((vertexIndices.size() % 4) != 0u)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "Number of vertex indices %d not a multiple of 4.",
-                  int(vertexIndices.size())));
+                                                                  "Number of vertex indices %d not a multiple of 4.",
+                                                                  int(vertexIndices.size())));
         }
 
         if (P.empty())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex positions \"P\" must be provided with bilinear "
-                  "patch mesh shape."));
+                                                                  "patch mesh shape."));
             return {};
         }
 
         if (!uv.empty() && uv.size() != P.size())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"uv\"s for bilinear patch mesh must match \"P\"s. "
-                  "Discarding uvs."));
+                                                                  "Discarding uvs."));
             uv = {};
         }
 
@@ -933,7 +933,7 @@ namespace spectra
         if (!N.empty() && N.size() != P.size())
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"N\"s for bilinear patch mesh must match \"P\"s. "
-                  "Discarding \"N\"s."));
+                                                                  "Discarding \"N\"s."));
             N = {};
         }
 
@@ -941,10 +941,10 @@ namespace spectra
             if (vertexIndices[i] >= P.size())
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Bilinear patch mesh has out of-bounds vertex index %d (%d "
-                      "\"P\" "
-                      "values were given. Discarding this mesh.",
-                      vertexIndices[i], (int)P.size()));
+                                                                      "Bilinear patch mesh has out of-bounds vertex index %d (%d "
+                                                                      "\"P\" "
+                                                                      "values were given. Discarding this mesh.",
+                                                                      vertexIndices[i], (int)P.size()));
                 return {};
             }
 
@@ -952,10 +952,10 @@ namespace spectra
         if (!faceIndices.empty() && faceIndices.size() != vertexIndices.size() / 4)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "Number of face indices %d does not match number of bilinear "
-                  "patches %d. "
-                  "Discarding face indices.",
-                  int(faceIndices.size()), int(vertexIndices.size() / 4)));
+                                                                  "Number of face indices %d does not match number of bilinear "
+                                                                  "patches %d. "
+                                                                  "Discarding face indices.",
+                                                                  int(faceIndices.size()), int(vertexIndices.size() / 4)));
             faceIndices = {};
         }
 
@@ -969,7 +969,7 @@ namespace spectra
         {
             if (!uv.empty())
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "\"emissionfilename\" is currently ignored for bilinear patches "
-                      "if \"uv\" coordinates have been provided--sorry!"));
+                                                                      "if \"uv\" coordinates have been provided--sorry!"));
             else
             {
                 ImageAndMetadata im = Image::Read(filename, alloc);
@@ -1123,7 +1123,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<ShapeIntersection> BilinearPatch::Intersect(const Ray& ray,
-                                                                            Float tMax) const
+                                                                               Float tMax) const
     {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
@@ -1264,7 +1264,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<ShapeSample> BilinearPatch::Sample(const ShapeSampleContext& ctx,
-                                                                   Point2f u) const
+                                                                      Point2f u) const
     {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
@@ -1479,7 +1479,6 @@ namespace spectra
                         });
                     },
                     loc);
-
             }
 
             if (!plyMesh.triIndices.empty())
@@ -1507,7 +1506,7 @@ namespace spectra
             std::vector<int> vertexIndices = parameters.GetIntArray("indices");
             if (vertexIndices.empty())
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex indices \"indices\" not provided for "
-                          "LoopSubdiv shape."));
+                                                                      "LoopSubdiv shape."));
 
             std::vector<Point3f> P = parameters.GetPoint3fArray("P");
             if (P.empty())
@@ -1532,5 +1531,4 @@ namespace spectra
 
 
     // Shape Method Definitions
-
 } // namespace spectra

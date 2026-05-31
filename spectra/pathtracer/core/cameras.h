@@ -100,7 +100,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         const Transform& WorldFromRender() const { return worldFromRender; }
 
-
     private:
         // CameraTransform Private Members
         AnimatedTransform renderFromCamera;
@@ -361,7 +360,6 @@ namespace spectra
             return {};
         }
 
-
     private:
         // OrthographicCamera Private Members
         Vector3f dxCamera, dyCamera;
@@ -426,7 +424,6 @@ namespace spectra
         pstd::optional<CameraWiSample> SampleWi(const Interaction& ref, Point2f u,
                                                 SampledWavelengths& lambda) const;
 
-
     private:
         // PerspectiveCamera Private Members
         Vector3f dxCamera, dyCamera;
@@ -487,7 +484,6 @@ namespace spectra
             return {};
         }
 
-
     private:
         // SphericalCamera Private Members
         Mapping mapping;
@@ -546,7 +542,6 @@ namespace spectra
             SPECTRA_FATAL("SampleWi() unimplemented for RealisticCamera");
             return {};
         }
-
 
     private:
         // RealisticCamera Private Declarations
@@ -627,7 +622,6 @@ namespace spectra
         Image apertureImage;
         pstd::vector<Bounds2f> exitPupilBounds;
     };
-
 } // namespace spectra
 
 #endif  // SPECTRA_PATHTRACER_CORE_CAMERAS_H

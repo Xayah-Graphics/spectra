@@ -597,6 +597,7 @@ namespace pstd
             nAlloc = n;
             ptr = ra;
         }
+
         SPECTRA_CPU_GPU
         reference operator[](size_type index)
         {

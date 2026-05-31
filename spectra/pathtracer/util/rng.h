@@ -65,7 +65,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         int64_t operator-(const RNG& other) const;
 
-
     private:
         // RNG Private Members
         uint64_t state, inc;

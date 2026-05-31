@@ -62,7 +62,7 @@ namespace spectra
         SPECTRA_CPU_GPU inline Float PDF(const Interaction&) const;
 
         SPECTRA_CPU_GPU inline pstd::optional<ShapeSample> Sample(const ShapeSampleContext& ctx,
-                                                               Point2f u) const;
+                                                                  Point2f u) const;
 
         SPECTRA_CPU_GPU inline Float PDF(const ShapeSampleContext& ctx, Vector3f wi) const;
     };

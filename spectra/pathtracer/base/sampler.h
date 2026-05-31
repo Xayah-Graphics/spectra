@@ -61,7 +61,6 @@ namespace spectra
         SPECTRA_CPU_GPU Point2f GetPixel2D();
 
         Sampler Clone(Allocator alloc = {});
-
     };
 } // namespace spectra
 

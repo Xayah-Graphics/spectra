@@ -104,5 +104,4 @@ namespace spectra
             &RGBColorSpace::ACES2065_1,
             sizeof(RGBColorSpace_ACES2065_1)));
     }
-
 } // namespace spectra

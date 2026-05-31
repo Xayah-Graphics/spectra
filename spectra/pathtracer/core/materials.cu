@@ -99,7 +99,7 @@ namespace spectra
         // resolve MixMaterials in the closest hit shader...
         if (!BasicTextureEvaluator().CanEvaluate({amount}, {}))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "The GPU renderer currently only supports basic textures "
-                      "for its \"amount\" parameter."));
+                                                                  "for its \"amount\" parameter."));
 
         return alloc.new_object<MixMaterial>(materials, amount);
     }
@@ -123,10 +123,10 @@ namespace spectra
                 spectra::diagnostics::PrintWarning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
             if (eumelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"sigma_a\" was "
-                        "provided.");
+                                                   "provided.");
             if (pheomelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"sigma_a\" was "
-                        "provided.");
+                                                   "provided.");
         }
         else if (reflectance)
         {
@@ -134,19 +134,19 @@ namespace spectra
                 spectra::diagnostics::PrintWarning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
             if (eumelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"reflectance\" was "
-                        "provided.");
+                                                   "provided.");
             if (pheomelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"reflectance\" was "
-                        "provided.");
+                                                   "provided.");
         }
         else if (eumelanin || pheomelanin)
         {
             if (sigma_a)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"sigma_a\" parameter since "
-                        "\"eumelanin\"/\"pheomelanin\" was provided.");
+                                                   "\"eumelanin\"/\"pheomelanin\" was provided.");
             if (reflectance)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"reflectance\" parameter since "
-                        "\"eumelanin\"/\"pheomelanin\" was provided.");
+                                                   "\"eumelanin\"/\"pheomelanin\" was provided.");
         }
         else
         {
@@ -196,7 +196,7 @@ namespace spectra
 
         if (reflectance && (eta || k))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "For the conductor material, both \"reflectance\" "
-                      "and \"eta\" and \"k\" can't be provided."));
+                                                                  "and \"eta\" and \"k\" can't be provided."));
         if (!reflectance)
         {
             if (!eta)
@@ -224,8 +224,8 @@ namespace spectra
     // CoatedDiffuseMaterial Method Definitions
     template <typename TextureEvaluator>
     SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(TextureEvaluator texEval,
-                                                                  const MaterialEvalContext& ctx,
-                                                                  SampledWavelengths& lambda) const
+                                                                     const MaterialEvalContext& ctx,
+                                                                     SampledWavelengths& lambda) const
     {
         // Initialize diffuse component of plastic material
         SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
@@ -311,8 +311,8 @@ namespace spectra
 
     template <typename TextureEvaluator>
     SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(TextureEvaluator texEval,
-                                                                      const MaterialEvalContext& ctx,
-                                                                      SampledWavelengths& lambda) const
+                                                                         const MaterialEvalContext& ctx,
+                                                                         SampledWavelengths& lambda) const
     {
         Float iurough = texEval(interfaceURoughness, ctx);
         Float ivrough = texEval(interfaceVRoughness, ctx);
@@ -420,7 +420,7 @@ namespace spectra
 
         if (reflectance && (conductorEta || k))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "For the coated conductor material, both \"reflectance\" "
-                      "and \"eta\" and \"k\" can't be provided."));
+                                                                  "and \"eta\" and \"k\" can't be provided."));
         if (!reflectance)
         {
             if (!conductorEta)
@@ -588,7 +588,7 @@ namespace spectra
         if (name.empty() || name == "none")
         {
             spectra::diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.",
-                    name.c_str());
+                                               name.c_str());
             return nullptr;
         }
         else if (name == "interface")
@@ -630,7 +630,7 @@ namespace spectra
 
                 if (materials[i] == nullptr)
                     throw std::runtime_error(spectra::diagnostics::Format("%s: an \"interface\" material cannot be used as an element of "
-                              "the \"mix\" material.", materialNames[i]));
+                                                                          "the \"mix\" material.", materialNames[i]));
             }
             material = MixMaterial::Create(materials, parameters, loc, alloc);
         }

@@ -370,7 +370,7 @@ namespace spectra
 
     // RayQueue Inline Methods
     SPECTRA_CPU_GPU inline int RayQueue::PushCameraRay(const Ray& ray, const SampledWavelengths& lambda,
-                                                    int pixelIndex)
+                                                       int pixelIndex)
     {
         int index = AllocateEntry();
         DCHECK(!ray.HasNaN());

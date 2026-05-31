@@ -94,8 +94,8 @@ namespace spectra
     // Bump Mapping Function Definitions
     template <typename TextureEvaluator>
     SPECTRA_CPU_GPU void BumpMap(TextureEvaluator texEval, FloatTexture displacement,
-                              const NormalBumpEvalContext& ctx, Vector3f* dpdu,
-                              Vector3f* dpdv)
+                                 const NormalBumpEvalContext& ctx, Vector3f* dpdu,
+                                 Vector3f* dpdv)
     {
         DCHECK(texEval.CanEvaluate({displacement}, {}));
         // Compute offset positions and evaluate displacement texture
@@ -166,7 +166,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
         }
 
@@ -174,7 +174,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU DielectricBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                            SampledWavelengths& lambda) const
+                                               SampledWavelengths& lambda) const
         {
             // Compute index of refraction for dielectric material
             Float sampledEta = eta(lambda[0]);
@@ -222,8 +222,8 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU ThinDielectricBxDF GetBxDF(TextureEvaluator texEval,
-                                                MaterialEvalContext ctx,
-                                                SampledWavelengths& lambda) const
+                                                   MaterialEvalContext ctx,
+                                                   SampledWavelengths& lambda) const
         {
             // Compute index of refraction for dielectric material
             Float sampledEta = eta(lambda[0]);
@@ -257,12 +257,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // ThinDielectricMaterial Private Data
@@ -288,7 +287,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU Material ChooseMaterial(TextureEvaluator texEval,
-                                             MaterialEvalContext ctx) const
+                                                MaterialEvalContext ctx) const
         {
             Float amt = texEval(amount, ctx);
             if (amt <= 0)
@@ -328,7 +327,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
@@ -346,7 +345,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                  SampledWavelengths& lambda) const
+                                     SampledWavelengths& lambda) const
         {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("MixMaterial::GetBxDF() shouldn't be called");
@@ -392,7 +391,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU HairBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                      SampledWavelengths& lambda) const
+                                         SampledWavelengths& lambda) const
         {
             Float bm = std::max<Float>(1e-2, std::min<Float>(1.0, texEval(beta_m, ctx)));
             Float bn = std::max<Float>(1e-2, std::min<Float>(1.0, texEval(beta_n, ctx)));
@@ -432,12 +431,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // HairMaterial Private Data
@@ -468,7 +466,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda, void*) const
+                                       SampledWavelengths& lambda, void*) const
         {
         }
 
@@ -489,7 +487,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU DiffuseBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                         SampledWavelengths& lambda) const
+                                            SampledWavelengths& lambda) const
         {
             SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
             return DiffuseBxDF(r);
@@ -518,7 +516,7 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU ConductorBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                           SampledWavelengths& lambda) const
+                                              SampledWavelengths& lambda) const
         {
             // Return BSDF for _ConductorMaterial_
             Float uRough = texEval(uRoughness, ctx), vRough = texEval(vRoughness, ctx);
@@ -572,12 +570,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // ConductorMaterial Private Data
@@ -626,8 +623,8 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU CoatedDiffuseBxDF GetBxDF(TextureEvaluator texEval,
-                                               const MaterialEvalContext& ctx,
-                                               SampledWavelengths& lambda) const;
+                                                  const MaterialEvalContext& ctx,
+                                                  SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
         FloatTexture GetDisplacement() const { return displacement; }
@@ -641,12 +638,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // CoatedDiffuseMaterial Private Members
@@ -708,8 +704,8 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU CoatedConductorBxDF GetBxDF(TextureEvaluator texEval,
-                                                 const MaterialEvalContext& ctx,
-                                                 SampledWavelengths& lambda) const;
+                                                    const MaterialEvalContext& ctx,
+                                                    SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
         FloatTexture GetDisplacement() const { return displacement; }
@@ -723,12 +719,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx,
-                                    SampledWavelengths& lambda, void*) const
+                                       SampledWavelengths& lambda, void*) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // CoatedConductorMaterial Private Members
@@ -784,8 +779,8 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU DielectricBxDF GetBxDF(TextureEvaluator texEval,
-                                            const MaterialEvalContext& ctx,
-                                            SampledWavelengths& lambda) const
+                                               const MaterialEvalContext& ctx,
+                                               SampledWavelengths& lambda) const
         {
             // Initialize BSDF for _SubsurfaceMaterial_
 
@@ -803,8 +798,8 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU TabulatedBSSRDF GetBSSRDF(TextureEvaluator texEval,
-                                               const MaterialEvalContext& ctx,
-                                               SampledWavelengths& lambda) const
+                                                  const MaterialEvalContext& ctx,
+                                                  SampledWavelengths& lambda) const
         {
             SampledSpectrum sig_a, sig_s;
             if (sigma_a && sigma_s)
@@ -836,7 +831,6 @@ namespace spectra
         static SubsurfaceMaterial* Create(const TextureParameterDictionary& parameters,
                                           Image* normalMap, const FileLoc* loc,
                                           Allocator alloc);
-
 
     private:
         // SubsurfaceMaterial Private Members
@@ -877,8 +871,8 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU DiffuseTransmissionBxDF GetBxDF(TextureEvaluator texEval,
-                                                     MaterialEvalContext ctx,
-                                                     SampledWavelengths& lambda) const
+                                                        MaterialEvalContext ctx,
+                                                        SampledWavelengths& lambda) const
         {
             SampledSpectrum r = Clamp(scale * texEval(reflectance, ctx, lambda), 0, 1);
             SampledSpectrum t = Clamp(scale * texEval(transmittance, ctx, lambda), 0, 1);
@@ -897,12 +891,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda) const
+                                       SampledWavelengths& lambda) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // DiffuseTransmissionMaterial Private Data
@@ -921,7 +914,7 @@ namespace spectra
         // MeasuredMaterial Public Methods
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU MeasuredBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                          SampledWavelengths& lambda) const
+                                             SampledWavelengths& lambda) const
         {
             return MeasuredBxDF(brdf, lambda);
         }
@@ -949,12 +942,11 @@ namespace spectra
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                    SampledWavelengths& lambda, void*) const
+                                       SampledWavelengths& lambda, void*) const
         {
         }
 
         SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
 
     private:
         // MeasuredMaterial Private Members
@@ -1033,7 +1025,6 @@ namespace spectra
         auto nmap = [&](auto ptr) { return ptr->GetNormalMap(); };
         return Dispatch(nmap);
     }
-
 } // namespace spectra
 
 #endif  // SPECTRA_PATHTRACER_CORE_MATERIALS_H

@@ -141,7 +141,7 @@ namespace spectra
             randomizer = RandomizeStrategy::Owen;
         else
             throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to PaddedSobolSampler",
-                      s));
+                                                                  s));
 
         return alloc.new_object<PaddedSobolSampler>(nsamp, randomizer, seed);
     }
@@ -232,7 +232,6 @@ namespace spectra
     {
         return alloc.new_object<PMJ02BNSampler>(*this);
     }
-
 
 
     Sampler IndependentSampler::Clone(Allocator alloc)

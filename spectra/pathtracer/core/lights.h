@@ -344,7 +344,6 @@ namespace spectra
 
         pstd::optional<LightBounds> Bounds() const;
 
-
     private:
         // ProjectionLight Private Members
         Image image;
@@ -551,7 +550,6 @@ namespace spectra
 
         pstd::optional<LightBounds> Bounds() const { return {}; }
 
-
     private:
         // UniformInfiniteLight Private Members
         const DenselySampledSpectrum* Lemit;
@@ -694,7 +692,6 @@ namespace spectra
 
         pstd::optional<LightBounds> Bounds() const { return {}; }
 
-
     private:
         // PortalImageInfiniteLight Private Methods
         SPECTRA_CPU_GPU
@@ -822,7 +819,6 @@ namespace spectra
         const DenselySampledSpectrum* Iemit;
         Float scale, cosFalloffStart, cosFalloffEnd;
     };
-
 } // namespace spectra
 
 namespace std

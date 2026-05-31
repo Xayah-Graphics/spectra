@@ -282,7 +282,6 @@ namespace spectra
             return BSSRDFSample{Sp(si.p()), PDF_Sp(si.p(), si.n), bsdf, wo};
         }
 
-
     private:
         friend struct SOA<TabulatedBSSRDF>;
         // TabulatedBSSRDF Private Members
@@ -296,10 +295,10 @@ namespace spectra
 
     // BSSRDF Inline Functions
     SPECTRA_CPU_GPU inline void SubsurfaceFromDiffuse(const BSSRDFTable& t,
-                                                   const SampledSpectrum& rhoEff,
-                                                   const SampledSpectrum& mfp,
-                                                   SampledSpectrum* sigma_a,
-                                                   SampledSpectrum* sigma_s)
+                                                      const SampledSpectrum& rhoEff,
+                                                      const SampledSpectrum& mfp,
+                                                      SampledSpectrum* sigma_a,
+                                                      SampledSpectrum* sigma_s)
     {
         for (int c = 0; c < NSpectrumSamples; ++c)
         {
@@ -308,7 +307,6 @@ namespace spectra
             (*sigma_a)[c] = (1 - rho) / mfp[c];
         }
     }
-
 } // namespace spectra
 
 #endif  // SPECTRA_PATHTRACER_CORE_BSSRDF_H

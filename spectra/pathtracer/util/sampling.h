@@ -19,7 +19,7 @@ namespace spectra
 {
     // Sampling Function Declarations
     SPECTRA_CPU_GPU inline int SampleDiscrete(pstd::span<const Float> weights, Float u,
-                                           Float* pmf = nullptr, Float* uRemapped = nullptr);
+                                              Float* pmf = nullptr, Float* uRemapped = nullptr);
 
     SPECTRA_CPU_GPU inline Float SampleLinear(Float u, Float a, Float b);
     SPECTRA_CPU_GPU inline Float InvertLinearSample(Float x, Float a, Float b);
@@ -69,7 +69,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline int SampleDiscrete(pstd::span<const Float> weights, Float u,
-                                           Float* pmf, Float* uRemapped)
+                                              Float* pmf, Float* uRemapped)
     {
         // Handle empty _weights_ for discrete sampling
         if (weights.empty())
@@ -308,7 +308,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Float InvertTrimmedLogisticSample(Float x, Float s, Float a,
-                                                          Float b)
+                                                             Float b)
     {
         DCHECK(a <= x && x <= b);
         auto P = [&](Float x) { return InvertLogisticSample(x, s); };
@@ -677,7 +677,6 @@ namespace spectra
                 reservoirWeight = wrs.reservoirWeight;
         }
 
-
     private:
         // WeightedReservoirSampler Private Members
         RNG rng;
@@ -975,7 +974,6 @@ namespace spectra
             return std::max<Float>(s / (sum.XSize() * sum.YSize()), 0);
         }
 
-
     private:
         // SummedAreaTable Private Methods
         SPECTRA_CPU_GPU
@@ -1083,7 +1081,7 @@ namespace spectra
         // WindowedPiecewiseConstant2D Private Methods
         template <typename CDF>
         SPECTRA_CPU_GPU static Float SampleBisection(CDF P, Float u, Float min, Float max,
-                                                  int n)
+                                                     int n)
         {
             // Apply bisection to bracket _u_
             while (pstd::ceil(n * max) - pstd::floor(n * min) > 1)
@@ -1600,7 +1598,7 @@ namespace spectra
     private:
         template <size_t Dim, std::enable_if_t<Dim != 0, int> = 0>
         SPECTRA_CPU_GPU Float lookup(const float* data, uint32_t i0, uint32_t size,
-                                  const float* param_weight) const
+                                     const float* param_weight) const
         {
             uint32_t i1 = i0 + m_param_strides[Dim - 1] * size;
 
@@ -1613,7 +1611,7 @@ namespace spectra
 
         template <size_t Dim, std::enable_if_t<Dim == 0, int> = 0>
         SPECTRA_CPU_GPU Float lookup(const float* data, uint32_t index, uint32_t,
-                                  const float*) const
+                                     const float*) const
         {
             return data[index];
         }

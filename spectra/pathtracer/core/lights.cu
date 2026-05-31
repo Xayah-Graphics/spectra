@@ -218,8 +218,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> PointLight::SampleLe(Point2f u1, Point2f u2,
-                                                                    SampledWavelengths& lambda,
-                                                                    Float time) const
+                                                                       SampledWavelengths& lambda,
+                                                                       Float time) const
     {
         Point3f p = renderFromLight(Point3f(0, 0, 0));
         Ray ray(p, SampleUniformSphere(u1), time, mediumInterface.outside);
@@ -265,8 +265,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> DistantLight::SampleLe(Point2f u1, Point2f u2,
-                                                                      SampledWavelengths& lambda,
-                                                                      Float time) const
+                                                                         SampledWavelengths& lambda,
+                                                                         Float time) const
     {
         // Choose point on disk oriented toward infinite light direction
         Vector3f w = Normalize(renderFromLight(Vector3f(0, 0, 1)));
@@ -364,8 +364,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLiSample> ProjectionLight::SampleLi(LightSampleContext ctx, Point2f u,
-                                                                         SampledWavelengths lambda,
-                                                                         bool allowIncompletePDF) const
+                                                                            SampledWavelengths lambda,
+                                                                            bool allowIncompletePDF) const
     {
         // Return sample for incident radiance from _ProjectionLight_
         Point3f p = renderFromLight(Point3f(0, 0, 0));
@@ -378,7 +378,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float ProjectionLight::PDF_Li(LightSampleContext, Vector3f,
-                                               bool allowIncompletePDF) const
+                                                  bool allowIncompletePDF) const
     {
         return 0.f;
     }
@@ -449,8 +449,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> ProjectionLight::SampleLe(Point2f u1, Point2f u2,
-                                                                         SampledWavelengths& lambda,
-                                                                         Float time) const
+                                                                            SampledWavelengths& lambda,
+                                                                            Float time) const
     {
         // Sample light space ray direction for projection light
         Float pdf;
@@ -527,7 +527,7 @@ namespace spectra
         ImageChannelDesc channelDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Image provided to \"projection\" light must have R, G, "
-                      "and B channels."));
+                                                                  "and B channels."));
         Image image = imageAndMetadata.image.SelectChannels(channelDesc, alloc);
 
         scale /= SpectrumToPhotometric(&colorSpace->illuminant);
@@ -592,9 +592,9 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLiSample> GoniometricLight::SampleLi(LightSampleContext ctx,
-                                                                          Point2f u,
-                                                                          SampledWavelengths lambda,
-                                                                          bool allowIncompletePDF) const
+                                                                             Point2f u,
+                                                                             SampledWavelengths lambda,
+                                                                             bool allowIncompletePDF) const
     {
         Point3f p = renderFromLight(Point3f(0, 0, 0));
         Vector3f wi = Normalize(p - ctx.p());
@@ -604,7 +604,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float GoniometricLight::PDF_Li(LightSampleContext, Vector3f,
-                                                bool allowIncompletePDF) const
+                                                   bool allowIncompletePDF) const
     {
         return 0.f;
     }
@@ -635,8 +635,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> GoniometricLight::SampleLe(Point2f u1, Point2f u2,
-                                                                          SampledWavelengths& lambda,
-                                                                          Float time) const
+                                                                             SampledWavelengths& lambda,
+                                                                             Float time) const
     {
         // Sample direction and PDF for ray leaving goniometric light
         Float pdf;
@@ -684,16 +684,16 @@ namespace spectra
                     texname));
             if (imageAndMetadata.image.HasAnyNaNPixels())
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                          "%s: image has not-a-number pixel values and so is not suitable as "
-                          "a light.",
-                          texname));
+                                                                      "%s: image has not-a-number pixel values and so is not suitable as "
+                                                                      "a light.",
+                                                                      texname));
 
             if (imageAndMetadata.image.Resolution().x !=
                 imageAndMetadata.image.Resolution().y)
                 throw std::runtime_error(spectra::diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
-                          "this is an equal-area environment map.",
-                          texname, imageAndMetadata.image.Resolution().x,
-                          imageAndMetadata.image.Resolution().y));
+                                                                      "this is an equal-area environment map.",
+                                                                      texname, imageAndMetadata.image.Resolution().x,
+                                                                      imageAndMetadata.image.Resolution().y));
 
             ImageChannelDesc rgbDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
             ImageChannelDesc yDesc = imageAndMetadata.image.GetChannelDesc({"Y"});
@@ -702,8 +702,8 @@ namespace spectra
             {
                 if (yDesc)
                     throw std::runtime_error(spectra::diagnostics::Format("%s: has both \"R\", \"G\", and \"B\" or \"Y\" "
-                              "channels.",
-                              texname));
+                                                                          "channels.",
+                                                                          texname));
                 image = Image(imageAndMetadata.image.Format(),
                               imageAndMetadata.image.Resolution(), {"Y"},
                               imageAndMetadata.image.Encoding(), alloc);
@@ -717,9 +717,9 @@ namespace spectra
                 image = imageAndMetadata.image;
             else
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                          "%s: has neither \"R\", \"G\", and \"B\" or \"Y\" "
-                          "channels.",
-                          texname));
+                                                                      "%s: has neither \"R\", \"G\", and \"B\" or \"Y\" "
+                                                                      "channels.",
+                                                                      texname));
         }
 
         sc /= SpectrumToPhotometric(I);
@@ -803,9 +803,9 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLiSample> DiffuseAreaLight::SampleLi(LightSampleContext ctx,
-                                                                          Point2f u,
-                                                                          SampledWavelengths lambda,
-                                                                          bool allowIncompletePDF) const
+                                                                             Point2f u,
+                                                                             SampledWavelengths lambda,
+                                                                             bool allowIncompletePDF) const
     {
         // Sample point on shape for _DiffuseAreaLight_
         ShapeSampleContext shapeCtx(ctx.pi, ctx.n, ctx.ns, 0 /* time */);
@@ -828,7 +828,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float DiffuseAreaLight::PDF_Li(LightSampleContext ctx, Vector3f wi,
-                                                bool allowIncompletePDF) const
+                                                   bool allowIncompletePDF) const
     {
         ShapeSampleContext shapeCtx(ctx.pi, ctx.n, ctx.ns, 0 /* time */);
         return shape.PDF(shapeCtx, wi);
@@ -880,8 +880,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> DiffuseAreaLight::SampleLe(Point2f u1, Point2f u2,
-                                                                          SampledWavelengths& lambda,
-                                                                          Float time) const
+                                                                             SampledWavelengths& lambda,
+                                                                             Float time) const
     {
         // Sample a point on the area light's _Shape_
         pstd::optional<ShapeSample> ss = shape.Sample(u1);
@@ -930,7 +930,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void DiffuseAreaLight::PDF_Le(const Interaction& intr, Vector3f w, Float* pdfPos,
-                                               Float* pdfDir) const
+                                                  Float* pdfDir) const
     {
         CHECK_NE(intr.n, Normal3f(0, 0, 0));
         *pdfPos = shape.PDF(intr);
@@ -967,16 +967,16 @@ namespace spectra
                     filename));
             if (im.image.HasAnyNaNPixels())
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                          "%s: image has not-a-number pixel values and so is not suitable as "
-                          "a light.",
-                          filename));
+                                                                      "%s: image has not-a-number pixel values and so is not suitable as "
+                                                                      "a light.",
+                                                                      filename));
 
             ImageChannelDesc channelDesc = im.image.GetChannelDesc({"R", "G", "B"});
             if (!channelDesc)
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                          "%s: Image provided to \"diffuse\" area light must have "
-                          "R, G, and B channels.",
-                          filename));
+                                                                      "%s: Image provided to \"diffuse\" area light must have "
+                                                                      "R, G, and B channels.",
+                                                                      filename));
             image = im.image.SelectChannels(channelDesc, alloc);
 
             imageColorSpace = im.metadata.GetColorSpace();
@@ -1031,7 +1031,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU SampledSpectrum UniformInfiniteLight::Le(const Ray& ray,
-                                                          const SampledWavelengths& lambda) const
+                                                             const SampledWavelengths& lambda) const
     {
         return scale * Lemit->Sample(lambda);
     }
@@ -1050,7 +1050,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float UniformInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
-                                                    bool allowIncompletePDF) const
+                                                       bool allowIncompletePDF) const
     {
         if (allowIncompletePDF)
             return 0;
@@ -1063,8 +1063,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> UniformInfiniteLight::SampleLe(Point2f u1, Point2f u2,
-                                                                              SampledWavelengths& lambda,
-                                                                              Float time) const
+                                                                                 SampledWavelengths& lambda,
+                                                                                 Float time) const
     {
         // Sample direction for uniform infinite light ray
         Vector3f w = SampleUniformSphere(u1);
@@ -1105,14 +1105,14 @@ namespace spectra
         ImageChannelDesc channelDesc = image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(spectra::diagnostics::Format("%s: image used for ImageInfiniteLight doesn't have R, G, B "
-                      "channels.",
-                      filename));
+                                                                  "channels.",
+                                                                  filename));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
         if (image.Resolution().x != image.Resolution().y)
             throw std::runtime_error(spectra::diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
-                      "this is an equal area environment map.",
-                      filename, image.Resolution().x, image.Resolution().y));
+                                                                  "this is an equal area environment map.",
+                                                                  filename, image.Resolution().x, image.Resolution().y));
         Array2D<Float> d = image.GetSamplingDistribution();
         Bounds2f domain = Bounds2f(Point2f(0, 0), Point2f(1, 1));
         distribution = PiecewiseConstant2D(d, domain, alloc);
@@ -1127,7 +1127,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float ImageInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
-                                                  bool allowIncompletePDF) const
+                                                     bool allowIncompletePDF) const
     {
         Vector3f wLight = renderFromLight.ApplyInverse(w);
         Point2f uv = EqualAreaSphereToSquare(wLight);
@@ -1162,8 +1162,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> ImageInfiniteLight::SampleLe(Point2f u1, Point2f u2,
-                                                                            SampledWavelengths& lambda,
-                                                                            Float time) const
+                                                                               SampledWavelengths& lambda,
+                                                                               Float time) const
     {
         // Sample infinite light image and compute ray direction _w_
         Float mapPDF;
@@ -1210,15 +1210,15 @@ namespace spectra
         ImageChannelDesc channelDesc = equalAreaImage.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(spectra::diagnostics::Format("%s: image used for PortalImageInfiniteLight doesn't have R, "
-                      "G, B channels.",
-                      filename));
+                                                                  "G, B channels.",
+                                                                  filename));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
 
         if (equalAreaImage.Resolution().x != equalAreaImage.Resolution().y)
             throw std::runtime_error(spectra::diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
-                      "this is an equal area environment map.",
-                      filename, equalAreaImage.Resolution().x, equalAreaImage.Resolution().y));
+                                                                  "this is an equal area environment map.",
+                                                                  filename, equalAreaImage.Resolution().x, equalAreaImage.Resolution().y));
 
         if (p.size() != 4)
             throw std::runtime_error(spectra::diagnostics::Format("Expected 4 vertices for infinite light portal but given %d", p.size()));
@@ -1304,7 +1304,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU SampledSpectrum PortalImageInfiniteLight::Le(const Ray& ray,
-                                                              const SampledWavelengths& lambda) const
+                                                                 const SampledWavelengths& lambda) const
     {
         pstd::optional<Point2f> uv = ImageFromRender(Normalize(ray.d));
         pstd::optional<Bounds2f> b = ImageBounds(ray.o);
@@ -1351,7 +1351,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float PortalImageInfiniteLight::PDF_Li(LightSampleContext ctx, Vector3f w,
-                                                        bool allowIncompletePDF) const
+                                                           bool allowIncompletePDF) const
     {
         // Find image $(u,v)$ coordinates corresponding to direction _w_
         Float duv_dw;
@@ -1401,7 +1401,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void PortalImageInfiniteLight::PDF_Le(const Ray& ray, Float* pdfPos,
-                                                       Float* pdfDir) const
+                                                          Float* pdfDir) const
     {
         // TODO: negate here or???
         Vector3f w = -Normalize(ray.d);
@@ -1467,8 +1467,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> SpotLight::SampleLe(Point2f u1, Point2f u2,
-                                                                   SampledWavelengths& lambda,
-                                                                   Float time) const
+                                                                      SampledWavelengths& lambda,
+                                                                      Float time) const
     {
         // Choose whether to sample spotlight center cone or falloff region
         Float p[2] = {1 - cosFalloffStart, (cosFalloffStart - cosFalloffEnd) / 2};
@@ -1564,8 +1564,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<LightLeSample> Light::SampleLe(Point2f u1, Point2f u2,
-                                                               SampledWavelengths& lambda,
-                                                               Float time) const
+                                                                  SampledWavelengths& lambda,
+                                                                  Float time) const
     {
         auto sample = [&](auto ptr) { return ptr->SampleLe(u1, u2, lambda, time); };
         return Dispatch(sample);
@@ -1585,7 +1585,7 @@ namespace spectra
 
 
     SPECTRA_CPU_GPU void Light::PDF_Le(const Interaction& intr, Vector3f w, Float* pdfPos,
-                                    Float* pdfDir) const
+                                       Float* pdfDir) const
     {
         auto pdf = [&](auto ptr) { return ptr->PDF_Le(intr, w, pdfPos, pdfDir); };
         return Dispatch(pdf);
@@ -1643,7 +1643,7 @@ namespace spectra
             {
                 if (!filename.empty())
                     throw std::runtime_error(spectra::diagnostics::Format(loc, "Can't specify both emission \"L\" and "
-                              "\"filename\" with ImageInfiniteLight"));
+                                                                          "\"filename\" with ImageInfiniteLight"));
 
                 // Scale the light spectrum to be equivalent to 1 nit
                 scale /= SpectrumToPhotometric(L[0]);
@@ -1674,7 +1674,7 @@ namespace spectra
                     // there for the sun, so here we go...
                     if (!L[0].Is<RGBIlluminantSpectrum>())
                         spectra::diagnostics::PrintWarning(loc, "Converting non-RGB \"L\" parameter to RGB so that a "
-                                "portal light can be used.");
+                                                           "portal light can be used.");
                     XYZ xyz = SpectrumToXYZ(L[0]);
                     RGB rgb = RGBColorSpace::sRGB->ToRGB(xyz);
 
@@ -1693,14 +1693,14 @@ namespace spectra
 
                     if (imageAndMetadata.image.HasAnyInfinitePixels())
                         throw std::runtime_error(spectra::diagnostics::Format(loc,
-                                  "%s: image has infinite pixel values and so is not "
-                                  "suitable as a light.",
-                                  filename));
+                                                                              "%s: image has infinite pixel values and so is not "
+                                                                              "suitable as a light.",
+                                                                              filename));
                     if (imageAndMetadata.image.HasAnyNaNPixels())
                         throw std::runtime_error(spectra::diagnostics::Format(loc,
-                                  "%s: image has not-a-number pixel values and so is not "
-                                  "suitable as a light.",
-                                  filename));
+                                                                              "%s: image has not-a-number pixel values and so is not "
+                                                                              "suitable as a light.",
+                                                                              filename));
                 }
 
                 const RGBColorSpace* colorSpace = imageAndMetadata.metadata.GetColorSpace();
@@ -1709,9 +1709,9 @@ namespace spectra
                     imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
                 if (!channelDesc)
                     throw std::runtime_error(spectra::diagnostics::Format(loc,
-                              "%s: image provided to \"infinite\" light must "
-                              "have R, G, and B channels.",
-                              filename));
+                                                                          "%s: image provided to \"infinite\" light must "
+                                                                          "have R, G, and B channels.",
+                                                                          filename));
 
                 // Scale the light spectrum to be equivalent to 1 nit
                 scale /= SpectrumToPhotometric(&colorSpace->illuminant);

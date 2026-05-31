@@ -41,7 +41,6 @@ namespace spectra
         {
             return std::tie(filter, maxAnisotropy) < std::tie(o.filter, o.maxAnisotropy);
         }
-
     };
 
     // MIPMap Definition

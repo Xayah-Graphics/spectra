@@ -632,7 +632,6 @@ namespace spectra
             return down;
         }
 
-
     private:
         SPECTRA_CPU_GPU
         explicit Half(uint16_t h) : h(h)

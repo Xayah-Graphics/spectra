@@ -54,7 +54,6 @@ namespace spectra
         bool operator<(const char* s) const { return *str < s; }
         bool operator<(const std::string& s) const { return *str < s; }
 
-
     private:
         const std::string* str = nullptr;
     };

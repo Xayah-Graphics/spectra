@@ -225,8 +225,8 @@ namespace spectra::pathtracer
             // This is a somewhat odd place for this check, but it's convenient...
             if (!m.CanEvaluateTextures(BasicTextureEvaluator()))
                 throw std::runtime_error(spectra::diagnostics::Format("\"mix\" material has a texture that can't be evaluated with the "
-                                "BasicTextureEvaluator, which is all that is currently supported "
-                                "in the Spectra pathtracer."));
+                    "BasicTextureEvaluator, which is all that is currently supported "
+                    "in the Spectra pathtracer."));
 
             updateMaterialNeeds(mix->GetMaterial(0), haveBasicEvalMaterial,
                                 haveUniversalEvalMaterial, haveSubsurface, haveMedia);
@@ -343,9 +343,9 @@ namespace spectra::pathtracer
 
         if (scene.integrator.name != "path" && scene.integrator.name != "volpath")
             spectra::diagnostics::PrintWarning(&scene.integrator.loc,
-                          "Ignoring specified integrator \"%s\": the Spectra pathtracer "
-                          "always uses a \"volpath\" integrator.",
-                          scene.integrator.name);
+                                               "Ignoring specified integrator \"%s\": the Spectra pathtracer "
+                                               "always uses a \"volpath\" integrator.",
+                                               scene.integrator.name);
 
         // Integrator parameters
         regularize = scene.integrator.parameters.GetOneBool("regularize", false);
@@ -446,8 +446,8 @@ namespace spectra::pathtracer
 
         GPUWait();
         Float seconds = Float(std::chrono::duration<double>(
-                                  std::chrono::steady_clock::now() - renderStart)
-                                  .count());
+                std::chrono::steady_clock::now() - renderStart)
+            .count());
         if (!Options->quiet)
         {
             std::fprintf(stdout, "Rendering completed in %.1fs\n", seconds);
@@ -458,8 +458,8 @@ namespace spectra::pathtracer
     }
 
     void WavefrontPathtracer::RenderSample(Bounds2i pixelBounds,
-                                         Transform cameraMotion,
-                                         int sampleIndex)
+                                           Transform cameraMotion,
+                                           int sampleIndex)
     {
         for (int y0 = pixelBounds.pMin.y; y0 < pixelBounds.pMax.y;
              y0 += scanlinesPerPass)
@@ -572,7 +572,6 @@ namespace spectra::pathtracer
                 // Update pixel radiance if ray's radiance is nonzero
                 if (L)
                 {
-
                     L += pixelSampleState.L[w.pixelIndex];
                     pixelSampleState.L[w.pixelIndex] = L;
                 }
@@ -669,7 +668,7 @@ namespace spectra::pathtracer
     }
 
     void WavefrontPathtracer::GenerateCameraRays(int y0, Transform movingFromCamera,
-                                               int sampleIndex)
+                                                 int sampleIndex)
     {
         // Define _generateRays_ lambda function
         auto generateRays = [=, this](auto sampler)
@@ -685,7 +684,7 @@ namespace spectra::pathtracer
 
     template <typename ConcreteSampler>
     void WavefrontPathtracer::GenerateCameraRays(int y0, Transform movingFromCamera,
-                                               int sampleIndex)
+                                                 int sampleIndex)
     {
         RayQueue* rayQueue = CurrentRayQueue(0);
         ParallelFor(
@@ -696,7 +695,7 @@ namespace spectra::pathtracer
                 Bounds2i pixelBounds = film.PixelBounds();
                 int xResolution = pixelBounds.pMax.x - pixelBounds.pMin.x;
                 Point2i pPixel(pixelBounds.pMin.x + pixelIndex % xResolution,
-                                     y0 + pixelIndex / xResolution);
+                               y0 + pixelIndex / xResolution);
                 pixelSampleState.pPixel[pixelIndex] = pPixel;
 
                 // Test pixel coordinates against pixel bounds
@@ -808,15 +807,15 @@ namespace spectra::pathtracer
     };
 
     void WavefrontPathtracer::EvaluateMaterialsAndBSDFs(int wavefrontDepth,
-                                                      Transform movingFromCamera)
+                                                        Transform movingFromCamera)
     {
         ForEachType(EvaluateMaterialCallback{wavefrontDepth, this, movingFromCamera},
-                          Material::Types());
+                    Material::Types());
     }
 
     template <typename ConcreteMaterial>
     void WavefrontPathtracer::EvaluateMaterialAndBSDF(int wavefrontDepth,
-                                                    Transform movingFromCamera)
+                                                      Transform movingFromCamera)
     {
         int index = Material::TypeIndex<ConcreteMaterial>();
         if (haveBasicEvalMaterial[index])
@@ -829,8 +828,8 @@ namespace spectra::pathtracer
 
     template <typename ConcreteMaterial, typename TextureEvaluator>
     void WavefrontPathtracer::EvaluateMaterialAndBSDF(MaterialEvalQueue* evalQueue,
-                                                    Transform movingFromCamera,
-                                                    int wavefrontDepth)
+                                                      Transform movingFromCamera,
+                                                      int wavefrontDepth)
     {
         // Get BSDF for items in _evalQueue_ and sample illumination
         // Construct _desc_ for material/texture evaluation kernel
@@ -1032,7 +1031,6 @@ namespace spectra::pathtracer
                                 ray, w.depth + 1, ctx, beta, r_u, r_l, lambda,
                                 etaScale, bsdfSample->IsSpecular(), anyNonSpecularBounces,
                                 w.pixelIndex);
-
                         }
                     }
                 }
@@ -1072,8 +1070,8 @@ namespace spectra::pathtracer
                     // This causes r_u to be zero for the shadow ray, so that
                     // part of MIS just becomes a no-op.
                     Float bsdfPDF = IsDeltaLight(light.Type())
-                                              ? 0.f
-                                              : bsdf.PDF<typename ConcreteMaterial::BxDF>(wo, wi);
+                                        ? 0.f
+                                        : bsdf.PDF<typename ConcreteMaterial::BxDF>(wo, wi);
                     SampledSpectrum r_u = w.r_u * bsdfPDF;
                     SampledSpectrum r_l = w.r_u * lightPDF;
 
@@ -1090,7 +1088,6 @@ namespace spectra::pathtracer
                         ray, 1 - Float(0.0001f), lambda, Ld,
                         r_u, r_l, w.pixelIndex
                     });
-
                 }
             });
     }
@@ -1142,7 +1139,6 @@ namespace spectra::pathtracer
                     [&](Point3f p, MediumProperties mp, SampledSpectrum sigma_maj,
                         SampledSpectrum T_maj)
                     {
-
                         // Add emission, if present.  Always do this and scale
                         // by sigma_a/sigma_maj rather than only doing it
                         // (without scaling) at absorption events.
@@ -1254,7 +1250,7 @@ namespace spectra::pathtracer
                 while (mix)
                 {
                     SurfaceInteraction intr(w.pi, w.uv, w.wo, w.dpdus, w.dpdvs, w.dndus,
-                                                  w.dndvs, ray.time, false /* flip normal */);
+                                            w.dndvs, ray.time, false /* flip normal */);
                     intr.faceIndex = w.faceIndex;
                     MaterialEvalContext ctx(intr);
                     material = mix->ChooseMaterial(BasicTextureEvaluator(), ctx);
@@ -1325,7 +1321,7 @@ namespace spectra::pathtracer
             return;
 
         ForEachType(SampleMediumScatteringCallback{wavefrontDepth, this},
-                          PhaseFunction::Types());
+                    PhaseFunction::Types());
     }
 
     template <typename ConcretePhaseFunction>
@@ -1379,7 +1375,6 @@ namespace spectra::pathtracer
                             w.lambda, Ld, r_u, r_l,
                             w.pixelIndex
                         });
-
                     }
                 }
 
@@ -1528,7 +1523,6 @@ namespace spectra::pathtracer
                                 ray, w.depth + 1, ctx, beta, indir_r_u, r_l, lambda,
                                 etaScale, bsdfSample->IsSpecular(), anyNonSpecularBounces,
                                 w.pixelIndex);
-
                         }
                     }
                 }
@@ -1560,8 +1554,8 @@ namespace spectra::pathtracer
                     // This causes r_u to be zero for the shadow ray, so that
                     // part of MIS just becomes a no-op.
                     Float bsdfPDF = IsDeltaLight(light.Type())
-                                              ? 0.f
-                                              : bsdf.PDF<TabulatedBSSRDF::BxDF>(wo, wi);
+                                        ? 0.f
+                                        : bsdf.PDF<TabulatedBSSRDF::BxDF>(wo, wi);
                     SampledSpectrum r_l = r_u * lightPDF;
                     r_u *= bsdfPDF;
 
@@ -1614,7 +1608,7 @@ namespace spectra::pathtracer
     }
 
     void WavefrontPathtracer::UpdateFramebufferFromFilm(Bounds2i pixelBounds,
-                                                      Float exposure, float* rgba)
+                                                        Float exposure, float* rgba)
     {
         Vector2i resolution = pixelBounds.Diagonal();
         ParallelFor(

@@ -1867,7 +1867,7 @@ namespace spectra
 
     template <typename T>
     SPECTRA_CPU_GPU inline bool Bounds3<T>::IntersectP(Point3f o, Vector3f d, Float tMax,
-                                                    Float* hitt0, Float* hitt1) const
+                                                       Float* hitt0, Float* hitt1) const
     {
         Float t0 = 0, t1 = tMax;
         for (int i = 0; i < 3; ++i)
@@ -1896,8 +1896,8 @@ namespace spectra
 
     template <typename T>
     SPECTRA_CPU_GPU inline bool Bounds3<T>::IntersectP(Point3f o, Vector3f d, Float raytMax,
-                                                    Vector3f invDir,
-                                                    const int dirIsNeg[3]) const
+                                                       Vector3f invDir,
+                                                       const int dirIsNeg[3]) const
     {
         const Bounds3f& bounds = *this;
         // Check for ray intersection against $x$ and $y$ slabs
@@ -1970,10 +1970,10 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Float SphericalQuadArea(Vector3f a, Vector3f b, Vector3f c,
-                                                Vector3f d);
+                                                   Vector3f d);
 
     SPECTRA_CPU_GPU inline Float SphericalQuadArea(Vector3f a, Vector3f b, Vector3f c,
-                                                Vector3f d)
+                                                   Vector3f d)
     {
         Vector3f axb = Cross(a, b), bxc = Cross(b, c);
         Vector3f cxd = Cross(c, d), dxa = Cross(d, a);
@@ -1994,7 +1994,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Vector3f SphericalDirection(Float sinTheta, Float cosTheta,
-                                                    Float phi)
+                                                       Float phi)
     {
         DCHECK(sinTheta >= -1.0001 && sinTheta <= 1.0001);
         DCHECK(cosTheta >= -1.0001 && cosTheta <= 1.0001);
@@ -2119,7 +2119,6 @@ namespace spectra
 
             return Normalize(v);
         }
-
 
     private:
         // OctahedralVector Private Methods

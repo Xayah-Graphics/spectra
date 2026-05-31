@@ -86,10 +86,10 @@ namespace spectra
 
     // Image Wrapping Inline Functions
     SPECTRA_CPU_GPU inline bool RemapPixelCoords(Point2i* pp, Point2i resolution,
-                                              WrapMode2D wrapMode);
+                                                 WrapMode2D wrapMode);
 
     SPECTRA_CPU_GPU inline bool RemapPixelCoords(Point2i* pp, Point2i resolution,
-                                              WrapMode2D wrapMode)
+                                                 WrapMode2D wrapMode)
     {
         Point2i& p = *pp;
 
@@ -225,7 +225,6 @@ namespace spectra
                 sum += (*this)[i];
             return sum / size();
         }
-
     };
 
     // Image Definition
@@ -438,7 +437,6 @@ namespace spectra
         Image JointBilateralFilter(const ImageChannelDesc& toFilter, int halfWidth,
                                    const Float xySigma[2], const ImageChannelDesc& joint,
                                    const ImageChannelValues& jointSigma) const;
-
 
     private:
         // Image Private Methods

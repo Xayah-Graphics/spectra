@@ -213,6 +213,7 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         bool operator==(const SampledSpectrum& s) const { return values == s.values; }
+
         SPECTRA_CPU_GPU
         bool operator!=(const SampledSpectrum& s) const { return values != s.values; }
 
@@ -236,6 +237,7 @@ namespace spectra
         SampledSpectrum() = default;
         SPECTRA_CPU_GPU
         explicit SampledSpectrum(Float c) { values.fill(c); }
+
         SPECTRA_CPU_GPU
         SampledSpectrum(pstd::span<const Float> v)
         {
@@ -351,8 +353,10 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         Float operator[](int i) const { return lambda[i]; }
+
         SPECTRA_CPU_GPU
         Float& operator[](int i) { return lambda[i]; }
+
         SPECTRA_CPU_GPU
         SampledSpectrum PDF() const { return SampledSpectrum(pdf); }
 
@@ -410,13 +414,13 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         Float operator()(Float lambda) const { return c; }
+
         // ConstantSpectrum Public Methods
         SPECTRA_CPU_GPU
         SampledSpectrum Sample(const SampledWavelengths&) const;
 
         SPECTRA_CPU_GPU
         Float MaxValue() const { return c; }
-
 
     private:
         Float c;
@@ -596,7 +600,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         Float MaxValue() const { return 1.f; }
 
-
     private:
         // BlackbodySpectrum Private Members
         Float T;
@@ -609,6 +612,7 @@ namespace spectra
         // RGBAlbedoSpectrum Public Methods
         SPECTRA_CPU_GPU
         Float operator()(Float lambda) const { return rsp(lambda); }
+
         SPECTRA_CPU_GPU
         Float MaxValue() const { return rsp.MaxValue(); }
 
@@ -624,7 +628,6 @@ namespace spectra
             return s;
         }
 
-
     private:
         // RGBAlbedoSpectrum Private Members
         RGBSigmoidPolynomial rsp;
@@ -636,6 +639,7 @@ namespace spectra
         // RGBUnboundedSpectrum Public Methods
         SPECTRA_CPU_GPU
         Float operator()(Float lambda) const { return scale * rsp(lambda); }
+
         SPECTRA_CPU_GPU
         Float MaxValue() const { return scale * rsp.MaxValue(); }
 
@@ -655,7 +659,6 @@ namespace spectra
                 s[i] = scale * rsp(lambda[i]);
             return s;
         }
-
 
     private:
         // RGBUnboundedSpectrum Private Members
@@ -700,7 +703,6 @@ namespace spectra
                 s[i] = scale * rsp(lambda[i]);
             return s * illuminant->Sample(lambda);
         }
-
 
     private:
         // RGBIlluminantSpectrum Private Members
@@ -857,7 +859,6 @@ namespace spectra
         SPECTRA_CPU_GPU inline const DenselySampledSpectrum& Y();
         SPECTRA_CPU_GPU inline const DenselySampledSpectrum& Z();
     } // namespace Spectra
-
 } // namespace spectra
 
 namespace std

@@ -149,5 +149,4 @@ namespace spectra
         // Compute sampling distribution for filter
         distrib = PiecewiseConstant2D(f, domain, alloc);
     }
-
 } // namespace spectra

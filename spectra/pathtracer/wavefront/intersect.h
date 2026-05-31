@@ -10,8 +10,8 @@ namespace spectra
 {
     // Wavefront Ray Intersection Enqueuing Functions
     inline SPECTRA_CPU_GPU void EnqueueWorkAfterMiss(RayWorkItem r,
-                                                  MediumSampleQueue* mediumSampleQueue,
-                                                  EscapedRayQueue* escapedRayQueue)
+                                                     MediumSampleQueue* mediumSampleQueue,
+                                                     EscapedRayQueue* escapedRayQueue)
     {
         if (r.ray.medium)
         {
@@ -24,8 +24,8 @@ namespace spectra
     }
 
     inline SPECTRA_CPU_GPU void RecordShadowRayResult(const ShadowRayWorkItem w,
-                                                   SOA<PixelSampleState>* pixelSampleState,
-                                                   bool foundIntersection)
+                                                      SOA<PixelSampleState>* pixelSampleState,
+                                                      bool foundIntersection)
     {
         if (foundIntersection)
         {
@@ -158,8 +158,8 @@ namespace spectra
 
     template <typename T, typename S>
     inline SPECTRA_CPU_GPU void TraceTransmittance(ShadowRayWorkItem sr,
-                                                SOA<PixelSampleState>* pixelSampleState,
-                                                T trace, S spawnTo)
+                                                   SOA<PixelSampleState>* pixelSampleState,
+                                                   T trace, S spawnTo)
     {
         SampledWavelengths lambda = sr.lambda;
 
@@ -210,9 +210,9 @@ namespace spectra
                             Float q = 0.75f;
                             if (rng.Uniform<Float>() < q)
                                 T_ray = SampledSpectrum(0.);
-                        else
-                            T_ray /= 1 - q;
-                    }
+                            else
+                                T_ray /= 1 - q;
+                        }
 
                         if (!T_ray)
                             return false;

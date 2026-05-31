@@ -87,9 +87,9 @@ SPECTRA_CPU_GPU Transform RotateZ(Float theta) {
         Vector3f dir = Normalize(look - pos);
         if (Length(Cross(Normalize(up), dir)) == 0)
             SPECTRA_FATAL("LookAt: \"up\" vector (%f, %f, %f) and viewing direction "
-                  "(%f, %f, %f) "
-                  "passed to LookAt are pointing in the same direction.",
-                  up.x, up.y, up.z, dir.x, dir.y, dir.z);
+                      "(%f, %f, %f) "
+                      "passed to LookAt are pointing in the same direction.",
+                      up.x, up.y, up.z, dir.x, dir.y, dir.z);
         Vector3f right = Normalize(Cross(Normalize(up), dir));
         Vector3f newUp = Cross(dir, right);
         worldFromCamera[0][0] = right.x;
@@ -1005,7 +1005,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
     }
 
     SPECTRA_CPU_GPU RayDifferential AnimatedTransform::operator()(const RayDifferential& r,
-                                                               Float* tMax) const
+                                                                  Float* tMax) const
     {
         if (!actuallyAnimated || r.time <= startTime)
             return startTransform(r, tMax);
@@ -1145,8 +1145,8 @@ SquareMatrix<4> persp(1, 0,           0,              0,
     }
 
     SPECTRA_CPU_GPU void AnimatedTransform::FindZeros(Float c1, Float c2, Float c3, Float c4, Float c5,
-                                                   Float theta, Interval tInterval,
-                                                   pstd::span<Float> zeros, int* nZeros, int depth)
+                                                      Float theta, Interval tInterval,
+                                                      pstd::span<Float> zeros, int* nZeros, int depth)
     {
         // Evaluate motion derivative in interval form, return if no zeros
         Interval dadt =

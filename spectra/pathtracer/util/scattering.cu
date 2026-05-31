@@ -30,5 +30,4 @@ namespace spectra
                 0.63942f * eta5;
         }
     }
-
 } // namespace spectra

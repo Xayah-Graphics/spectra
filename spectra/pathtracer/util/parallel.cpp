@@ -11,8 +11,6 @@
 
 namespace spectra
 {
-
-
     // Barrier Method Definitions
     bool Barrier::Block()
     {
@@ -42,13 +40,11 @@ namespace spectra
 
     void ThreadPool::Worker()
     {
-
         GPUThreadInit();
 
         std::unique_lock<std::mutex> lock(mutex);
         while (!shutdownThreads)
             WorkOrWait(&lock, false);
-
     }
 
     std::unique_lock<std::mutex> ThreadPool::AddToJobList(ParallelJob* job)
@@ -199,7 +195,6 @@ namespace spectra
 
         void RunStep(std::unique_lock<std::mutex>* lock);
 
-
     private:
         // ParallelForLoop1D Private Members
         std::function<void(int64_t, int64_t)> func;
@@ -221,7 +216,6 @@ namespace spectra
 
         bool HaveWork() const { return nextStart.y < extent.pMax.y; }
         void RunStep(std::unique_lock<std::mutex>* lock);
-
 
     private:
         std::function<void(Bounds2i)> func;

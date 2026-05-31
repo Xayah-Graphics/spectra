@@ -1058,7 +1058,7 @@ namespace spectra
 
         // HairBxDF Private Methods
         SPECTRA_CPU_GPU static Float Mp(Float cosTheta_i, Float cosTheta_o, Float sinTheta_i,
-                                     Float sinTheta_o, Float v)
+                                        Float sinTheta_o, Float v)
         {
             Float a = cosTheta_i * cosTheta_o / v, b = sinTheta_i * sinTheta_o / v;
             Float mp = (v <= .1)
@@ -1069,8 +1069,8 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU static pstd::array<SampledSpectrum, pMax + 1> Ap(Float cosTheta_o,
-                                                                      Float eta, Float h,
-                                                                      SampledSpectrum T)
+                                                                         Float eta, Float h,
+                                                                         SampledSpectrum T)
         {
             pstd::array<SampledSpectrum, pMax + 1> ap;
             // Compute $p=0$ attenuation at initial cylinder intersection
@@ -1099,7 +1099,7 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU static inline Float Np(Float phi, int p, Float s, Float gamma_o,
-                                            Float gamma_t)
+                                               Float gamma_t)
         {
             Float dphi = phi - Phi(p, gamma_o, gamma_t);
             // Remap _dphi_ to $[-\pi,\pi]$

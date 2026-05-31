@@ -134,7 +134,7 @@ namespace spectra
 
     // Spline Interpolation Function Definitions
     SPECTRA_CPU_GPU bool CatmullRomWeights(pstd::span<const Float> nodes, Float x, int* offset,
-                                        pstd::span<Float> weights)
+                                           pstd::span<Float> weights)
     {
         CHECK_GE(weights.size(), 4);
         // Return _false_ if _x_ is out of bounds
@@ -212,7 +212,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float InvertCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f,
-                                        Float u)
+                                           Float u)
     {
         // Stop when _u_ is out of bounds
         if (!(u > f.front()))
@@ -255,7 +255,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU Float IntegrateCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f,
-                                           pstd::span<Float> cdf)
+                                              pstd::span<Float> cdf)
     {
         CHECK_EQ(nodes.size(), f.size());
         Float sum = 0;

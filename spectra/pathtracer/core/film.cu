@@ -142,10 +142,10 @@ namespace spectra
         {
             if (!filename.empty())
                 spectra::diagnostics::PrintWarning(loc,
-                        "Output filename supplied on command line, \"%s\" will "
-                        "override "
-                        "filename provided in scene description file, \"%s\".",
-                        Options->imageFile, filename);
+                                                   "Output filename supplied on command line, \"%s\" will "
+                                                   "override "
+                                                   "filename provided in scene description file, \"%s\".",
+                                                   Options->imageFile, filename);
             filename = Options->imageFile;
         }
         else if (filename.empty())
@@ -161,24 +161,24 @@ namespace spectra
             Bounds2i newBounds = *Options->pixelBounds;
             if (Intersect(newBounds, pixelBounds) != newBounds)
                 spectra::diagnostics::PrintWarning(loc, "Supplied pixel bounds extend beyond image "
-                        "resolution. Clamping.");
+                                                   "resolution. Clamping.");
             pixelBounds = Intersect(newBounds, pixelBounds);
 
             if (!pb.empty())
                 spectra::diagnostics::PrintWarning(loc, "Both pixel bounds and crop window were specified. Using the "
-                        "crop window.");
+                                                   "crop window.");
         }
         else if (!pb.empty())
         {
             if (pb.size() != 4)
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "%d values supplied for \"pixelbounds\". Expected 4.",
-                      int(pb.size())));
+                                                                      int(pb.size())));
             else
             {
                 Bounds2i newBounds = Bounds2i({pb[0], pb[2]}, {pb[1], pb[3]});
                 if (Intersect(newBounds, pixelBounds) != newBounds)
                     spectra::diagnostics::PrintWarning(loc, "Supplied pixel bounds extend beyond image "
-                            "resolution. Clamping.");
+                                                       "resolution. Clamping.");
                 pixelBounds = Intersect(newBounds, pixelBounds);
             }
         }
@@ -190,9 +190,9 @@ namespace spectra
             if (Intersect(crop, Bounds2f(Point2f(0, 0), Point2f(1, 1))) != crop)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Film crop window [%f, %f] - [%f, %f] is not in [0,1] range; did you "
-                      "mean to use \"pixelbounds\"? Clamping to valid range.",
-                      crop.pMin.x, crop.pMin.y, crop.pMax.x, crop.pMax.y));
+                                                                      "Film crop window [%f, %f] - [%f, %f] is not in [0,1] range; did you "
+                                                                      "mean to use \"pixelbounds\"? Clamping to valid range.",
+                                                                      crop.pMin.x, crop.pMin.y, crop.pMax.x, crop.pMax.y));
                 crop = Intersect(crop, Bounds2f(Point2f(0, 0), Point2f(1, 1)));
             }
 
@@ -204,22 +204,22 @@ namespace spectra
 
             if (!cr.empty())
                 spectra::diagnostics::PrintWarning(loc, "Crop window supplied on command line will override "
-                        "crop window specified with Film.");
+                                                   "crop window specified with Film.");
             if (Options->pixelBounds || !pb.empty())
                 spectra::diagnostics::PrintWarning(loc, "Both pixel bounds and crop window were specified. Using the "
-                        "crop window.");
+                                                   "crop window.");
         }
         else if (!cr.empty())
         {
             if (Options->pixelBounds)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"cropwindow\" since pixel bounds were specified "
-                        "on the command line.");
+                                                   "on the command line.");
             else if (cr.size() == 4)
             {
                 if (!pb.empty())
                     spectra::diagnostics::PrintWarning(loc, "Both pixel bounds and crop window were "
-                            "specified. Using the "
-                            "crop window.");
+                                                       "specified. Using the "
+                                                       "crop window.");
 
                 Bounds2f crop;
                 crop.pMin.x = Clamp(std::min(cr[0], cr[1]), 0.f, 1.f);
@@ -235,7 +235,7 @@ namespace spectra
             }
             else
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "%d values supplied for \"cropwindow\". Expected 4.",
-                      (int)cr.size()));
+                                                                      (int)cr.size()));
         }
 
         if (pixelBounds.IsEmpty())
@@ -255,7 +255,7 @@ namespace spectra
 
     // VisibleSurface Method Definitions
     SPECTRA_CPU_GPU VisibleSurface::VisibleSurface(const SurfaceInteraction& si, SampledSpectrum albedo,
-                                                const SampledWavelengths& lambda)
+                                                   const SampledWavelengths& lambda)
         : albedo(albedo)
     {
         set = true;
@@ -701,8 +701,8 @@ namespace spectra
 
     // GBufferFilm Method Definitions
     SPECTRA_CPU_GPU void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L,
-                                             const SampledWavelengths& lambda,
-                                             const VisibleSurface* visibleSurface, Float weight)
+                                                const SampledWavelengths& lambda,
+                                                const VisibleSurface* visibleSurface, Float weight)
     {
         RGB rgb = sensor->ToSensorRGB(L, lambda);
         Float m = MaxComponentValue(rgb);
@@ -777,7 +777,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v,
-                                            const SampledWavelengths& lambda)
+                                               const SampledWavelengths& lambda)
     {
         // NOTE: same code as RGBFilm::AddSplat()...
         CHECK(!v.HasNaNs());
@@ -952,7 +952,7 @@ namespace spectra
 
         if (!HasExtension(filmBaseParameters.filename, "exr"))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: EXR is the only format supported by the GBufferFilm.",
-                      filmBaseParameters.filename));
+                                                                  filmBaseParameters.filename));
 
         std::string coordinateSystem = parameters.GetOneString("coordinatesystem", "camera");
         AnimatedTransform outputFromRender;
@@ -966,9 +966,9 @@ namespace spectra
             outputFromRender = AnimatedTransform(cameraTransform.WorldFromRender());
         else
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "%s: unknown coordinate system for GBufferFilm. (Expecting \"camera\" "
-                      "or \"world\".)",
-                      coordinateSystem));
+                                                                  "%s: unknown coordinate system for GBufferFilm. (Expecting \"camera\" "
+                                                                  "or \"world\".)",
+                                                                  coordinateSystem));
 
         return alloc.new_object<GBufferFilm>(filmBaseParameters, outputFromRender,
                                              applyInverse, colorSpace, maxComponentValue,
@@ -1038,7 +1038,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L,
-                                             const SampledWavelengths& lambda)
+                                                const SampledWavelengths& lambda)
     {
         // This, too, is similar to RGBFilm::AddSplat(), with additions for
         // spectra.
@@ -1105,7 +1105,7 @@ namespace spectra
             // determines bucket widths based on the neighbor wavelengths).
             char lambdaBuffer[64];
             std::snprintf(lambdaBuffer, sizeof(lambdaBuffer), "%.3fnm",
-                Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
+                          Lerp((i + 0.5f) / nBuckets, lambdaMin, lambdaMax));
             std::string lambda = lambdaBuffer;
             // Convert any '.' to ',' in the number since OpenEXR uses '.' for
             // separating layers.
@@ -1185,17 +1185,17 @@ namespace spectra
 
         if (!HasExtension(filmBaseParameters.filename, "exr"))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: EXR is the only output format supported by the SpectralFilm.",
-                      filmBaseParameters.filename));
+                                                                  filmBaseParameters.filename));
 
         int nBuckets = parameters.GetOneInt("nbuckets", 16);
         Float lambdaMin = parameters.GetOneFloat("lambdamin", Lambda_min);
         Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
         if (lambdaMin < Lambda_min || lambdaMax > Lambda_max)
             throw std::runtime_error(spectra::diagnostics::Format("Unfortunately pbrt must be recompiled to render wavelengths "
-                      "beyond the [%f,%f] range ([%f,%f] was specified). Please "
-                      "update Lambda_min and/or Lambda_max as necessary in "
-                      "spectra/pathtracer/pbrt/util/spectrum.h and recompile.", Lambda_min, Lambda_max,
-                      lambdaMin, lambdaMax));
+                                                                  "beyond the [%f,%f] range ([%f,%f] was specified). Please "
+                                                                  "update Lambda_min and/or Lambda_max as necessary in "
+                                                                  "spectra/pathtracer/pbrt/util/spectrum.h and recompile.", Lambda_min, Lambda_max,
+                                                                  lambdaMin, lambdaMax));
 
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
 

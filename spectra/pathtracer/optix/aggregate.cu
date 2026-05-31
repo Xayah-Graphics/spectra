@@ -227,8 +227,8 @@ namespace spectra::optix
             // It would be nice to just use the spectra::UniversalTextureEvaluator (maybe
             // always), but optix complains "spectra::Error: Found call graph recursion"...
             throw std::runtime_error(spectra::diagnostics::Format(&shape.loc,
-                      "%s: alpha texture too complex for spectra::BasicTextureEvaluator.",
-                      alphaTexName));
+                                                                  "%s: alpha texture too complex for spectra::BasicTextureEvaluator.",
+                                                                  alphaTexName));
         }
 
         return alphaTexture;
@@ -296,7 +296,7 @@ namespace spectra::optix
                     auto iter = floatTextures.find(displacementTexName);
                     if (iter == floatTextures.end())
                         throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: no such texture defined.",
-                                  displacementTexName));
+                                                                              displacementTexName));
                     FloatTexture displacement = iter->second;
 
 
@@ -340,7 +340,6 @@ namespace spectra::optix
                             SPECTRA_CUDA_CHECK(cudaFree(uv));
                         },
                         &shape.loc);
-
                 }
             }
 
@@ -399,12 +398,12 @@ namespace spectra::optix
                 std::vector<int> vertexIndices = shape.parameters.GetIntArray("indices");
                 if (vertexIndices.empty())
                     throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Vertex indices \"indices\" not "
-                              "provided for LoopSubdiv shape."));
+                                                                          "provided for LoopSubdiv shape."));
 
                 std::vector<Point3f> P = shape.parameters.GetPoint3fArray("P");
                 if (P.empty())
                     throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Vertex positions \"P\" not provided "
-                              "for LoopSubdiv shape."));
+                                                                          "for LoopSubdiv shape."));
 
                 // don't actually use this for now...
                 std::string scheme = shape.parameters.GetOneString("scheme", "loop");
@@ -428,11 +427,11 @@ namespace spectra::optix
                     std::string filename =
                         ResolveFilename(shape.parameters.GetOneString("filename", ""));
                     throw std::runtime_error(spectra::diagnostics::Format(&shape.loc,
-                              "%s: PLY file being used as an area light has quads--"
-                              "this is currently unsupported. Please replace them with "
-                              "\"bilinearmesh\" "
-                              "shapes as a workaround. (Sorry!).",
-                              filename));
+                                                                          "%s: PLY file being used as an area light has quads--"
+                                                                          "this is currently unsupported. Please replace them with "
+                                                                          "\"bilinearmesh\" "
+                                                                          "shapes as a workaround. (Sorry!).",
+                                                                          filename));
                 }
 
                 mesh = alloc.new_object<TriangleMesh>(
@@ -532,7 +531,7 @@ namespace spectra::optix
                 {
                     if (!material)
                         spectra::diagnostics::PrintWarning(&shape.loc, "Ignoring area light specification for shape "
-                                "with \"interface\" material.");
+                                                           "with \"interface\" material.");
                     else
                     {
                         // Note: this will hit if we try to have an instance as an area
@@ -568,8 +567,8 @@ namespace spectra::optix
     }
 
     BilinearPatchMesh* SpectraOptiXAggregate::diceCurveToBLP(const scene::ShapeSceneEntity& shape,
-                                                      int nDiceU, int nDiceV,
-                                                      Allocator alloc)
+                                                             int nDiceU, int nDiceV,
+                                                             Allocator alloc)
     {
         SPECTRA_CHECK_EQ(shape.name, "curve");
         const ParameterDictionary& parameters = shape.parameters;
@@ -587,7 +586,7 @@ namespace spectra::optix
         if (degree != 2 && degree != 3)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.",
-                  degree));
+                                                                  degree));
             return {};
         }
 
@@ -595,9 +594,9 @@ namespace spectra::optix
         if (basis != "bezier" && basis != "bspline")
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
-                  "supported.",
-                  basis));
+                                                                  "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
+                                                                  "supported.",
+                                                                  basis));
             return {};
         }
 
@@ -612,9 +611,9 @@ namespace spectra::optix
             if (((cp.size() - 1 - degree) % degree) != 0)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Invalid number of control points %d: for the degree %d "
-                      "Bezier basis %d + n * %d are required, for n >= 0.",
-                      (int)cp.size(), degree, degree + 1, degree));
+                                                                      "Invalid number of control points %d: for the degree %d "
+                                                                      "Bezier basis %d + n * %d are required, for n >= 0.",
+                                                                      (int)cp.size(), degree, degree + 1, degree));
                 return {};
             }
             nSegments = (cp.size() - 1) / degree;
@@ -624,9 +623,9 @@ namespace spectra::optix
             if (cp.size() < degree + 1)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Invalid number of control points %d: for the degree %d "
-                      "b-spline basis, must have >= %d.",
-                      int(cp.size()), degree, degree + 1));
+                                                                      "Invalid number of control points %d: for the degree %d "
+                                                                      "b-spline basis, must have >= %d.",
+                                                                      int(cp.size()), degree, degree + 1));
                 return {};
             }
             nSegments = cp.size() - degree;
@@ -656,9 +655,9 @@ namespace spectra::optix
             else if (n.size() != nSegments + 1)
             {
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "Invalid number of normals %d: must provide %d normals for "
-                      "ribbon curves with %d segments.",
-                      int(n.size()), nSegments + 1, nSegments));
+                                                                      "Invalid number of normals %d: must provide %d normals for "
+                                                                      "ribbon curves with %d segments.",
+                                                                      int(n.size()), nSegments + 1, nSegments));
                 return {};
             }
             for (Normal3f& nn : n)
@@ -667,7 +666,7 @@ namespace spectra::optix
         else if (type == CurveType::Ribbon)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
-                  "curves."));
+                                                                  "curves."));
             return {};
         }
 
@@ -938,7 +937,7 @@ namespace spectra::optix
             {
                 if (!material)
                     spectra::diagnostics::PrintWarning(&shape.loc, "Ignoring area light specification for shape with "
-                            "\"interface\" material.");
+                                                       "\"interface\" material.");
                 else
                 {
                     auto iter = shapeIndexToAreaLights.find(shapeIndex);
@@ -1058,7 +1057,7 @@ namespace spectra::optix
             {
                 if (!material)
                     spectra::diagnostics::PrintWarning(&s.loc, "Ignoring area light specification for shape with "
-                            "\"interface\" material.");
+                                                       "\"interface\" material.");
                 else
                 {
                     auto iter = shapeIndexToAreaLights.find(shapeIndex);
@@ -1148,7 +1147,7 @@ namespace spectra::optix
     }
 
     OptixModule SpectraOptiXAggregate::createOptiXModule(OptixDeviceContext optixContext,
-                                                  const char* input, size_t inputSize)
+                                                         const char* input, size_t inputSize)
     {
         OptixModuleCompileOptions moduleCompileOptions = {};
         moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
@@ -1201,7 +1200,7 @@ namespace spectra::optix
         SPECTRA_OPTIX_CHECK(optixModuleGetCompilationState(optixModule, &state));
         if (state != OPTIX_MODULE_COMPILE_STATE_COMPLETED)
             SPECTRA_FATAL("OptiX module compilation did not complete; state=%d diagnostics=%s",
-                          int(state), optixDiagnostics);
+                      int(state), optixDiagnostics);
 
         return optixModule;
     }
@@ -1245,8 +1244,8 @@ namespace spectra::optix
     }
 
     OptixProgramGroup SpectraOptiXAggregate::createIntersectionPG(const char* closest,
-                                                           const char* any,
-                                                           const char* intersect)
+                                                                  const char* any,
+                                                                  const char* intersect)
     {
         OptixProgramGroupOptions pgOptions = {};
         OptixProgramGroupDesc desc = {};
@@ -1416,7 +1415,7 @@ namespace spectra::optix
         OptixStackSizes stackSizes = {};
         for (OptixProgramGroup programGroup : allPGs)
             SPECTRA_OPTIX_CHECK(
-                optixUtilAccumulateStackSizes(programGroup, &stackSizes, optixPipeline));
+            optixUtilAccumulateStackSizes(programGroup, &stackSizes, optixPipeline));
         unsigned int directCallableStackSizeFromTraversal = 0;
         unsigned int directCallableStackSizeFromState = 0;
         unsigned int continuationStackSize = 0;
@@ -1564,7 +1563,7 @@ namespace spectra::optix
 
             if (!def.second->animatedShapes.empty())
                 spectra::diagnostics::PrintWarning("Ignoring %d animated shapes in instance \"%s\".",
-                        def.second->animatedShapes.size(), def.first);
+                                                   def.second->animatedShapes.size(), def.first);
 
             Instance inst;
 
@@ -1693,13 +1692,13 @@ namespace spectra::optix
                 auto iter = instanceMapIters[index];
                 if (iter == instanceMap.end())
                     throw std::runtime_error(spectra::diagnostics::Format(&sceneInstance.loc, "%s: object instance not defined.",
-                              sceneInstance.name));
+                                                                          sceneInstance.name));
 
                 if (sceneInstance.renderFromInstance == nullptr)
                 {
                     spectra::diagnostics::PrintWarning(&sceneInstance.loc,
-                            "%s: object instance has animated transformation. TODO",
-                            sceneInstance.name);
+                                                       "%s: object instance has animated transformation. TODO",
+                                                       sceneInstance.name);
                     continue;
                 }
 
@@ -1849,12 +1848,12 @@ namespace spectra::optix
     }
 
     void SpectraOptiXAggregate::IntersectClosest(int maxRays, const RayQueue* rayQueue,
-                                          EscapedRayQueue* escapedRayQueue,
-                                          HitAreaLightQueue* hitAreaLightQueue,
-                                          MaterialEvalQueue* basicEvalMaterialQueue,
-                                          MaterialEvalQueue* universalEvalMaterialQueue,
-                                          MediumSampleQueue* mediumSampleQueue,
-                                          RayQueue* nextRayQueue) const
+                                                 EscapedRayQueue* escapedRayQueue,
+                                                 HitAreaLightQueue* hitAreaLightQueue,
+                                                 MaterialEvalQueue* basicEvalMaterialQueue,
+                                                 MaterialEvalQueue* universalEvalMaterialQueue,
+                                                 MediumSampleQueue* mediumSampleQueue,
+                                                 RayQueue* nextRayQueue) const
     {
         if (rootTraversable)
         {
@@ -1891,7 +1890,7 @@ namespace spectra::optix
     };
 
     void SpectraOptiXAggregate::IntersectShadow(int maxRays, ShadowRayQueue* shadowRayQueue,
-                                         SOA<PixelSampleState>* pixelSampleState) const
+                                                SOA<PixelSampleState>* pixelSampleState) const
     {
         if (rootTraversable)
         {
@@ -1923,7 +1922,7 @@ namespace spectra::optix
     }
 
     void SpectraOptiXAggregate::IntersectShadowTr(int maxRays, ShadowRayQueue* shadowRayQueue,
-                                           SOA<PixelSampleState>* pixelSampleState) const
+                                                  SOA<PixelSampleState>* pixelSampleState) const
     {
         if (rootTraversable)
         {

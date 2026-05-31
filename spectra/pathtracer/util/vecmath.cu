@@ -40,5 +40,4 @@ namespace spectra
         Vector3f w = Rotate(Degrees(theta_r), wr)(a.w);
         return DirectionCone(w, std::cos(theta_o));
     }
-
 } // namespace spectra

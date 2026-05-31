@@ -12,7 +12,7 @@ namespace spectra
     // Bezier Inline Functions
     template <typename P>
     SPECTRA_CPU_GPU inline P BlossomCubicBezier(pstd::span<const P> p, Float u0, Float u1,
-                                             Float u2)
+                                                Float u2)
     {
         P a[3] = {Lerp(u0, p[0], p[1]), Lerp(u0, p[1], p[2]), Lerp(u0, p[2], p[3])};
         P b[2] = {Lerp(u1, a[0], a[1]), Lerp(u1, a[1], a[2])};
@@ -26,7 +26,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Point3f EvaluateCubicBezier(pstd::span<const Point3f> cp, Float u,
-                                                    Vector3f* deriv)
+                                                       Vector3f* deriv)
     {
         Point3f cp1[3] = {
             Lerp(u, cp[0], cp[1]), Lerp(u, cp[1], cp[2]),
@@ -75,7 +75,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Bounds3f BoundCubicBezier(pstd::span<const Point3f> cp, Float uMin,
-                                                  Float uMax)
+                                                     Float uMax)
     {
         if (uMin == 0 && uMax == 1)
             return BoundCubicBezier(cp);

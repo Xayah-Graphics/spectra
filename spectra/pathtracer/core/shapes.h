@@ -1643,7 +1643,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline pstd::optional<ShapeIntersection> Shape::Intersect(const Ray& ray,
-                                                                           Float tMax) const
+                                                                              Float tMax) const
     {
         auto intr = [&](auto ptr) { return ptr->Intersect(ray, tMax); };
         return Dispatch(intr);
@@ -1674,7 +1674,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline pstd::optional<ShapeSample> Shape::Sample(const ShapeSampleContext& ctx,
-                                                                  Point2f u) const
+                                                                     Point2f u) const
     {
         auto sample = [&](auto ptr) { return ptr->Sample(ctx, u); };
         return Dispatch(sample);

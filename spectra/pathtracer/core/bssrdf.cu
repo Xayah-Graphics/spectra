@@ -153,5 +153,4 @@ namespace spectra
           profileCDF(nRadiusSamples * nRhoSamples, alloc)
     {
     }
-
 } // namespace spectra

@@ -65,8 +65,6 @@ namespace spectra
     }
 
 
-
-
     const RGBColorSpace* ImageMetadata::GetColorSpace() const
     {
         if (colorSpace && *colorSpace)
@@ -1031,8 +1029,8 @@ namespace spectra
                 if (!desc)
                     // Still go for it with 3 channels.
                     spectra::diagnostics::PrintWarning("%s: image has 3 channels but they are not R, G, and B. Image may be "
-                            "garbled.",
-                            name);
+                                                       "garbled.",
+                                                       name);
                 else
                     // Reorder them as RGB.
                     outImage = outImage.SelectChannels(desc);
@@ -1058,8 +1056,8 @@ namespace spectra
                 if (!desc)
                 {
                     throw std::runtime_error(spectra::diagnostics::Format("%s: multi-channel image does not have R, G, and B. Unable to write to "
-                          "this format.",
-                          name));
+                                                                          "this format.",
+                                                                          name));
                     return false;
                 }
                 else
@@ -1084,7 +1082,7 @@ namespace spectra
         if (outImage.NChannels() != 1 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB)
         {
             spectra::diagnostics::PrintWarning("%s: converting pixel colors to sRGB to match output image format.",
-                    name);
+                                               name);
             SquareMatrix<3> m =
                 ConvertRGBColorSpace(*metadata.GetColorSpace(), *RGBColorSpace::sRGB);
             ImageChannelDesc rgbDesc = outImage.GetChannelDesc({"R", "G", "B"});
@@ -1235,10 +1233,10 @@ namespace spectra
                 if (!cs)
                 {
                     spectra::diagnostics::PrintWarning("Couldn't find supported color space that matches "
-                            "chromaticities: "
-                            "r (%f, %f) g (%f, %f) b (%f, %f), w (%f, %f). Using sRGB.",
-                            c.red.x, c.red.y, c.green.x, c.green.y, c.blue.x, c.blue.y,
-                            c.white.x, c.white.y);
+                                                       "chromaticities: "
+                                                       "r (%f, %f) g (%f, %f) b (%f, %f), w (%f, %f). Using sRGB.",
+                                                       c.red.x, c.red.y, c.green.x, c.green.y, c.blue.x, c.blue.y,
+                                                       c.white.x, c.white.y);
                     metadata.colorSpace = RGBColorSpace::sRGB;
                 }
                 else
@@ -1631,7 +1629,7 @@ namespace spectra
 
         if (nOutOfGamut > 0)
             spectra::diagnostics::PrintWarning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
-                    nOutOfGamut);
+                                               nOutOfGamut);
 
         if (error == 0)
         {
@@ -1700,7 +1698,7 @@ namespace spectra
             std::unique_ptr<uint8_t[]> rgba8 = QuantizePixelsToU256(&nOutOfGamut);
             if (nOutOfGamut > 0)
                 spectra::diagnostics::PrintWarning("%s: %d out of gamut pixel channels clamped to [0,1].", filename,
-                        nOutOfGamut);
+                                                   nOutOfGamut);
 
             qoiPixels = qoi_encode(rgba8.get(), &desc, &qoiSize);
         }
@@ -1806,7 +1804,7 @@ namespace spectra
             nChannels = 3;
         else
             throw std::runtime_error(spectra::diagnostics::Format("%s: unable to decode PFM file type \"%c%c\"", filename, buffer[0],
-                      buffer[1]));
+                                                                  buffer[1]));
 
         // read the rest of the header
         // read width

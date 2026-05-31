@@ -27,11 +27,11 @@ namespace spectra::optix
     {
     public:
         SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource,
-                       NamedTextures& textures,
-                       const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights,
-                       const std::map<std::string, Medium>& media,
-                       const std::map<std::string, Material>& namedMaterials,
-                       const std::vector<Material>& materials);
+                              NamedTextures& textures,
+                              const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights,
+                              const std::map<std::string, Medium>& media,
+                              const std::map<std::string, Material>& namedMaterials,
+                              const std::vector<Material>& materials);
         ~SpectraOptiXAggregate();
 
         Bounds3f Bounds() const { return bounds; }

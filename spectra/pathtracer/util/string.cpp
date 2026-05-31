@@ -252,7 +252,7 @@ namespace spectra
             utf8proc_map((const unsigned char*)str.data(), str.size(), &result, options);
         if (length < 0)
             throw std::runtime_error(spectra::diagnostics::Format("Unicode normalization error: %s: \"%s\"", utf8proc_errmsg(length),
-                      str));
+                                                                  str));
 
         str = std::string(result, result + length);
         free(result);

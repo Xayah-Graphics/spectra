@@ -110,7 +110,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Ray SpawnRayTo(Point3fi pFrom, Normal3f nFrom, Float time,
-                                       Point3fi pTo, Normal3f nTo)
+                                          Point3fi pTo, Normal3f nTo)
     {
         Point3f pf = OffsetRayOrigin(pFrom, nFrom, Point3f(pTo) - Point3f(pFrom));
         Point3f pt = OffsetRayOrigin(pTo, nTo, pf - Point3f(pTo));

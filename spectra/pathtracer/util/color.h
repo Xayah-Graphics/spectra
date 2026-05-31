@@ -146,8 +146,10 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         bool operator==(RGB s) const { return r == s.r && g == s.g && b == s.b; }
+
         SPECTRA_CPU_GPU
         bool operator!=(RGB s) const { return r != s.r || g != s.g || b != s.b; }
+
         SPECTRA_CPU_GPU
         Float operator[](int c) const
         {
@@ -345,8 +347,10 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         bool operator==(const XYZ& s) const { return X == s.X && Y == s.Y && Z == s.Z; }
+
         SPECTRA_CPU_GPU
         bool operator!=(const XYZ& s) const { return X != s.X || Y != s.Y || Z != s.Z; }
+
         SPECTRA_CPU_GPU
         Float operator[](int c) const
         {
@@ -467,7 +471,6 @@ namespace spectra
         static const RGBToSpectrumTable* Rec2020;
         static const RGBToSpectrumTable* ACES2065_1;
 
-
     private:
         // RGBToSpectrumTable Private Members
         const float* zNodes;
@@ -522,7 +525,6 @@ namespace spectra
             for (size_t i = 0; i < vin.size(); ++i)
                 vout[i] = uint8_t(Clamp(vin[i] * 255.f + 0.5f, 0, 255));
         }
-
     };
 
     class sRGBColorEncoding
@@ -535,7 +537,6 @@ namespace spectra
         Float ToFloatLinear(Float v) const;
         SPECTRA_CPU_GPU
         void FromLinear(pstd::span<const Float> vin, pstd::span<uint8_t> vout) const;
-
     };
 
     class GammaColorEncoding
@@ -550,7 +551,6 @@ namespace spectra
         Float ToFloatLinear(Float v) const;
         SPECTRA_CPU_GPU
         void FromLinear(pstd::span<const Float> vin, pstd::span<uint8_t> vout) const;
-
 
     private:
         Float gamma;

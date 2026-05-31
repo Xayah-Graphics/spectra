@@ -61,7 +61,6 @@ namespace spectra
 
         static const char* Name() { return "Henyey-Greenstein"; }
 
-
     private:
         // HGPhaseFunction Private Members
         Float g;
@@ -99,7 +98,6 @@ namespace spectra
             called = true;
             return seg;
         }
-
 
     private:
         RayMajorantSegment seg;
@@ -221,7 +219,6 @@ namespace spectra
             return seg;
         }
 
-
     private:
         // DDAMajorantIterator Private Members
         SampledSpectrum sigma_t;
@@ -274,7 +271,6 @@ namespace spectra
             SampledSpectrum sigma_s = sigma_s_spec.Sample(lambda);
             return HomogeneousMajorantIterator(0, tMax, sigma_a + sigma_s);
         }
-
 
     private:
         // HomogeneousMedium Private Data
@@ -732,7 +728,7 @@ namespace spectra
 
     template <typename F>
     SPECTRA_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG& rng,
-                                             const SampledWavelengths& lambda, F callback)
+                                                const SampledWavelengths& lambda, F callback)
     {
         auto sample = [&](auto medium)
         {
@@ -744,7 +740,7 @@ namespace spectra
 
     template <typename ConcreteMedium, typename F>
     SPECTRA_CPU_GPU SampledSpectrum SampleT_maj(Ray ray, Float tMax, Float u, RNG& rng,
-                                             const SampledWavelengths& lambda, F callback)
+                                                const SampledWavelengths& lambda, F callback)
     {
         // Normalize ray direction and update _tMax_ accordingly
         tMax *= Length(ray.d);

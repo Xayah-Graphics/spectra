@@ -193,7 +193,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         explicit operator Float() const { return sum; }
 
-
     private:
         Float sum = 0, c = 0;
     };
@@ -230,7 +229,7 @@ namespace spectra
 
     template <typename T>
     inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> FMA(T a, T b,
-                                                                                T c)
+                                                                                   T c)
     {
         return a * b + c;
     }
@@ -535,7 +534,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Float GaussianIntegral(Float x0, Float x1, Float mu = 0,
-                                               Float sigma = 1)
+                                                  Float sigma = 1)
     {
         DCHECK_GT(sigma, 0);
         Float sigmaRoot2 = sigma * Float(1.414213562373095);
@@ -736,7 +735,7 @@ namespace spectra
 
     template <typename Func>
     SPECTRA_CPU_GPU inline Float NewtonBisection(Float x0, Float x1, Func f, Float xEps = 1e-6f,
-                                              Float fEps = 1e-6f)
+                                                 Float fEps = 1e-6f)
     {
         // Check function endpoints for roots
         DCHECK_LT(x0, x1);
@@ -1255,7 +1254,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Interval DifferenceOfProducts(Interval a, Interval b, Interval c,
-                                                      Interval d)
+                                                         Interval d)
     {
         Float ab[4] = {
             a.LowerBound() * b.LowerBound(), a.UpperBound() * b.LowerBound(),
@@ -1288,7 +1287,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Interval SumOfProducts(Interval a, Interval b, Interval c,
-                                               Interval d)
+                                                  Interval d)
     {
         return DifferenceOfProducts(a, b, -c, d);
     }
@@ -1372,7 +1371,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline bool Quadratic(Interval a, Interval b, Interval c, Interval* t0,
-                                       Interval* t1)
+                                          Interval* t1)
     {
         // Find quadratic discriminant
         Interval discrim = DifferenceOfProducts(b, b, MulPow2(4, a), c);
@@ -1687,7 +1686,7 @@ namespace spectra
 
     template <>
     SPECTRA_CPU_GPU inline SquareMatrix<4> operator*(const SquareMatrix<4>& m1,
-                                                  const SquareMatrix<4>& m2)
+                                                     const SquareMatrix<4>& m2)
     {
         SquareMatrix<4> r;
         for (int i = 0; i < 4; ++i)
@@ -1699,7 +1698,7 @@ namespace spectra
 
     template <>
     SPECTRA_CPU_GPU inline SquareMatrix<3> operator*(const SquareMatrix<3>& m1,
-                                                  const SquareMatrix<3>& m2)
+                                                     const SquareMatrix<3>& m2)
     {
         SquareMatrix<3> r;
         for (int i = 0; i < 3; ++i)
@@ -1711,7 +1710,7 @@ namespace spectra
 
     template <int N>
     SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(const SquareMatrix<N>& m1,
-                                                  const SquareMatrix<N>& m2)
+                                                     const SquareMatrix<N>& m2)
     {
         SquareMatrix<N> r;
         for (int i = 0; i < N; ++i)
@@ -1734,7 +1733,7 @@ namespace spectra
 
     template <int N>
     SPECTRA_CPU_GPU SquareMatrix<N> operator*(const SquareMatrix<N>& m1,
-                                           const SquareMatrix<N>& m2);
+                                              const SquareMatrix<N>& m2);
 
     template <>
     SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<1>& m)

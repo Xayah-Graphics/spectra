@@ -232,7 +232,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         Bounds2f SampleBounds() const;
 
-
     protected:
         // FilmBase Protected Members
         Point2i fullResolution;
@@ -554,7 +553,6 @@ namespace spectra
         Array2D<Pixel> pixels;
         SquareMatrix<3> outputRGBFromSensorRGB;
     };
-
 } // namespace spectra
 
 #endif  // SPECTRA_PATHTRACER_CORE_FILM_H

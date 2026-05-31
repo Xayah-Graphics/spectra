@@ -153,12 +153,16 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         bool IsReflection() const { return IsReflective(flags); }
+
         SPECTRA_CPU_GPU
         bool IsTransmission() const { return IsTransmissive(flags); }
+
         SPECTRA_CPU_GPU
         bool IsDiffuse() const { return spectra::IsDiffuse(flags); }
+
         SPECTRA_CPU_GPU
         bool IsGlossy() const { return spectra::IsGlossy(flags); }
+
         SPECTRA_CPU_GPU
         bool IsSpecular() const { return spectra::IsSpecular(flags); }
 

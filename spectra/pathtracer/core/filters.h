@@ -252,7 +252,6 @@ namespace spectra
     private:
         Vector2f radius;
     };
-
 } // namespace spectra
 
 #endif  // SPECTRA_PATHTRACER_CORE_FILTERS_H

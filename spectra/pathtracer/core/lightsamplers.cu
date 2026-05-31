@@ -44,8 +44,6 @@ namespace spectra
     }
 
 
-
-
     LightSampler LightSampler::Create(const std::string& name, pstd::span<const Light> lights,
                                       Allocator alloc)
     {
@@ -60,7 +58,7 @@ namespace spectra
         else
         {
             throw std::runtime_error(spectra::diagnostics::Format(R"(Light sample distribution type "%s" unknown.)",
-                  name.c_str()));
+                                                                  name.c_str()));
         }
     }
 
@@ -239,7 +237,6 @@ namespace spectra
     }
 
 
-
     // ExhaustiveLightSampler Method Definitions
     ExhaustiveLightSampler::ExhaustiveLightSampler(pstd::span<const Light> lights,
                                                    Allocator alloc)
@@ -263,7 +260,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<SampledLight> ExhaustiveLightSampler::Sample(const LightSampleContext& ctx,
-                                                                             Float u) const
+                                                                                Float u) const
     {
         Float pInfinite = Float(infiniteLights.size()) /
             Float(infiniteLights.size() + (!lightBounds.empty() ? 1 : 0));
@@ -313,5 +310,4 @@ namespace spectra
         Float pdf = lightImportance / importanceSum * (1. - pInfinite);
         return pdf;
     }
-
 } // namespace spectra

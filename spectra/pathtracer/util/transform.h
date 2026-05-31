@@ -370,7 +370,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline RayDifferential Transform::operator()(const RayDifferential& r,
-                                                              Float* tMax) const
+                                                                 Float* tMax) const
     {
         Ray tr = (*this)(Ray(r), tMax);
         RayDifferential ret(tr.o, tr.d, tr.time, tr.medium);
@@ -460,7 +460,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline RayDifferential Transform::ApplyInverse(const RayDifferential& r,
-                                                                Float* tMax) const
+                                                                   Float* tMax) const
     {
         Ray tr = ApplyInverse(Ray(r), tMax);
         RayDifferential ret(tr.o, tr.d, tr.time, tr.medium);

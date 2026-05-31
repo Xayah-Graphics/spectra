@@ -530,8 +530,8 @@ namespace spectra
         {
             if (!IsPowerOf2(samplesPerPixel))
                 spectra::diagnostics::PrintWarning("Non power-of-two sample count %d will perform suboptimally with the "
-                        "SobolSampler.",
-                        samplesPerPixel);
+                                                   "SobolSampler.",
+                                                   samplesPerPixel);
             scale = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));
         }
 
@@ -740,7 +740,6 @@ namespace spectra
 
         std::string DumpState() const;
 
-
     protected:
         // MLTSampler Private Declarations
         struct PrimarySample
@@ -808,7 +807,6 @@ namespace spectra
         SPECTRA_CPU_GPU
         Point2f GetPixel2D() { return Get2D(); }
 
-
     private:
         DebugMLTSampler(int nSampleStreams) : MLTSampler(1, 0, 0.5, 0.5, nSampleStreams)
         {
@@ -820,7 +818,7 @@ namespace spectra
     // Sampler Inline Functions
     template <typename S>
     inline SPECTRA_CPU_GPU CameraSample GetCameraSample(S sampler, Point2i pPixel,
-                                                     Filter filter)
+                                                        Filter filter)
     {
         FilterSample fs = filter.Sample(sampler.GetPixel2D());
         CameraSample cs;

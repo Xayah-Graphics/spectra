@@ -25,5 +25,4 @@ namespace spectra
             return "RenderingCoordinateSystem::World";
         }
     }
-
 } // namespace spectra

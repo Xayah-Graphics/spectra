@@ -58,7 +58,6 @@ namespace spectra
             return permutations[digitIndex * base + digitValue];
         }
 
-
     private:
         // DigitPermutation Private Members
         int base, nDigits;
@@ -67,7 +66,7 @@ namespace spectra
 
     // Low Discrepancy Declarations
     inline SPECTRA_CPU_GPU uint64_t SobolIntervalToIndex(uint32_t log2Scale,
-                                                      uint64_t sampleIndex, Point2i p);
+                                                         uint64_t sampleIndex, Point2i p);
 
     SPECTRA_CPU_GPU inline Float BlueNoiseSample(Point2i p, int instance);
 
@@ -107,7 +106,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline uint64_t InverseRadicalInverse(uint64_t inverse, int base,
-                                                       int nDigits)
+                                                          int nDigits)
     {
         uint64_t index = 0;
         for (int i = 0; i < nDigits; ++i)
@@ -120,7 +119,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Float ScrambledRadicalInverse(int baseIndex, uint64_t a,
-                                                      const DigitPermutation& perm)
+                                                         const DigitPermutation& perm)
     {
         unsigned int base = Primes[baseIndex];
         // We have to stop once reversedDigits is >= limit since otherwise the
@@ -143,7 +142,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline Float OwenScrambledRadicalInverse(int baseIndex, uint64_t a,
-                                                          uint32_t hash)
+                                                             uint32_t hash)
     {
         unsigned int base = Primes[baseIndex];
         // We have to stop once reversedDigits is >= limit since otherwise the

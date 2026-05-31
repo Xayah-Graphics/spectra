@@ -50,12 +50,12 @@ namespace spectra
 
             char deviceString[512];
             std::snprintf(deviceString, sizeof(deviceString),
-                "CUDA device %d (%s) with %g MiB, %d SMs running at %g MHz "
-                "with shader model %d.%d",
-                i, deviceProperties.name,
-                static_cast<double>(deviceProperties.totalGlobalMem) / (1024. * 1024.),
-                deviceProperties.multiProcessorCount, static_cast<double>(clockRate) / 1000.,
-                deviceProperties.major, deviceProperties.minor);
+                          "CUDA device %d (%s) with %g MiB, %d SMs running at %g MHz "
+                          "with shader model %d.%d",
+                          i, deviceProperties.name,
+                          static_cast<double>(deviceProperties.totalGlobalMem) / (1024. * 1024.),
+                          deviceProperties.multiProcessorCount, static_cast<double>(clockRate) / 1000.,
+                          deviceProperties.major, deviceProperties.minor);
             devices += deviceString;
             devices += "\n";
         }
@@ -63,12 +63,12 @@ namespace spectra
 #ifdef SPECTRA_IS_WINDOWS
         if (nDevices > 1)
             throw std::runtime_error(spectra::diagnostics::Format("Found multiple GPUs.\n"
-                      "On Windows, this unfortunately causes a significant slowdown with "
-                      "pbrt.\n"
-                      "Please select a single GPU and use the --gpu-device command line "
-                      "option to specify it.\n"
-                      "Found devices:\n%s",
-                      devices));
+                                                                  "On Windows, this unfortunately causes a significant slowdown with "
+                                                                  "pbrt.\n"
+                                                                  "Please select a single GPU and use the --gpu-device command line "
+                                                                  "option to specify it.\n"
+                                                                  "Found devices:\n%s",
+                                                                  devices));
 #endif
 
         int device = Options->gpuDevice ? *Options->gpuDevice : 0;
@@ -82,7 +82,7 @@ namespace spectra
             device));
         if (!hasUnifiedAddressing)
             SPECTRA_FATAL("The selected GPU device (%d) does not support unified addressing.",
-                  device);
+                      device);
 
         CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
         size_t stackSize;

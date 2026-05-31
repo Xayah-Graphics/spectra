@@ -34,7 +34,6 @@ namespace spectra
         pstd::optional<Bounds2f> cropWindow;
         pstd::optional<Bounds2i> pixelBounds;
         Float displacementEdgeScale = 1;
-
     };
 
     // Options Global Variable Declaration

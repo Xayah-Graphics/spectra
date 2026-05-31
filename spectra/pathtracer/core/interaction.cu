@@ -15,11 +15,9 @@
 
 namespace spectra
 {
-
-
     // SurfaceInteraction Method Definitions
     SPECTRA_CPU_GPU void SurfaceInteraction::ComputeDifferentials(const RayDifferential& ray, Camera camera,
-                                                               int samplesPerPixel)
+                                                                  int samplesPerPixel)
     {
         if (GetOptions().disableTextureFiltering)
         {
@@ -83,8 +81,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU RayDifferential SurfaceInteraction::SpawnRay(const RayDifferential& rayi,
-                                                              const BSDF& bsdf, Vector3f wi, int flags,
-                                                              Float eta) const
+                                                                 const BSDF& bsdf, Vector3f wi, int flags,
+                                                                 Float eta) const
     {
         RayDifferential rd(SpawnRay(wi));
         if (rayi.hasDifferentials)
@@ -202,9 +200,8 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU SampledSpectrum SurfaceInteraction::Le(Vector3f w,
-                                                        const SampledWavelengths& lambda) const
+                                                           const SampledWavelengths& lambda) const
     {
         return areaLight ? areaLight.L(p(), n, uv, w, lambda) : SampledSpectrum(0.f);
     }
-
 } // namespace spectra

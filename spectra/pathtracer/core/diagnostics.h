@@ -1,7 +1,6 @@
 #ifndef SPECTRA_DIAGNOSTICS_H
 #define SPECTRA_DIAGNOSTICS_H
 
-#include <spectra/scene_location.h>
 #include <spectra/pathtracer/core/compiler.h>
 
 #include <cassert>
@@ -14,6 +13,32 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+namespace spectra
+{
+    struct FileLoc
+    {
+        FileLoc() = default;
+
+        FileLoc(std::string_view filename) : filename(filename)
+        {
+        }
+
+        std::string_view filename;
+        int line = 1;
+        int column = 0;
+    };
+
+    [[nodiscard]] inline std::string FormatFileLocation(const FileLoc& location)
+    {
+        std::string result(location.filename.data(), location.filename.size());
+        result += ":";
+        result += std::to_string(location.line);
+        result += ":";
+        result += std::to_string(location.column);
+        return result;
+    }
+} // namespace spectra
 
 namespace spectra::diagnostics
 {

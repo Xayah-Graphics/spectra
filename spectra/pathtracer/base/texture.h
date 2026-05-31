@@ -94,7 +94,7 @@ namespace spectra
 
 
         SPECTRA_CPU_GPU inline SampledSpectrum Evaluate(TextureEvalContext ctx,
-                                                     SampledWavelengths lambda) const;
+                                                        SampledWavelengths lambda) const;
     };
 } // namespace spectra
 

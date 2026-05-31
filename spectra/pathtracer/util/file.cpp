@@ -320,8 +320,8 @@ namespace spectra
             {
                 if (curNumberPos >= (int)sizeof(curNumber))
                     SPECTRA_FATAL("Overflowed buffer for parsing number in file: %s at "
-                          "line %d",
-                          filename, lineNumber);
+                              "line %d",
+                              filename, lineNumber);
                 // Note: this is not very robust, and would accept something
                 // like 0.0.0.0eeee-+--2 as a valid number.
                 if ((isdigit(c) != 0) || c == '.' || c == 'e' || c == 'E' || c == '-' ||
@@ -336,7 +336,7 @@ namespace spectra
                     Float v;
                     if (!Atof(curNumber, &v))
                         throw std::runtime_error(spectra::diagnostics::Format("%s: unable to parse float value \"%s\"", filename,
-                                  curNumber));
+                                                                              curNumber));
                     values.push_back(v);
                     inNumber = false;
                     curNumberPos = 0;
@@ -357,7 +357,7 @@ namespace spectra
                 else if (isspace(c) == 0)
                 {
                     throw std::runtime_error(spectra::diagnostics::Format("%s: unexpected character \"%c\" found at line %d.", filename, c,
-                          lineNumber));
+                                                                          lineNumber));
                     return {};
                 }
             }

@@ -40,7 +40,6 @@ namespace spectra
         SPECTRA_CPU_GPU Float Integral() const;
 
         SPECTRA_CPU_GPU FilterSample Sample(Point2f u) const;
-
     };
 } // namespace spectra
 

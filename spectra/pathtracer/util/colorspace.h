@@ -55,6 +55,7 @@ namespace spectra
 
         SPECTRA_CPU_GPU
         RGB ToRGB(XYZ xyz) const { return Mul<RGB>(RGBFromXYZ, xyz); }
+
         SPECTRA_CPU_GPU
         XYZ ToXYZ(RGB rgb) const { return Mul<XYZ>(XYZFromRGB, rgb); }
 

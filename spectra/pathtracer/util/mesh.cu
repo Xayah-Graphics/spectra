@@ -257,8 +257,8 @@ namespace spectra
         if (length != 3 && length != 4)
         {
             spectra::diagnostics::PrintWarning("plymesh: Ignoring face with %i vertices (only triangles and quads "
-                    "are supported!)",
-                    (int)length);
+                                               "are supported!)",
+                                               (int)length);
             return 1;
         }
         else if (value_index < 0)
@@ -394,13 +394,13 @@ namespace spectra
         for (int idx : mesh.triIndices)
             if (idx < 0 || idx >= mesh.p.size())
                 throw std::runtime_error(spectra::diagnostics::Format("plymesh: Vertex index %i is out of bounds! "
-                          "Valid range is [0..%i)",
-                          idx, int(mesh.p.size())));
+                                                                      "Valid range is [0..%i)",
+                                                                      idx, int(mesh.p.size())));
         for (int idx : mesh.quadIndices)
             if (idx < 0 || idx >= mesh.p.size())
                 throw std::runtime_error(spectra::diagnostics::Format("plymesh: Vertex index %i is out of bounds! "
-                          "Valid range is [0..%i)",
-                          idx, int(mesh.p.size())));
+                                                                      "Valid range is [0..%i)",
+                                                                      idx, int(mesh.p.size())));
 
         return mesh;
     }
@@ -453,5 +453,4 @@ namespace spectra
             if (LengthSquared(n[i]) > 0)
                 n[i] = Normalize(n[i]);
     }
-
 } // namespace spectra

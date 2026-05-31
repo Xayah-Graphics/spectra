@@ -337,7 +337,6 @@ namespace spectra
             return pstd::span<const T>(values, static_cast<size_t>(size()));
         }
 
-
     private:
         // Array2D Private Members
         Bounds2i extent;
@@ -538,6 +537,7 @@ namespace spectra
             nAlloc = n;
             ptr = ra;
         }
+
         SPECTRA_CPU_GPU
         reference operator[](size_type index)
         {
@@ -934,7 +934,6 @@ namespace spectra
         {
             return MaxValue(bounds, [](T value) { return value; });
         }
-
 
     private:
         // SampledGrid Private Members

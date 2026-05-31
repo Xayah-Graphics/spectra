@@ -21,12 +21,6 @@
 
 namespace spectra
 {
-
-
-
-
-
-
     // HenyeyGreenstein Method Definitions
 
     struct MeasuredSS
@@ -128,9 +122,9 @@ namespace spectra
                 (typename std::remove_reference_t<decltype(*medium)>::MajorantIterator*)
                 buf.Alloc(
                     sizeof(typename std::remove_reference_t<decltype(*medium)>::
-                           MajorantIterator),
+                        MajorantIterator),
                     alignof(typename std::remove_reference_t<decltype(*medium)>::
-                            MajorantIterator));
+                        MajorantIterator));
             *iter = medium->SampleRay(ray, tMax, lambda);
             return RayMajorantIterator(iter);
         };
@@ -230,16 +224,16 @@ namespace spectra
         if (!temperature.empty())
             if (nDensity != temperature.size())
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                          "Different number of samples (%d vs %d) provided for "
-                          "\"density\" and \"temperature\".",
-                          nDensity, temperature.size()));
+                                                                      "Different number of samples (%d vs %d) provided for "
+                                                                      "\"density\" and \"temperature\".",
+                                                                      nDensity, temperature.size()));
 
         int nx = parameters.GetOneInt("nx", 1);
         int ny = parameters.GetOneInt("ny", 1);
         int nz = parameters.GetOneInt("nz", 1);
         if (nDensity != nx * ny * nz)
             throw std::runtime_error(spectra::diagnostics::Format(loc, "Grid medium has %d density values; expected nx*ny*nz = %d",
-                      nDensity, nx * ny * nz));
+                                                                  nDensity, nx * ny * nz));
 
         // Create Density Grid
         SampledGrid<Float> densityGrid = SampledGrid<Float>(density, nx, ny, nz, alloc);
@@ -269,8 +263,8 @@ namespace spectra
         {
             if (LeScale.size() != nx * ny * nz)
                 throw std::runtime_error(spectra::diagnostics::Format("Expected %d x %d %d = %d values for \"Lescale\" but were "
-                          "given %d.",
-                          nx, ny, nz, nx * ny * nz, LeScale.size()));
+                                                                      "given %d.",
+                                                                      nx, ny, nz, nx * ny * nz, LeScale.size()));
             for (int i = 0; i < nx * ny * nz; ++i)
                 LeScale[i] *= LeNorm;
             LeGrid = SampledGrid<Float>(LeScale, nx, ny, nz, alloc);
@@ -349,7 +343,7 @@ namespace spectra
 
         if (sigma_a.empty() && sigma_s.empty())
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "RGB grid requires \"sigma_a\" and/or \"sigma_s\" parameter values."));
+                                                                  "RGB grid requires \"sigma_a\" and/or \"sigma_s\" parameter values."));
 
         size_t nDensity;
         if (!sigma_a.empty())
@@ -357,9 +351,9 @@ namespace spectra
             nDensity = sigma_a.size();
             if (!sigma_s.empty() && nDensity != sigma_s.size())
                 throw std::runtime_error(spectra::diagnostics::Format(loc,
-                          "Different number of samples (%d vs %d) provided for \"sigma_a\" "
-                          "and \"sigma_s\".",
-                          nDensity, sigma_s.size()));
+                                                                      "Different number of samples (%d vs %d) provided for \"sigma_a\" "
+                                                                      "and \"sigma_s\".",
+                                                                      nDensity, sigma_s.size()));
         }
         else
             nDensity = sigma_s.size();
@@ -369,14 +363,14 @@ namespace spectra
 
         if (!Le.empty() && nDensity != Le.size())
             throw std::runtime_error(spectra::diagnostics::Format("Expected %d values for \"Le\" parameter but were given %d.", nDensity,
-                      Le.size()));
+                                                                  Le.size()));
 
         int nx = parameters.GetOneInt("nx", 1);
         int ny = parameters.GetOneInt("ny", 1);
         int nz = parameters.GetOneInt("nz", 1);
         if (nDensity != nx * ny * nz)
             throw std::runtime_error(spectra::diagnostics::Format(loc, "RGB grid medium has %d density values; expected nx*ny*nz = %d",
-                      nDensity, nx * ny * nz));
+                                                                  nDensity, nx * ny * nz));
 
         pstd::optional<SampledGrid<RGBUnboundedSpectrum>> sigma_aGrid, sigma_sGrid;
         pstd::optional<SampledGrid<RGBIlluminantSpectrum>> LeGrid;
@@ -469,7 +463,6 @@ namespace spectra
         {
             if (!grid.gridMetaData()->isFogVolume() && !grid.gridMetaData()->isUnknown())
                 throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: \"%s\" isn't a FogVolume grid?", filename, gridName));
-
         }
 
         return grid;

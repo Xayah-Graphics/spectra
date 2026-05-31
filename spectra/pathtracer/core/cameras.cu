@@ -113,7 +113,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU SampledSpectrum Camera::We(const Ray& ray, SampledWavelengths& lambda,
-                                            Point2f* pRaster2) const
+                                               Point2f* pRaster2) const
     {
         auto we = [&](auto ptr) { return ptr->We(ray, lambda, pRaster2); };
         return Dispatch(we);
@@ -126,7 +126,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<CameraWiSample> Camera::SampleWi(const Interaction& ref, Point2f u,
-                                                                 SampledWavelengths& lambda) const
+                                                                    SampledWavelengths& lambda) const
     {
         auto sample = [&](auto ptr) { return ptr->SampleWi(ref, u, lambda); };
         return Dispatch(sample);
@@ -241,14 +241,12 @@ namespace spectra
             if (Length(dyf - df) < Length(minDirDifferentialY))
                 minDirDifferentialY = dyf - df;
         }
-
     }
 
     void CameraBase::InitMetadata(ImageMetadata* metadata) const
     {
         metadata->cameraFromWorld = cameraTransform.CameraFromWorld(shutterOpen).GetMatrix();
     }
-
 
 
     // ProjectiveCamera Method Definitions
@@ -304,7 +302,7 @@ namespace spectra
         if (shutterClose < shutterOpen)
         {
             spectra::diagnostics::PrintWarning(loc, "Shutter close time %f < shutter open %f.  Swapping them.",
-                    shutterClose, shutterOpen);
+                                               shutterClose, shutterOpen);
             pstd::swap(shutterClose, shutterOpen);
         }
     }
@@ -568,7 +566,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU SampledSpectrum PerspectiveCamera::We(const Ray& ray, SampledWavelengths& lambda,
-                                                       Point2f* pRasterOut) const
+                                                          Point2f* pRasterOut) const
     {
         // Check if ray is forward-facing with respect to the camera
         Float cosTheta = Dot(ray.d, RenderFromCamera(Vector3f(0, 0, 1), ray.time));
@@ -653,7 +651,7 @@ namespace spectra
 
     // SphericalCamera Method Definitions
     SPECTRA_CPU_GPU pstd::optional<CameraRay> SphericalCamera::GenerateRay(CameraSample sample,
-                                                                        SampledWavelengths& lambda) const
+                                                                           SampledWavelengths& lambda) const
     {
         // Compute spherical camera ray direction
         Point2f uv(sample.pFilm.x / film.FullResolution().x,
@@ -731,9 +729,9 @@ namespace spectra
             mapping = EquiRectangular;
         else
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                      "%s: unknown mapping for spherical camera. (Must be "
-                      "\"equalarea\" or \"equirectangular\".)",
-                      m));
+                                                                  "%s: unknown mapping for spherical camera. (Must be "
+                                                                  "\"equalarea\" or \"equirectangular\".)",
+                                                                  m));
 
         return alloc.new_object<SphericalCamera>(cameraBaseParameters, mapping);
     }
@@ -771,8 +769,8 @@ namespace spectra
                 setApertureDiameter /= 1000;
                 if (setApertureDiameter > apertureDiameter)
                     spectra::diagnostics::PrintWarning("Aperture diameter %f is greater than maximum possible %f. "
-                            "Clamping it.",
-                            setApertureDiameter, apertureDiameter);
+                                                       "Clamping it.",
+                                                       setApertureDiameter, apertureDiameter);
                 else
                     apertureDiameter = setApertureDiameter;
             }
@@ -910,8 +908,8 @@ namespace spectra
         Float c = (pz[1] - z - pz[0]) * (pz[1] - z - 4 * f - pz[0]);
         if (c <= 0)
             throw std::runtime_error(spectra::diagnostics::Format("Coefficient must be positive. It looks focusDistance %f "
-                      " is too short for a given lenses configuration",
-                      focusDistance));
+                                                                  " is too short for a given lenses configuration",
+                                                                  focusDistance));
         Float delta = (pz[1] - z + pz[0] - std::sqrt(c)) / 2;
 
         return elementInterfaces.back().thickness + delta;
@@ -956,7 +954,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<ExitPupilSample> RealisticCamera::SampleExitPupil(Point2f pFilm,
-                                                                                  Point2f uLens) const
+                                                                                     Point2f uLens) const
     {
         // Find exit pupil bound for sample distance from film center
         Float rFilm = std::sqrt(Sqr(pFilm.x) + Sqr(pFilm.y));
@@ -979,7 +977,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU pstd::optional<CameraRay> RealisticCamera::GenerateRay(CameraSample sample,
-                                                                        SampledWavelengths& lambda) const
+                                                                           SampledWavelengths& lambda) const
     {
         // Find point on film, _pFilm_, corresponding to _sample.pFilm_
         Point2f s(sample.pFilm.x / film.FullResolution().x,
@@ -1412,9 +1410,9 @@ namespace spectra
         if (lensParameters.size() % 4 != 0)
         {
             throw std::runtime_error(spectra::diagnostics::Format(loc,
-                  "%s: excess values in lens specification file; "
-                  "must be multiple-of-four values, read %d.",
-                  lensFile, (int)lensParameters.size()));
+                                                                  "%s: excess values in lens specification file; "
+                                                                  "must be multiple-of-four values, read %d.",
+                                                                  lensFile, (int)lensParameters.size()));
             return nullptr;
         }
 
@@ -1516,8 +1514,8 @@ namespace spectra
                     ImageChannelDesc rgbDesc = apertureImage.GetChannelDesc({"R", "G", "B"});
                     if (!rgbDesc)
                         throw std::runtime_error(spectra::diagnostics::Format("%s: didn't find R, G, B channels to average for "
-                                  "aperture image.",
-                                  apertureName));
+                                                                              "aperture image.",
+                                                                              apertureName));
 
                     Image mono(PixelFormat::Float, apertureImage.Resolution(), {"Y"}, nullptr,
                                alloc);

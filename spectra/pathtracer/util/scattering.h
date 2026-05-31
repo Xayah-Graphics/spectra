@@ -17,7 +17,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline bool Refract(Vector3f wi, Normal3f n, Float eta, Float* etap,
-                                     Vector3f* wt)
+                                        Vector3f* wt)
     {
         Float cosTheta_i = Dot(n, wi);
         // Potentially flip interface orientation for Snell's law
@@ -95,7 +95,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU inline SampledSpectrum FrComplex(Float cosTheta_i, SampledSpectrum eta,
-                                                  SampledSpectrum k)
+                                                     SampledSpectrum k)
     {
         SampledSpectrum result;
         for (int i = 0; i < NSpectrumSamples; ++i)

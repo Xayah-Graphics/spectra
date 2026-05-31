@@ -47,7 +47,7 @@ namespace spectra
 
         template <typename BxDF>
         SPECTRA_CPU_GPU SampledSpectrum f(Vector3f woRender, Vector3f wiRender,
-                                       TransportMode mode = TransportMode::Radiance) const
+                                          TransportMode mode = TransportMode::Radiance) const
         {
             Vector3f wi = RenderToLocal(wiRender), wo = RenderToLocal(woRender);
             if (wo.z == 0)

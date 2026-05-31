@@ -226,13 +226,6 @@ namespace spectra::scene
     };
 
 
-
-
-
-
-
-
-
     // MaxTransforms Definition
     constexpr int MaxTransforms = 2;
 
@@ -641,7 +634,6 @@ namespace spectra::scene
         std::unique_ptr<SceneBuilder> CopyForImport();
         void MergeImported(std::unique_ptr<SceneBuilder> imported);
         void MergeImported(SceneBuilder*);
-
 
     private:
         // SceneBuilder::GraphicsState Definition
