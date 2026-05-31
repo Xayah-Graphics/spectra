@@ -19,15 +19,15 @@ namespace xayah {
         SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept = delete;
 
         [[nodiscard]] std::string_view name() const override;
-        void attach(SpectraContext& context) override;
-        void detach(SpectraContext& context) noexcept override;
-        void before_imgui_shutdown(SpectraContext& context) noexcept override;
-        void after_imgui_created(SpectraContext& context) override;
-        void begin_frame(SpectraFrameContext& context) override;
-        void record_frame(SpectraRecordContext& context) override;
+        void attach(Spectra& spectra) override;
+        void detach(Spectra& spectra) noexcept override;
+        void before_imgui_shutdown(Spectra& spectra) noexcept override;
+        void after_imgui_created(Spectra& spectra) override;
+        [[nodiscard]] SpectraFrameResult begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) override;
+        void record_frame(const vk::raii::CommandBuffer& command_buffer) override;
 
     private:
-        void register_panels(SpectraContext& context);
+        void register_panels(Spectra& spectra);
 
         xayah::pathtracer::InteractiveSession session;
     };

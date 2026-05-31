@@ -37,38 +37,39 @@ namespace xayah {
         return "Spectra Pathtracer";
     }
 
-    void SpectraPathtracer::attach(xayah::SpectraContext& context) {
-        this->session.attach(xayah::pathtracer::HostContext{&context.physical_device(), &context.device(), context.frame_count(), context.swapchain_extent()});
-        this->register_panels(context);
-        context.set_window_detail(this->session.window_detail());
+    void SpectraPathtracer::attach(xayah::Spectra& spectra) {
+        this->session.attach(xayah::pathtracer::HostContext{&spectra.physical_device(), &spectra.device(), spectra.frame_count(), spectra.swapchain_extent()});
+        this->register_panels(spectra);
+        spectra.set_window_detail(this->session.window_detail());
     }
 
-    void SpectraPathtracer::detach(xayah::SpectraContext&) noexcept {
+    void SpectraPathtracer::detach(xayah::Spectra&) noexcept {
         this->session.detach();
     }
 
-    void SpectraPathtracer::before_imgui_shutdown(xayah::SpectraContext&) noexcept {
+    void SpectraPathtracer::before_imgui_shutdown(xayah::Spectra&) noexcept {
         this->session.before_imgui_shutdown();
     }
 
-    void SpectraPathtracer::after_imgui_created(xayah::SpectraContext&) {
+    void SpectraPathtracer::after_imgui_created(xayah::Spectra&) {
         this->session.after_imgui_created();
     }
 
-    void SpectraPathtracer::begin_frame(xayah::SpectraFrameContext& context) {
-        const xayah::SpectraContext app = context.app();
-        this->session.update_host(xayah::pathtracer::HostContext{&app.physical_device(), &app.device(), app.frame_count(), app.swapchain_extent()});
-        const xayah::pathtracer::FrameOutput output = this->session.begin_frame(xayah::pathtracer::FrameInput{context.frame_index(), context.image_index()});
-        if (output.completion_semaphore.has_value()) context.request_external_completion(*output.completion_semaphore);
-        if (output.close_requested) context.request_close();
-        context.set_window_detail(this->session.window_detail());
+    xayah::SpectraFrameResult SpectraPathtracer::begin_frame(xayah::Spectra& spectra, const xayah::SpectraFrameInfo& frame) {
+        this->session.update_host(xayah::pathtracer::HostContext{&spectra.physical_device(), &spectra.device(), spectra.frame_count(), spectra.swapchain_extent()});
+        const xayah::pathtracer::FrameOutput output = this->session.begin_frame(xayah::pathtracer::FrameInput{frame.frame_index, frame.image_index});
+        xayah::SpectraFrameResult result{};
+        result.completion_semaphore = output.completion_semaphore;
+        result.close_requested = output.close_requested;
+        result.window_detail = this->session.window_detail();
+        return result;
     }
 
-    void SpectraPathtracer::record_frame(xayah::SpectraRecordContext& context) {
-        this->session.record_frame(context.command_buffer());
+    void SpectraPathtracer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+        this->session.record_frame(command_buffer);
     }
 
-    void SpectraPathtracer::register_panels(xayah::SpectraContext& context) {
+    void SpectraPathtracer::register_panels(xayah::Spectra& spectra) {
         constexpr std::array panels{
             PanelDefinition{
                 "pathtracer.viewport",
@@ -199,7 +200,7 @@ namespace xayah {
             panel.show_in_toolbar     = definition.show_in_toolbar;
             panel.zero_window_padding = definition.zero_window_padding;
             panel.draw                = [this, draw = definition.draw] { (this->session.*draw)(); };
-            context.register_panel(std::move(panel));
+            spectra.register_panel(std::move(panel));
         }
     }
 } // namespace xayah
