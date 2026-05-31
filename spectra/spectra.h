@@ -1,19 +1,23 @@
-module;
+#ifndef XAYAH_SPECTRA_SPECTRA_H
+#define XAYAH_SPECTRA_SPECTRA_H
+
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #endif
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+
 #include <imgui.h>
 #include <vulkan/vulkan_raii.hpp>
 
-export module spectra;
-import std;
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
 
-export namespace xayah {
+namespace xayah {
     class Spectra;
     class SpectraContext;
     class SpectraFrameContext;
@@ -140,13 +144,13 @@ export namespace xayah {
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
 
-        void register_plugin(std::unique_ptr<SpectraPlugin> plugin);
-        void run();
-
         Spectra(const Spectra& other)                = delete;
         Spectra(Spectra&& other) noexcept            = delete;
         Spectra& operator=(const Spectra& other)     = delete;
         Spectra& operator=(Spectra&& other) noexcept = delete;
+
+        void register_plugin(std::unique_ptr<SpectraPlugin> plugin);
+        void run();
 
     private:
         friend class SpectraContext;
@@ -155,19 +159,22 @@ export namespace xayah {
         friend class SpectraRecordContext;
 
         void create_imgui();
-        void destroy_imgui() noexcept;
         void notify_plugins_before_imgui_shutdown() noexcept;
         void notify_plugins_after_imgui_created();
+        void destroy_imgui() noexcept;
         void detach_plugins_noexcept() noexcept;
+
         void render_loop();
         bool begin_frame(SpectraFrameState& frame);
         void record_frame(SpectraFrameState& frame);
         void end_frame(SpectraFrameState& frame);
+
         void draw_main_menu();
         void draw_menu_toolbar();
         void draw_dockspace();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
+
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
@@ -175,3 +182,5 @@ export namespace xayah {
         std::unique_ptr<SpectraState> state{};
     };
 } // namespace xayah
+
+#endif

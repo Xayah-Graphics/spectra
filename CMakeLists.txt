@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 4.3.0)
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 project(spectra VERSION 1.0.0 LANGUAGES C CXX CUDA)
 
 
@@ -9,8 +8,6 @@ project(spectra VERSION 1.0.0 LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API ON)
-set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
 
 # ============================================================================
@@ -440,15 +437,17 @@ add_library(spectra_core)
 target_sources(
         spectra_core
         PRIVATE
-        modules/spectra_pathtracer/backend.h
-        modules/spectra_pathtracer/backend.cpp
-        modules/spectra_pathtracer/camera.h
-        modules/spectra_pathtracer/camera.cpp
-        modules/spectra_pathtracer/session.h
-        modules/spectra_pathtracer/session.cpp
-        modules/spectra_pathtracer/panels.cpp
-        modules/spectra_pathtracer/plugin.cpp
-        modules/spectra.cpp
+        spectra/pathtracer/pathtracer.h
+        spectra/pathtracer/pathtracer.cpp
+        spectra/pathtracer/render_backend.h
+        spectra/pathtracer/render_backend.cpp
+        spectra/pathtracer/camera_controller.h
+        spectra/pathtracer/camera_controller.cpp
+        spectra/pathtracer/session.h
+        spectra/pathtracer/session.cpp
+        spectra/pathtracer/panels.cpp
+        spectra/spectra.h
+        spectra/spectra.cpp
 
         vendor/imgui/imgui.cpp
         vendor/imgui/imgui_draw.cpp
@@ -456,21 +455,17 @@ target_sources(
         vendor/imgui/imgui_widgets.cpp
         vendor/imgui/backends/imgui_impl_glfw.cpp
         vendor/imgui/backends/imgui_impl_vulkan.cpp
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        modules/spectra.ixx
-        modules/spectra_pathtracer.ixx
 )
-target_link_libraries(spectra_core PRIVATE Vulkan::Vulkan glfw CUDA::cudart spectra::gpu_lib)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw CUDA::cudart spectra::gpu_lib)
 target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(
         spectra_core
         PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
 )
-set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
 
 # ============================================================================
@@ -478,4 +473,3 @@ set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 # ============================================================================
 add_executable(spectra main.cpp)
 target_link_libraries(spectra PRIVATE spectra_core spectra::gpu_lib)
-set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)

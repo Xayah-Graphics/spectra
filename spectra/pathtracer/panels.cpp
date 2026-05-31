@@ -87,7 +87,7 @@ namespace {
 
 } // namespace
 
-namespace xayah::spectra_pathtracer {
+namespace xayah::pathtracer {
     void InteractiveSession::draw_viewport_window() {
         const ImVec2 viewport_position = ImGui::GetCursorScreenPos();
         const ImVec2 viewport_size     = ImGui::GetContentRegionAvail();
@@ -156,7 +156,6 @@ namespace xayah::spectra_pathtracer {
     }
 
     void InteractiveSession::draw_scene_browser_window() {
-
         if (this->state->spectra_scene == nullptr) {
             ImGui::TextDisabled("No active Spectra scene");
             return;
@@ -187,9 +186,7 @@ namespace xayah::spectra_pathtracer {
             ImGui::EndTable();
         }
 
-        if (!ImGui::BeginTabBar("SpectraSceneBrowserTabs")) {
-            return;
-        }
+        if (!ImGui::BeginTabBar("SpectraSceneBrowserTabs")) return;
 
         constexpr ImGuiTableFlags render_settings_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable;
         constexpr ImGuiTableFlags detail_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable;
@@ -420,12 +417,58 @@ namespace xayah::spectra_pathtracer {
             ImGui::EndTabItem();
         }
 
-
         ImGui::EndTabBar();
     }
 
-    void InteractiveSession::draw_inspector_window() {
+    void InteractiveSession::draw_settings_window() {
+        const PathtracerStatus pathtracer_status = this->pathtracer_status();
+        if (this->state->gpu_pathtracer == nullptr) {
+            ImGui::TextDisabled("No active Spectra pathtracer session");
+            return;
+        }
 
+        if (ImGui::BeginTable("SpectraPathTracerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("State", pathtracer_status.state);
+            draw_statistics_row("External Completion", pathtracer_status.uses_external_completion ? "Yes" : "No");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Spectra Pathtracer Sampler SPP");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(positive_int_text(this->state->spectra_scene->sampler_sample_count).c_str());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Current Sample");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%d / %d", this->state->gpu_pathtracer->current_sample(), this->state->gpu_pathtracer->target_sample_count());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Max Iterations");
+            ImGui::TableSetColumnIndex(1);
+            const int previous_target_sample_count = this->state->gpu_pathtracer->target_sample_count();
+            int target_sample_count                = previous_target_sample_count;
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->state->spectra_scene->sampler_sample_count)) {
+                this->state->gpu_pathtracer->set_target_sample_count(target_sample_count);
+                if (target_sample_count != previous_target_sample_count) this->clear_pathtracer_throughput_statistics();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Accumulation");
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::Button("Reset Accumulation")) this->request_pathtracer_accumulation_reset();
+
+            ImGui::EndTable();
+        }
+    }
+
+    void InteractiveSession::draw_inspector_window() {
         if (this->state->spectra_scene == nullptr) {
             ImGui::TextDisabled("No active Spectra scene");
             return;
@@ -433,7 +476,7 @@ namespace xayah::spectra_pathtracer {
 
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
-        const std::string viewport_resolution       = this->state->ui.viewport_known ? resolution_text(this->state->ui.viewport_framebuffer_size) : "Unknown";
+        const std::string viewport_resolution = this->state->ui.viewport_known ? resolution_text(this->state->ui.viewport_framebuffer_size) : "Unknown";
 
         ImGui::SeparatorText("Path Tracer");
         if (ImGui::BeginTable("SpectraInspectorPathTracerState", 2, table_flags)) {
@@ -487,60 +530,9 @@ namespace xayah::spectra_pathtracer {
                 ImGui::EndTable();
             }
         }
-
-    }
-
-    void InteractiveSession::draw_settings_window() {
-
-        const PathtracerStatus pathtracer_status = this->pathtracer_status();
-        if (this->state->gpu_pathtracer == nullptr) {
-            ImGui::TextDisabled("No active Spectra pathtracer session");
-            return;
-        }
-
-        if (ImGui::BeginTable("SpectraPathTracerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("State", pathtracer_status.state);
-            draw_statistics_row("External Completion", pathtracer_status.uses_external_completion ? "Yes" : "No");
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Spectra Pathtracer Sampler SPP");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(positive_int_text(this->state->spectra_scene->sampler_sample_count).c_str());
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Current Sample");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%d / %d", this->state->gpu_pathtracer->current_sample(), this->state->gpu_pathtracer->target_sample_count());
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Max Iterations");
-            ImGui::TableSetColumnIndex(1);
-            const int previous_target_sample_count = this->state->gpu_pathtracer->target_sample_count();
-            int target_sample_count                = previous_target_sample_count;
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::SliderInt("##MaxIterations", &target_sample_count, 1, this->state->spectra_scene->sampler_sample_count)) {
-                this->state->gpu_pathtracer->set_target_sample_count(target_sample_count);
-                if (target_sample_count != previous_target_sample_count) this->clear_pathtracer_throughput_statistics();
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Accumulation");
-            ImGui::TableSetColumnIndex(1);
-            if (ImGui::Button("Reset Accumulation")) this->request_pathtracer_accumulation_reset();
-
-            ImGui::EndTable();
-        }
     }
 
     void InteractiveSession::draw_environment_window() {
-
         if (this->state->spectra_scene == nullptr) {
             ImGui::TextDisabled("No active Spectra pathtracer scene");
             return;
@@ -635,7 +627,6 @@ namespace xayah::spectra_pathtracer {
             }
             ImGui::EndTable();
         }
-
     }
 
     void InteractiveSession::draw_tonemapper_window() {
@@ -741,7 +732,6 @@ namespace xayah::spectra_pathtracer {
             draw_statistics_row("Current Frame Work", this->state->statistics.last_frame_rendered_sample ? "Rendered sample" : "No Spectra pathtracer sample");
             ImGui::EndTable();
         }
-
     }
 
-} // namespace xayah::spectra_pathtracer
+} // namespace xayah::pathtracer

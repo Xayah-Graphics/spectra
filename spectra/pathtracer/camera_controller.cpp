@@ -1,4 +1,5 @@
-#include "camera.h"
+#include "camera_controller.h"
+#include "render_backend.h"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +9,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace xayah::spectra_pathtracer {
+namespace {
     void validate_finite_point(const spectra::Point3f& point, const char* message) {
         if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) throw std::runtime_error(message);
     }
@@ -40,31 +41,31 @@ namespace xayah::spectra_pathtracer {
         return vector / length;
     }
 
-    [[nodiscard]] spectra::Vector3f camera_effective_up(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
+    [[nodiscard]] spectra::Vector3f interactive_camera_effective_up(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
         const spectra::Vector3f view_direction = center - eye;
         if (finite_length(spectra::Cross(view_direction, up), "Camera view/up cross product is invalid") > 1.0e-10f) return up;
         return std::abs(up.y) < 0.9f ? spectra::Vector3f{0.0f, 1.0f, 0.0f} : spectra::Vector3f{1.0f, 0.0f, 0.0f};
     }
 
-    struct CameraFrame {
+    struct InteractiveCameraFrame {
         spectra::Vector3f forward{};
         spectra::Vector3f right{};
         spectra::Vector3f up{};
     };
 
-    [[nodiscard]] CameraFrame camera_frame_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
+    [[nodiscard]] InteractiveCameraFrame interactive_camera_frame_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
         if (basis_handedness != -1.0f && basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
-        CameraFrame frame{};
+        InteractiveCameraFrame frame{};
         frame.forward = normalized_vector(center - eye, "Camera eye and center must not overlap");
-        const spectra::Vector3f effective_up = camera_effective_up(eye, center, up);
+        const spectra::Vector3f effective_up = interactive_camera_effective_up(eye, center, up);
         const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(effective_up, frame.forward), "Camera right vector is invalid");
         frame.right                         = positive_right * basis_handedness;
         frame.up                            = spectra::Cross(frame.forward, positive_right);
         return frame;
     }
 
-    [[nodiscard]] spectra::Transform camera_from_world_transform_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
-        const CameraFrame frame = camera_frame_from_pose(eye, center, up, basis_handedness);
+    [[nodiscard]] spectra::Transform camera_from_world_transform_from_interactive_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
+        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(eye, center, up, basis_handedness);
         const spectra::Vector3f eye_vector{eye.x, eye.y, eye.z};
         spectra::Transform transform{spectra::SquareMatrix<4>{
             frame.right.x, frame.right.y, frame.right.z, -spectra::Dot(frame.right, eye_vector),
@@ -84,7 +85,7 @@ namespace xayah::spectra_pathtracer {
         }
     }
 
-    [[nodiscard]] spectra::Point3f camera_focus_center_from_bounds(const spectra::Point3f& eye, const spectra::Vector3f& forward, const spectra::Bounds3f& focus_bounds) {
+    [[nodiscard]] spectra::Point3f interactive_camera_focus_center_from_bounds(const spectra::Point3f& eye, const spectra::Vector3f& forward, const spectra::Bounds3f& focus_bounds) {
         validate_bounds(focus_bounds, "Camera focus bounds are invalid");
 
         const spectra::Point3f bounds_center{
@@ -117,7 +118,7 @@ namespace xayah::spectra_pathtracer {
         return eye + forward * focus_distance;
     }
 
-    [[nodiscard]] std::array<float, 2> camera_view_dimensions(const spectra::Point3f& eye, const spectra::Point3f& center, const float fov_degrees, const std::array<float, 2>& viewport_size) {
+    [[nodiscard]] std::array<float, 2> interactive_camera_view_dimensions(const spectra::Point3f& eye, const spectra::Point3f& center, const float fov_degrees, const std::array<float, 2>& viewport_size) {
         if (!std::isfinite(fov_degrees) || !(fov_degrees > 0.0f) || !(fov_degrees < 180.0f)) throw std::runtime_error("Camera fov must be finite and inside (0, 180)");
         if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
         constexpr float radians_per_degree = 0.017453292519943295769f;
@@ -128,49 +129,50 @@ namespace xayah::spectra_pathtracer {
         if (!std::isfinite(width) || !std::isfinite(height) || !(width > 0.0f) || !(height > 0.0f)) throw std::runtime_error("Camera view dimensions are invalid");
         return {width, height};
     }
+} // namespace
 
-
-    [[nodiscard]] float camera_fov_degrees(const SceneSession& scene) {
+namespace xayah::pathtracer {
+    [[nodiscard]] float interactive_camera_fov_degrees(const SceneSession& scene) {
         if (!scene.description.camera.present) throw std::runtime_error("Interactive Spectra pathtracer camera controls require an explicit perspective camera");
         if (scene.description.camera.name != "perspective") throw std::runtime_error(std::format("Interactive Spectra pathtracer camera controls require a perspective camera, not \"{}\"", scene.description.camera.name));
-        constexpr float spectra_pathtracer_perspective_default_fov = 90.0f;
+        constexpr float pathtracer_perspective_default_fov = 90.0f;
         for (const spectra::scene::SceneDescriptionParameter& parameter : scene.description.camera.parameters) {
             if (parameter.name != "fov") continue;
             if (parameter.floats.size() != 1) throw std::runtime_error("Spectra pathtracer perspective camera fov must have exactly one float value");
             return parameter.floats.front();
         }
-        return spectra_pathtracer_perspective_default_fov;
+        return pathtracer_perspective_default_fov;
     }
 
-    [[nodiscard]] CameraPose camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
+    [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
         const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
-        CameraPose pose{};
-        pose.eye                          = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
-        const spectra::Vector3f right        = normalized_vector(world_from_camera(spectra::Vector3f{1.0f, 0.0f, 0.0f}), "Base camera right vector is invalid");
-        const spectra::Vector3f forward      = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
-        pose.up                           = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 1.0f, 0.0f}), "Base camera up vector is invalid");
-        const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(camera_effective_up(pose.eye, pose.eye + forward, pose.up), forward), "Base camera positive right vector is invalid");
-        pose.basis_handedness             = spectra::Dot(right, positive_right) < 0.0f ? -1.0f : 1.0f;
-        pose.center                        = camera_focus_center_from_bounds(pose.eye, forward, focus_bounds);
+        InteractiveCameraPose pose{};
+        pose.eye = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
+        const spectra::Vector3f right = normalized_vector(world_from_camera(spectra::Vector3f{1.0f, 0.0f, 0.0f}), "Base camera right vector is invalid");
+        const spectra::Vector3f forward = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
+        pose.up = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 1.0f, 0.0f}), "Base camera up vector is invalid");
+        const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(interactive_camera_effective_up(pose.eye, pose.eye + forward, pose.up), forward), "Base camera positive right vector is invalid");
+        pose.basis_handedness = spectra::Dot(right, positive_right) < 0.0f ? -1.0f : 1.0f;
+        pose.center = interactive_camera_focus_center_from_bounds(pose.eye, forward, focus_bounds);
         return pose;
     }
 
-    [[nodiscard]] spectra::Transform moving_from_camera_from_pose(const spectra::Transform& base_camera_from_world, const CameraPose& pose) {
-        const spectra::Transform current_camera_from_world = camera_from_world_transform_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+    [[nodiscard]] spectra::Transform moving_from_camera_from_interactive_pose(const spectra::Transform& base_camera_from_world, const InteractiveCameraPose& pose) {
+        const spectra::Transform current_camera_from_world = camera_from_world_transform_from_interactive_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
 
-    bool camera_pan(CameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
+    bool interactive_camera_pan(InteractiveCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
         if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
-        const CameraFrame frame       = camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
-        const std::array<float, 2> view_size = camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
-        const spectra::Vector3f offset          = frame.right * (-displacement[0] * view_size[0]) + frame.up * (displacement[1] * view_size[1]);
+        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const std::array<float, 2> view_size = interactive_camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
+        const spectra::Vector3f offset = frame.right * (-displacement[0] * view_size[0]) + frame.up * (displacement[1] * view_size[1]);
         pose.eye += offset;
         pose.center += offset;
         return true;
     }
 
-    bool camera_dolly(CameraPose& pose, const std::array<float, 2>& displacement) {
+    bool interactive_camera_dolly(InteractiveCameraPose& pose, const std::array<float, 2>& displacement) {
         const float larger_displacement = std::abs(displacement[0]) > std::abs(displacement[1]) ? displacement[0] : -displacement[1];
         if (larger_displacement == 0.0f) return false;
         if (larger_displacement >= 0.99f) return false;
@@ -180,7 +182,7 @@ namespace xayah::spectra_pathtracer {
         return true;
     }
 
-    bool camera_orbit(CameraPose& pose, std::array<float, 2> displacement, const bool invert) {
+    bool interactive_camera_orbit(InteractiveCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
         if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
         if (pose.basis_handedness != -1.0f && pose.basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
         constexpr float two_pi   = 6.2831853071795864769f;
@@ -219,10 +221,10 @@ namespace xayah::spectra_pathtracer {
         return true;
     }
 
-    bool camera_key_motion(CameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
+    bool interactive_camera_key_motion(InteractiveCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
         if (delta[0] == 0.0f && delta[1] == 0.0f) return false;
         if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
-        const CameraFrame frame = camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
         const spectra::Vector3f movement = dolly
             ? frame.forward * (delta[0] * speed)
             : frame.right * (delta[0] * speed) + frame.up * (delta[1] * speed);
@@ -230,4 +232,4 @@ namespace xayah::spectra_pathtracer {
         pose.center += movement;
         return true;
     }
-} // namespace xayah::spectra_pathtracer
+} // namespace xayah::pathtracer

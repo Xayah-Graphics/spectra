@@ -1,12 +1,17 @@
-import spectra;
-import spectra.pathtracer;
-import std;
+#include "spectra/pathtracer/pathtracer.h"
+#include "spectra/spectra.h"
+
+#include <exception>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
 
 int main(const int argc, char** argv) {
     try {
         if (argc != 2) throw std::runtime_error("usage: spectra [scene.pbrt]");
         xayah::Spectra spectra{"Spectra"};
-        spectra.register_plugin(xayah::create_spectra_pathtracer_plugin(std::filesystem::path{argv[1]}));
+        spectra.register_plugin(std::make_unique<xayah::SpectraPathtracer>(std::filesystem::path{argv[1]}));
         spectra.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

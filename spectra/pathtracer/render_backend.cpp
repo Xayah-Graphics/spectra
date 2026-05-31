@@ -8,7 +8,7 @@
 #include <unistd.h>
 #endif
 
-#include "backend.h"
+#include "render_backend.h"
 
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
@@ -77,10 +77,9 @@ namespace {
             if (bounds.pMin[axis] > bounds.pMax[axis]) throw std::runtime_error(message);
         }
     }
-}
+} // namespace
 
-namespace xayah::spectra_pathtracer {
-
+namespace xayah::pathtracer {
     struct RuntimeSessionState {
         spectra::SpectraOptions baseline_options{};
         std::unique_ptr<spectra::runtime::Runtime> runtime{};
@@ -108,10 +107,7 @@ namespace xayah::spectra_pathtracer {
     void RuntimeSession::wait_gpu_noexcept() const noexcept {
         if (this->state != nullptr && this->state->runtime != nullptr) this->state->runtime->WaitGpuNoexcept();
     }
-}
 
-
-namespace xayah::spectra_pathtracer {
     void SceneSession::load(const std::filesystem::path& path) {
         if (!this->scene_path.empty()) throw std::runtime_error("Spectra scene is already loaded");
         if (path.empty()) throw std::runtime_error("Spectra scene path is empty");
@@ -145,7 +141,7 @@ namespace xayah::spectra_pathtracer {
         this->description.Clear();
     }
 
-}
+} // namespace xayah::pathtracer
 
 namespace {
     [[nodiscard]] vk::ExternalMemoryHandleTypeFlagBits spectra_external_memory_handle_type() {
@@ -180,9 +176,9 @@ namespace {
 #endif
     }
 
-}
+} // namespace
 
-namespace xayah::spectra_pathtracer {
+namespace xayah::pathtracer {
     struct PathtracerSessionState {
         struct FrameResource {
             vk::raii::Buffer interop_buffer{nullptr};
@@ -224,15 +220,15 @@ namespace xayah::spectra_pathtracer {
         std::uint32_t frame_count{0};
         std::vector<FrameResource> frames{};
     };
-}
+} // namespace xayah::pathtracer
 
 namespace {
-    [[nodiscard]] xayah::spectra_pathtracer::PathtracerSessionState& require_pathtracer_state(std::unique_ptr<xayah::spectra_pathtracer::PathtracerSessionState>& state) {
+    [[nodiscard]] xayah::pathtracer::PathtracerSessionState& require_pathtracer_state(std::unique_ptr<xayah::pathtracer::PathtracerSessionState>& state) {
         if (state == nullptr) throw std::runtime_error("Spectra pathtracer state is null");
         return *state;
     }
 
-    [[nodiscard]] const xayah::spectra_pathtracer::PathtracerSessionState& require_pathtracer_state(const std::unique_ptr<xayah::spectra_pathtracer::PathtracerSessionState>& state) {
+    [[nodiscard]] const xayah::pathtracer::PathtracerSessionState& require_pathtracer_state(const std::unique_ptr<xayah::pathtracer::PathtracerSessionState>& state) {
         if (state == nullptr) throw std::runtime_error("Spectra pathtracer state is null");
         return *state;
     }
@@ -256,8 +252,8 @@ namespace {
 #endif
     }
 
-    void release_pathtracer_viewport_descriptors_noexcept(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) noexcept {
-        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
+    void release_pathtracer_viewport_descriptors_noexcept(xayah::pathtracer::PathtracerSessionState& pathtracer) noexcept {
+        for (xayah::pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             if (frame.imgui_descriptor != VK_NULL_HANDLE) {
                 ImGui_ImplVulkan_RemoveTexture(frame.imgui_descriptor);
                 frame.imgui_descriptor = VK_NULL_HANDLE;
@@ -265,17 +261,17 @@ namespace {
         }
     }
 
-    void create_pathtracer_viewport_descriptors(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) {
-        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
+    void create_pathtracer_viewport_descriptors(xayah::pathtracer::PathtracerSessionState& pathtracer) {
+        for (xayah::pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             if (frame.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra pathtracer viewport descriptor is already allocated");
             frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.sampler), static_cast<VkImageView>(*frame.image_view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             if (frame.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra pathtracer viewport descriptor");
         }
     }
 
-    void destroy_pathtracer_frame_resources_noexcept(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) noexcept {
+    void destroy_pathtracer_frame_resources_noexcept(xayah::pathtracer::PathtracerSessionState& pathtracer) noexcept {
         release_pathtracer_viewport_descriptors_noexcept(pathtracer);
-        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
+        for (xayah::pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             if (frame.cuda_pixels != nullptr) {
                 cudaFree(frame.cuda_pixels);
                 frame.cuda_pixels = nullptr;
@@ -293,7 +289,7 @@ namespace {
         pathtracer.active_frame_index = 0;
     }
 
-    void create_pathtracer_interop_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame, const vk::DeviceSize rgba_bytes) {
+    void create_pathtracer_interop_buffer(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::pathtracer::PathtracerSessionState::FrameResource& frame, const vk::DeviceSize rgba_bytes) {
         const vk::ExternalMemoryBufferCreateInfo external_buffer_info{spectra_external_memory_handle_type()};
         const vk::BufferCreateInfo buffer_create_info{{}, rgba_bytes, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive, 0, nullptr, &external_buffer_info};
         frame.interop_buffer = vk::raii::Buffer{device, buffer_create_info};
@@ -333,7 +329,7 @@ namespace {
         if (frame.cuda_pixels == nullptr) throw std::runtime_error("CUDA external memory mapped to a null Spectra pathtracer RGBA pointer");
     }
 
-    void create_pathtracer_cuda_complete_semaphore(const vk::raii::Device& device, xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame) {
+    void create_pathtracer_cuda_complete_semaphore(const vk::raii::Device& device, xayah::pathtracer::PathtracerSessionState::FrameResource& frame) {
         const vk::ExportSemaphoreCreateInfo export_semaphore_info{spectra_external_semaphore_handle_type()};
         const vk::SemaphoreCreateInfo semaphore_create_info{{}, &export_semaphore_info};
         frame.cuda_complete_semaphore = vk::raii::Semaphore{device, semaphore_create_info};
@@ -358,7 +354,7 @@ namespace {
         if (frame.cuda_external_semaphore == nullptr) throw std::runtime_error("CUDA external semaphore import returned null");
     }
 
-    void create_pathtracer_display_image(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame) {
+    void create_pathtracer_display_image(xayah::pathtracer::PathtracerSessionState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::pathtracer::PathtracerSessionState::FrameResource& frame) {
         const vk::ImageCreateInfo image_create_info{
             {},
             vk::ImageType::e2D,
@@ -413,7 +409,7 @@ namespace {
         frame.sampler = vk::raii::Sampler{device, sampler_create_info};
     }
 
-    void create_pathtracer_frame_resources(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    void create_pathtracer_frame_resources(xayah::pathtracer::PathtracerSessionState& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         const vk::FormatProperties format_properties = physical_device.getFormatProperties(pathtracer.display_format);
         constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst;
         if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
@@ -421,14 +417,14 @@ namespace {
         const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(pathtracer.resolution.x) * static_cast<vk::DeviceSize>(pathtracer.resolution.y);
         if (rgba_bytes == 0) throw std::runtime_error("Spectra pathtracer interop buffer cannot be zero bytes");
         pathtracer.frames.resize(frame_count);
-        for (xayah::spectra_pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
+        for (xayah::pathtracer::PathtracerSessionState::FrameResource& frame : pathtracer.frames) {
             create_pathtracer_interop_buffer(physical_device, device, frame, rgba_bytes);
             create_pathtracer_cuda_complete_semaphore(device, frame);
             create_pathtracer_display_image(pathtracer, physical_device, device, frame);
         }
     }
 
-    void destroy_pathtracer_resources_noexcept(xayah::spectra_pathtracer::PathtracerSessionState& pathtracer) noexcept {
+    void destroy_pathtracer_resources_noexcept(xayah::pathtracer::PathtracerSessionState& pathtracer) noexcept {
         try {
             if (pathtracer.device != nullptr) pathtracer.device->waitIdle();
             if (spectra::Options != nullptr) spectra::GPUWait();
@@ -440,9 +436,9 @@ namespace {
         pathtracer.builder.reset();
         pathtracer.scene.reset();
     }
-}
+} // namespace
 
-namespace xayah::spectra_pathtracer {
+namespace xayah::pathtracer {
 
     PathtracerSession::PathtracerSession(const SceneSession& spectra_scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) : state{std::make_unique<PathtracerSessionState>()} {
         try {
@@ -674,4 +670,4 @@ namespace xayah::spectra_pathtracer {
     }
 
 
-} // namespace xayah::spectra_pathtracer
+} // namespace xayah::pathtracer

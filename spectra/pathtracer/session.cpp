@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace xayah::spectra_pathtracer {
+namespace xayah::pathtracer {
     [[nodiscard]] std::string scene_title_text(const SceneSession& scene) {
         const std::string title = scene.scene_path.filename().string();
         if (!title.empty()) return title;
@@ -52,22 +52,6 @@ namespace xayah::spectra_pathtracer {
 
     InteractiveSession::~InteractiveSession() noexcept = default;
 
-    void InteractiveSession::update_host(HostContext host) {
-        if (host.physical_device == nullptr) throw std::runtime_error("Spectra pathtracer host physical device is null");
-        if (host.device == nullptr) throw std::runtime_error("Spectra pathtracer host logical device is null");
-        if (host.frame_count == 0) throw std::runtime_error("Spectra pathtracer host frame count must be positive");
-        if (host.swapchain_extent.width == 0 || host.swapchain_extent.height == 0) throw std::runtime_error("Spectra pathtracer host swapchain extent must be positive");
-        this->state->host = host;
-    }
-
-    bool InteractiveSession::close_requested() const {
-        return this->state->close_requested;
-    }
-
-    void InteractiveSession::clear_close_request() {
-        this->state->close_requested = false;
-    }
-
     void InteractiveSession::attach(HostContext host) {
         if (this->state->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
         this->update_host(host);
@@ -102,6 +86,14 @@ namespace xayah::spectra_pathtracer {
         this->state->close_requested = false;
     }
 
+    void InteractiveSession::update_host(HostContext host) {
+        if (host.physical_device == nullptr) throw std::runtime_error("Spectra pathtracer host physical device is null");
+        if (host.device == nullptr) throw std::runtime_error("Spectra pathtracer host logical device is null");
+        if (host.frame_count == 0) throw std::runtime_error("Spectra pathtracer host frame count must be positive");
+        if (host.swapchain_extent.width == 0 || host.swapchain_extent.height == 0) throw std::runtime_error("Spectra pathtracer host swapchain extent must be positive");
+        this->state->host = host;
+    }
+
     void InteractiveSession::before_imgui_shutdown() noexcept {
         if (this->state->gpu_pathtracer != nullptr) this->state->gpu_pathtracer->release_viewport_descriptors_noexcept();
     }
@@ -130,7 +122,6 @@ namespace xayah::spectra_pathtracer {
         if (this->pathtracer_ready()) this->record_pathtracer_output(command_buffer);
     }
 
-
     std::string InteractiveSession::window_detail() const {
         std::uint32_t width = this->state->host.swapchain_extent.width;
         std::uint32_t height = this->state->host.swapchain_extent.height;
@@ -144,6 +135,14 @@ namespace xayah::spectra_pathtracer {
         const std::string scene_title = this->state->spectra_scene == nullptr ? "No Scene" : scene_title_text(*this->state->spectra_scene);
         const std::array<int, 2> sample_range = this->state->spectra_scene == nullptr ? std::array<int, 2>{0, 0} : this->pathtracer_sample_range();
         return std::format("{} | Spectra Pathtracer | {}x{} | sample {}/{}", scene_title, width, height, sample_range[0], sample_range[1]);
+    }
+
+    bool InteractiveSession::close_requested() const {
+        return this->state->close_requested;
+    }
+
+    void InteractiveSession::clear_close_request() {
+        this->state->close_requested = false;
     }
 
     void InteractiveSession::unload_spectra_scene_noexcept() noexcept {
@@ -177,7 +176,7 @@ namespace xayah::spectra_pathtracer {
         if (this->state->render_resolution_sync.pathtracer_created && this->state->render_resolution_sync.active_resolution == resolution) return;
 
         const bool preserve_camera = this->state->camera.initialized;
-        const CameraPose preserved_pose{this->state->camera.eye, this->state->camera.center, this->state->camera.up, this->state->camera.basis_handedness};
+        const InteractiveCameraPose preserved_pose{this->state->camera.eye, this->state->camera.center, this->state->camera.up, this->state->camera.basis_handedness};
         const float preserved_speed     = this->state->camera.speed;
         const int preserved_samples     = this->state->gpu_pathtracer == nullptr ? 0 : this->state->gpu_pathtracer->target_sample_count();
         const float preserved_exposure  = this->state->gpu_pathtracer == nullptr ? 1.0f : this->state->gpu_pathtracer->current_exposure();
@@ -197,10 +196,10 @@ namespace xayah::spectra_pathtracer {
                 this->state->camera.up                         = preserved_pose.up;
                 this->state->camera.basis_handedness           = preserved_pose.basis_handedness;
                 this->state->camera.speed                      = preserved_speed;
-                this->state->camera.fov_degrees                = camera_fov_degrees(*this->state->spectra_scene);
+                this->state->camera.fov_degrees                = interactive_camera_fov_degrees(*this->state->spectra_scene);
                 this->state->camera.mouse_position_known       = false;
                 this->state->camera.input_enabled              = false;
-                this->state->camera.moving_from_camera         = moving_from_camera_from_pose(this->state->camera.camera_from_world, preserved_pose);
+                this->state->camera.moving_from_camera         = moving_from_camera_from_interactive_pose(this->state->camera.camera_from_world, preserved_pose);
             } else
                 this->initialize_camera_state();
             this->clear_pathtracer_throughput_statistics();
@@ -243,6 +242,81 @@ namespace xayah::spectra_pathtracer {
 
     [[nodiscard]] bool InteractiveSession::pathtracer_ready() const {
         return this->state->render_resolution_sync.pathtracer_created && this->state->gpu_pathtracer != nullptr;
+    }
+
+    [[nodiscard]] VkDescriptorSet InteractiveSession::pathtracer_viewport_descriptor() const {
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer viewport descriptor requested without an active Spectra pathtracer session");
+        return this->state->gpu_pathtracer->active_descriptor();
+    }
+
+    [[nodiscard]] std::array<int, 2> InteractiveSession::pathtracer_sample_range() const {
+        if (this->state->gpu_pathtracer == nullptr) return {0, 0};
+        return {this->state->gpu_pathtracer->current_sample(), this->state->gpu_pathtracer->target_sample_count()};
+    }
+
+    [[nodiscard]] float InteractiveSession::pathtracer_initial_move_scale() const {
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera move scale requested without an active Spectra pathtracer session");
+        return this->state->gpu_pathtracer->camera_initial_move_scale();
+    }
+
+    [[nodiscard]] vk::Semaphore InteractiveSession::pathtracer_complete_semaphore() const {
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer completion semaphore requested without an active Spectra pathtracer session");
+        return this->state->gpu_pathtracer->active_cuda_complete_semaphore();
+    }
+
+    [[nodiscard]] InteractiveSession::PathtracerFrameResult InteractiveSession::render_pathtracer_frame(const FrameInput& frame) {
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot render Spectra pathtracer without an active Spectra pathtracer session");
+        const PathtracerSession::RenderFrameResult render_result = this->state->gpu_pathtracer->render_frame(frame.frame_index, this->state->camera.moving_from_camera);
+        return {render_result.sample_pixels, render_result.rendered_sample, render_result.reset_accumulation};
+    }
+
+    void InteractiveSession::record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot record Spectra pathtracer output without an active Spectra pathtracer session");
+        this->state->gpu_pathtracer->record_copy(command_buffer);
+    }
+
+    void InteractiveSession::request_pathtracer_accumulation_reset() {
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot reset Spectra pathtracer accumulation without an active Spectra pathtracer session");
+        this->state->gpu_pathtracer->request_reset_accumulation();
+        this->clear_pathtracer_throughput_statistics();
+    }
+
+    void InteractiveSession::initialize_camera_state() {
+        if (this->state->spectra_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
+        const float initial_move_scale = this->pathtracer_initial_move_scale();
+        if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
+        this->state->camera.camera_from_world = this->state->spectra_scene->camera_from_world;
+        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active Spectra pathtracer session");
+        const InteractiveCameraPose pose   = interactive_camera_pose_from_base_transform(this->state->camera.camera_from_world, this->state->gpu_pathtracer->camera_initial_focus_bounds());
+        this->state->camera.initialized       = true;
+        this->state->camera.input_enabled     = false;
+        this->state->camera.speed             = initial_move_scale * 60.0f;
+        this->state->camera.fov_degrees       = interactive_camera_fov_degrees(*this->state->spectra_scene);
+        this->state->camera.basis_handedness  = pose.basis_handedness;
+        this->state->camera.eye               = pose.eye;
+        this->state->camera.center            = pose.center;
+        this->state->camera.up                = pose.up;
+        this->state->camera.mouse_position    = {0.0f, 0.0f};
+        this->state->camera.mouse_position_known = false;
+        this->state->camera.moving_from_camera   = spectra::Transform{};
+    }
+
+    void InteractiveSession::set_camera_speed(const float speed) {
+        if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
+        this->state->camera.speed = speed;
+    }
+
+    void InteractiveSession::reset_camera() {
+        if (!this->state->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
+        if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
+        const InteractiveCameraPose pose  = interactive_camera_pose_from_base_transform(this->state->camera.camera_from_world, this->state->gpu_pathtracer->camera_initial_focus_bounds());
+        this->state->camera.eye              = pose.eye;
+        this->state->camera.center           = pose.center;
+        this->state->camera.up               = pose.up;
+        this->state->camera.basis_handedness = pose.basis_handedness;
+        this->state->camera.mouse_position_known = false;
+        this->state->camera.moving_from_camera   = spectra::Transform{};
+        this->request_pathtracer_accumulation_reset();
     }
 
     void InteractiveSession::clear_pathtracer_throughput_statistics() {
@@ -294,81 +368,6 @@ namespace xayah::spectra_pathtracer {
         return status;
     }
 
-    [[nodiscard]] VkDescriptorSet InteractiveSession::pathtracer_viewport_descriptor() const {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer viewport descriptor requested without an active Spectra pathtracer session");
-        return this->state->gpu_pathtracer->active_descriptor();
-    }
-
-    [[nodiscard]] std::array<int, 2> InteractiveSession::pathtracer_sample_range() const {
-        if (this->state->gpu_pathtracer == nullptr) return {0, 0};
-        return {this->state->gpu_pathtracer->current_sample(), this->state->gpu_pathtracer->target_sample_count()};
-    }
-
-    [[nodiscard]] float InteractiveSession::pathtracer_initial_move_scale() const {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera move scale requested without an active Spectra pathtracer session");
-        return this->state->gpu_pathtracer->camera_initial_move_scale();
-    }
-
-    [[nodiscard]] vk::Semaphore InteractiveSession::pathtracer_complete_semaphore() const {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer completion semaphore requested without an active Spectra pathtracer session");
-        return this->state->gpu_pathtracer->active_cuda_complete_semaphore();
-    }
-
-    [[nodiscard]] InteractiveSession::PathtracerFrameResult InteractiveSession::render_pathtracer_frame(const FrameInput& frame) {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot render Spectra pathtracer without an active Spectra pathtracer session");
-        const PathtracerSession::RenderFrameResult render_result = this->state->gpu_pathtracer->render_frame(frame.frame_index, this->state->camera.moving_from_camera);
-        return {render_result.sample_pixels, render_result.rendered_sample, render_result.reset_accumulation};
-    }
-
-    void InteractiveSession::record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot record Spectra pathtracer output without an active Spectra pathtracer session");
-        this->state->gpu_pathtracer->record_copy(command_buffer);
-    }
-
-    void InteractiveSession::request_pathtracer_accumulation_reset() {
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Cannot reset Spectra pathtracer accumulation without an active Spectra pathtracer session");
-        this->state->gpu_pathtracer->request_reset_accumulation();
-        this->clear_pathtracer_throughput_statistics();
-    }
-
-    void InteractiveSession::initialize_camera_state() {
-        if (this->state->spectra_scene == nullptr) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
-        const float initial_move_scale = this->pathtracer_initial_move_scale();
-        if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
-        this->state->camera.camera_from_world = this->state->spectra_scene->camera_from_world;
-        if (this->state->gpu_pathtracer == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active Spectra pathtracer session");
-        const CameraPose pose   = camera_pose_from_base_transform(this->state->camera.camera_from_world, this->state->gpu_pathtracer->camera_initial_focus_bounds());
-        this->state->camera.initialized       = true;
-        this->state->camera.input_enabled     = false;
-        this->state->camera.speed             = initial_move_scale * 60.0f;
-        this->state->camera.fov_degrees       = camera_fov_degrees(*this->state->spectra_scene);
-        this->state->camera.basis_handedness  = pose.basis_handedness;
-        this->state->camera.eye               = pose.eye;
-        this->state->camera.center            = pose.center;
-        this->state->camera.up                = pose.up;
-        this->state->camera.mouse_position    = {0.0f, 0.0f};
-        this->state->camera.mouse_position_known = false;
-        this->state->camera.moving_from_camera   = spectra::Transform{};
-    }
-
-    void InteractiveSession::set_camera_speed(const float speed) {
-        if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
-        this->state->camera.speed = speed;
-    }
-
-    void InteractiveSession::reset_camera() {
-        if (!this->state->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
-        if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
-        const CameraPose pose  = camera_pose_from_base_transform(this->state->camera.camera_from_world, this->state->gpu_pathtracer->camera_initial_focus_bounds());
-        this->state->camera.eye              = pose.eye;
-        this->state->camera.center           = pose.center;
-        this->state->camera.up               = pose.up;
-        this->state->camera.basis_handedness = pose.basis_handedness;
-        this->state->camera.mouse_position_known = false;
-        this->state->camera.moving_from_camera   = spectra::Transform{};
-        this->request_pathtracer_accumulation_reset();
-    }
-
     void InteractiveSession::process_camera_input() {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) this->state->close_requested = true;
@@ -392,7 +391,7 @@ namespace xayah::spectra_pathtracer {
         const bool shift = io.KeyShift;
         const bool ctrl  = io.KeyCtrl;
         const bool alt   = io.KeyAlt;
-        CameraPose pose{this->state->camera.eye, this->state->camera.center, this->state->camera.up, this->state->camera.basis_handedness};
+        InteractiveCameraPose pose{this->state->camera.eye, this->state->camera.center, this->state->camera.up, this->state->camera.basis_handedness};
         bool camera_changed = false;
         if (!alt) {
             if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid");
@@ -400,12 +399,12 @@ namespace xayah::spectra_pathtracer {
             if (shift) key_motion_factor *= 5.0f;
             if (ctrl) key_motion_factor *= 0.1f;
             if (key_motion_factor > 0.0f) {
-                if (ImGui::IsKeyDown(ImGuiKey_W)) camera_changed = camera_key_motion(pose, {key_motion_factor, 0.0f}, this->state->camera.speed, true) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_S)) camera_changed = camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->state->camera.speed, true) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) camera_changed = camera_key_motion(pose, {key_motion_factor, 0.0f}, this->state->camera.speed, false) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) camera_changed = camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->state->camera.speed, false) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) camera_changed = camera_key_motion(pose, {0.0f, key_motion_factor}, this->state->camera.speed, false) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) camera_changed = camera_key_motion(pose, {0.0f, -key_motion_factor}, this->state->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_W)) camera_changed = interactive_camera_key_motion(pose, {key_motion_factor, 0.0f}, this->state->camera.speed, true) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_S)) camera_changed = interactive_camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->state->camera.speed, true) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) camera_changed = interactive_camera_key_motion(pose, {key_motion_factor, 0.0f}, this->state->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) camera_changed = interactive_camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->state->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) camera_changed = interactive_camera_key_motion(pose, {0.0f, key_motion_factor}, this->state->camera.speed, false) || camera_changed;
+                if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) camera_changed = interactive_camera_key_motion(pose, {0.0f, -key_motion_factor}, this->state->camera.speed, false) || camera_changed;
             }
         }
 
@@ -430,14 +429,14 @@ namespace xayah::spectra_pathtracer {
                 (current_mouse_position[1] - this->state->camera.mouse_position[1]) / viewport_size[1],
             };
             if (left_dragging) {
-                if ((ctrl && shift) || alt) camera_changed = camera_orbit(pose, {mouse_displacement[0], -mouse_displacement[1]}, true) || camera_changed;
-                else if (shift) camera_changed = camera_dolly(pose, mouse_displacement) || camera_changed;
-                else if (ctrl) camera_changed = camera_pan(pose, mouse_displacement, this->state->camera.fov_degrees, viewport_size) || camera_changed;
-                else camera_changed = camera_orbit(pose, mouse_displacement, false) || camera_changed;
+                if ((ctrl && shift) || alt) camera_changed = interactive_camera_orbit(pose, {mouse_displacement[0], -mouse_displacement[1]}, true) || camera_changed;
+                else if (shift) camera_changed = interactive_camera_dolly(pose, mouse_displacement) || camera_changed;
+                else if (ctrl) camera_changed = interactive_camera_pan(pose, mouse_displacement, this->state->camera.fov_degrees, viewport_size) || camera_changed;
+                else camera_changed = interactive_camera_orbit(pose, mouse_displacement, false) || camera_changed;
             } else if (middle_dragging) {
-                camera_changed = camera_pan(pose, mouse_displacement, this->state->camera.fov_degrees, viewport_size) || camera_changed;
+                camera_changed = interactive_camera_pan(pose, mouse_displacement, this->state->camera.fov_degrees, viewport_size) || camera_changed;
             } else if (right_dragging) {
-                camera_changed = camera_dolly(pose, mouse_displacement) || camera_changed;
+                camera_changed = interactive_camera_dolly(pose, mouse_displacement) || camera_changed;
             }
             this->state->camera.mouse_position = current_mouse_position;
         }
@@ -446,7 +445,7 @@ namespace xayah::spectra_pathtracer {
             constexpr float wheel_speed = 10.0f;
             const float wheel_value     = io.MouseWheel * wheel_speed;
             const float dolly_delta     = wheel_value * std::abs(wheel_value) / viewport_size[0];
-            camera_changed              = camera_dolly(pose, {dolly_delta, 0.0f}) || camera_changed;
+            camera_changed              = interactive_camera_dolly(pose, {dolly_delta, 0.0f}) || camera_changed;
         }
 
         if (camera_changed) {
@@ -454,11 +453,9 @@ namespace xayah::spectra_pathtracer {
             this->state->camera.center               = pose.center;
             this->state->camera.up                   = pose.up;
             this->state->camera.basis_handedness     = pose.basis_handedness;
-            this->state->camera.moving_from_camera   = moving_from_camera_from_pose(this->state->camera.camera_from_world, pose);
+            this->state->camera.moving_from_camera   = moving_from_camera_from_interactive_pose(this->state->camera.camera_from_world, pose);
             this->request_pathtracer_accumulation_reset();
         }
     }
 
-
-
-} // namespace xayah::spectra_pathtracer
+} // namespace xayah::pathtracer

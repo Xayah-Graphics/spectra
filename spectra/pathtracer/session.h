@@ -1,8 +1,8 @@
-#ifndef XAYAH_MODULES_SPECTRA_GPU_SESSION_H
-#define XAYAH_MODULES_SPECTRA_GPU_SESSION_H
+#ifndef XAYAH_SPECTRA_PATHTRACER_SESSION_H
+#define XAYAH_SPECTRA_PATHTRACER_SESSION_H
 
-#include "backend.h"
-#include "camera.h"
+#include "camera_controller.h"
+#include "render_backend.h"
 
 #include <vulkan/vulkan_raii.hpp>
 
@@ -12,7 +12,7 @@
 #include <memory>
 #include <string>
 
-namespace xayah::spectra_pathtracer {
+namespace xayah::pathtracer {
     struct HostContext {
         const vk::raii::PhysicalDevice* physical_device{};
         const vk::raii::Device* device{};
@@ -56,8 +56,8 @@ namespace xayah::spectra_pathtracer {
         void draw_viewport_window();
         void draw_camera_window();
         void draw_scene_browser_window();
-        void draw_inspector_window();
         void draw_settings_window();
+        void draw_inspector_window();
         void draw_environment_window();
         void draw_tonemapper_window();
         void draw_statistics_window();
@@ -152,9 +152,6 @@ namespace xayah::spectra_pathtracer {
         void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
         void synchronize_render_resolution();
         [[nodiscard]] bool pathtracer_ready() const;
-        void clear_pathtracer_throughput_statistics();
-        void update_frame_statistics(const FrameInput& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
-        [[nodiscard]] PathtracerStatus pathtracer_status() const;
         [[nodiscard]] VkDescriptorSet pathtracer_viewport_descriptor() const;
         [[nodiscard]] std::array<int, 2> pathtracer_sample_range() const;
         [[nodiscard]] float pathtracer_initial_move_scale() const;
@@ -163,12 +160,15 @@ namespace xayah::spectra_pathtracer {
         void record_pathtracer_output(const vk::raii::CommandBuffer& command_buffer);
         void request_pathtracer_accumulation_reset();
         void initialize_camera_state();
-        void process_camera_input();
         void set_camera_speed(float speed);
         void reset_camera();
+        void clear_pathtracer_throughput_statistics();
+        void update_frame_statistics(const FrameInput& frame, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
+        [[nodiscard]] PathtracerStatus pathtracer_status() const;
+        void process_camera_input();
 
         std::unique_ptr<SessionState> state{};
     };
-} // namespace xayah::spectra_pathtracer
+} // namespace xayah::pathtracer
 
 #endif

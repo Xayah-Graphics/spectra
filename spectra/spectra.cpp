@@ -1,4 +1,3 @@
-module;
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
@@ -10,6 +9,9 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+#include "spectra.h"
+
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <backends/imgui_impl_glfw.h>
@@ -20,8 +22,20 @@ module;
 #include <roboto/roboto_regular.h>
 #include <vulkan/vulkan_raii.hpp>
 
-module spectra;
-import std;
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <format>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <ranges>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace xayah {
     void SpectraPlugin::detach(SpectraContext&) noexcept {

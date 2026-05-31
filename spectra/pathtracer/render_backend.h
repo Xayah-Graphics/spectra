@@ -1,5 +1,5 @@
-#ifndef XAYAH_MODULES_SPECTRA_GPU_BACKEND_H
-#define XAYAH_MODULES_SPECTRA_GPU_BACKEND_H
+#ifndef XAYAH_SPECTRA_PATHTRACER_RENDER_BACKEND_H
+#define XAYAH_SPECTRA_PATHTRACER_RENDER_BACKEND_H
 
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -14,10 +14,11 @@
 #include <vulkan/vulkan_raii.hpp>
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 
-namespace xayah::spectra_pathtracer {
+namespace xayah::pathtracer {
     struct SceneSession {
         std::filesystem::path scene_path{};
         std::array<int, 2> film_resolution{0, 0};
@@ -91,6 +92,6 @@ namespace xayah::spectra_pathtracer {
         std::unique_ptr<PathtracerSessionState> state{};
     };
 
-} // namespace xayah::spectra_pathtracer
+} // namespace xayah::pathtracer
 
 #endif
