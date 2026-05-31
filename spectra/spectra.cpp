@@ -88,7 +88,7 @@ namespace {
         io.FontDefault = default_font;
     }
 
-    void apply_imgui_style(const bool viewports) {
+    void apply_imgui_style() {
         ImGui::StyleColorsDark();
         ImGuiStyle& style                  = ImGui::GetStyle();
         style.WindowRounding               = 0.0f;
@@ -146,15 +146,11 @@ namespace {
         style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4{0.465f, 0.465f, 0.465f, 0.350f};
         style.Colors[ImGuiCol_ButtonActive]     = static_cast<ImVec4>(ImColor::HSV(0.3F, 0.5F, 0.5F));
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
-        if (viewports) {
-            style.WindowRounding              = 0.0f;
-            style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-        }
     }
 } // namespace
 
 namespace xayah {
-    struct SpectraFrameState {
+    struct Spectra::FrameState {
         std::uint32_t frame_index{0};
         std::uint32_t image_index{0};
         bool recreate_after_present{false};
@@ -187,10 +183,6 @@ namespace xayah {
         }
         this->panels.push_back(std::move(panel));
         this->dock_layout_initialized = false;
-    }
-
-    void Spectra::request_close() {
-        glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
     }
 
     void Spectra::set_window_detail(std::string detail) {
@@ -263,7 +255,6 @@ namespace xayah {
             int height = 0;
             glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
             if (width <= 0 || height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size");
-            this->surface.extent = vk::Extent2D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)};
         }
         {
             bool selected = false;
@@ -374,7 +365,7 @@ namespace xayah {
 
     void Spectra::run() {
         while (!glfwWindowShouldClose(this->surface.window.get())) {
-            SpectraFrameState frame{};
+            FrameState frame{};
             if (!this->begin_frame(frame)) continue;
             this->record_frame(frame);
             this->end_frame(frame);
@@ -406,25 +397,24 @@ namespace xayah {
             };
             const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()), static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
             this->imgui.descriptor_pool = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
-            this->imgui.color_format    = this->swapchain.format;
-            this->imgui.min_image_count = std::max(2u, this->sync.frame_count);
-            this->imgui.image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
-            if (this->imgui.image_count < this->imgui.min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
+            const vk::Format imgui_color_format = this->swapchain.format;
+            const std::uint32_t imgui_min_image_count = std::max(2u, this->sync.frame_count);
+            const std::uint32_t imgui_image_count = static_cast<std::uint32_t>(this->swapchain.images.size());
+            if (imgui_image_count < imgui_min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
 
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
             context_created = true;
 
             ImGuiIO& io = ImGui::GetIO();
-            if (this->imgui.docking) io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-            if (this->imgui.viewports) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+            io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
             load_imgui_fonts();
-            apply_imgui_style(this->imgui.viewports);
+            apply_imgui_style();
 
             if (!ImGui_ImplGlfw_InitForVulkan(this->surface.window.get(), true)) throw std::runtime_error("ImGui_ImplGlfw_InitForVulkan failed");
             glfw_backend_initialized = true;
 
-            auto color_attachment_format = static_cast<VkFormat>(this->imgui.color_format);
+            auto color_attachment_format = static_cast<VkFormat>(imgui_color_format);
             VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
             pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
             pipeline_rendering_create_info.colorAttachmentCount    = 1;
@@ -438,8 +428,8 @@ namespace xayah {
             init_info.QueueFamily                                  = this->context.graphics_queue_index;
             init_info.Queue                                        = static_cast<VkQueue>(*this->context.graphics_queue);
             init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
-            init_info.MinImageCount                                = this->imgui.min_image_count;
-            init_info.ImageCount                                   = this->imgui.image_count;
+            init_info.MinImageCount                                = imgui_min_image_count;
+            init_info.ImageCount                                   = imgui_image_count;
             init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
             init_info.UseDynamicRendering                          = true;
             init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
@@ -447,15 +437,13 @@ namespace xayah {
             vulkan_backend_initialized = true;
             this->imgui.initialized = true;
             this->imgui_shutdown_notified = false;
-            this->notify_plugins_after_imgui_created();
+            for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins)
+                plugin->after_imgui_created(*this);
         } catch (...) {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
             if (context_created) ImGui::DestroyContext();
             this->imgui.descriptor_pool = nullptr;
-            this->imgui.color_format    = vk::Format::eUndefined;
-            this->imgui.min_image_count = 2;
-            this->imgui.image_count     = 2;
             this->imgui.initialized     = false;
             this->imgui_shutdown_notified = false;
             throw;
@@ -473,11 +461,6 @@ namespace xayah {
         this->imgui_shutdown_notified = true;
     }
 
-    void Spectra::notify_plugins_after_imgui_created() {
-        for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins)
-            plugin->after_imgui_created(*this);
-    }
-
     void Spectra::destroy_imgui() noexcept {
         this->notify_plugins_before_imgui_shutdown();
         if (this->imgui.initialized) {
@@ -486,9 +469,6 @@ namespace xayah {
             ImGui::DestroyContext();
         }
         this->imgui.descriptor_pool = nullptr;
-        this->imgui.color_format    = vk::Format::eUndefined;
-        this->imgui.min_image_count = 2;
-        this->imgui.image_count     = 2;
         this->imgui.initialized     = false;
         this->dock_layout_initialized = false;
     }
@@ -506,7 +486,7 @@ namespace xayah {
         this->dock_layout_initialized = false;
     }
 
-    bool Spectra::begin_frame(SpectraFrameState& frame) {
+    bool Spectra::begin_frame(FrameState& frame) {
         glfwPollEvents();
         if (this->surface.resize_requested) {
             this->recreate_swapchain();
@@ -547,13 +527,13 @@ namespace xayah {
                 if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
                 frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
             }
-            if (frame_result.close_requested) this->request_close();
+            if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
             if (frame_result.window_detail.has_value()) this->set_window_detail(std::move(*frame_result.window_detail));
         }
         return true;
     }
 
-    void Spectra::record_frame(SpectraFrameState& frame) {
+    void Spectra::record_frame(FrameState& frame) {
         this->draw_main_menu();
         this->draw_dockspace();
         this->draw_registered_panels();
@@ -621,12 +601,7 @@ namespace xayah {
         command_buffer.end();
     }
 
-    void Spectra::end_frame(SpectraFrameState& frame) {
-        if (this->imgui.viewports) {
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-        }
-
+    void Spectra::end_frame(FrameState& frame) {
         std::vector<vk::SemaphoreSubmitInfo> wait_semaphore_infos{};
         wait_semaphore_infos.reserve(frame.external_waits.size() + 1u);
         wait_semaphore_infos.emplace_back(*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands);
@@ -853,13 +828,12 @@ namespace xayah {
         std::uint32_t image_count = surface_capabilities.minImageCount + 1;
         if (surface_capabilities.maxImageCount > 0) image_count = std::min(image_count, surface_capabilities.maxImageCount);
         if (image_count < 2) throw std::runtime_error("Swapchain requires at least two images");
-        this->swapchain.image_count = image_count;
-        this->swapchain.usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
-        if ((surface_capabilities.supportedUsageFlags & this->swapchain.usage) != this->swapchain.usage) throw std::runtime_error("Vulkan surface does not support required swapchain image usage");
+        const vk::ImageUsageFlags swapchain_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+        if ((surface_capabilities.supportedUsageFlags & swapchain_usage) != swapchain_usage) throw std::runtime_error("Vulkan surface does not support required swapchain image usage");
 
         const vk::SurfaceTransformFlagBitsKHR pre_transform = surface_capabilities.currentTransform;
         constexpr vk::CompositeAlphaFlagBitsKHR composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-        const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, this->swapchain.image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, this->swapchain.usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
+        const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
         this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
 
         this->swapchain.images = this->swapchain.handle.getImages();

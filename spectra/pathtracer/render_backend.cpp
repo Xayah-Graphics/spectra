@@ -94,18 +94,17 @@ namespace xayah::pathtracer {
     RuntimeSession::~RuntimeSession() noexcept {
         try {
             this->wait_gpu_noexcept();
-            if (this->state != nullptr) this->state->runtime.reset();
+            this->state->runtime.reset();
         } catch (...) {
         }
     }
 
     void RuntimeSession::reset_options_for_scene() {
-        if (this->state == nullptr || this->state->runtime == nullptr) throw std::runtime_error("Spectra pathtracer runtime is not initialized");
         this->state->runtime->ResetOptions(this->state->baseline_options);
     }
 
     void RuntimeSession::wait_gpu_noexcept() const noexcept {
-        if (this->state != nullptr && this->state->runtime != nullptr) this->state->runtime->WaitGpuNoexcept();
+        this->state->runtime->WaitGpuNoexcept();
     }
 
     void SceneSession::load(const std::filesystem::path& path) {
@@ -486,13 +485,13 @@ namespace xayah::pathtracer {
             create_pathtracer_frame_resources(pathtracer, physical_device, device, frame_count);
             create_pathtracer_viewport_descriptors(pathtracer);
         } catch (...) {
-            if (this->state != nullptr) destroy_pathtracer_resources_noexcept(*this->state);
+            destroy_pathtracer_resources_noexcept(*this->state);
             throw;
         }
     }
 
     PathtracerSession::~PathtracerSession() noexcept {
-        if (this->state != nullptr) destroy_pathtracer_resources_noexcept(*this->state);
+        destroy_pathtracer_resources_noexcept(*this->state);
     }
 
     [[nodiscard]] int PathtracerSession::current_sample() const {
@@ -573,7 +572,7 @@ namespace xayah::pathtracer {
     }
 
     void PathtracerSession::release_viewport_descriptors_noexcept() noexcept {
-        if (this->state != nullptr) release_pathtracer_viewport_descriptors_noexcept(*this->state);
+        release_pathtracer_viewport_descriptors_noexcept(*this->state);
     }
 
     void PathtracerSession::create_viewport_descriptors() {

@@ -23,7 +23,6 @@ struct GLFWwindow;
 
 namespace xayah {
     class Spectra;
-    struct SpectraFrameState;
 
     enum class SpectraDockSlot {
         Center,
@@ -93,19 +92,19 @@ namespace xayah {
         [[nodiscard]] std::uint32_t frame_count() const;
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
         void register_panel(SpectraPanel panel);
-        void request_close();
         void set_window_detail(std::string detail);
 
     private:
+        struct FrameState;
+
         void create_imgui();
         void notify_plugins_before_imgui_shutdown() noexcept;
-        void notify_plugins_after_imgui_created();
         void destroy_imgui() noexcept;
         void detach_plugins_noexcept() noexcept;
 
-        bool begin_frame(SpectraFrameState& frame);
-        void record_frame(SpectraFrameState& frame);
-        void end_frame(SpectraFrameState& frame);
+        bool begin_frame(FrameState& frame);
+        void record_frame(FrameState& frame);
+        void end_frame(FrameState& frame);
 
         void draw_main_menu();
         void draw_menu_toolbar();
@@ -130,7 +129,6 @@ namespace xayah {
         struct {
             std::shared_ptr<GLFWwindow> window{};
             vk::raii::SurfaceKHR surface{nullptr};
-            vk::Extent2D extent{};
             bool resize_requested{false};
             bool glfw_initialized{false};
         } surface;
@@ -144,18 +142,11 @@ namespace xayah {
             vk::ColorSpaceKHR color_space{vk::ColorSpaceKHR::eSrgbNonlinear};
             vk::PresentModeKHR present_mode{vk::PresentModeKHR::eFifo};
             vk::Extent2D extent{};
-            std::uint32_t image_count{0};
-            vk::ImageUsageFlags usage{};
         } swapchain;
 
         struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
-            vk::Format color_format{vk::Format::eUndefined};
-            std::uint32_t min_image_count{2};
-            std::uint32_t image_count{2};
             bool initialized{false};
-            bool docking{true};
-            bool viewports{false};
         } imgui;
 
         struct {

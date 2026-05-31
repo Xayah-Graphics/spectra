@@ -153,7 +153,7 @@ namespace xayah::pathtracer {
         [[nodiscard]] PathtracerStatus pathtracer_status() const;
         [[nodiscard]] bool process_camera_input();
 
-        std::unique_ptr<SessionState> state{};
+        SessionState state{};
     };
 } // namespace xayah::pathtracer
 
