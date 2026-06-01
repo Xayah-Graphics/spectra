@@ -1,70 +1,61 @@
 #ifndef SPECTRA_PATHTRACER_CORE_SAMPLERS_H
 #define SPECTRA_PATHTRACER_CORE_SAMPLERS_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <algorithm>
+#include <limits>
+#include <memory>
 #include <spectra/pathtracer/base/sampler.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/core/filters.h>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/util/bluenoise.h>
 #include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/hash.h>
 #include <spectra/pathtracer/util/lowdiscrepancy.h>
 #include <spectra/pathtracer/util/math.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/pmj02tables.h>
 #include <spectra/pathtracer/util/primes.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/rng.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
-#include <algorithm>
-#include <limits>
-#include <memory>
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     // HaltonSampler Definition
-    class HaltonSampler
-    {
+    class HaltonSampler {
     public:
         // HaltonSampler Public Methods
-        HaltonSampler(int samplesPerPixel, Point2i fullResolution,
-                      RandomizeStrategy randomize = RandomizeStrategy::PermuteDigits,
-                      int seed = 0, Allocator alloc = {});
+        HaltonSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize = RandomizeStrategy::PermuteDigits, int seed = 0, Allocator alloc = {});
 
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "HaltonSampler"; }
+        static constexpr const char* Name() {
+            return "HaltonSampler";
+        }
 
-        static HaltonSampler* Create(const ParameterDictionary& parameters,
-                                     Point2i fullResolution, const FileLoc* loc,
-                                     Allocator alloc);
-
-        SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return samplesPerPixel; }
+        static HaltonSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        RandomizeStrategy GetRandomizeStrategy() const { return randomize; }
+        int SamplesPerPixel() const {
+            return samplesPerPixel;
+        }
 
         SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int sampleIndex, int dim)
-        {
-            haltonIndex = 0;
+        RandomizeStrategy GetRandomizeStrategy() const {
+            return randomize;
+        }
+
+        SPECTRA_CPU_GPU
+        void StartPixelSample(Point2i p, int sampleIndex, int dim) {
+            haltonIndex      = 0;
             int sampleStride = baseScales[0] * baseScales[1];
             // Compute Halton sample index for first sample in pixel _p_
-            if (sampleStride > 1)
-            {
+            if (sampleStride > 1) {
                 Point2i pm(Mod(p[0], MaxHaltonResolution), Mod(p[1], MaxHaltonResolution));
-                for (int i = 0; i < 2; ++i)
-                {
-                    uint64_t dimOffset =
-                        (i == 0)
-                            ? InverseRadicalInverse(pm[i], 2, baseExponents[i])
-                            : InverseRadicalInverse(pm[i], 3, baseExponents[i]);
-                    haltonIndex +=
-                        dimOffset * (sampleStride / baseScales[i]) * multInverse[i];
+                for (int i = 0; i < 2; ++i) {
+                    uint64_t dimOffset = (i == 0) ? InverseRadicalInverse(pm[i], 2, baseExponents[i]) : InverseRadicalInverse(pm[i], 3, baseExponents[i]);
+                    haltonIndex += dimOffset * (sampleStride / baseScales[i]) * multInverse[i];
                 }
                 haltonIndex %= sampleStride;
             }
@@ -74,47 +65,36 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
-            if (dimension >= PrimeTableSize)
-                dimension = 2;
+        Float Get1D() {
+            if (dimension >= PrimeTableSize) dimension = 2;
             return SampleDimension(dimension++);
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D()
-        {
-            if (dimension + 1 >= PrimeTableSize)
-                dimension = 2;
+        Point2f Get2D() {
+            if (dimension + 1 >= PrimeTableSize) dimension = 2;
             int dim = dimension;
             dimension += 2;
             return {SampleDimension(dim), SampleDimension(dim + 1)};
         }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D()
-        {
-            return {
-                RadicalInverse(0, haltonIndex >> baseExponents[0]),
-                RadicalInverse(1, haltonIndex / baseScales[1])
-            };
+        Point2f GetPixel2D() {
+            return {RadicalInverse(0, haltonIndex >> baseExponents[0]), RadicalInverse(1, haltonIndex / baseScales[1])};
         }
 
         Sampler Clone(Allocator alloc);
 
     private:
         // HaltonSampler Private Methods
-        static uint64_t multiplicativeInverse(int64_t a, int64_t n)
-        {
+        static uint64_t multiplicativeInverse(int64_t a, int64_t n) {
             int64_t x, y;
             extendedGCD(a, n, &x, &y);
             return Mod(x, n);
         }
 
-        static void extendedGCD(uint64_t a, uint64_t b, int64_t* x, int64_t* y)
-        {
-            if (b == 0)
-            {
+        static void extendedGCD(uint64_t a, uint64_t b, int64_t* x, int64_t* y) {
+            if (b == 0) {
                 *x = 1;
                 *y = 0;
                 return;
@@ -126,18 +106,14 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Float SampleDimension(int dimension) const
-        {
+        Float SampleDimension(int dimension) const {
             if (randomize == RandomizeStrategy::None)
                 return RadicalInverse(dimension, haltonIndex);
             else if (randomize == RandomizeStrategy::PermuteDigits)
-                return ScrambledRadicalInverse(dimension, haltonIndex,
-                                               (*digitPermutations)[dimension]);
-            else
-            {
+                return ScrambledRadicalInverse(dimension, haltonIndex, (*digitPermutations)[dimension]);
+            else {
                 DCHECK_EQ(randomize, RandomizeStrategy::Owen);
-                return OwenScrambledRadicalInverse(dimension, haltonIndex,
-                                                   MixBits(1 + (dimension << 4)));
+                return OwenScrambledRadicalInverse(dimension, haltonIndex, MixBits(1 + (dimension << 4)));
             }
         }
 
@@ -145,50 +121,45 @@ namespace spectra
         int samplesPerPixel;
         RandomizeStrategy randomize;
         pstd::vector<DigitPermutation>* digitPermutations = nullptr;
-        static constexpr int MaxHaltonResolution = 128;
+        static constexpr int MaxHaltonResolution          = 128;
         Point2i baseScales, baseExponents;
         int multInverse[2];
         int64_t haltonIndex = 0;
-        int dimension = 0;
+        int dimension       = 0;
     };
 
     // PaddedSobolSampler Definition
-    class PaddedSobolSampler
-    {
+    class PaddedSobolSampler {
     public:
         // PaddedSobolSampler Public Methods
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "PaddedSobolSampler"; }
+        static constexpr const char* Name() {
+            return "PaddedSobolSampler";
+        }
 
-        static PaddedSobolSampler* Create(const ParameterDictionary& parameters,
-                                          const FileLoc* loc, Allocator alloc);
+        static PaddedSobolSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
-        PaddedSobolSampler(int samplesPerPixel, RandomizeStrategy randomizer, int seed = 0)
-            : samplesPerPixel(samplesPerPixel), randomize(randomizer), seed(seed)
-        {
-            if (!IsPowerOf2(samplesPerPixel))
-                spectra::diagnostics::PrintWarning(
-                    "Sobol samplers with non power-of-two sample counts (%d) are suboptimal.",
-                    samplesPerPixel);
+        PaddedSobolSampler(int samplesPerPixel, RandomizeStrategy randomizer, int seed = 0) : samplesPerPixel(samplesPerPixel), randomize(randomizer), seed(seed) {
+            if (!IsPowerOf2(samplesPerPixel)) spectra::diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
         }
 
         SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return samplesPerPixel; }
+        int SamplesPerPixel() const {
+            return samplesPerPixel;
+        }
 
         SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int index, int dim)
-        {
-            pixel = p;
+        void StartPixelSample(Point2i p, int index, int dim) {
+            pixel       = p;
             sampleIndex = index;
-            dimension = dim;
+            dimension   = dim;
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
+        Float Get1D() {
             // Get permuted index for current pixel sample
             uint64_t hash = Hash(pixel, dimension, seed);
-            int index = PermutationElement(sampleIndex, samplesPerPixel, hash);
+            int index     = PermutationElement(sampleIndex, samplesPerPixel, hash);
 
             int dim = dimension++;
             // Return randomized 1D van der Corput sample for dimension _dim_
@@ -196,32 +167,33 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D()
-        {
+        Point2f Get2D() {
             // Get permuted index for current pixel sample
             uint64_t hash = Hash(pixel, dimension, seed);
-            int index = PermutationElement(sampleIndex, samplesPerPixel, hash);
+            int index     = PermutationElement(sampleIndex, samplesPerPixel, hash);
 
             int dim = dimension;
             dimension += 2;
             // Return randomized 2D Sobol\+$'$ sample
-            return Point2f(SampleDimension(0, index, uint32_t(hash)),
-                           SampleDimension(1, index, hash >> 32));
+            return Point2f(SampleDimension(0, index, uint32_t(hash)), SampleDimension(1, index, hash >> 32));
         }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D() { return Get2D(); }
+        Point2f GetPixel2D() {
+            return Get2D();
+        }
 
         SPECTRA_CPU_GPU
-        RandomizeStrategy GetRandomizeStrategy() const { return randomize; }
+        RandomizeStrategy GetRandomizeStrategy() const {
+            return randomize;
+        }
 
         Sampler Clone(Allocator alloc);
 
     private:
         // PaddedSobolSampler Private Methods
         SPECTRA_CPU_GPU
-        Float SampleDimension(int dimension, uint32_t a, uint32_t hash) const
-        {
+        Float SampleDimension(int dimension, uint32_t a, uint32_t hash) const {
             if (randomize == RandomizeStrategy::None)
                 return SobolSample(a, dimension, NoRandomizer());
             else if (randomize == RandomizeStrategy::PermuteDigits)
@@ -240,44 +212,37 @@ namespace spectra
     };
 
     // ZSobolSampler Definition
-    class ZSobolSampler
-    {
+    class ZSobolSampler {
     public:
         // ZSobolSampler Public Methods
-        ZSobolSampler(int samplesPerPixel, Point2i fullResolution,
-                      RandomizeStrategy randomize, int seed = 0)
-            : randomize(randomize), seed(seed)
-        {
-            if (!IsPowerOf2(samplesPerPixel))
-                spectra::diagnostics::PrintWarning(
-                    "Sobol samplers with non power-of-two sample counts (%d) are suboptimal.",
-                    samplesPerPixel);
-            log2SamplesPerPixel = Log2Int(samplesPerPixel);
-            int res = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));
+        ZSobolSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize, int seed = 0) : randomize(randomize), seed(seed) {
+            if (!IsPowerOf2(samplesPerPixel)) spectra::diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
+            log2SamplesPerPixel     = Log2Int(samplesPerPixel);
+            int res                 = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));
             int log4SamplesPerPixel = (log2SamplesPerPixel + 1) / 2;
-            nBase4Digits = Log2Int(res) + log4SamplesPerPixel;
+            nBase4Digits            = Log2Int(res) + log4SamplesPerPixel;
         }
 
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "ZSobolSampler"; }
+        static constexpr const char* Name() {
+            return "ZSobolSampler";
+        }
 
-        static ZSobolSampler* Create(const ParameterDictionary& parameters,
-                                     Point2i fullResolution, const FileLoc* loc,
-                                     Allocator alloc);
-
-        SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return 1 << log2SamplesPerPixel; }
+        static ZSobolSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int index, int dim)
-        {
-            dimension = dim;
+        int SamplesPerPixel() const {
+            return 1 << log2SamplesPerPixel;
+        }
+
+        SPECTRA_CPU_GPU
+        void StartPixelSample(Point2i p, int index, int dim) {
+            dimension   = dim;
             mortonIndex = (EncodeMorton2(p.x, p.y) << log2SamplesPerPixel) | index;
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
+        Float Get1D() {
             uint64_t sampleIndex = GetSampleIndex();
             ++dimension;
             // Generate 1D Sobol\+$'$ sample at _sampleIndex_
@@ -293,96 +258,58 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D()
-        {
+        Point2f Get2D() {
             uint64_t sampleIndex = GetSampleIndex();
             dimension += 2;
             // Generate 2D Sobol\+$'$ sample at _sampleIndex_
-            uint64_t bits = Hash(dimension, seed);
+            uint64_t bits          = Hash(dimension, seed);
             uint32_t sampleHash[2] = {uint32_t(bits), uint32_t(bits >> 32)};
             if (randomize == RandomizeStrategy::None)
-                return {
-                    SobolSample(sampleIndex, 0, NoRandomizer()),
-                    SobolSample(sampleIndex, 1, NoRandomizer())
-                };
+                return {SobolSample(sampleIndex, 0, NoRandomizer()), SobolSample(sampleIndex, 1, NoRandomizer())};
             else if (randomize == RandomizeStrategy::PermuteDigits)
-                return {
-                    SobolSample(sampleIndex, 0, BinaryPermuteScrambler(sampleHash[0])),
-                    SobolSample(sampleIndex, 1, BinaryPermuteScrambler(sampleHash[1]))
-                };
+                return {SobolSample(sampleIndex, 0, BinaryPermuteScrambler(sampleHash[0])), SobolSample(sampleIndex, 1, BinaryPermuteScrambler(sampleHash[1]))};
             else if (randomize == RandomizeStrategy::FastOwen)
-                return {
-                    SobolSample(sampleIndex, 0, FastOwenScrambler(sampleHash[0])),
-                    SobolSample(sampleIndex, 1, FastOwenScrambler(sampleHash[1]))
-                };
+                return {SobolSample(sampleIndex, 0, FastOwenScrambler(sampleHash[0])), SobolSample(sampleIndex, 1, FastOwenScrambler(sampleHash[1]))};
             else
-                return {
-                    SobolSample(sampleIndex, 0, OwenScrambler(sampleHash[0])),
-                    SobolSample(sampleIndex, 1, OwenScrambler(sampleHash[1]))
-                };
+                return {SobolSample(sampleIndex, 0, OwenScrambler(sampleHash[0])), SobolSample(sampleIndex, 1, OwenScrambler(sampleHash[1]))};
         }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D() { return Get2D(); }
+        Point2f GetPixel2D() {
+            return Get2D();
+        }
 
         Sampler Clone(Allocator alloc);
 
         SPECTRA_CPU_GPU
-        uint64_t GetSampleIndex() const
-        {
+        uint64_t GetSampleIndex() const {
             // Define the full set of 4-way permutations in _permutations_
-            static const uint8_t permutations[24][4] = {
-                {0, 1, 2, 3},
-                {0, 1, 3, 2},
-                {0, 2, 1, 3},
-                {0, 2, 3, 1},
+            static const uint8_t permutations[24][4] = {{0, 1, 2, 3}, {0, 1, 3, 2}, {0, 2, 1, 3}, {0, 2, 3, 1},
                 // Define remaining 20 4-way permutations
-                {0, 3, 2, 1},
-                {0, 3, 1, 2},
-                {1, 0, 2, 3},
-                {1, 0, 3, 2},
-                {1, 2, 0, 3},
-                {1, 2, 3, 0},
-                {1, 3, 2, 0},
-                {1, 3, 0, 2},
-                {2, 1, 0, 3},
-                {2, 1, 3, 0},
-                {2, 0, 1, 3},
-                {2, 0, 3, 1},
-                {2, 3, 0, 1},
-                {2, 3, 1, 0},
-                {3, 1, 2, 0},
-                {3, 1, 0, 2},
-                {3, 2, 1, 0},
-                {3, 2, 0, 1},
-                {3, 0, 2, 1},
-                {3, 0, 1, 2}
+                {0, 3, 2, 1}, {0, 3, 1, 2}, {1, 0, 2, 3}, {1, 0, 3, 2}, {1, 2, 0, 3}, {1, 2, 3, 0}, {1, 3, 2, 0}, {1, 3, 0, 2}, {2, 1, 0, 3}, {2, 1, 3, 0}, {2, 0, 1, 3}, {2, 0, 3, 1}, {2, 3, 0, 1}, {2, 3, 1, 0}, {3, 1, 2, 0}, {3, 1, 0, 2}, {3, 2, 1, 0}, {3, 2, 0, 1}, {3, 0, 2, 1}, {3, 0, 1, 2}
 
             };
 
             uint64_t sampleIndex = 0;
             // Apply random permutations to full base-4 digits
             bool pow2Samples = log2SamplesPerPixel & 1;
-            int lastDigit = pow2Samples ? 1 : 0;
-            for (int i = nBase4Digits - 1; i >= lastDigit; --i)
-            {
+            int lastDigit    = pow2Samples ? 1 : 0;
+            for (int i = nBase4Digits - 1; i >= lastDigit; --i) {
                 // Randomly permute $i$th base-4 digit in _mortonIndex_
                 int digitShift = 2 * i - (pow2Samples ? 1 : 0);
-                int digit = (mortonIndex >> digitShift) & 3;
+                int digit      = (mortonIndex >> digitShift) & 3;
                 // Choose permutation _p_ to use for _digit_
                 uint64_t higherDigits = mortonIndex >> (digitShift + 2);
-                int p = (MixBits(higherDigits ^ (0x55555555u * dimension)) >> 24) % 24;
+                int p                 = (MixBits(higherDigits ^ (0x55555555u * dimension)) >> 24) % 24;
 
                 digit = permutations[p][digit];
                 sampleIndex |= uint64_t(digit) << digitShift;
             }
 
             // Handle power-of-2 (but not 4) sample count
-            if (pow2Samples)
-            {
+            if (pow2Samples) {
                 int digit = mortonIndex & 1;
-                sampleIndex |=
-                    digit ^ (MixBits((mortonIndex >> 1) ^ (0x55555555u * dimension)) & 1);
+                sampleIndex |= digit ^ (MixBits((mortonIndex >> 1) ^ (0x55555555u * dimension)) & 1);
             }
 
             return sampleIndex;
@@ -397,35 +324,35 @@ namespace spectra
     };
 
     // PMJ02BNSampler Definition
-    class PMJ02BNSampler
-    {
+    class PMJ02BNSampler {
     public:
         // PMJ02BNSampler Public Methods
         PMJ02BNSampler(int samplesPerPixel, int seed = 0, Allocator alloc = {});
 
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "PMJ02BNSampler"; }
+        static constexpr const char* Name() {
+            return "PMJ02BNSampler";
+        }
 
-        static PMJ02BNSampler* Create(const ParameterDictionary& parameters,
-                                      const FileLoc* loc, Allocator alloc);
-
-        SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return samplesPerPixel; }
+        static PMJ02BNSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int index, int dim)
-        {
-            pixel = p;
-            sampleIndex = index;
-            dimension = std::max(2, dim);
+        int SamplesPerPixel() const {
+            return samplesPerPixel;
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
+        void StartPixelSample(Point2i p, int index, int dim) {
+            pixel       = p;
+            sampleIndex = index;
+            dimension   = std::max(2, dim);
+        }
+
+        SPECTRA_CPU_GPU
+        Float Get1D() {
             // Find permuted sample index for 1D PMJ02BNSampler sample
             uint64_t hash = Hash(pixel, dimension, seed);
-            int index = PermutationElement(sampleIndex, samplesPerPixel, hash);
+            int index     = PermutationElement(sampleIndex, samplesPerPixel, hash);
 
             Float delta = BlueNoise(dimension, pixel);
             ++dimension;
@@ -433,34 +360,29 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D()
-        {
+        Point2f GetPixel2D() {
             int px = pixel.x % pixelTileSize, py = pixel.y % pixelTileSize;
             int offset = (px + py * pixelTileSize) * samplesPerPixel;
             return (*pixelSamples)[offset + sampleIndex];
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D()
-        {
+        Point2f Get2D() {
             // Compute index for 2D pmj02bn sample
-            int index = sampleIndex;
+            int index       = sampleIndex;
             int pmjInstance = dimension / 2;
-            if (pmjInstance >= nPMJ02bnSets)
-            {
+            if (pmjInstance >= nPMJ02bnSets) {
                 // Permute index to be used for pmj02bn sample array
                 uint64_t hash = Hash(pixel, dimension, seed);
-                index = PermutationElement(sampleIndex, samplesPerPixel, hash);
+                index         = PermutationElement(sampleIndex, samplesPerPixel, hash);
             }
 
             // Return randomized pmj02bn sample for current dimension
             Point2f u = GetPMJ02BNSample(pmjInstance, index);
             // Apply Cranley-Patterson rotation to pmj02bn sample _u_
             u += Vector2f(BlueNoise(dimension, pixel), BlueNoise(dimension + 1, pixel));
-            if (u.x >= 1)
-                u.x -= 1;
-            if (u.y >= 1)
-                u.y -= 1;
+            if (u.x >= 1) u.x -= 1;
+            if (u.y >= 1) u.y -= 1;
 
             dimension += 2;
             return {std::min(u.x, OneMinusEpsilon), std::min(u.y, OneMinusEpsilon)};
@@ -478,38 +400,42 @@ namespace spectra
     };
 
     // IndependentSampler Definition
-    class IndependentSampler
-    {
+    class IndependentSampler {
     public:
         // IndependentSampler Public Methods
-        IndependentSampler(int samplesPerPixel, int seed = 0)
-            : samplesPerPixel(samplesPerPixel), seed(seed)
-        {
+        IndependentSampler(int samplesPerPixel, int seed = 0) : samplesPerPixel(samplesPerPixel), seed(seed) {}
+
+        static IndependentSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        SPECTRA_CPU_GPU
+        static constexpr const char* Name() {
+            return "IndependentSampler";
         }
 
-        static IndependentSampler* Create(const ParameterDictionary& parameters,
-                                          const FileLoc* loc, Allocator alloc);
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "IndependentSampler"; }
+        int SamplesPerPixel() const {
+            return samplesPerPixel;
+        }
 
         SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return samplesPerPixel; }
-
-        SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int sampleIndex, int dimension)
-        {
+        void StartPixelSample(Point2i p, int sampleIndex, int dimension) {
             rng.SetSequence(Hash(p, seed));
             rng.Advance(sampleIndex * 65536ull + dimension);
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D() { return rng.Uniform<Float>(); }
+        Float Get1D() {
+            return rng.Uniform<Float>();
+        }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D() { return {rng.Uniform<Float>(), rng.Uniform<Float>()}; }
+        Point2f Get2D() {
+            return {rng.Uniform<Float>(), rng.Uniform<Float>()};
+        }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D() { return Get2D(); }
+        Point2f GetPixel2D() {
+            return Get2D();
+        }
 
         Sampler Clone(Allocator alloc);
 
@@ -520,65 +446,55 @@ namespace spectra
     };
 
     // SobolSampler Definition
-    class SobolSampler
-    {
+    class SobolSampler {
     public:
         // SobolSampler Public Methods
-        SobolSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize,
-                     int seed = 0)
-            : samplesPerPixel(samplesPerPixel), seed(seed), randomize(randomize)
-        {
+        SobolSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize, int seed = 0) : samplesPerPixel(samplesPerPixel), seed(seed), randomize(randomize) {
             if (!IsPowerOf2(samplesPerPixel))
                 spectra::diagnostics::PrintWarning("Non power-of-two sample count %d will perform suboptimally with the "
                                                    "SobolSampler.",
-                                                   samplesPerPixel);
+                    samplesPerPixel);
             scale = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));
         }
 
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "SobolSampler"; }
+        static constexpr const char* Name() {
+            return "SobolSampler";
+        }
 
-        static SobolSampler* Create(const ParameterDictionary& parameters,
-                                    Point2i fullResolution, const FileLoc* loc,
-                                    Allocator alloc);
-
-        SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return samplesPerPixel; }
+        static SobolSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int sampleIndex, int dim)
-        {
-            pixel = p;
-            dimension = std::max(2, dim);
+        int SamplesPerPixel() const {
+            return samplesPerPixel;
+        }
+
+        SPECTRA_CPU_GPU
+        void StartPixelSample(Point2i p, int sampleIndex, int dim) {
+            pixel      = p;
+            dimension  = std::max(2, dim);
             sobolIndex = SobolIntervalToIndex(Log2Int(scale), sampleIndex, pixel);
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
-            if (dimension >= NSobolDimensions)
-                dimension = 2;
+        Float Get1D() {
+            if (dimension >= NSobolDimensions) dimension = 2;
             return SampleDimension(dimension++);
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D()
-        {
-            if (dimension + 1 >= NSobolDimensions)
-                dimension = 2;
+        Point2f Get2D() {
+            if (dimension + 1 >= NSobolDimensions) dimension = 2;
             Point2f u(SampleDimension(dimension), SampleDimension(dimension + 1));
             dimension += 2;
             return u;
         }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D()
-        {
-            Point2f u(SobolSample(sobolIndex, 0, NoRandomizer()),
-                      SobolSample(sobolIndex, 1, NoRandomizer()));
+        Point2f GetPixel2D() {
+            Point2f u(SobolSample(sobolIndex, 0, NoRandomizer()), SobolSample(sobolIndex, 1, NoRandomizer()));
             // Remap Sobol\+$'$ dimensions used for pixel samples
-            for (int dim = 0; dim < 2; ++dim)
-            {
+            for (int dim = 0; dim < 2; ++dim) {
                 DCHECK_RARE(1e-7, u[dim] * scale - pixel[dim] < 0);
                 DCHECK_RARE(1e-7, u[dim] * scale - pixel[dim] > 1);
                 u[dim] = Clamp(u[dim] * scale - pixel[dim], 0, OneMinusEpsilon);
@@ -592,11 +508,9 @@ namespace spectra
     private:
         // SobolSampler Private Methods
         SPECTRA_CPU_GPU
-        Float SampleDimension(int dimension) const
-        {
+        Float SampleDimension(int dimension) const {
             // Return un-randomized Sobol\+$'$ sample if appropriate
-            if (randomize == RandomizeStrategy::None)
-                return SobolSample(sobolIndex, dimension, NoRandomizer());
+            if (randomize == RandomizeStrategy::None) return SobolSample(sobolIndex, dimension, NoRandomizer());
 
             // Return randomized Sobol\+$'$ sample using _randomize_
             uint32_t hash = Hash(dimension, seed);
@@ -617,42 +531,36 @@ namespace spectra
     };
 
     // StratifiedSampler Definition
-    class StratifiedSampler
-    {
+    class StratifiedSampler {
     public:
         // StratifiedSampler Public Methods
-        StratifiedSampler(int xPixelSamples, int yPixelSamples, bool jitter, int seed = 0)
-            : xPixelSamples(xPixelSamples),
-              yPixelSamples(yPixelSamples),
-              seed(seed),
-              jitter(jitter)
-        {
+        StratifiedSampler(int xPixelSamples, int yPixelSamples, bool jitter, int seed = 0) : xPixelSamples(xPixelSamples), yPixelSamples(yPixelSamples), seed(seed), jitter(jitter) {}
+
+        static StratifiedSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        SPECTRA_CPU_GPU
+        static constexpr const char* Name() {
+            return "StratifiedSampler";
         }
 
-        static StratifiedSampler* Create(const ParameterDictionary& parameters,
-                                         const FileLoc* loc, Allocator alloc);
         SPECTRA_CPU_GPU
-        static constexpr const char* Name() { return "StratifiedSampler"; }
+        int SamplesPerPixel() const {
+            return xPixelSamples * yPixelSamples;
+        }
 
         SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return xPixelSamples * yPixelSamples; }
-
-        SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int index, int dim)
-        {
-            pixel = p;
+        void StartPixelSample(Point2i p, int index, int dim) {
+            pixel       = p;
             sampleIndex = index;
-            dimension = dim;
+            dimension   = dim;
             rng.SetSequence(Hash(p, seed));
             rng.Advance(sampleIndex * 65536ull + dimension);
         }
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
+        Float Get1D() {
             // Compute _stratum_ index for current pixel and dimension
             uint64_t hash = Hash(pixel, dimension, seed);
-            int stratum = PermutationElement(sampleIndex, SamplesPerPixel(), hash);
+            int stratum   = PermutationElement(sampleIndex, SamplesPerPixel(), hash);
 
             ++dimension;
             Float delta = jitter ? rng.Uniform<Float>() : 0.5f;
@@ -660,11 +568,10 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D()
-        {
+        Point2f Get2D() {
             // Compute _stratum_ index for current pixel and dimension
             uint64_t hash = Hash(pixel, dimension, seed);
-            int stratum = PermutationElement(sampleIndex, SamplesPerPixel(), hash);
+            int stratum   = PermutationElement(sampleIndex, SamplesPerPixel(), hash);
 
             dimension += 2;
             int x = stratum % xPixelSamples, y = stratum / xPixelSamples;
@@ -674,7 +581,9 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D() { return Get2D(); }
+        Point2f GetPixel2D() {
+            return Get2D();
+        }
 
         Sampler Clone(Allocator alloc);
 
@@ -688,19 +597,10 @@ namespace spectra
     };
 
     // MLTSampler Definition
-    class MLTSampler
-    {
+    class MLTSampler {
     public:
         // MLTSampler Public Methods
-        MLTSampler(int mutationsPerPixel, int rngSequenceIndex, Float sigma,
-                   Float largeStepProbability, int streamCount)
-            : mutationsPerPixel(mutationsPerPixel),
-              rng(MixBits(rngSequenceIndex) ^ MixBits(Options->seed)),
-              sigma(sigma),
-              largeStepProbability(largeStepProbability),
-              streamCount(streamCount)
-        {
-        }
+        MLTSampler(int mutationsPerPixel, int rngSequenceIndex, Float sigma, Float largeStepProbability, int streamCount) : mutationsPerPixel(mutationsPerPixel), rng(MixBits(rngSequenceIndex) ^ MixBits(Options->seed)), sigma(sigma), largeStepProbability(largeStepProbability), streamCount(streamCount) {}
 
         SPECTRA_CPU_GPU
         void StartIteration();
@@ -712,14 +612,17 @@ namespace spectra
         void StartStream(int index);
 
         SPECTRA_CPU_GPU
-        int GetNextIndex() { return streamIndex + streamCount * sampleIndex++; }
+        int GetNextIndex() {
+            return streamIndex + streamCount * sampleIndex++;
+        }
 
         SPECTRA_CPU_GPU
-        int SamplesPerPixel() const { return mutationsPerPixel; }
+        int SamplesPerPixel() const {
+            return mutationsPerPixel;
+        }
 
         SPECTRA_CPU_GPU
-        void StartPixelSample(Point2i p, int sampleIndex, int dim)
-        {
+        void StartPixelSample(Point2i p, int sampleIndex, int dim) {
             rng.SetSequence(Hash(p));
             rng.Advance(sampleIndex * 65536 + dim * 8192);
         }
@@ -742,29 +645,26 @@ namespace spectra
 
     protected:
         // MLTSampler Private Declarations
-        struct PrimarySample
-        {
+        struct PrimarySample {
             Float value = 0;
             // PrimarySample Public Methods
             SPECTRA_CPU_GPU
-            void Backup()
-            {
-                valueBackup = value;
+            void Backup() {
+                valueBackup  = value;
                 modifyBackup = lastModificationIteration;
             }
 
             SPECTRA_CPU_GPU
-            void Restore()
-            {
-                value = valueBackup;
+            void Restore() {
+                value                     = valueBackup;
                 lastModificationIteration = modifyBackup;
             }
 
 
             // PrimarySample Public Members
             int64_t lastModificationIteration = 0;
-            Float valueBackup = 0;
-            int64_t modifyBackup = 0;
+            Float valueBackup                 = 0;
+            int64_t modifyBackup              = 0;
         };
 
         // MLTSampler Private Methods
@@ -777,21 +677,18 @@ namespace spectra
         Float sigma, largeStepProbability;
         int streamCount;
         pstd::vector<PrimarySample> X;
-        int64_t currentIteration = 0;
-        bool largeStep = true;
+        int64_t currentIteration       = 0;
+        bool largeStep                 = true;
         int64_t lastLargeStepIteration = 0;
         int streamIndex, sampleIndex;
     };
 
-    class DebugMLTSampler : public MLTSampler
-    {
+    class DebugMLTSampler : public MLTSampler {
     public:
-        static DebugMLTSampler Create(pstd::span<const std::string> state,
-                                      int nSampleStreams);
+        static DebugMLTSampler Create(pstd::span<const std::string> state, int nSampleStreams);
 
         SPECTRA_CPU_GPU
-        Float Get1D()
-        {
+        Float Get1D() {
             int index = GetNextIndex();
 #if defined(__CUDA_ARCH__)
             return 0;
@@ -802,41 +699,40 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Point2f Get2D() { return {Get1D(), Get1D()}; }
+        Point2f Get2D() {
+            return {Get1D(), Get1D()};
+        }
 
         SPECTRA_CPU_GPU
-        Point2f GetPixel2D() { return Get2D(); }
+        Point2f GetPixel2D() {
+            return Get2D();
+        }
 
     private:
-        DebugMLTSampler(int nSampleStreams) : MLTSampler(1, 0, 0.5, 0.5, nSampleStreams)
-        {
-        }
+        DebugMLTSampler(int nSampleStreams) : MLTSampler(1, 0, 0.5, 0.5, nSampleStreams) {}
 
         std::vector<Float> u;
     };
 
     // Sampler Inline Functions
     template <typename S>
-    inline SPECTRA_CPU_GPU CameraSample GetCameraSample(S sampler, Point2i pPixel,
-                                                        Filter filter)
-    {
+    inline SPECTRA_CPU_GPU CameraSample GetCameraSample(S sampler, Point2i pPixel, Filter filter) {
         FilterSample fs = filter.Sample(sampler.GetPixel2D());
         CameraSample cs;
         // Initialize _CameraSample_ member variables
-        cs.pFilm = pPixel + fs.p + Vector2f(0.5f, 0.5f);
-        cs.time = sampler.Get1D();
-        cs.pLens = sampler.Get2D();
+        cs.pFilm        = pPixel + fs.p + Vector2f(0.5f, 0.5f);
+        cs.time         = sampler.Get1D();
+        cs.pLens        = sampler.Get2D();
         cs.filterWeight = fs.weight;
 
-        if (GetOptions().disablePixelJitter)
-        {
-            cs.pFilm = pPixel + Vector2f(0.5f, 0.5f);
-            cs.time = 0.5f;
-            cs.pLens = Point2f(0.5f, 0.5f);
+        if (GetOptions().disablePixelJitter) {
+            cs.pFilm        = pPixel + Vector2f(0.5f, 0.5f);
+            cs.time         = 0.5f;
+            cs.pLens        = Point2f(0.5f, 0.5f);
             cs.filterWeight = 1;
         }
         return cs;
     }
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_CORE_SAMPLERS_H
+#endif // SPECTRA_PATHTRACER_CORE_SAMPLERS_H

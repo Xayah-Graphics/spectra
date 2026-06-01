@@ -1,37 +1,30 @@
-#include <spectra/pathtracer/core/materials.h>
-
+#include <cmath>
+#include <numeric>
 #include <spectra/pathtracer/core/bsdf.h>
 #include <spectra/pathtracer/core/bssrdf.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/core/interaction.h>
+#include <spectra/pathtracer/core/materials.h>
 #include <spectra/pathtracer/core/media.h>
 #include <spectra/pathtracer/core/paramdict.h>
 #include <spectra/pathtracer/core/textures.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/spectrum.h>
-
-#include <cmath>
-#include <numeric>
 #include <string>
 
-namespace spectra
-{
-    SPECTRA_CPU_GPU void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx,
-                                   Vector3f* dpdu, Vector3f* dpdv)
-    {
+namespace spectra {
+    SPECTRA_CPU_GPU void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx, Vector3f* dpdu, Vector3f* dpdv) {
         WrapMode2D wrap(WrapMode::Repeat);
         Point2f uv(ctx.uv[0], 1 - ctx.uv[1]);
-        Vector3f ns(2 * normalMap.BilerpChannel(uv, 0, wrap) - 1,
-                    2 * normalMap.BilerpChannel(uv, 1, wrap) - 1,
-                    2 * normalMap.BilerpChannel(uv, 2, wrap) - 1);
+        Vector3f ns(2 * normalMap.BilerpChannel(uv, 0, wrap) - 1, 2 * normalMap.BilerpChannel(uv, 1, wrap) - 1, 2 * normalMap.BilerpChannel(uv, 2, wrap) - 1);
         ns = Normalize(ns);
 
         Frame frame = Frame::FromXZ(Normalize(ctx.shading.dpdu), Vector3f(ctx.shading.n));
-        ns = frame.FromLocal(ns);
+        ns          = frame.FromLocal(ns);
 
         Float ulen = Length(ctx.shading.dpdu), vlen = Length(ctx.shading.dpdv);
         *dpdu = Normalize(GramSchmidt(ctx.shading.dpdu, ns)) * ulen;
@@ -40,45 +33,34 @@ namespace spectra
 
     // DielectricMaterial Method Definitions
 
-    DielectricMaterial* DielectricMaterial::Create(
-        const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc,
-        Allocator alloc)
-    {
+    DielectricMaterial* DielectricMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
         Spectrum eta;
         if (!parameters.GetFloatArray("eta").empty())
             eta = alloc.new_object<ConstantSpectrum>(parameters.GetFloatArray("eta")[0]);
         else
             eta = parameters.GetOneSpectrum("eta", nullptr, SpectrumType::Unbounded, alloc);
-        if (!eta)
-            eta = alloc.new_object<ConstantSpectrum>(1.5f);
+        if (!eta) eta = alloc.new_object<ConstantSpectrum>(1.5f);
 
         FloatTexture uRoughness = parameters.GetFloatTextureOrNull("uroughness", alloc);
         FloatTexture vRoughness = parameters.GetFloatTextureOrNull("vroughness", alloc);
-        if (!uRoughness)
-            uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
-        if (!vRoughness)
-            vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!uRoughness) uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!vRoughness) vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
-        bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+        bool remapRoughness       = parameters.GetOneBool("remaproughness", true);
 
-        return alloc.new_object<DielectricMaterial>(uRoughness, vRoughness, eta, displacement,
-                                                    normalMap, remapRoughness);
+        return alloc.new_object<DielectricMaterial>(uRoughness, vRoughness, eta, displacement, normalMap, remapRoughness);
     }
 
     // ThinDielectricMaterial Method Definitions
 
-    ThinDielectricMaterial* ThinDielectricMaterial::Create(
-        const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc,
-        Allocator alloc)
-    {
+    ThinDielectricMaterial* ThinDielectricMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
         Spectrum eta;
         if (!parameters.GetFloatArray("eta").empty())
             eta = alloc.new_object<ConstantSpectrum>(parameters.GetFloatArray("eta")[0]);
         else
             eta = parameters.GetOneSpectrum("eta", nullptr, SpectrumType::Unbounded, alloc);
-        if (!eta)
-            eta = alloc.new_object<ConstantSpectrum>(1.5f);
+        if (!eta) eta = alloc.new_object<ConstantSpectrum>(1.5f);
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
 
@@ -87,10 +69,7 @@ namespace spectra
 
     // MixMaterial Method Definitions
 
-    MixMaterial* MixMaterial::Create(Material materials[2],
-                                     const TextureParameterDictionary& parameters,
-                                     const FileLoc* loc, Allocator alloc)
-    {
+    MixMaterial* MixMaterial::Create(Material materials[2], const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
         FloatTexture amount = parameters.GetFloatTexture("amount", 0.5f, alloc);
 
         // Check for this stuff here, where we can include the FileLoc in
@@ -99,83 +78,60 @@ namespace spectra
         // resolve MixMaterials in the closest hit shader...
         if (!BasicTextureEvaluator().CanEvaluate({amount}, {}))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "The GPU renderer currently only supports basic textures "
-                                                                  "for its \"amount\" parameter."));
+                                                                       "for its \"amount\" parameter."));
 
         return alloc.new_object<MixMaterial>(materials, amount);
     }
 
     // HairMaterial Method Definitions
 
-    HairMaterial* HairMaterial::Create(const TextureParameterDictionary& parameters,
-                                       const FileLoc* loc, Allocator alloc)
-    {
-        SpectrumTexture sigma_a =
-            parameters.GetSpectrumTextureOrNull("sigma_a", SpectrumType::Unbounded, alloc);
-        SpectrumTexture reflectance =
-            parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
-        if (!reflectance)
-            reflectance = parameters.GetSpectrumTextureOrNull("color", SpectrumType::Albedo, alloc);
-        FloatTexture eumelanin = parameters.GetFloatTextureOrNull("eumelanin", alloc);
+    HairMaterial* HairMaterial::Create(const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+        SpectrumTexture sigma_a     = parameters.GetSpectrumTextureOrNull("sigma_a", SpectrumType::Unbounded, alloc);
+        SpectrumTexture reflectance = parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+        if (!reflectance) reflectance = parameters.GetSpectrumTextureOrNull("color", SpectrumType::Albedo, alloc);
+        FloatTexture eumelanin   = parameters.GetFloatTextureOrNull("eumelanin", alloc);
         FloatTexture pheomelanin = parameters.GetFloatTextureOrNull("pheomelanin", alloc);
-        if (sigma_a)
-        {
-            if (reflectance)
-                spectra::diagnostics::PrintWarning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
+        if (sigma_a) {
+            if (reflectance) spectra::diagnostics::PrintWarning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
             if (eumelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"sigma_a\" was "
-                                                   "provided.");
+                                                        "provided.");
             if (pheomelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"sigma_a\" was "
-                                                   "provided.");
-        }
-        else if (reflectance)
-        {
-            if (sigma_a)
-                spectra::diagnostics::PrintWarning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
+                                                        "provided.");
+        } else if (reflectance) {
+            if (sigma_a) spectra::diagnostics::PrintWarning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
             if (eumelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"reflectance\" was "
-                                                   "provided.");
+                                                        "provided.");
             if (pheomelanin)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"reflectance\" was "
-                                                   "provided.");
-        }
-        else if (eumelanin || pheomelanin)
-        {
+                                                        "provided.");
+        } else if (eumelanin || pheomelanin) {
             if (sigma_a)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"sigma_a\" parameter since "
-                                                   "\"eumelanin\"/\"pheomelanin\" was provided.");
+                                                        "\"eumelanin\"/\"pheomelanin\" was provided.");
             if (reflectance)
                 spectra::diagnostics::PrintWarning(loc, "Ignoring \"reflectance\" parameter since "
-                                                   "\"eumelanin\"/\"pheomelanin\" was provided.");
-        }
-        else
-        {
+                                                        "\"eumelanin\"/\"pheomelanin\" was provided.");
+        } else {
             // Default: brown-ish hair.
-            sigma_a = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<RGBUnboundedSpectrum>(
-                    HairBxDF::SigmaAFromConcentration(1.3, 0.)));
+            sigma_a = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<RGBUnboundedSpectrum>(HairBxDF::SigmaAFromConcentration(1.3, 0.)));
         }
 
-        FloatTexture eta = parameters.GetFloatTexture("eta", 1.55f, alloc);
+        FloatTexture eta    = parameters.GetFloatTexture("eta", 1.55f, alloc);
         FloatTexture beta_m = parameters.GetFloatTexture("beta_m", 0.3f, alloc);
         FloatTexture beta_n = parameters.GetFloatTexture("beta_n", 0.3f, alloc);
-        FloatTexture alpha = parameters.GetFloatTexture("alpha", 2.f, alloc);
+        FloatTexture alpha  = parameters.GetFloatTexture("alpha", 2.f, alloc);
 
-        return alloc.new_object<HairMaterial>(sigma_a, reflectance, eumelanin, pheomelanin, eta,
-                                              beta_m, beta_n, alpha);
+        return alloc.new_object<HairMaterial>(sigma_a, reflectance, eumelanin, pheomelanin, eta, beta_m, beta_n, alpha);
     }
 
     // DiffuseMaterial Method Definitions
 
-    DiffuseMaterial* DiffuseMaterial::Create(const TextureParameterDictionary& parameters,
-                                             Image* normalMap, const FileLoc* loc,
-                                             Allocator alloc)
-    {
-        SpectrumTexture reflectance = parameters.GetSpectrumTexture(
-            "reflectance", nullptr, SpectrumType::Albedo, alloc);
-        if (!reflectance)
-            reflectance = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<ConstantSpectrum>(0.5f));
+    DiffuseMaterial* DiffuseMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
+        SpectrumTexture reflectance = parameters.GetSpectrumTexture("reflectance", nullptr, SpectrumType::Albedo, alloc);
+        if (!reflectance) reflectance = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<ConstantSpectrum>(0.5f));
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
 
         return alloc.new_object<DiffuseMaterial>(reflectance, displacement, normalMap);
@@ -183,58 +139,40 @@ namespace spectra
 
     // ConductorMaterial Method Definitions
 
-    ConductorMaterial* ConductorMaterial::Create(const TextureParameterDictionary& parameters,
-                                                 Image* normalMap, const FileLoc* loc,
-                                                 Allocator alloc)
-    {
-        SpectrumTexture eta =
-            parameters.GetSpectrumTextureOrNull("eta", SpectrumType::Unbounded, alloc);
-        SpectrumTexture k =
-            parameters.GetSpectrumTextureOrNull("k", SpectrumType::Unbounded, alloc);
-        SpectrumTexture reflectance =
-            parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+    ConductorMaterial* ConductorMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
+        SpectrumTexture eta         = parameters.GetSpectrumTextureOrNull("eta", SpectrumType::Unbounded, alloc);
+        SpectrumTexture k           = parameters.GetSpectrumTextureOrNull("k", SpectrumType::Unbounded, alloc);
+        SpectrumTexture reflectance = parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
 
         if (reflectance && (eta || k))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "For the conductor material, both \"reflectance\" "
-                                                                  "and \"eta\" and \"k\" can't be provided."));
-        if (!reflectance)
-        {
-            if (!eta)
-                eta = alloc.new_object<SpectrumConstantTexture>(
-                    GetNamedSpectrum("metal-Cu-eta"));
-            if (!k)
-                k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
+                                                                       "and \"eta\" and \"k\" can't be provided."));
+        if (!reflectance) {
+            if (!eta) eta = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-eta"));
+            if (!k) k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
         }
 
         FloatTexture uRoughness = parameters.GetFloatTextureOrNull("uroughness", alloc);
         FloatTexture vRoughness = parameters.GetFloatTextureOrNull("vroughness", alloc);
-        if (!uRoughness)
-            uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
-        if (!vRoughness)
-            vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!uRoughness) uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!vRoughness) vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
-        bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+        bool remapRoughness       = parameters.GetOneBool("remaproughness", true);
 
-        return alloc.new_object<ConductorMaterial>(eta, k, reflectance, uRoughness,
-                                                   vRoughness, displacement, normalMap,
-                                                   remapRoughness);
+        return alloc.new_object<ConductorMaterial>(eta, k, reflectance, uRoughness, vRoughness, displacement, normalMap, remapRoughness);
     }
 
     // CoatedDiffuseMaterial Method Definitions
     template <typename TextureEvaluator>
-    SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(TextureEvaluator texEval,
-                                                                     const MaterialEvalContext& ctx,
-                                                                     SampledWavelengths& lambda) const
-    {
+    SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
         // Initialize diffuse component of plastic material
         SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
 
         // Create microfacet distribution _distrib_ for coated diffuse material
         Float urough = texEval(uRoughness, ctx);
         Float vrough = texEval(vRoughness, ctx);
-        if (remapRoughness)
-        {
+        if (remapRoughness) {
             urough = TrowbridgeReitzDistribution::RoughnessToAlpha(urough);
             vrough = TrowbridgeReitzDistribution::RoughnessToAlpha(vrough);
         }
@@ -243,43 +181,28 @@ namespace spectra
         Float thick = texEval(thickness, ctx);
 
         Float sampledEta = eta(lambda[0]);
-        if (!eta.template Is<ConstantSpectrum>())
-            lambda.TerminateSecondary();
-        if (sampledEta == 0)
-            sampledEta = 1;
+        if (!eta.template Is<ConstantSpectrum>()) lambda.TerminateSecondary();
+        if (sampledEta == 0) sampledEta = 1;
 
         SampledSpectrum a = Clamp(texEval(albedo, ctx, lambda), 0, 1);
-        Float gg = Clamp(texEval(g, ctx), -1, 1);
+        Float gg          = Clamp(texEval(g, ctx), -1, 1);
 
-        return CoatedDiffuseBxDF(DielectricBxDF(sampledEta, distrib), DiffuseBxDF(r), thick,
-                                 a, gg, maxDepth, nSamples);
+        return CoatedDiffuseBxDF(DielectricBxDF(sampledEta, distrib), DiffuseBxDF(r), thick, a, gg, maxDepth, nSamples);
     }
 
     // Explicit template instantiation
-    template SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(
-        BasicTextureEvaluator, const MaterialEvalContext& ctx,
-        SampledWavelengths& lambda) const;
-    template SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(
-        UniversalTextureEvaluator, const MaterialEvalContext& ctx,
-        SampledWavelengths& lambda) const;
+    template SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(BasicTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
+    template SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(UniversalTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
 
 
-    CoatedDiffuseMaterial* CoatedDiffuseMaterial::Create(
-        const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc,
-        Allocator alloc)
-    {
-        SpectrumTexture reflectance = parameters.GetSpectrumTexture(
-            "reflectance", nullptr, SpectrumType::Albedo, alloc);
-        if (!reflectance)
-            reflectance = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<ConstantSpectrum>(0.5f));
+    CoatedDiffuseMaterial* CoatedDiffuseMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
+        SpectrumTexture reflectance = parameters.GetSpectrumTexture("reflectance", nullptr, SpectrumType::Albedo, alloc);
+        if (!reflectance) reflectance = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<ConstantSpectrum>(0.5f));
 
         FloatTexture uRoughness = parameters.GetFloatTextureOrNull("uroughness", alloc);
         FloatTexture vRoughness = parameters.GetFloatTextureOrNull("vroughness", alloc);
-        if (!uRoughness)
-            uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
-        if (!vRoughness)
-            vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!uRoughness) uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!vRoughness) vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
 
         FloatTexture thickness = parameters.GetFloatTexture("thickness", .01, alloc);
 
@@ -288,36 +211,26 @@ namespace spectra
             eta = alloc.new_object<ConstantSpectrum>(parameters.GetFloatArray("eta")[0]);
         else
             eta = parameters.GetOneSpectrum("eta", nullptr, SpectrumType::Unbounded, alloc);
-        if (!eta)
-            eta = alloc.new_object<ConstantSpectrum>(1.5f);
+        if (!eta) eta = alloc.new_object<ConstantSpectrum>(1.5f);
 
         int maxDepth = parameters.GetOneInt("maxdepth", 10);
         int nSamples = parameters.GetOneInt("nsamples", 1);
 
-        FloatTexture g = parameters.GetFloatTexture("g", 0.f, alloc);
-        SpectrumTexture albedo =
-            parameters.GetSpectrumTexture("albedo", nullptr, SpectrumType::Albedo, alloc);
-        if (!albedo)
-            albedo = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<ConstantSpectrum>(0.f));
+        FloatTexture g         = parameters.GetFloatTexture("g", 0.f, alloc);
+        SpectrumTexture albedo = parameters.GetSpectrumTexture("albedo", nullptr, SpectrumType::Albedo, alloc);
+        if (!albedo) albedo = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<ConstantSpectrum>(0.f));
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
-        bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+        bool remapRoughness       = parameters.GetOneBool("remaproughness", true);
 
-        return alloc.new_object<CoatedDiffuseMaterial>(
-            reflectance, uRoughness, vRoughness, thickness, albedo, g, eta, displacement,
-            normalMap, remapRoughness, maxDepth, nSamples);
+        return alloc.new_object<CoatedDiffuseMaterial>(reflectance, uRoughness, vRoughness, thickness, albedo, g, eta, displacement, normalMap, remapRoughness, maxDepth, nSamples);
     }
 
     template <typename TextureEvaluator>
-    SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(TextureEvaluator texEval,
-                                                                         const MaterialEvalContext& ctx,
-                                                                         SampledWavelengths& lambda) const
-    {
+    SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
         Float iurough = texEval(interfaceURoughness, ctx);
         Float ivrough = texEval(interfaceVRoughness, ctx);
-        if (remapRoughness)
-        {
+        if (remapRoughness) {
             iurough = TrowbridgeReitzDistribution::RoughnessToAlpha(iurough);
             ivrough = TrowbridgeReitzDistribution::RoughnessToAlpha(ivrough);
         }
@@ -326,250 +239,164 @@ namespace spectra
         Float thick = texEval(thickness, ctx);
 
         Float ieta = interfaceEta(lambda[0]);
-        if (!interfaceEta.template Is<ConstantSpectrum>())
-            lambda.TerminateSecondary();
-        if (ieta == 0)
-            ieta = 1;
+        if (!interfaceEta.template Is<ConstantSpectrum>()) lambda.TerminateSecondary();
+        if (ieta == 0) ieta = 1;
 
         SampledSpectrum ce, ck;
-        if (conductorEta)
-        {
+        if (conductorEta) {
             ce = texEval(conductorEta, ctx, lambda);
             ck = texEval(k, ctx, lambda);
-        }
-        else
-        {
+        } else {
             // Avoid r==1 NaN case...
             SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, .9999);
-            ce = SampledSpectrum(1.f);
-            ck = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
+            ce                = SampledSpectrum(1.f);
+            ck                = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
         }
         ce /= ieta;
         ck /= ieta;
 
         Float curough = texEval(conductorURoughness, ctx);
         Float cvrough = texEval(conductorVRoughness, ctx);
-        if (remapRoughness)
-        {
+        if (remapRoughness) {
             curough = TrowbridgeReitzDistribution::RoughnessToAlpha(curough);
             cvrough = TrowbridgeReitzDistribution::RoughnessToAlpha(cvrough);
         }
         TrowbridgeReitzDistribution conductorDistrib(curough, cvrough);
 
         SampledSpectrum a = Clamp(texEval(albedo, ctx, lambda), 0, 1);
-        Float gg = Clamp(texEval(g, ctx), -1, 1);
+        Float gg          = Clamp(texEval(g, ctx), -1, 1);
 
-        return CoatedConductorBxDF(DielectricBxDF(ieta, interfaceDistrib),
-                                   ConductorBxDF(conductorDistrib, ce, ck), thick, a, gg,
-                                   maxDepth, nSamples);
+        return CoatedConductorBxDF(DielectricBxDF(ieta, interfaceDistrib), ConductorBxDF(conductorDistrib, ce, ck), thick, a, gg, maxDepth, nSamples);
     }
 
-    template SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(
-        BasicTextureEvaluator, const MaterialEvalContext& ctx,
-        SampledWavelengths& lambda) const;
-    template SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(
-        UniversalTextureEvaluator, const MaterialEvalContext& ctx,
-        SampledWavelengths& lambda) const;
+    template SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(BasicTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
+    template SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(UniversalTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
 
 
-    CoatedConductorMaterial* CoatedConductorMaterial::Create(
-        const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc,
-        Allocator alloc)
-    {
+    CoatedConductorMaterial* CoatedConductorMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
         // interface
-        FloatTexture interfaceURoughness =
-            parameters.GetFloatTextureOrNull("interface.uroughness", alloc);
-        FloatTexture interfaceVRoughness =
-            parameters.GetFloatTextureOrNull("interface.vroughness", alloc);
-        if (!interfaceURoughness)
-            interfaceURoughness =
-                parameters.GetFloatTexture("interface.roughness", 0.f, alloc);
-        if (!interfaceVRoughness)
-            interfaceVRoughness =
-                parameters.GetFloatTexture("interface.roughness", 0.f, alloc);
+        FloatTexture interfaceURoughness = parameters.GetFloatTextureOrNull("interface.uroughness", alloc);
+        FloatTexture interfaceVRoughness = parameters.GetFloatTextureOrNull("interface.vroughness", alloc);
+        if (!interfaceURoughness) interfaceURoughness = parameters.GetFloatTexture("interface.roughness", 0.f, alloc);
+        if (!interfaceVRoughness) interfaceVRoughness = parameters.GetFloatTexture("interface.roughness", 0.f, alloc);
 
         FloatTexture thickness = parameters.GetFloatTexture("thickness", .01, alloc);
 
         Spectrum interfaceEta;
         if (!parameters.GetFloatArray("interface.eta").empty())
-            interfaceEta = alloc.new_object<ConstantSpectrum>(
-                parameters.GetFloatArray("interface.eta")[0]);
+            interfaceEta = alloc.new_object<ConstantSpectrum>(parameters.GetFloatArray("interface.eta")[0]);
         else
-            interfaceEta = parameters.GetOneSpectrum("interface.eta", nullptr,
-                                                     SpectrumType::Unbounded, alloc);
-        if (!interfaceEta)
-            interfaceEta = alloc.new_object<ConstantSpectrum>(1.5f);
+            interfaceEta = parameters.GetOneSpectrum("interface.eta", nullptr, SpectrumType::Unbounded, alloc);
+        if (!interfaceEta) interfaceEta = alloc.new_object<ConstantSpectrum>(1.5f);
 
         // conductor
-        FloatTexture conductorURoughness =
-            parameters.GetFloatTextureOrNull("conductor.uroughness", alloc);
-        FloatTexture conductorVRoughness =
-            parameters.GetFloatTextureOrNull("conductor.vroughness", alloc);
-        if (!conductorURoughness)
-            conductorURoughness =
-                parameters.GetFloatTexture("conductor.roughness", 0.f, alloc);
-        if (!conductorVRoughness)
-            conductorVRoughness =
-                parameters.GetFloatTexture("conductor.roughness", 0.f, alloc);
-        SpectrumTexture conductorEta = parameters.GetSpectrumTextureOrNull(
-            "conductor.eta", SpectrumType::Unbounded, alloc);
-        SpectrumTexture k = parameters.GetSpectrumTextureOrNull(
-            "conductor.k", SpectrumType::Unbounded, alloc);
-        SpectrumTexture reflectance =
-            parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+        FloatTexture conductorURoughness = parameters.GetFloatTextureOrNull("conductor.uroughness", alloc);
+        FloatTexture conductorVRoughness = parameters.GetFloatTextureOrNull("conductor.vroughness", alloc);
+        if (!conductorURoughness) conductorURoughness = parameters.GetFloatTexture("conductor.roughness", 0.f, alloc);
+        if (!conductorVRoughness) conductorVRoughness = parameters.GetFloatTexture("conductor.roughness", 0.f, alloc);
+        SpectrumTexture conductorEta = parameters.GetSpectrumTextureOrNull("conductor.eta", SpectrumType::Unbounded, alloc);
+        SpectrumTexture k            = parameters.GetSpectrumTextureOrNull("conductor.k", SpectrumType::Unbounded, alloc);
+        SpectrumTexture reflectance  = parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
 
         if (reflectance && (conductorEta || k))
             throw std::runtime_error(spectra::diagnostics::Format(loc, "For the coated conductor material, both \"reflectance\" "
-                                                                  "and \"eta\" and \"k\" can't be provided."));
-        if (!reflectance)
-        {
-            if (!conductorEta)
-                conductorEta = alloc.new_object<SpectrumConstantTexture>(
-                    GetNamedSpectrum("metal-Cu-eta"));
-            if (!k)
-                k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
+                                                                       "and \"eta\" and \"k\" can't be provided."));
+        if (!reflectance) {
+            if (!conductorEta) conductorEta = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-eta"));
+            if (!k) k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
         }
 
         int maxDepth = parameters.GetOneInt("maxdepth", 10);
         int nSamples = parameters.GetOneInt("nsamples", 1);
 
-        FloatTexture g = parameters.GetFloatTexture("g", 0.f, alloc);
-        SpectrumTexture albedo =
-            parameters.GetSpectrumTexture("albedo", nullptr, SpectrumType::Albedo, alloc);
-        if (!albedo)
-            albedo = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<ConstantSpectrum>(0.f));
+        FloatTexture g         = parameters.GetFloatTexture("g", 0.f, alloc);
+        SpectrumTexture albedo = parameters.GetSpectrumTexture("albedo", nullptr, SpectrumType::Albedo, alloc);
+        if (!albedo) albedo = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<ConstantSpectrum>(0.f));
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
-        bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+        bool remapRoughness       = parameters.GetOneBool("remaproughness", true);
 
-        return alloc.new_object<CoatedConductorMaterial>(
-            interfaceURoughness, interfaceVRoughness, thickness, interfaceEta, g, albedo,
-            conductorURoughness, conductorVRoughness, conductorEta, k, reflectance,
-            displacement, normalMap, remapRoughness, maxDepth, nSamples);
+        return alloc.new_object<CoatedConductorMaterial>(interfaceURoughness, interfaceVRoughness, thickness, interfaceEta, g, albedo, conductorURoughness, conductorVRoughness, conductorEta, k, reflectance, displacement, normalMap, remapRoughness, maxDepth, nSamples);
     }
 
     // SubsurfaceMaterial Method Definitions
 
-    SubsurfaceMaterial* SubsurfaceMaterial::Create(
-        const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc,
-        Allocator alloc)
-    {
+    SubsurfaceMaterial* SubsurfaceMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
         SpectrumTexture sigma_a, sigma_s, reflectance, mfp;
 
         Float g = parameters.GetOneFloat("g", 0.0f);
 
         // 4, mutually-exclusive, ways to specify the subsurface properties...
         std::string name = parameters.GetOneString("name", "");
-        if (!name.empty())
-        {
+        if (!name.empty()) {
             // 1. By name
             Spectrum sig_a, sig_s;
-            if (!GetMediumScatteringProperties(name, &sig_a, &sig_s, alloc))
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: named medium not found.", name));
-            if (g != 0)
-                spectra::diagnostics::PrintWarning(loc, "Non-zero \"g\" ignored with named scattering coefficients.");
+            if (!GetMediumScatteringProperties(name, &sig_a, &sig_s, alloc)) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: named medium not found.", name));
+            if (g != 0) spectra::diagnostics::PrintWarning(loc, "Non-zero \"g\" ignored with named scattering coefficients.");
             g = 0; /* Enforce g=0 (the database specifies reduced scattering
                   coefficients) */
             sigma_a = alloc.new_object<SpectrumConstantTexture>(sig_a);
             sigma_s = alloc.new_object<SpectrumConstantTexture>(sig_s);
-        }
-        else
-        {
+        } else {
             // 2. sigma_a and sigma_s directly specified
-            sigma_a = parameters.GetSpectrumTextureOrNull("sigma_a", SpectrumType::Unbounded,
-                                                          alloc);
-            sigma_s = parameters.GetSpectrumTextureOrNull("sigma_s", SpectrumType::Unbounded,
-                                                          alloc);
-            if (sigma_a && !sigma_s)
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "Provided \"sigma_a\" parameter without \"sigma_s\"."));
-            if (sigma_s && !sigma_a)
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "Provided \"sigma_s\" parameter without \"sigma_a\"."));
+            sigma_a = parameters.GetSpectrumTextureOrNull("sigma_a", SpectrumType::Unbounded, alloc);
+            sigma_s = parameters.GetSpectrumTextureOrNull("sigma_s", SpectrumType::Unbounded, alloc);
+            if (sigma_a && !sigma_s) throw std::runtime_error(spectra::diagnostics::Format(loc, "Provided \"sigma_a\" parameter without \"sigma_s\"."));
+            if (sigma_s && !sigma_a) throw std::runtime_error(spectra::diagnostics::Format(loc, "Provided \"sigma_s\" parameter without \"sigma_a\"."));
 
-            if (!sigma_a && !sigma_s)
-            {
+            if (!sigma_a && !sigma_s) {
                 // 3. RGB/Spectrum, reflectance
-                reflectance = parameters.GetSpectrumTextureOrNull(
-                    "reflectance", SpectrumType::Albedo, alloc);
-                if (reflectance)
-                {
+                reflectance = parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
+                if (reflectance) {
                     Spectrum one = alloc.new_object<ConstantSpectrum>(1.);
-                    mfp = parameters.GetSpectrumTexture("mfp", one, SpectrumType::Unbounded,
-                                                        alloc);
-                }
-                else
-                {
+                    mfp          = parameters.GetSpectrumTexture("mfp", one, SpectrumType::Unbounded, alloc);
+                } else {
                     // 4. nothing specified -- use defaults
-                    RGBUnboundedSpectrum* defaultSigma_a =
-                        alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB,
-                                                               RGB(.0011f, .0024f, .014f));
-                    RGBUnboundedSpectrum* defaultSigma_s =
-                        alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB,
-                                                               RGB(2.55f, 3.21f, 3.77f));
-                    sigma_a = alloc.new_object<SpectrumConstantTexture>(defaultSigma_a);
-                    sigma_s = alloc.new_object<SpectrumConstantTexture>(defaultSigma_s);
+                    RGBUnboundedSpectrum* defaultSigma_a = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB, RGB(.0011f, .0024f, .014f));
+                    RGBUnboundedSpectrum* defaultSigma_s = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB, RGB(2.55f, 3.21f, 3.77f));
+                    sigma_a                              = alloc.new_object<SpectrumConstantTexture>(defaultSigma_a);
+                    sigma_s                              = alloc.new_object<SpectrumConstantTexture>(defaultSigma_s);
                 }
             }
         }
 
         Float scale = parameters.GetOneFloat("scale", 1.f);
-        Float eta = parameters.GetOneFloat("eta", 1.33f);
+        Float eta   = parameters.GetOneFloat("eta", 1.33f);
 
         FloatTexture uRoughness = parameters.GetFloatTextureOrNull("uroughness", alloc);
         FloatTexture vRoughness = parameters.GetFloatTextureOrNull("vroughness", alloc);
-        if (!uRoughness)
-            uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
-        if (!vRoughness)
-            vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!uRoughness) uRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
+        if (!vRoughness) vRoughness = parameters.GetFloatTexture("roughness", 0.f, alloc);
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
-        bool remapRoughness = parameters.GetOneBool("remaproughness", true);
+        bool remapRoughness       = parameters.GetOneBool("remaproughness", true);
 
-        return alloc.new_object<SubsurfaceMaterial>(
-            scale, sigma_a, sigma_s, reflectance, mfp, g, eta, uRoughness, vRoughness,
-            displacement, normalMap, remapRoughness, alloc);
+        return alloc.new_object<SubsurfaceMaterial>(scale, sigma_a, sigma_s, reflectance, mfp, g, eta, uRoughness, vRoughness, displacement, normalMap, remapRoughness, alloc);
     }
 
     // DiffuseTransmissionMaterial Method Definitions
 
-    DiffuseTransmissionMaterial* DiffuseTransmissionMaterial::Create(
-        const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc,
-        Allocator alloc)
-    {
-        SpectrumTexture reflectance = parameters.GetSpectrumTexture(
-            "reflectance", nullptr, SpectrumType::Albedo, alloc);
-        if (!reflectance)
-            reflectance = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<ConstantSpectrum>(0.25f));
+    DiffuseTransmissionMaterial* DiffuseTransmissionMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
+        SpectrumTexture reflectance = parameters.GetSpectrumTexture("reflectance", nullptr, SpectrumType::Albedo, alloc);
+        if (!reflectance) reflectance = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<ConstantSpectrum>(0.25f));
 
-        SpectrumTexture transmittance = parameters.GetSpectrumTexture(
-            "transmittance", nullptr, SpectrumType::Albedo, alloc);
-        if (!transmittance)
-            transmittance = alloc.new_object<SpectrumConstantTexture>(
-                alloc.new_object<ConstantSpectrum>(0.25f));
+        SpectrumTexture transmittance = parameters.GetSpectrumTexture("transmittance", nullptr, SpectrumType::Albedo, alloc);
+        if (!transmittance) transmittance = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<ConstantSpectrum>(0.25f));
 
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
-        Float scale = parameters.GetOneFloat("scale", 1.f);
+        Float scale               = parameters.GetOneFloat("scale", 1.f);
 
-        return alloc.new_object<DiffuseTransmissionMaterial>(reflectance, transmittance,
-                                                             displacement, normalMap, scale);
+        return alloc.new_object<DiffuseTransmissionMaterial>(reflectance, transmittance, displacement, normalMap, scale);
     }
 
-    MeasuredMaterial::MeasuredMaterial(const std::string& filename, FloatTexture displacement,
-                                       Image* normalMap, Allocator alloc)
-        : displacement(displacement), normalMap(normalMap)
-    {
+    MeasuredMaterial::MeasuredMaterial(const std::string& filename, FloatTexture displacement, Image* normalMap, Allocator alloc) : displacement(displacement), normalMap(normalMap) {
         brdf = MeasuredBxDF::BRDFDataFromFile(filename, alloc);
     }
 
 
-    MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters,
-                                               Image* normalMap, const FileLoc* loc,
-                                               Allocator alloc)
-    {
+    MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
-        if (filename.empty())
-        {
+        if (filename.empty()) {
             throw std::runtime_error(spectra::diagnostics::Format("Filename must be provided for MeasuredMaterial"));
             return nullptr;
         }
@@ -579,19 +406,13 @@ namespace spectra
     }
 
 
-    Material Material::Create(const std::string& name,
-                              const TextureParameterDictionary& parameters, Image* normalMap,
-                              /*const */ std::map<std::string, Material>& namedMaterials,
-                              const FileLoc* loc, Allocator alloc)
-    {
+    Material Material::Create(const std::string& name, const TextureParameterDictionary& parameters, Image* normalMap,
+        /*const */ std::map<std::string, Material>& namedMaterials, const FileLoc* loc, Allocator alloc) {
         Material material;
-        if (name.empty() || name == "none")
-        {
-            spectra::diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.",
-                                               name.c_str());
+        if (name.empty() || name == "none") {
+            spectra::diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.", name.c_str());
             return nullptr;
-        }
-        else if (name == "interface")
+        } else if (name == "interface")
             return nullptr;
         else if (name == "diffuse")
             material = DiffuseMaterial::Create(parameters, normalMap, loc, alloc);
@@ -613,32 +434,26 @@ namespace spectra
             material = MeasuredMaterial::Create(parameters, normalMap, loc, alloc);
         else if (name == "subsurface")
             material = SubsurfaceMaterial::Create(parameters, normalMap, loc, alloc);
-        else if (name == "mix")
-        {
+        else if (name == "mix") {
             std::vector<std::string> materialNames = parameters.GetStringArray("materials");
-            if (materialNames.size() != 2)
-                throw std::runtime_error(spectra::diagnostics::Format(
-                    "Must provide two values for \"string materials\" for mix material."));
+            if (materialNames.size() != 2) throw std::runtime_error(spectra::diagnostics::Format("Must provide two values for \"string materials\" for mix material."));
 
             Material materials[2];
-            for (int i = 0; i < 2; ++i)
-            {
+            for (int i = 0; i < 2; ++i) {
                 auto iter = namedMaterials.find(materialNames[i]);
-                if (iter == namedMaterials.end())
-                    throw std::runtime_error(spectra::diagnostics::Format("%s: named material not found.", materialNames[i]));
+                if (iter == namedMaterials.end()) throw std::runtime_error(spectra::diagnostics::Format("%s: named material not found.", materialNames[i]));
                 materials[i] = iter->second;
 
                 if (materials[i] == nullptr)
                     throw std::runtime_error(spectra::diagnostics::Format("%s: an \"interface\" material cannot be used as an element of "
-                                                                          "the \"mix\" material.", materialNames[i]));
+                                                                          "the \"mix\" material.",
+                        materialNames[i]));
             }
             material = MixMaterial::Create(materials, parameters, loc, alloc);
-        }
-        else
+        } else
             throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: material type unknown.", name));
 
-        if (!material)
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create material.", name));
+        if (!material) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create material.", name));
 
         parameters.ReportUnused();
         return material;

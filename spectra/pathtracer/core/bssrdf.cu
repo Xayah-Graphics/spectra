@@ -1,5 +1,5 @@
+#include <cmath>
 #include <spectra/pathtracer/core/bssrdf.h>
-
 #include <spectra/pathtracer/core/media.h>
 #include <spectra/pathtracer/core/shapes.h>
 #include <spectra/pathtracer/util/math.h>
@@ -7,41 +7,29 @@
 #include <spectra/pathtracer/util/parallel.h>
 #include <spectra/pathtracer/util/sampling.h>
 
-#include <cmath>
-
-namespace spectra
-{
-    SPECTRA_CPU_GPU pstd::optional<BSSRDFProbeSegment> BSSRDF::SampleSp(Float u1,
-                                                                        Point2f u2) const
-    {
+namespace spectra {
+    SPECTRA_CPU_GPU pstd::optional<BSSRDFProbeSegment> BSSRDF::SampleSp(Float u1, Point2f u2) const {
         auto sample = [&](auto ptr) { return ptr->SampleSp(u1, u2); };
         return Dispatch(sample);
     }
 
-    BSSRDFSample BSSRDF::ProbeIntersectionToSample(
-        const SubsurfaceInteraction& si, ScratchBuffer& scratchBuffer) const
-    {
-        auto pits = [&](auto ptr)
-        {
-            typename std::remove_reference_t<decltype(*ptr)>::BxDF* bxdf =
-                (typename std::remove_reference_t<decltype(*ptr)>::BxDF*)scratchBuffer.Alloc(
-                    sizeof(typename std::remove_reference_t<decltype(*ptr)>::BxDF),
-                    alignof(typename std::remove_reference_t<decltype(*ptr)>::BxDF));
+    BSSRDFSample BSSRDF::ProbeIntersectionToSample(const SubsurfaceInteraction& si, ScratchBuffer& scratchBuffer) const {
+        auto pits = [&](auto ptr) {
+            typename std::remove_reference_t<decltype(*ptr)>::BxDF* bxdf = (typename std::remove_reference_t<decltype(*ptr)>::BxDF*) scratchBuffer.Alloc(sizeof(typename std::remove_reference_t<decltype(*ptr)>::BxDF), alignof(typename std::remove_reference_t<decltype(*ptr)>::BxDF));
             return ptr->ProbeIntersectionToSample(si, bxdf);
         };
         return DispatchCPU(pits);
     }
 
     // BSSRDF Function Definitions
-    Float BeamDiffusionMS(Float sigma_s, Float sigma_a, Float g, Float eta, Float r)
-    {
+    Float BeamDiffusionMS(Float sigma_s, Float sigma_a, Float g, Float eta, Float r) {
         const int nSamples = 100;
-        Float Ed = 0;
+        Float Ed           = 0;
         // Precompute information for dipole integrand
         // Compute reduced scattering coefficients $\sigmaps, \sigmapt$ and albedo $\rhop$
         Float sigmap_s = sigma_s * (1 - g);
         Float sigmap_t = sigma_a + sigmap_s;
-        Float rhop = sigmap_s / sigmap_t;
+        Float rhop     = sigmap_s / sigmap_t;
 
         // Compute non-classical diffusion coefficient $D_\roman{G}$ using Equation
         // $(\ref{eq:diffusion-coefficient-grosjean})$
@@ -59,8 +47,7 @@ namespace spectra
         // $(\ref{eq:kp-exitance-e})$
         Float cPhi = 0.25f * (1 - 2 * fm1), cE = 0.5f * (1 - 3 * fm2);
 
-        for (int i = 0; i < nSamples; ++i)
-        {
+        for (int i = 0; i < nSamples; ++i) {
             // Sample real point source depth $\depthreal$
             Float zr = SampleExponential((i + 0.5f) / nSamples, sigmap_t);
 
@@ -69,88 +56,63 @@ namespace spectra
             Float dr = std::sqrt(Sqr(r) + Sqr(zr)), dv = std::sqrt(Sqr(r) + Sqr(zv));
             // Compute dipole fluence rate $\dipole(r)$ using Equation
             // $(\ref{eq:diffusion-dipole})$
-            Float phiD =
-                Inv4Pi / D_g * (FastExp(-sigma_tr * dr) / dr - FastExp(-sigma_tr * dv) / dv);
+            Float phiD = Inv4Pi / D_g * (FastExp(-sigma_tr * dr) / dr - FastExp(-sigma_tr * dv) / dv);
 
             // Compute dipole vector irradiance $-\N{}\cdot\dipoleE(r)$ using Equation
             // $(\ref{eq:diffusion-dipole-vector-irradiance-normal})$
-            Float EDn =
-                Inv4Pi * (zr * (1 + sigma_tr * dr) * FastExp(-sigma_tr * dr) / (Pow<3>(dr)) -
-                    zv * (1 + sigma_tr * dv) * FastExp(-sigma_tr * dv) / (Pow<3>(dv)));
+            Float EDn = Inv4Pi * (zr * (1 + sigma_tr * dr) * FastExp(-sigma_tr * dr) / (Pow<3>(dr)) - zv * (1 + sigma_tr * dv) * FastExp(-sigma_tr * dv) / (Pow<3>(dv)));
 
             // Add contribution from dipole for depth $\depthreal$ to _Ed_
-            Float E = phiD * cPhi + EDn * cE;
+            Float E     = phiD * cPhi + EDn * cE;
             Float kappa = 1 - FastExp(-2 * sigmap_t * (dr + zr));
             Ed += kappa * rhop * rhop * E;
         }
         return Ed / nSamples;
     }
 
-    Float BeamDiffusionSS(Float sigma_s, Float sigma_a, Float g, Float eta, Float r)
-    {
+    Float BeamDiffusionSS(Float sigma_s, Float sigma_a, Float g, Float eta, Float r) {
         // Compute material parameters and minimum $t$ below the critical angle
         Float sigma_t = sigma_a + sigma_s, rho = sigma_s / sigma_t;
         Float tCrit = r * SafeSqrt(Sqr(eta) - 1);
 
-        Float Ess = 0;
+        Float Ess          = 0;
         const int nSamples = 100;
-        for (int i = 0; i < nSamples; ++i)
-        {
+        for (int i = 0; i < nSamples; ++i) {
             // Evaluate single-scattering integrand and add to _Ess_
             Float ti = tCrit + SampleExponential((i + 0.5f) / nSamples, sigma_t);
             // Determine length $d$ of connecting segment and $\cos\theta_\roman{o}$
-            Float d = std::sqrt(Sqr(r) + Sqr(ti));
+            Float d          = std::sqrt(Sqr(r) + Sqr(ti));
             Float cosTheta_o = ti / d;
 
             // Add contribution of single scattering at depth $t$
-            Ess += rho * FastExp(-sigma_t * (d + tCrit)) / Sqr(d) *
-                HenyeyGreenstein(cosTheta_o, g) * (1 - FrDielectric(-cosTheta_o, eta)) *
-                std::abs(cosTheta_o);
+            Ess += rho * FastExp(-sigma_t * (d + tCrit)) / Sqr(d) * HenyeyGreenstein(cosTheta_o, g) * (1 - FrDielectric(-cosTheta_o, eta)) * std::abs(cosTheta_o);
         }
         return Ess / nSamples;
     }
 
-    void ComputeBeamDiffusionBSSRDF(Float g, Float eta, BSSRDFTable* t)
-    {
+    void ComputeBeamDiffusionBSSRDF(Float g, Float eta, BSSRDFTable* t) {
         // Choose radius values of the diffusion profile discretization
         t->radiusSamples[0] = 0;
         t->radiusSamples[1] = 2.5e-3f;
-        for (int i = 2; i < t->radiusSamples.size(); ++i)
-            t->radiusSamples[i] = t->radiusSamples[i - 1] * 1.2f;
+        for (int i = 2; i < t->radiusSamples.size(); ++i) t->radiusSamples[i] = t->radiusSamples[i - 1] * 1.2f;
 
         // Choose albedo values of the diffusion profile discretization
-        for (int i = 0; i < t->rhoSamples.size(); ++i)
-            t->rhoSamples[i] =
-                (1 - FastExp(-8 * i / (Float)(t->rhoSamples.size() - 1))) / (1 - FastExp(-8));
+        for (int i = 0; i < t->rhoSamples.size(); ++i) t->rhoSamples[i] = (1 - FastExp(-8 * i / (Float) (t->rhoSamples.size() - 1))) / (1 - FastExp(-8));
 
-        ParallelFor(0, t->rhoSamples.size(), [&](int i)
-        {
+        ParallelFor(0, t->rhoSamples.size(), [&](int i) {
             // Compute the diffusion profile for the _i_th albedo sample
             // Compute scattering profile for chosen albedo $\rho$
             size_t nSamples = t->radiusSamples.size();
-            for (int j = 0; j < nSamples; ++j)
-            {
+            for (int j = 0; j < nSamples; ++j) {
                 Float rho = t->rhoSamples[i], r = t->radiusSamples[j];
-                t->profile[i * nSamples + j] = 2 * Pi * r *
-                (BeamDiffusionSS(rho, 1 - rho, g, eta, r) +
-                    BeamDiffusionMS(rho, 1 - rho, g, eta, r));
+                t->profile[i * nSamples + j] = 2 * Pi * r * (BeamDiffusionSS(rho, 1 - rho, g, eta, r) + BeamDiffusionMS(rho, 1 - rho, g, eta, r));
             }
 
             // Compute effective albedo $\rho_{\roman{eff}}$ and CDF for importance sampling
-            t->rhoEff[i] = IntegrateCatmullRom(
-                t->radiusSamples,
-                pstd::span<const Float>(&t->profile[i * nSamples], nSamples),
-                pstd::span<Float>(&t->profileCDF[i * nSamples], nSamples));
+            t->rhoEff[i] = IntegrateCatmullRom(t->radiusSamples, pstd::span<const Float>(&t->profile[i * nSamples], nSamples), pstd::span<Float>(&t->profileCDF[i * nSamples], nSamples));
         });
     }
 
     // BSSRDFTable Method Definitions
-    BSSRDFTable::BSSRDFTable(int nRhoSamples, int nRadiusSamples, Allocator alloc)
-        : rhoSamples(nRhoSamples, alloc),
-          radiusSamples(nRadiusSamples, alloc),
-          profile(nRadiusSamples * nRhoSamples, alloc),
-          rhoEff(nRhoSamples, alloc),
-          profileCDF(nRadiusSamples * nRhoSamples, alloc)
-    {
-    }
+    BSSRDFTable::BSSRDFTable(int nRhoSamples, int nRadiusSamples, Allocator alloc) : rhoSamples(nRhoSamples, alloc), radiusSamples(nRadiusSamples, alloc), profile(nRadiusSamples * nRhoSamples, alloc), rhoEff(nRhoSamples, alloc), profileCDF(nRadiusSamples * nRhoSamples, alloc) {}
 } // namespace spectra

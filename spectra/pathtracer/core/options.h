@@ -4,29 +4,25 @@
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     // RenderingCoordinateSystem Definition
     enum class RenderingCoordinateSystem { Camera, CameraWorld, World };
 
     std::string ToString(const RenderingCoordinateSystem&);
 
     // BasicSpectraOptions Definition
-    struct BasicSpectraOptions
-    {
-        int seed = 0;
-        bool quiet = false;
+    struct BasicSpectraOptions {
+        int seed                = 0;
+        bool quiet              = false;
         bool disablePixelJitter = false, disableWavelengthJitter = false;
-        bool disableTextureFiltering = false;
+        bool disableTextureFiltering             = false;
         RenderingCoordinateSystem renderingSpace = RenderingCoordinateSystem::CameraWorld;
     };
 
     // SpectraOptions Definition
-    struct SpectraOptions : BasicSpectraOptions
-    {
+    struct SpectraOptions : BasicSpectraOptions {
         int nThreads = 0;
         pstd::optional<int> pixelSamples;
         pstd::optional<int> gpuDevice;
@@ -41,15 +37,14 @@ namespace spectra
 
 #if defined(__CUDACC__)
     extern __constant__ BasicSpectraOptions OptionsGPU;
-#endif  // __CUDACC__
+#endif // __CUDACC__
 
     void CopyOptionsToGPU();
 
     // Options Inline Functions
     SPECTRA_CPU_GPU inline const BasicSpectraOptions& GetOptions();
 
-    SPECTRA_CPU_GPU inline const BasicSpectraOptions& GetOptions()
-    {
+    SPECTRA_CPU_GPU inline const BasicSpectraOptions& GetOptions() {
 #if defined(__CUDA_ARCH__)
         return OptionsGPU;
 #else
@@ -58,4 +53,4 @@ namespace spectra
     }
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_CORE_OPTIONS_H
+#endif // SPECTRA_PATHTRACER_CORE_OPTIONS_H

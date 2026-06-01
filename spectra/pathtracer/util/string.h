@@ -1,15 +1,13 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_STRING_H
 #define SPECTRA_PATHTRACER_UTIL_STRING_H
 
-#include <spectra/pathtracer/util/float.h>
-
 #include <ctype.h>
+#include <spectra/pathtracer/util/float.h>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace spectra
-{
+namespace spectra {
     bool Atoi(std::string_view str, int*);
     bool Atoi(std::string_view str, int64_t*);
     bool Atof(std::string_view str, float*);
@@ -30,42 +28,51 @@ namespace spectra
 #ifdef SPECTRA_IS_WINDOWS
     std::wstring WStringFromUTF8(std::string str);
     std::string UTF8FromWString(std::wstring str);
-#endif  // SPECTRA_IS_WINDOWS
+#endif // SPECTRA_IS_WINDOWS
 
     std::string NormalizeUTF8(std::string str);
 
     // InternedString Definition
-    class InternedString
-    {
+    class InternedString {
     public:
         // InternedString Public Methods
         InternedString() = default;
 
-        InternedString(const std::string* str) : str(str)
-        {
+        InternedString(const std::string* str) : str(str) {}
+
+        operator const std::string&() const {
+            return *str;
         }
 
-        operator const std::string&() const { return *str; }
-
-        bool operator==(const char* s) const { return *str == s; }
-        bool operator==(const std::string& s) const { return *str == s; }
-        bool operator!=(const char* s) const { return *str != s; }
-        bool operator!=(const std::string& s) const { return *str != s; }
-        bool operator<(const char* s) const { return *str < s; }
-        bool operator<(const std::string& s) const { return *str < s; }
+        bool operator==(const char* s) const {
+            return *str == s;
+        }
+        bool operator==(const std::string& s) const {
+            return *str == s;
+        }
+        bool operator!=(const char* s) const {
+            return *str != s;
+        }
+        bool operator!=(const std::string& s) const {
+            return *str != s;
+        }
+        bool operator<(const char* s) const {
+            return *str < s;
+        }
+        bool operator<(const std::string& s) const {
+            return *str < s;
+        }
 
     private:
         const std::string* str = nullptr;
     };
 
     // InternedStringHash Definition
-    struct InternedStringHash
-    {
-        size_t operator()(const InternedString& s) const
-        {
+    struct InternedStringHash {
+        size_t operator()(const InternedString& s) const {
             return std::hash<std::string>()(s);
         }
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_UTIL_STRING_H
+#endif // SPECTRA_PATHTRACER_UTIL_STRING_H

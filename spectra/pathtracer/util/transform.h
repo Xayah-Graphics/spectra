@@ -1,35 +1,30 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_TRANSFORM_H
 #define SPECTRA_PATHTRACER_UTIL_TRANSFORM_H
 
-#include <spectra/pathtracer/util/float.h>
-
-#include <spectra/pathtracer/core/ray.h>
-#include <spectra/pathtracer/util/hash.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/pstd.h>
-#include <spectra/pathtracer/util/vecmath.h>
-
-#include <stdio.h>
 #include <cmath>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <spectra/pathtracer/core/ray.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/hash.h>
+#include <spectra/pathtracer/util/math.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/vecmath.h>
+#include <stdio.h>
 
-namespace spectra
-{
+namespace spectra {
     class Interaction;
     class SurfaceInteraction;
 
     // Transform Definition
-    class Transform
-    {
+    class Transform {
     public:
         // Transform Public Methods
         SPECTRA_CPU_GPU
         inline Ray ApplyInverse(const Ray& r, Float* tMax = nullptr) const;
         SPECTRA_CPU_GPU
-        inline RayDifferential ApplyInverse(const RayDifferential& r,
-                                            Float* tMax = nullptr) const;
+        inline RayDifferential ApplyInverse(const RayDifferential& r, Float* tMax = nullptr) const;
         template <typename T>
         SPECTRA_CPU_GPU inline Vector3<T> ApplyInverse(Vector3<T> v) const;
         template <typename T>
@@ -39,53 +34,52 @@ namespace spectra
         Transform() = default;
 
         SPECTRA_CPU_GPU
-        Transform(const SquareMatrix<4>& m) : m(m)
-        {
+        Transform(const SquareMatrix<4>& m) : m(m) {
             pstd::optional<SquareMatrix<4>> inv = Inverse(m);
             if (inv)
                 mInv = *inv;
-            else
-            {
+            else {
                 // Initialize _mInv_ with not-a-number values
-                Float NaN = std::numeric_limits<Float>::has_signaling_NaN
-                                ? std::numeric_limits<Float>::signaling_NaN()
-                                : std::numeric_limits<Float>::quiet_NaN();
+                Float NaN = std::numeric_limits<Float>::has_signaling_NaN ? std::numeric_limits<Float>::signaling_NaN() : std::numeric_limits<Float>::quiet_NaN();
                 for (int i = 0; i < 4; ++i)
-                    for (int j = 0; j < 4; ++j)
-                        mInv[i][j] = NaN;
+                    for (int j = 0; j < 4; ++j) mInv[i][j] = NaN;
             }
         }
 
         SPECTRA_CPU_GPU
-        Transform(const Float mat[4][4]) : Transform(SquareMatrix<4>(mat))
-        {
+        Transform(const Float mat[4][4]) : Transform(SquareMatrix<4>(mat)) {}
+
+        SPECTRA_CPU_GPU
+        Transform(const SquareMatrix<4>& m, const SquareMatrix<4>& mInv) : m(m), mInv(mInv) {}
+
+        SPECTRA_CPU_GPU
+        const SquareMatrix<4>& GetMatrix() const {
+            return m;
+        }
+        SPECTRA_CPU_GPU
+        const SquareMatrix<4>& GetInverseMatrix() const {
+            return mInv;
         }
 
         SPECTRA_CPU_GPU
-        Transform(const SquareMatrix<4>& m, const SquareMatrix<4>& mInv) : m(m), mInv(mInv)
-        {
+        bool operator==(const Transform& t) const {
+            return t.m == m;
+        }
+        SPECTRA_CPU_GPU
+        bool operator!=(const Transform& t) const {
+            return t.m != m;
+        }
+        SPECTRA_CPU_GPU
+        bool IsIdentity() const {
+            return m.IsIdentity();
         }
 
         SPECTRA_CPU_GPU
-        const SquareMatrix<4>& GetMatrix() const { return m; }
-        SPECTRA_CPU_GPU
-        const SquareMatrix<4>& GetInverseMatrix() const { return mInv; }
-
-        SPECTRA_CPU_GPU
-        bool operator==(const Transform& t) const { return t.m == m; }
-        SPECTRA_CPU_GPU
-        bool operator!=(const Transform& t) const { return t.m != m; }
-        SPECTRA_CPU_GPU
-        bool IsIdentity() const { return m.IsIdentity(); }
-
-        SPECTRA_CPU_GPU
-        bool HasScale(Float tolerance = 1e-3f) const
-        {
+        bool HasScale(Float tolerance = 1e-3f) const {
             Float la2 = LengthSquared((*this)(Vector3f(1, 0, 0)));
             Float lb2 = LengthSquared((*this)(Vector3f(0, 1, 0)));
             Float lc2 = LengthSquared((*this)(Vector3f(0, 0, 1)));
-            return (std::abs(la2 - 1) > tolerance || std::abs(lb2 - 1) > tolerance ||
-                std::abs(lc2 - 1) > tolerance);
+            return (std::abs(la2 - 1) > tolerance || std::abs(lb2 - 1) > tolerance || std::abs(lc2 - 1) > tolerance);
         }
 
         template <typename T>
@@ -135,8 +129,7 @@ namespace spectra
         SurfaceInteraction ApplyInverse(const SurfaceInteraction& in) const;
 
         SPECTRA_CPU_GPU
-        Point3fi operator()(const Point3fi& p) const
-        {
+        Point3fi operator()(const Point3fi& p) const {
             Float x = Float(p.x), y = Float(p.y), z = Float(p.z);
             // Compute transformed coordinates from point _(x, y, z)_
             Float xp = (m[0][0] * x + m[0][1] * y) + (m[0][2] * z + m[0][3]);
@@ -146,35 +139,17 @@ namespace spectra
 
             // Compute absolute error for transformed point, _pError_
             Vector3f pError;
-            if (p.IsExact())
-            {
+            if (p.IsExact()) {
                 // Compute error for transformed exact _p_
-                pError.x = gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) +
-                    std::abs(m[0][2] * z) + std::abs(m[0][3]));
-                pError.y = gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) +
-                    std::abs(m[1][2] * z) + std::abs(m[1][3]));
-                pError.z = gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) +
-                    std::abs(m[2][2] * z) + std::abs(m[2][3]));
-            }
-            else
-            {
+                pError.x = gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) + std::abs(m[0][2] * z) + std::abs(m[0][3]));
+                pError.y = gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) + std::abs(m[1][2] * z) + std::abs(m[1][3]));
+                pError.z = gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) + std::abs(m[2][2] * z) + std::abs(m[2][3]));
+            } else {
                 // Compute error for transformed approximate _p_
                 Vector3f pInError = p.Error();
-                pError.x = (gamma(3) + 1) * (std::abs(m[0][0]) * pInError.x +
-                        std::abs(m[0][1]) * pInError.y +
-                        std::abs(m[0][2]) * pInError.z) +
-                    gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) +
-                        std::abs(m[0][2] * z) + std::abs(m[0][3]));
-                pError.y = (gamma(3) + 1) * (std::abs(m[1][0]) * pInError.x +
-                        std::abs(m[1][1]) * pInError.y +
-                        std::abs(m[1][2]) * pInError.z) +
-                    gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) +
-                        std::abs(m[1][2] * z) + std::abs(m[1][3]));
-                pError.z = (gamma(3) + 1) * (std::abs(m[2][0]) * pInError.x +
-                        std::abs(m[2][1]) * pInError.y +
-                        std::abs(m[2][2]) * pInError.z) +
-                    gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) +
-                        std::abs(m[2][2] * z) + std::abs(m[2][3]));
+                pError.x          = (gamma(3) + 1) * (std::abs(m[0][0]) * pInError.x + std::abs(m[0][1]) * pInError.y + std::abs(m[0][2]) * pInError.z) + gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) + std::abs(m[0][2] * z) + std::abs(m[0][3]));
+                pError.y          = (gamma(3) + 1) * (std::abs(m[1][0]) * pInError.x + std::abs(m[1][1]) * pInError.y + std::abs(m[1][2]) * pInError.z) + gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) + std::abs(m[1][2] * z) + std::abs(m[1][3]));
+                pError.z          = (gamma(3) + 1) * (std::abs(m[2][0]) * pInError.x + std::abs(m[2][1]) * pInError.y + std::abs(m[2][2]) * pInError.z) + gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) + std::abs(m[2][2] * z) + std::abs(m[2][3]));
             }
 
             if (wp == 1)
@@ -217,18 +192,15 @@ namespace spectra
     Transform Perspective(Float fov, Float znear, Float zfar);
 
     // Transform Inline Functions
-    SPECTRA_CPU_GPU inline Transform Inverse(const Transform& t)
-    {
+    SPECTRA_CPU_GPU inline Transform Inverse(const Transform& t) {
         return Transform(t.GetInverseMatrix(), t.GetMatrix());
     }
 
-    SPECTRA_CPU_GPU inline Transform Transpose(const Transform& t)
-    {
+    SPECTRA_CPU_GPU inline Transform Transpose(const Transform& t) {
         return Transform(Transpose(t.GetMatrix()), Transpose(t.GetInverseMatrix()));
     }
 
-    SPECTRA_CPU_GPU inline Transform Rotate(Float sinTheta, Float cosTheta, Vector3f axis)
-    {
+    SPECTRA_CPU_GPU inline Transform Rotate(Float sinTheta, Float cosTheta, Vector3f axis) {
         Vector3f a = Normalize(axis);
         SquareMatrix<4> m;
         // Compute rotation of first basis vector
@@ -251,15 +223,13 @@ namespace spectra
         return Transform(m, Transpose(m));
     }
 
-    SPECTRA_CPU_GPU inline Transform Rotate(Float theta, Vector3f axis)
-    {
+    SPECTRA_CPU_GPU inline Transform Rotate(Float theta, Vector3f axis) {
         Float sinTheta = std::sin(Radians(theta));
         Float cosTheta = std::cos(Radians(theta));
         return Rotate(sinTheta, cosTheta, axis);
     }
 
-    SPECTRA_CPU_GPU inline Transform RotateFromTo(Vector3f from, Vector3f to)
-    {
+    SPECTRA_CPU_GPU inline Transform RotateFromTo(Vector3f from, Vector3f to) {
         // Compute intermediate vector for vector reflection
         Vector3f refl;
         if (std::abs(from.x) < 0.72f && std::abs(to.x) < 0.72f)
@@ -275,44 +245,23 @@ namespace spectra
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j)
                 // Initialize matrix element _r[i][j]_
-                r[i][j] = ((i == j) ? 1 : 0) - 2 / Dot(u, u) * u[i] * u[j] -
-                    2 / Dot(v, v) * v[i] * v[j] +
-                    4 * Dot(u, v) / (Dot(u, u) * Dot(v, v)) * v[i] * u[j];
+                r[i][j] = ((i == j) ? 1 : 0) - 2 / Dot(u, u) * u[i] * u[j] - 2 / Dot(v, v) * v[i] * v[j] + 4 * Dot(u, v) / (Dot(u, u) * Dot(v, v)) * v[i] * u[j];
 
         return Transform(r, Transpose(r));
     }
 
-    SPECTRA_CPU_GPU inline Vector3fi Transform::operator()(const Vector3fi& v) const
-    {
+    SPECTRA_CPU_GPU inline Vector3fi Transform::operator()(const Vector3fi& v) const {
         Float x = Float(v.x), y = Float(v.y), z = Float(v.z);
         Vector3f vOutError;
-        if (v.IsExact())
-        {
-            vOutError.x = gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) +
-                std::abs(m[0][2] * z));
-            vOutError.y = gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) +
-                std::abs(m[1][2] * z));
-            vOutError.z = gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) +
-                std::abs(m[2][2] * z));
-        }
-        else
-        {
+        if (v.IsExact()) {
+            vOutError.x = gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) + std::abs(m[0][2] * z));
+            vOutError.y = gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) + std::abs(m[1][2] * z));
+            vOutError.z = gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) + std::abs(m[2][2] * z));
+        } else {
             Vector3f vInError = v.Error();
-            vOutError.x = (gamma(3) + 1) * (std::abs(m[0][0]) * vInError.x +
-                    std::abs(m[0][1]) * vInError.y +
-                    std::abs(m[0][2]) * vInError.z) +
-                gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) +
-                    std::abs(m[0][2] * z));
-            vOutError.y = (gamma(3) + 1) * (std::abs(m[1][0]) * vInError.x +
-                    std::abs(m[1][1]) * vInError.y +
-                    std::abs(m[1][2]) * vInError.z) +
-                gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) +
-                    std::abs(m[1][2] * z));
-            vOutError.z = (gamma(3) + 1) * (std::abs(m[2][0]) * vInError.x +
-                    std::abs(m[2][1]) * vInError.y +
-                    std::abs(m[2][2]) * vInError.z) +
-                gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) +
-                    std::abs(m[2][2] * z));
+            vOutError.x       = (gamma(3) + 1) * (std::abs(m[0][0]) * vInError.x + std::abs(m[0][1]) * vInError.y + std::abs(m[0][2]) * vInError.z) + gamma(3) * (std::abs(m[0][0] * x) + std::abs(m[0][1] * y) + std::abs(m[0][2] * z));
+            vOutError.y       = (gamma(3) + 1) * (std::abs(m[1][0]) * vInError.x + std::abs(m[1][1]) * vInError.y + std::abs(m[1][2]) * vInError.z) + gamma(3) * (std::abs(m[1][0] * x) + std::abs(m[1][1] * y) + std::abs(m[1][2] * z));
+            vOutError.z       = (gamma(3) + 1) * (std::abs(m[2][0]) * vInError.x + std::abs(m[2][1]) * vInError.y + std::abs(m[2][2]) * vInError.z) + gamma(3) * (std::abs(m[2][0] * x) + std::abs(m[2][1] * y) + std::abs(m[2][2] * z));
         }
 
         Float xp = m[0][0] * x + m[0][1] * y + m[0][2] * z;
@@ -324,8 +273,7 @@ namespace spectra
 
     // Transform Inline Methods
     template <typename T>
-    SPECTRA_CPU_GPU inline Point3<T> Transform::operator()(Point3<T> p) const
-    {
+    SPECTRA_CPU_GPU inline Point3<T> Transform::operator()(Point3<T> p) const {
         T xp = m[0][0] * p.x + m[0][1] * p.y + m[0][2] * p.z + m[0][3];
         T yp = m[1][0] * p.x + m[1][1] * p.y + m[1][2] * p.z + m[1][3];
         T zp = m[2][0] * p.x + m[2][1] * p.y + m[2][2] * p.z + m[2][3];
@@ -337,60 +285,43 @@ namespace spectra
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Transform::operator()(Vector3<T> v) const
-    {
-        return Vector3<T>(m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
-                          m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
-                          m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z);
+    SPECTRA_CPU_GPU inline Vector3<T> Transform::operator()(Vector3<T> v) const {
+        return Vector3<T>(m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z, m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z, m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Normal3<T> Transform::operator()(Normal3<T> n) const
-    {
+    SPECTRA_CPU_GPU inline Normal3<T> Transform::operator()(Normal3<T> n) const {
         T x = n.x, y = n.y, z = n.z;
-        return Normal3<T>(mInv[0][0] * x + mInv[1][0] * y + mInv[2][0] * z,
-                          mInv[0][1] * x + mInv[1][1] * y + mInv[2][1] * z,
-                          mInv[0][2] * x + mInv[1][2] * y + mInv[2][2] * z);
+        return Normal3<T>(mInv[0][0] * x + mInv[1][0] * y + mInv[2][0] * z, mInv[0][1] * x + mInv[1][1] * y + mInv[2][1] * z, mInv[0][2] * x + mInv[1][2] * y + mInv[2][2] * z);
     }
 
-    SPECTRA_CPU_GPU inline Ray Transform::operator()(const Ray& r, Float* tMax) const
-    {
+    SPECTRA_CPU_GPU inline Ray Transform::operator()(const Ray& r, Float* tMax) const {
         Point3fi o = (*this)(Point3fi(r.o));
         Vector3f d = (*this)(r.d);
         // Offset ray origin to edge of error bounds and compute _tMax_
-        if (Float lengthSquared = LengthSquared(d); lengthSquared > 0)
-        {
+        if (Float lengthSquared = LengthSquared(d); lengthSquared > 0) {
             Float dt = Dot(Abs(d), o.Error()) / lengthSquared;
             o += d * dt;
-            if (tMax)
-                *tMax -= dt;
+            if (tMax) *tMax -= dt;
         }
 
         return Ray(Point3f(o), d, r.time, r.medium);
     }
 
-    SPECTRA_CPU_GPU inline RayDifferential Transform::operator()(const RayDifferential& r,
-                                                                 Float* tMax) const
-    {
+    SPECTRA_CPU_GPU inline RayDifferential Transform::operator()(const RayDifferential& r, Float* tMax) const {
         Ray tr = (*this)(Ray(r), tMax);
         RayDifferential ret(tr.o, tr.d, tr.time, tr.medium);
         ret.hasDifferentials = r.hasDifferentials;
-        ret.rxOrigin = (*this)(r.rxOrigin);
-        ret.ryOrigin = (*this)(r.ryOrigin);
-        ret.rxDirection = (*this)(r.rxDirection);
-        ret.ryDirection = (*this)(r.ryDirection);
+        ret.rxOrigin         = (*this)(r.rxOrigin);
+        ret.ryOrigin         = (*this)(r.ryOrigin);
+        ret.rxDirection      = (*this)(r.rxDirection);
+        ret.ryDirection      = (*this)(r.ryDirection);
         return ret;
     }
 
-    SPECTRA_CPU_GPU inline Transform::Transform(const Frame& frame)
-        : Transform(SquareMatrix<4>(frame.x.x, frame.x.y, frame.x.z, 0, frame.y.x, frame.y.y,
-                                    frame.y.z, 0, frame.z.x, frame.z.y, frame.z.z, 0, 0, 0, 0,
-                                    1))
-    {
-    }
+    SPECTRA_CPU_GPU inline Transform::Transform(const Frame& frame) : Transform(SquareMatrix<4>(frame.x.x, frame.x.y, frame.x.z, 0, frame.y.x, frame.y.y, frame.y.z, 0, frame.z.x, frame.z.y, frame.z.z, 0, 0, 0, 0, 1)) {}
 
-    SPECTRA_CPU_GPU inline Transform::Transform(Quaternion q)
-    {
+    SPECTRA_CPU_GPU inline Transform::Transform(Quaternion q) {
         Float xx = q.v.x * q.v.x, yy = q.v.y * q.v.y, zz = q.v.z * q.v.z;
         Float xy = q.v.x * q.v.y, xz = q.v.x * q.v.z, yz = q.v.y * q.v.z;
         Float wx = q.v.x * q.w, wy = q.v.y * q.w, wz = q.v.z * q.w;
@@ -410,8 +341,7 @@ namespace spectra
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Point3<T> Transform::ApplyInverse(Point3<T> p) const
-    {
+    SPECTRA_CPU_GPU inline Point3<T> Transform::ApplyInverse(Point3<T> p) const {
         T x = p.x, y = p.y, z = p.z;
         T xp = (mInv[0][0] * x + mInv[0][1] * y) + (mInv[0][2] * z + mInv[0][3]);
         T yp = (mInv[1][0] * x + mInv[1][1] * y) + (mInv[1][2] * z + mInv[1][3]);
@@ -425,96 +355,77 @@ namespace spectra
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Transform::ApplyInverse(Vector3<T> v) const
-    {
+    SPECTRA_CPU_GPU inline Vector3<T> Transform::ApplyInverse(Vector3<T> v) const {
         T x = v.x, y = v.y, z = v.z;
-        return Vector3<T>(mInv[0][0] * x + mInv[0][1] * y + mInv[0][2] * z,
-                          mInv[1][0] * x + mInv[1][1] * y + mInv[1][2] * z,
-                          mInv[2][0] * x + mInv[2][1] * y + mInv[2][2] * z);
+        return Vector3<T>(mInv[0][0] * x + mInv[0][1] * y + mInv[0][2] * z, mInv[1][0] * x + mInv[1][1] * y + mInv[1][2] * z, mInv[2][0] * x + mInv[2][1] * y + mInv[2][2] * z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Normal3<T> Transform::ApplyInverse(Normal3<T> n) const
-    {
+    SPECTRA_CPU_GPU inline Normal3<T> Transform::ApplyInverse(Normal3<T> n) const {
         T x = n.x, y = n.y, z = n.z;
-        return Normal3<T>(m[0][0] * x + m[1][0] * y + m[2][0] * z,
-                          m[0][1] * x + m[1][1] * y + m[2][1] * z,
-                          m[0][2] * x + m[1][2] * y + m[2][2] * z);
+        return Normal3<T>(m[0][0] * x + m[1][0] * y + m[2][0] * z, m[0][1] * x + m[1][1] * y + m[2][1] * z, m[0][2] * x + m[1][2] * y + m[2][2] * z);
     }
 
-    SPECTRA_CPU_GPU inline Ray Transform::ApplyInverse(const Ray& r, Float* tMax) const
-    {
+    SPECTRA_CPU_GPU inline Ray Transform::ApplyInverse(const Ray& r, Float* tMax) const {
         Point3fi o = ApplyInverse(Point3fi(r.o));
         Vector3f d = ApplyInverse(r.d);
         // Offset ray origin to edge of error bounds and compute _tMax_
         Float lengthSquared = LengthSquared(d);
-        if (lengthSquared > 0)
-        {
+        if (lengthSquared > 0) {
             Vector3f oError(o.x.Width() / 2, o.y.Width() / 2, o.z.Width() / 2);
             Float dt = Dot(Abs(d), oError) / lengthSquared;
             o += d * dt;
-            if (tMax)
-                *tMax -= dt;
+            if (tMax) *tMax -= dt;
         }
         return Ray(Point3f(o), d, r.time, r.medium);
     }
 
-    SPECTRA_CPU_GPU inline RayDifferential Transform::ApplyInverse(const RayDifferential& r,
-                                                                   Float* tMax) const
-    {
+    SPECTRA_CPU_GPU inline RayDifferential Transform::ApplyInverse(const RayDifferential& r, Float* tMax) const {
         Ray tr = ApplyInverse(Ray(r), tMax);
         RayDifferential ret(tr.o, tr.d, tr.time, tr.medium);
         ret.hasDifferentials = r.hasDifferentials;
-        ret.rxOrigin = ApplyInverse(r.rxOrigin);
-        ret.ryOrigin = ApplyInverse(r.ryOrigin);
-        ret.rxDirection = ApplyInverse(r.rxDirection);
-        ret.ryDirection = ApplyInverse(r.ryDirection);
+        ret.rxOrigin         = ApplyInverse(r.rxOrigin);
+        ret.ryOrigin         = ApplyInverse(r.ryOrigin);
+        ret.rxDirection      = ApplyInverse(r.rxDirection);
+        ret.ryDirection      = ApplyInverse(r.ryDirection);
         return ret;
     }
 
     // AnimatedTransform Definition
-    class AnimatedTransform
-    {
+    class AnimatedTransform {
     public:
         // AnimatedTransform Public Methods
         AnimatedTransform() = default;
 
-        explicit AnimatedTransform(const Transform& t) : AnimatedTransform(t, 0, t, 1)
-        {
-        }
+        explicit AnimatedTransform(const Transform& t) : AnimatedTransform(t, 0, t, 1) {}
 
-        AnimatedTransform(const Transform& startTransform, Float startTime,
-                          const Transform& endTransform, Float endTime);
+        AnimatedTransform(const Transform& startTransform, Float startTime, const Transform& endTransform, Float endTime);
 
         SPECTRA_CPU_GPU
-        bool IsAnimated() const { return actuallyAnimated; }
+        bool IsAnimated() const {
+            return actuallyAnimated;
+        }
 
         SPECTRA_CPU_GPU
         Ray ApplyInverse(const Ray& r, Float* tMax = nullptr) const;
 
         SPECTRA_CPU_GPU
-        Point3f ApplyInverse(Point3f p, Float time) const
-        {
-            if (!actuallyAnimated)
-                return startTransform.ApplyInverse(p);
+        Point3f ApplyInverse(Point3f p, Float time) const {
+            if (!actuallyAnimated) return startTransform.ApplyInverse(p);
             return Interpolate(time).ApplyInverse(p);
         }
 
         SPECTRA_CPU_GPU
-        Vector3f ApplyInverse(Vector3f v, Float time) const
-        {
-            if (!actuallyAnimated)
-                return startTransform.ApplyInverse(v);
+        Vector3f ApplyInverse(Vector3f v, Float time) const {
+            if (!actuallyAnimated) return startTransform.ApplyInverse(v);
             return Interpolate(time).ApplyInverse(v);
         }
 
         SPECTRA_CPU_GPU
         Normal3f operator()(Normal3f n, Float time) const;
         SPECTRA_CPU_GPU
-        Normal3f ApplyInverse(Normal3f n, Float time) const
-        {
-            if (!actuallyAnimated)
-                return startTransform.ApplyInverse(n);
+        Normal3f ApplyInverse(Normal3f n, Float time) const {
+            if (!actuallyAnimated) return startTransform.ApplyInverse(n);
             return Interpolate(time).ApplyInverse(n);
         }
 
@@ -527,7 +438,9 @@ namespace spectra
         SPECTRA_CPU_GPU
         SurfaceInteraction ApplyInverse(const SurfaceInteraction& it) const;
         SPECTRA_CPU_GPU
-        bool HasScale() const { return startTransform.HasScale() || endTransform.HasScale(); }
+        bool HasScale() const {
+            return startTransform.HasScale() || endTransform.HasScale();
+        }
 
 
         SPECTRA_CPU_GPU
@@ -555,9 +468,7 @@ namespace spectra
     private:
         // AnimatedTransform Private Methods
         SPECTRA_CPU_GPU
-        static void FindZeros(Float c1, Float c2, Float c3, Float c4, Float c5, Float theta,
-                              Interval tInterval, pstd::span<Float> zeros, int* nZeros,
-                              int depth = 8);
+        static void FindZeros(Float c1, Float c2, Float c3, Float c4, Float c5, Float theta, Interval tInterval, pstd::span<Float> zeros, int* nZeros, int depth = 8);
 
         // AnimatedTransform Private Members
         bool actuallyAnimated = false;
@@ -566,39 +477,33 @@ namespace spectra
         SquareMatrix<4> S[2];
         bool hasRotation;
 
-        struct DerivativeTerm
-        {
+        struct DerivativeTerm {
             SPECTRA_CPU_GPU
-            DerivativeTerm()
-            {
-            }
+            DerivativeTerm() {}
 
             SPECTRA_CPU_GPU
-            DerivativeTerm(Float c, Float x, Float y, Float z) : kc(c), kx(x), ky(y), kz(z)
-            {
-            }
+            DerivativeTerm(Float c, Float x, Float y, Float z) : kc(c), kx(x), ky(y), kz(z) {}
 
             Float kc, kx, ky, kz;
             SPECTRA_CPU_GPU
-            Float Eval(Point3f p) const { return kc + kx * p.x + ky * p.y + kz * p.z; }
+            Float Eval(Point3f p) const {
+                return kc + kx * p.x + ky * p.y + kz * p.z;
+            }
         };
 
         DerivativeTerm c1[3], c2[3], c3[3], c4[3], c5[3];
     };
 } // namespace spectra
 
-namespace std
-{
+namespace std {
     template <>
-    struct hash<spectra::Transform>
-    {
+    struct hash<spectra::Transform> {
         SPECTRA_CPU_GPU
-        size_t operator()(const spectra::Transform& t) const
-        {
+        size_t operator()(const spectra::Transform& t) const {
             spectra::SquareMatrix<4> m = t.GetMatrix();
             return spectra::Hash(m);
         }
     };
 } // namespace std
 
-#endif  // SPECTRA_PATHTRACER_UTIL_TRANSFORM_H
+#endif // SPECTRA_PATHTRACER_UTIL_TRANSFORM_H

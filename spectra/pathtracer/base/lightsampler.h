@@ -3,16 +3,12 @@
 
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/memory.h>
-
 #include <spectra/pathtracer/util/taggedptr.h>
-
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     // SampledLight Definition
-    struct SampledLight
-    {
+    struct SampledLight {
         Light light;
         Float p = 0;
     };
@@ -23,19 +19,15 @@ namespace spectra
     class ExhaustiveLightSampler;
 
     // LightSampler Definition
-    class LightSampler : public TaggedPointer<UniformLightSampler, PowerLightSampler,
-                                              ExhaustiveLightSampler, BVHLightSampler>
-    {
+    class LightSampler : public TaggedPointer<UniformLightSampler, PowerLightSampler, ExhaustiveLightSampler, BVHLightSampler> {
     public:
         // LightSampler Interface
         using TaggedPointer::TaggedPointer;
 
-        static LightSampler Create(const std::string& name, pstd::span<const Light> lights,
-                                   Allocator alloc);
+        static LightSampler Create(const std::string& name, pstd::span<const Light> lights, Allocator alloc);
 
 
-        SPECTRA_CPU_GPU pstd::optional<SampledLight> Sample(const LightSampleContext& ctx,
-                                                            Float u) const;
+        SPECTRA_CPU_GPU pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const;
 
         SPECTRA_CPU_GPU Float PMF(const LightSampleContext& ctx, Light light) const;
 
@@ -44,4 +36,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_BASE_LIGHTSAMPLER_H
+#endif // SPECTRA_PATHTRACER_BASE_LIGHTSAMPLER_H

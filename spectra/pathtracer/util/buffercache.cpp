@@ -1,7 +1,6 @@
 #include <spectra/pathtracer/util/buffercache.h>
 
-namespace spectra
-{
+namespace spectra {
     // BufferCache Global Definitions
     BufferCache<int>* intBufferCache;
     BufferCache<Point2f>* point2BufferCache;
@@ -9,12 +8,11 @@ namespace spectra
     BufferCache<Vector3f>* vector3BufferCache;
     BufferCache<Normal3f>* normal3BufferCache;
 
-    void InitBufferCaches()
-    {
+    void InitBufferCaches() {
         CHECK(intBufferCache == nullptr);
-        intBufferCache = new BufferCache<int>;
-        point2BufferCache = new BufferCache<Point2f>;
-        point3BufferCache = new BufferCache<Point3f>;
+        intBufferCache     = new BufferCache<int>;
+        point2BufferCache  = new BufferCache<Point2f>;
+        point3BufferCache  = new BufferCache<Point3f>;
         vector3BufferCache = new BufferCache<Vector3f>;
         normal3BufferCache = new BufferCache<Normal3f>;
     }

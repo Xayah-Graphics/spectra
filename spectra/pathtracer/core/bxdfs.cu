@@ -1,264 +1,193 @@
-#include <spectra/pathtracer/core/bxdfs.h>
-
 #include <spectra/pathtracer/core/bssrdf.h>
+#include <spectra/pathtracer/core/bxdfs.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/media.h>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/util/check.h>
 #include <spectra/pathtracer/util/color.h>
 #include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/hash.h>
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/sampling.h>
-
 #include <unordered_map>
 
-namespace spectra
-{
-    SPECTRA_CPU_GPU SampledSpectrum BxDF::f(Vector3f wo, Vector3f wi,
-                                            TransportMode mode) const
-    {
+namespace spectra {
+    SPECTRA_CPU_GPU SampledSpectrum BxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         auto f = [&](auto ptr) -> SampledSpectrum { return ptr->f(wo, wi, mode); };
         return Dispatch(f);
     }
 
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> BxDF::Sample_f(
-        Vector3f wo, Float uc, Point2f u, TransportMode mode,
-        BxDFReflTransFlags sampleFlags) const
-    {
-        auto sample_f = [&](auto ptr) -> pstd::optional<BSDFSample>
-        {
-            return ptr->Sample_f(wo, uc, u, mode, sampleFlags);
-        };
+    SPECTRA_CPU_GPU pstd::optional<BSDFSample> BxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+        auto sample_f = [&](auto ptr) -> pstd::optional<BSDFSample> { return ptr->Sample_f(wo, uc, u, mode, sampleFlags); };
         return Dispatch(sample_f);
     }
 
-    SPECTRA_CPU_GPU Float BxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                    BxDFReflTransFlags sampleFlags) const
-    {
+    SPECTRA_CPU_GPU Float BxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         auto pdf = [&](auto ptr) { return ptr->PDF(wo, wi, mode, sampleFlags); };
         return Dispatch(pdf);
     }
 
-    SPECTRA_CPU_GPU BxDFFlags BxDF::Flags() const
-    {
+    SPECTRA_CPU_GPU BxDFFlags BxDF::Flags() const {
         auto flags = [&](auto ptr) { return ptr->Flags(); };
         return Dispatch(flags);
     }
 
-    SPECTRA_CPU_GPU void BxDF::Regularize()
-    {
+    SPECTRA_CPU_GPU void BxDF::Regularize() {
         auto regularize = [&](auto ptr) { ptr->Regularize(); };
         return Dispatch(regularize);
     }
 
-    std::string ToString(BxDFReflTransFlags flags)
-    {
-        if (flags == BxDFReflTransFlags::Unset)
-            return "Unset";
+    std::string ToString(BxDFReflTransFlags flags) {
+        if (flags == BxDFReflTransFlags::Unset) return "Unset";
         std::string s;
-        if (flags & BxDFReflTransFlags::Reflection)
-            s += "Reflection,";
-        if (flags & BxDFReflTransFlags::Transmission)
-            s += "Transmission,";
+        if (flags & BxDFReflTransFlags::Reflection) s += "Reflection,";
+        if (flags & BxDFReflTransFlags::Transmission) s += "Transmission,";
         return s;
     }
 
-    std::string ToString(BxDFFlags flags)
-    {
-        if (flags == Unset)
-            return "Unset";
+    std::string ToString(BxDFFlags flags) {
+        if (flags == Unset) return "Unset";
         std::string s;
-        if (flags & Reflection)
-            s += "Reflection,";
-        if (flags & Transmission)
-            s += "Transmission,";
-        if (flags & Diffuse)
-            s += "Diffuse,";
-        if (flags & Glossy)
-            s += "Glossy,";
-        if (flags & Specular)
-            s += "Specular,";
+        if (flags & Reflection) s += "Reflection,";
+        if (flags & Transmission) s += "Transmission,";
+        if (flags & Diffuse) s += "Diffuse,";
+        if (flags & Glossy) s += "Glossy,";
+        if (flags & Specular) s += "Specular,";
         return s;
     }
 
-    std::string ToString(TransportMode mode)
-    {
+    std::string ToString(TransportMode mode) {
         return mode == TransportMode::Radiance ? "Radiance" : "Importance";
     }
 
     // BxDF Method Definitions
 
     // DielectricBxDF Method Definitions
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> DielectricBxDF::Sample_f(
-        Vector3f wo, Float uc, Point2f u, TransportMode mode,
-        BxDFReflTransFlags sampleFlags) const
-    {
-        if (eta == 1 || mfDistrib.EffectivelySmooth())
-        {
+    SPECTRA_CPU_GPU pstd::optional<BSDFSample> DielectricBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+        if (eta == 1 || mfDistrib.EffectivelySmooth()) {
             // Sample perfect specular dielectric BSDF
             Float R = FrDielectric(CosTheta(wo), eta), T = 1 - R;
             // Compute probabilities _pr_ and _pt_ for sampling reflection and transmission
             Float pr = R, pt = T;
-            if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-                pr = 0;
-            if (!(sampleFlags & BxDFReflTransFlags::Transmission))
-                pt = 0;
-            if (pr == 0 && pt == 0)
-                return {};
+            if (!(sampleFlags & BxDFReflTransFlags::Reflection)) pr = 0;
+            if (!(sampleFlags & BxDFReflTransFlags::Transmission)) pt = 0;
+            if (pr == 0 && pt == 0) return {};
 
-            if (uc < pr / (pr + pt))
-            {
+            if (uc < pr / (pr + pt)) {
                 // Sample perfect specular dielectric BRDF
                 Vector3f wi(-wo.x, -wo.y, wo.z);
                 SampledSpectrum fr(R / AbsCosTheta(wi));
                 return BSDFSample(fr, wi, pr / (pr + pt), SpecularReflection);
-            }
-            else
-            {
+            } else {
                 // Sample perfect specular dielectric BTDF
                 // Compute ray direction for specular transmission
                 Vector3f wi;
                 Float etap;
                 bool valid = Refract(wo, Normal3f(0, 0, 1), eta, &etap, &wi);
                 CHECK_RARE(1e-5f, !valid);
-                if (!valid)
-                    return {};
+                if (!valid) return {};
 
                 SampledSpectrum ft(T / AbsCosTheta(wi));
                 // Account for non-symmetry with transmission to different medium
-                if (mode == TransportMode::Radiance)
-                    ft /= Sqr(etap);
+                if (mode == TransportMode::Radiance) ft /= Sqr(etap);
 
-                return BSDFSample(ft, wi, pt / (pr + pt), SpecularTransmission,
-                                  etap);
+                return BSDFSample(ft, wi, pt / (pr + pt), SpecularTransmission, etap);
             }
-        }
-        else
-        {
+        } else {
             // Sample rough dielectric BSDF
             Vector3f wm = mfDistrib.Sample_wm(wo, u);
-            Float R = FrDielectric(Dot(wo, wm), eta);
-            Float T = 1 - R;
+            Float R     = FrDielectric(Dot(wo, wm), eta);
+            Float T     = 1 - R;
             // Compute probabilities _pr_ and _pt_ for sampling reflection and transmission
             Float pr = R, pt = T;
-            if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-                pr = 0;
-            if (!(sampleFlags & BxDFReflTransFlags::Transmission))
-                pt = 0;
-            if (pr == 0 && pt == 0)
-                return {};
+            if (!(sampleFlags & BxDFReflTransFlags::Reflection)) pr = 0;
+            if (!(sampleFlags & BxDFReflTransFlags::Transmission)) pt = 0;
+            if (pr == 0 && pt == 0) return {};
 
             Float pdf;
-            if (uc < pr / (pr + pt))
-            {
+            if (uc < pr / (pr + pt)) {
                 // Sample reflection at rough dielectric interface
                 Vector3f wi = Reflect(wo, wm);
-                if (!SameHemisphere(wo, wi))
-                    return {};
+                if (!SameHemisphere(wo, wi)) return {};
                 // Compute PDF of rough dielectric reflection
                 pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
 
                 DCHECK(!IsNaN(pdf));
-                SampledSpectrum f(mfDistrib.D(wm) * mfDistrib.G(wo, wi) * R /
-                    (4 * CosTheta(wi) * CosTheta(wo)));
+                SampledSpectrum f(mfDistrib.D(wm) * mfDistrib.G(wo, wi) * R / (4 * CosTheta(wi) * CosTheta(wo)));
                 return BSDFSample(f, wi, pdf, GlossyReflection);
-            }
-            else
-            {
+            } else {
                 // Sample transmission at rough dielectric interface
                 Float etap;
                 Vector3f wi;
-                bool tir = !Refract(wo, (Normal3f)wm, eta, &etap, &wi);
+                bool tir = !Refract(wo, (Normal3f) wm, eta, &etap, &wi);
                 CHECK_RARE(1e-5f, tir);
-                if (SameHemisphere(wo, wi) || wi.z == 0 || tir)
-                    return {};
+                if (SameHemisphere(wo, wi) || wi.z == 0 || tir) return {};
                 // Compute PDF of rough dielectric transmission
-                Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
+                Float denom   = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
                 Float dwm_dwi = AbsDot(wi, wm) / denom;
-                pdf = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
+                pdf           = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
 
                 CHECK(!IsNaN(pdf));
                 // Evaluate BRDF and return _BSDFSample_ for rough transmission
-                SampledSpectrum ft(T * mfDistrib.D(wm) * mfDistrib.G(wo, wi) *
-                    std::abs(Dot(wi, wm) * Dot(wo, wm) /
-                        (CosTheta(wi) * CosTheta(wo) * denom)));
+                SampledSpectrum ft(T * mfDistrib.D(wm) * mfDistrib.G(wo, wi) * std::abs(Dot(wi, wm) * Dot(wo, wm) / (CosTheta(wi) * CosTheta(wo) * denom)));
                 // Account for non-symmetry with transmission to different medium
-                if (mode == TransportMode::Radiance)
-                    ft /= Sqr(etap);
+                if (mode == TransportMode::Radiance) ft /= Sqr(etap);
 
                 return BSDFSample(ft, wi, pdf, GlossyTransmission, etap);
             }
         }
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const
-    {
-        if (eta == 1 || mfDistrib.EffectivelySmooth())
-            return SampledSpectrum(0.f);
+    SPECTRA_CPU_GPU SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+        if (eta == 1 || mfDistrib.EffectivelySmooth()) return SampledSpectrum(0.f);
         // Evaluate rough dielectric BSDF
         // Compute generalized half vector _wm_
         Float cosTheta_o = CosTheta(wo), cosTheta_i = CosTheta(wi);
         bool reflect = cosTheta_i * cosTheta_o > 0;
-        float etap = 1;
-        if (!reflect)
-            etap = cosTheta_o > 0 ? eta : (1 / eta);
+        float etap   = 1;
+        if (!reflect) etap = cosTheta_o > 0 ? eta : (1 / eta);
         Vector3f wm = wi * etap + wo;
         CHECK_RARE(1e-5f, LengthSquared(wm) == 0);
-        if (cosTheta_i == 0 || cosTheta_o == 0 || LengthSquared(wm) == 0)
-            return {};
+        if (cosTheta_i == 0 || cosTheta_o == 0 || LengthSquared(wm) == 0) return {};
         wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
 
         // Discard backfacing microfacets
-        if (Dot(wm, wi) * cosTheta_i < 0 || Dot(wm, wo) * cosTheta_o < 0)
-            return {};
+        if (Dot(wm, wi) * cosTheta_i < 0 || Dot(wm, wo) * cosTheta_o < 0) return {};
 
         Float F = FrDielectric(Dot(wo, wm), eta);
-        if (reflect)
-        {
+        if (reflect) {
             // Compute reflection at rough dielectric interface
-            return SampledSpectrum(mfDistrib.D(wm) * mfDistrib.G(wo, wi) * F /
-                std::abs(4 * cosTheta_i * cosTheta_o));
-        }
-        else
-        {
+            return SampledSpectrum(mfDistrib.D(wm) * mfDistrib.G(wo, wi) * F / std::abs(4 * cosTheta_i * cosTheta_o));
+        } else {
             // Compute transmission at rough dielectric interface
             Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap) * cosTheta_i * cosTheta_o;
-            Float ft = mfDistrib.D(wm) * (1 - F) * mfDistrib.G(wo, wi) *
-                std::abs(Dot(wi, wm) * Dot(wo, wm) / denom);
+            Float ft    = mfDistrib.D(wm) * (1 - F) * mfDistrib.G(wo, wi) * std::abs(Dot(wi, wm) * Dot(wo, wm) / denom);
             // Account for non-symmetry with transmission to different medium
-            if (mode == TransportMode::Radiance)
-                ft /= Sqr(etap);
+            if (mode == TransportMode::Radiance) ft /= Sqr(etap);
 
             return SampledSpectrum(ft);
         }
     }
 
-    SPECTRA_CPU_GPU Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                              BxDFReflTransFlags sampleFlags) const
-    {
-        if (eta == 1 || mfDistrib.EffectivelySmooth())
-            return 0;
+    SPECTRA_CPU_GPU Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+        if (eta == 1 || mfDistrib.EffectivelySmooth()) return 0;
         // Evaluate sampling PDF of rough dielectric BSDF
         // Compute generalized half vector _wm_
         Float cosTheta_o = CosTheta(wo), cosTheta_i = CosTheta(wi);
         bool reflect = cosTheta_i * cosTheta_o > 0;
-        float etap = 1;
-        if (!reflect)
-            etap = cosTheta_o > 0 ? eta : (1 / eta);
+        float etap   = 1;
+        if (!reflect) etap = cosTheta_o > 0 ? eta : (1 / eta);
         Vector3f wm = wi * etap + wo;
         CHECK_RARE(1e-5f, LengthSquared(wm) == 0);
-        if (cosTheta_i == 0 || cosTheta_o == 0 || LengthSquared(wm) == 0)
-            return {};
+        if (cosTheta_i == 0 || cosTheta_o == 0 || LengthSquared(wm) == 0) return {};
         wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
 
         // Discard backfacing microfacets
-        if (Dot(wm, wi) * cosTheta_i < 0 || Dot(wm, wo) * cosTheta_o < 0)
-            return {};
+        if (Dot(wm, wi) * cosTheta_i < 0 || Dot(wm, wo) * cosTheta_o < 0) return {};
 
         // Determine Fresnel reflectance of rough dielectric boundary
         Float R = FrDielectric(Dot(wo, wm), eta);
@@ -266,42 +195,32 @@ namespace spectra
 
         // Compute probabilities _pr_ and _pt_ for sampling reflection and transmission
         Float pr = R, pt = T;
-        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-            pr = 0;
-        if (!(sampleFlags & BxDFReflTransFlags::Transmission))
-            pt = 0;
-        if (pr == 0 && pt == 0)
-            return {};
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection)) pr = 0;
+        if (!(sampleFlags & BxDFReflTransFlags::Transmission)) pt = 0;
+        if (pr == 0 && pt == 0) return {};
 
         // Return PDF for rough dielectric
         Float pdf;
-        if (reflect)
-        {
+        if (reflect) {
             // Compute PDF of rough dielectric reflection
             pdf = mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm)) * pr / (pr + pt);
-        }
-        else
-        {
+        } else {
             // Compute PDF of rough dielectric transmission
-            Float denom = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
+            Float denom   = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
             Float dwm_dwi = AbsDot(wi, wm) / denom;
-            pdf = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
+            pdf           = mfDistrib.PDF(wo, wm) * dwm_dwi * pt / (pr + pt);
         }
         return pdf;
     }
 
 
     // HairBxDF Method Definitions
-    SPECTRA_CPU_GPU HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum& sigma_a, Float beta_m,
-                                       Float beta_n, Float alpha)
-        : h(h), eta(eta), sigma_a(sigma_a), beta_m(beta_m), beta_n(beta_n)
-    {
+    SPECTRA_CPU_GPU HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum& sigma_a, Float beta_m, Float beta_n, Float alpha) : h(h), eta(eta), sigma_a(sigma_a), beta_m(beta_m), beta_n(beta_n) {
         CHECK(h >= -1 && h <= 1);
         CHECK(beta_m >= 0 && beta_m <= 1);
         CHECK(beta_n >= 0 && beta_n <= 1);
         // _HairBxDF_ constructor implementation
-        static_assert(pMax >= 3,
-                      "Longitudinal variance code must be updated to handle low pMax");
+        static_assert(pMax >= 3, "Longitudinal variance code must be updated to handle low pMax");
         v[0] = Sqr(0.726f * beta_m + 0.812f * Sqr(beta_m) + 3.7f * Pow<20>(beta_m));
         v[1] = .25 * v[0];
         v[2] = 4 * v[0];
@@ -310,71 +229,62 @@ namespace spectra
             v[p] = v[2];
 
         static const Float SqrtPiOver8 = 0.626657069f;
-        s = SqrtPiOver8 * (0.265f * beta_n + 1.194f * Sqr(beta_n) + 5.372f * Pow<22>(beta_n));
+        s                              = SqrtPiOver8 * (0.265f * beta_n + 1.194f * Sqr(beta_n) + 5.372f * Pow<22>(beta_n));
         DCHECK(!IsNaN(s));
 
         sin2kAlpha[0] = std::sin(Radians(alpha));
         cos2kAlpha[0] = SafeSqrt(1 - Sqr(sin2kAlpha[0]));
-        for (int i = 1; i < pMax; ++i)
-        {
+        for (int i = 1; i < pMax; ++i) {
             sin2kAlpha[i] = 2 * cos2kAlpha[i - 1] * sin2kAlpha[i - 1];
             cos2kAlpha[i] = Sqr(cos2kAlpha[i - 1]) - Sqr(sin2kAlpha[i - 1]);
         }
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const
-    {
+    SPECTRA_CPU_GPU SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         // Compute hair coordinate system terms related to _wo_
         Float sinTheta_o = wo.x;
         Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
-        Float phi_o = std::atan2(wo.z, wo.y);
-        Float gamma_o = SafeASin(h);
+        Float phi_o      = std::atan2(wo.z, wo.y);
+        Float gamma_o    = SafeASin(h);
 
         // Compute hair coordinate system terms related to _wi_
         Float sinTheta_i = wi.x;
         Float cosTheta_i = SafeSqrt(1 - Sqr(sinTheta_i));
-        Float phi_i = std::atan2(wi.z, wi.y);
+        Float phi_i      = std::atan2(wi.z, wi.y);
 
         // Compute $\cos\,\thetat$ for refracted ray
         Float sinTheta_t = sinTheta_o / eta;
         Float cosTheta_t = SafeSqrt(1 - Sqr(sinTheta_t));
 
         // Compute $\gammat$ for refracted ray
-        Float etap = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
+        Float etap       = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
         Float sinGamma_t = h / etap;
         Float cosGamma_t = SafeSqrt(1 - Sqr(sinGamma_t));
-        Float gamma_t = SafeASin(sinGamma_t);
+        Float gamma_t    = SafeASin(sinGamma_t);
 
         // Compute the transmittance _T_ of a single path through the cylinder
         SampledSpectrum T = Exp(-sigma_a * (2 * cosGamma_t / cosTheta_t));
 
         // Evaluate hair BSDF
-        Float phi = phi_i - phi_o;
+        Float phi                                 = phi_i - phi_o;
         pstd::array<SampledSpectrum, pMax + 1> ap = Ap(cosTheta_o, eta, h, T);
         SampledSpectrum fsum(0.);
 
-        for (int p = 0; p < pMax; ++p)
-        {
+        for (int p = 0; p < pMax; ++p) {
             // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
             Float sinThetap_o, cosThetap_o;
-            if (p == 0)
-            {
+            if (p == 0) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
                 cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
             }
             // Handle remainder of $p$ values for hair scale tilt
-            else if (p == 1)
-            {
+            else if (p == 1) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
                 cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
-            }
-            else if (p == 2)
-            {
+            } else if (p == 2) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[2] + cosTheta_o * sin2kAlpha[2];
                 cosThetap_o = cosTheta_o * cos2kAlpha[2] - sinTheta_o * sin2kAlpha[2];
-            }
-            else
-            {
+            } else {
                 sinThetap_o = sinTheta_o;
                 cosThetap_o = cosTheta_o;
             }
@@ -382,21 +292,17 @@ namespace spectra
             // Handle out-of-range $\cos\,\thetao$ from scale adjustment
             cosThetap_o = std::abs(cosThetap_o);
 
-            fsum += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * ap[p] *
-                Np(phi, p, s, gamma_o, gamma_t);
+            fsum += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * ap[p] * Np(phi, p, s, gamma_o, gamma_t);
         }
         // Compute contribution of remaining terms after _pMax_
-        fsum +=
-            Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * ap[pMax] / (2 * Pi);
+        fsum += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * ap[pMax] / (2 * Pi);
 
-        if (AbsCosTheta(wi) > 0)
-            fsum /= AbsCosTheta(wi);
+        if (AbsCosTheta(wi) > 0) fsum /= AbsCosTheta(wi);
         DCHECK(!IsInf(fsum.Average()) && !IsNaN(fsum.Average()));
         return fsum;
     }
 
-    SPECTRA_CPU_GPU pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ApPDF(Float cosTheta_o) const
-    {
+    SPECTRA_CPU_GPU pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ApPDF(Float cosTheta_o) const {
         // Initialize array of $A_p$ values for _cosTheta_o_
         Float sinTheta_o = SafeSqrt(1 - Sqr(cosTheta_o));
         // Compute $\cos\,\thetat$ for refracted ray
@@ -404,10 +310,10 @@ namespace spectra
         Float cosTheta_t = SafeSqrt(1 - Sqr(sinTheta_t));
 
         // Compute $\gammat$ for refracted ray
-        Float etap = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
+        Float etap       = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
         Float sinGamma_t = h / etap;
         Float cosGamma_t = SafeSqrt(1 - Sqr(sinGamma_t));
-        Float gamma_t = SafeASin(sinGamma_t);
+        Float gamma_t    = SafeASin(sinGamma_t);
 
         // Compute the transmittance _T_ of a single path through the cylinder
         SampledSpectrum T = Exp(-sigma_a * (2 * cosGamma_t / cosTheta_t));
@@ -417,48 +323,37 @@ namespace spectra
         // Compute $A_p$ PDF from individual $A_p$ terms
         pstd::array<Float, pMax + 1> apPDF;
         Float sumY = 0;
-        for (const SampledSpectrum& as : ap)
-            sumY += as.Average();
-        for (int i = 0; i <= pMax; ++i)
-            apPDF[i] = ap[i].Average() / sumY;
+        for (const SampledSpectrum& as : ap) sumY += as.Average();
+        for (int i = 0; i <= pMax; ++i) apPDF[i] = ap[i].Average() / sumY;
 
         return apPDF;
     }
 
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
-                                                                  TransportMode mode,
-                                                                  BxDFReflTransFlags sampleFlags) const
-    {
+    SPECTRA_CPU_GPU pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         // Compute hair coordinate system terms related to _wo_
         Float sinTheta_o = wo.x;
         Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
-        Float phi_o = std::atan2(wo.z, wo.y);
-        Float gamma_o = SafeASin(h);
+        Float phi_o      = std::atan2(wo.z, wo.y);
+        Float gamma_o    = SafeASin(h);
 
         // Determine which term $p$ to sample for hair scattering
         pstd::array<Float, pMax + 1> apPDF = ApPDF(cosTheta_o);
-        int p = SampleDiscrete(apPDF, uc, nullptr, &uc);
+        int p                              = SampleDiscrete(apPDF, uc, nullptr, &uc);
 
         // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
         Float sinThetap_o, cosThetap_o;
-        if (p == 0)
-        {
+        if (p == 0) {
             sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
             cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
         }
         // Handle remainder of $p$ values for hair scale tilt
-        else if (p == 1)
-        {
+        else if (p == 1) {
             sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
             cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
-        }
-        else if (p == 2)
-        {
+        } else if (p == 2) {
             sinThetap_o = sinTheta_o * cos2kAlpha[2] + cosTheta_o * sin2kAlpha[2];
             cosThetap_o = cosTheta_o * cos2kAlpha[2] - sinTheta_o * sin2kAlpha[2];
-        }
-        else
-        {
+        } else {
             sinThetap_o = sinTheta_o;
             cosThetap_o = cosTheta_o;
         }
@@ -467,19 +362,18 @@ namespace spectra
         cosThetap_o = std::abs(cosThetap_o);
 
         // Sample $M_p$ to compute $\thetai$
-        Float cosTheta = 1 + v[p] * std::log(std::max<Float>(u[0], 1e-5) +
-            (1 - u[0]) * FastExp(-2 / v[p]));
-        Float sinTheta = SafeSqrt(1 - Sqr(cosTheta));
-        Float cosPhi = std::cos(2 * Pi * u[1]);
+        Float cosTheta   = 1 + v[p] * std::log(std::max<Float>(u[0], 1e-5) + (1 - u[0]) * FastExp(-2 / v[p]));
+        Float sinTheta   = SafeSqrt(1 - Sqr(cosTheta));
+        Float cosPhi     = std::cos(2 * Pi * u[1]);
         Float sinTheta_i = -cosTheta * sinThetap_o + sinTheta * cosPhi * cosThetap_o;
         Float cosTheta_i = SafeSqrt(1 - Sqr(sinTheta_i));
 
         // Sample $N_p$ to compute $\Delta\phi$
         // Compute $\gammat$ for refracted ray
-        Float etap = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
+        Float etap       = SafeSqrt(Sqr(eta) - Sqr(sinTheta_o)) / cosTheta_o;
         Float sinGamma_t = h / etap;
         Float cosGamma_t = SafeSqrt(1 - Sqr(sinGamma_t));
-        Float gamma_t = SafeASin(sinGamma_t);
+        Float gamma_t    = SafeASin(sinGamma_t);
 
         Float dphi;
         if (p < pMax)
@@ -493,28 +387,21 @@ namespace spectra
 
         // Compute PDF for sampled hair scattering direction _wi_
         Float pdf = 0;
-        for (int p = 0; p < pMax; ++p)
-        {
+        for (int p = 0; p < pMax; ++p) {
             // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
             Float sinThetap_o, cosThetap_o;
-            if (p == 0)
-            {
+            if (p == 0) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
                 cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
             }
             // Handle remainder of $p$ values for hair scale tilt
-            else if (p == 1)
-            {
+            else if (p == 1) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
                 cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
-            }
-            else if (p == 2)
-            {
+            } else if (p == 2) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[2] + cosTheta_o * sin2kAlpha[2];
                 cosThetap_o = cosTheta_o * cos2kAlpha[2] - sinTheta_o * sin2kAlpha[2];
-            }
-            else
-            {
+            } else {
                 sinThetap_o = sinTheta_o;
                 cosThetap_o = cosTheta_o;
             }
@@ -525,35 +412,31 @@ namespace spectra
             // Handle out-of-range $\cos\,\thetao$ from scale adjustment
             cosThetap_o = std::abs(cosThetap_o);
 
-            pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
-                Np(dphi, p, s, gamma_o, gamma_t);
+            pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] * Np(dphi, p, s, gamma_o, gamma_t);
         }
-        pdf += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * apPDF[pMax] *
-            (1 / (2 * Pi));
+        pdf += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * apPDF[pMax] * (1 / (2 * Pi));
 
         return BSDFSample(f(wo, wi, mode), wi, pdf, Flags());
     }
 
-    SPECTRA_CPU_GPU Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                        BxDFReflTransFlags sampleFlags) const
-    {
+    SPECTRA_CPU_GPU Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         // TODO? flags...
 
         // Compute hair coordinate system terms related to _wo_
         Float sinTheta_o = wo.x;
         Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
-        Float phi_o = std::atan2(wo.z, wo.y);
-        Float gamma_o = SafeASin(h);
+        Float phi_o      = std::atan2(wo.z, wo.y);
+        Float gamma_o    = SafeASin(h);
 
         // Compute hair coordinate system terms related to _wi_
         Float sinTheta_i = wi.x;
         Float cosTheta_i = SafeSqrt(1 - Sqr(sinTheta_i));
-        Float phi_i = std::atan2(wi.z, wi.y);
+        Float phi_i      = std::atan2(wi.z, wi.y);
 
         // Compute $\gammat$ for refracted ray
-        Float etap = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
+        Float etap       = SafeSqrt(eta * eta - Sqr(sinTheta_o)) / cosTheta_o;
         Float sinGamma_t = h / etap;
-        Float gamma_t = SafeASin(sinGamma_t);
+        Float gamma_t    = SafeASin(sinGamma_t);
 
         // Compute PDF for $A_p$ terms
         pstd::array<Float, pMax + 1> apPDF = ApPDF(cosTheta_o);
@@ -561,28 +444,21 @@ namespace spectra
         // Compute PDF sum for hair scattering events
         Float phi = phi_i - phi_o;
         Float pdf = 0;
-        for (int p = 0; p < pMax; ++p)
-        {
+        for (int p = 0; p < pMax; ++p) {
             // Compute $\sin\,\thetao$ and $\cos\,\thetao$ terms accounting for scales
             Float sinThetap_o, cosThetap_o;
-            if (p == 0)
-            {
+            if (p == 0) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[1] - cosTheta_o * sin2kAlpha[1];
                 cosThetap_o = cosTheta_o * cos2kAlpha[1] + sinTheta_o * sin2kAlpha[1];
             }
             // Handle remainder of $p$ values for hair scale tilt
-            else if (p == 1)
-            {
+            else if (p == 1) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[0] + cosTheta_o * sin2kAlpha[0];
                 cosThetap_o = cosTheta_o * cos2kAlpha[0] - sinTheta_o * sin2kAlpha[0];
-            }
-            else if (p == 2)
-            {
+            } else if (p == 2) {
                 sinThetap_o = sinTheta_o * cos2kAlpha[2] + cosTheta_o * sin2kAlpha[2];
                 cosThetap_o = cosTheta_o * cos2kAlpha[2] - sinTheta_o * sin2kAlpha[2];
-            }
-            else
-            {
+            } else {
                 sinThetap_o = sinTheta_o;
                 cosThetap_o = cosTheta_o;
             }
@@ -590,16 +466,13 @@ namespace spectra
             // Handle out-of-range $\cos\,\thetao$ from scale adjustment
             cosThetap_o = std::abs(cosThetap_o);
 
-            pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] *
-                Np(phi, p, s, gamma_o, gamma_t);
+            pdf += Mp(cosTheta_i, cosThetap_o, sinTheta_i, sinThetap_o, v[p]) * apPDF[p] * Np(phi, p, s, gamma_o, gamma_t);
         }
-        pdf += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * apPDF[pMax] *
-            (1 / (2 * Pi));
+        pdf += Mp(cosTheta_i, cosTheta_o, sinTheta_i, sinTheta_o, v[pMax]) * apPDF[pMax] * (1 / (2 * Pi));
         return pdf;
     }
 
-    SPECTRA_CPU_GPU RGBUnboundedSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp)
-    {
+    SPECTRA_CPU_GPU RGBUnboundedSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp) {
         RGB eumelaninSigma_a(0.419f, 0.697f, 1.37f);
         RGB pheomelaninSigma_a(0.187f, 0.4f, 1.05f);
         RGB sigma_a = ce * eumelaninSigma_a + cp * pheomelaninSigma_a;
@@ -610,15 +483,9 @@ namespace spectra
 #endif
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum& c, Float beta_n,
-                                                                    const SampledWavelengths& lambda)
-    {
+    SPECTRA_CPU_GPU SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum& c, Float beta_n, const SampledWavelengths& lambda) {
         SampledSpectrum sigma_a;
-        for (int i = 0; i < NSpectrumSamples; ++i)
-            sigma_a[i] =
-                Sqr(std::log(c[i]) / (5.969f - 0.215f * beta_n + 2.532f * Sqr(beta_n) -
-                    10.73f * Pow<3>(beta_n) + 5.574f * Pow<4>(beta_n) +
-                    0.245f * Pow<5>(beta_n)));
+        for (int i = 0; i < NSpectrumSamples; ++i) sigma_a[i] = Sqr(std::log(c[i]) / (5.969f - 0.215f * beta_n + 2.532f * Sqr(beta_n) - 10.73f * Pow<3>(beta_n) + 5.574f * Pow<4>(beta_n) + 0.245f * Pow<5>(beta_n)));
         return sigma_a;
     }
 
@@ -627,12 +494,10 @@ namespace spectra
     // Tensor file I/O
     // *****************************************************************************
 
-    class Tensor
-    {
+    class Tensor {
     public:
         // Data type of the tensor's fields
-        enum Type
-        {
+        enum Type {
             /* Invalid/unspecified */
             Invalid = 0,
 
@@ -652,8 +517,7 @@ namespace spectra
             Float64,
         };
 
-        struct Field
-        {
+        struct Field {
             // Data type of the tensor's fields
             Type dtype;
 
@@ -677,9 +541,13 @@ namespace spectra
         const Field& field(const std::string& name) const;
 
         /// Return the total size of the tensor's data
-        size_t size() const { return m_size; }
+        size_t size() const {
+            return m_size;
+        }
 
-        std::string filename() const { return m_filename; }
+        std::string filename() const {
+            return m_filename;
+        }
 
     private:
         std::unordered_map<std::string, Field> m_fields;
@@ -687,73 +555,42 @@ namespace spectra
         size_t m_size;
     };
 
-    static size_t type_size(Tensor::Type value)
-    {
-        switch (value)
-        {
-        case Tensor::Invalid:
-            return 0;
-            break;
-        case Tensor::UInt8:
-            return 1;
-            break;
-        case Tensor::Int8:
-            return 1;
-            break;
-        case Tensor::UInt16:
-            return 2;
-            break;
-        case Tensor::Int16:
-            return 2;
-            break;
-        case Tensor::UInt32:
-            return 4;
-            break;
-        case Tensor::Int32:
-            return 4;
-            break;
-        case Tensor::UInt64:
-            return 8;
-            break;
-        case Tensor::Int64:
-            return 8;
-            break;
-        case Tensor::Float16:
-            return 2;
-            break;
-        case Tensor::Float32:
-            return 4;
-            break;
-        case Tensor::Float64:
-            return 8;
-            break;
-        default:
-            return 0;
-            break;
+    static size_t type_size(Tensor::Type value) {
+        switch (value) {
+        case Tensor::Invalid: return 0; break;
+        case Tensor::UInt8: return 1; break;
+        case Tensor::Int8: return 1; break;
+        case Tensor::UInt16: return 2; break;
+        case Tensor::Int16: return 2; break;
+        case Tensor::UInt32: return 4; break;
+        case Tensor::Int32: return 4; break;
+        case Tensor::UInt64: return 8; break;
+        case Tensor::Int64: return 8; break;
+        case Tensor::Float16: return 2; break;
+        case Tensor::Float32: return 4; break;
+        case Tensor::Float64: return 8; break;
+        default: return 0; break;
         }
     }
 
-    Tensor::Tensor(const std::string& filename) : m_filename(filename)
-    {
+    Tensor::Tensor(const std::string& filename) : m_filename(filename) {
         // Helpful macros to limit error-handling code duplication
 #ifdef ASSERT
 #undef ASSERT
-#endif  // ASSERT
+#endif // ASSERT
 
-#define ASSERT(cond, msg)                            \
-    do {                                             \
-        if (!(cond)) {                               \
-            fclose(file);                            \
+#define ASSERT(cond, msg)                                                                         \
+    do {                                                                                          \
+        if (!(cond)) {                                                                            \
+            fclose(file);                                                                         \
             throw std::runtime_error(spectra::diagnostics::Format("%s: Tensor: " msg, filename)); \
-        }                                            \
+        }                                                                                         \
     } while (0)
 
-#define SAFE_READ(vars, size, count) \
-    ASSERT(fread(vars, size, count, file) == (count), "Unable to read " #vars ".")
+#define SAFE_READ(vars, size, count) ASSERT(fread(vars, size, count, file) == (count), "Unable to read " #vars ".")
 
         FILE* file = FOpenRead(filename);
-        if (file == NULL)
-            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open file", filename));
+        if (file == NULL) throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open file", filename));
 
         ASSERT(!fseek(file, 0, SEEK_END), "Unable to seek to end of file.");
 
@@ -770,34 +607,29 @@ namespace spectra
         SAFE_READ(version, sizeof(*version), 2);
         SAFE_READ(&n_fields, sizeof(n_fields), 1);
 
-        ASSERT(memcmp(header, "tensor_file", 12) == 0,
-               "Invalid tensor file: invalid header.");
-        ASSERT(version[0] == 1 && version[1] == 0,
-               "Invalid tensor file: unknown file version.");
+        ASSERT(memcmp(header, "tensor_file", 12) == 0, "Invalid tensor file: invalid header.");
+        ASSERT(version[0] == 1 && version[1] == 0, "Invalid tensor file: unknown file version.");
 
-        for (uint32_t i = 0; i < n_fields; ++i)
-        {
+        for (uint32_t i = 0; i < n_fields; ++i) {
             uint8_t dtype;
             uint16_t name_length, ndim;
             uint64_t offset;
 
             SAFE_READ(&name_length, sizeof(name_length), 1);
             std::string name(name_length, '\0');
-            SAFE_READ((char *)name.data(), 1, name_length);
+            SAFE_READ((char*) name.data(), 1, name_length);
             SAFE_READ(&ndim, sizeof(ndim), 1);
             SAFE_READ(&dtype, sizeof(dtype), 1);
             SAFE_READ(&offset, sizeof(offset), 1);
-            ASSERT(dtype != Invalid && dtype <= Float64,
-                   "Invalid tensor file: unknown type.");
+            ASSERT(dtype != Invalid && dtype <= Float64, "Invalid tensor file: unknown type.");
 
             std::vector<size_t> shape(ndim);
-            size_t total_size = type_size((Type)dtype); // no need to check here, line 43
+            size_t total_size = type_size((Type) dtype); // no need to check here, line 43
             // already removes invalid types
-            for (size_t j = 0; j < (size_t)ndim; ++j)
-            {
+            for (size_t j = 0; j < (size_t) ndim; ++j) {
                 uint64_t size_value;
                 SAFE_READ(&size_value, sizeof(size_value), 1);
-                shape[j] = (size_t)size_value;
+                shape[j] = (size_t) size_value;
                 total_size *= shape[j];
             }
 
@@ -807,11 +639,9 @@ namespace spectra
             ASSERT(cur_pos != -1, "Unable to tell current cursor position.");
             ASSERT(fseek(file, offset, SEEK_SET) != -1, "Unable to seek to tensor offset.");
             SAFE_READ(data.get(), 1, total_size);
-            ASSERT(fseek(file, cur_pos, SEEK_SET) != -1,
-                   "Unable to seek back to current position");
+            ASSERT(fseek(file, cur_pos, SEEK_SET) != -1, "Unable to seek back to current position");
 
-            m_fields[name] =
-                Field{(Type)dtype, static_cast<size_t>(offset), shape, std::move(data)};
+            m_fields[name] = Field{(Type) dtype, static_cast<size_t>(offset), shape, std::move(data)};
         }
 
         fclose(file);
@@ -821,22 +651,19 @@ namespace spectra
     }
 
     /// Does the file contain a field of the specified name?
-    bool Tensor::has_field(const std::string& name) const
-    {
+    bool Tensor::has_field(const std::string& name) const {
         return m_fields.find(name) != m_fields.end();
     }
 
     /// Return a data structure with information about the specified field
-    const Tensor::Field& Tensor::field(const std::string& name) const
-    {
+    const Tensor::Field& Tensor::field(const std::string& name) const {
         auto it = m_fields.find(name);
         CHECK(it != m_fields.end());
         return it->second;
     }
 
     // MeasuredBxDFData Definition
-    struct MeasuredBxDFData
-    {
+    struct MeasuredBxDFData {
         // MeasuredBxDFData Public Members
         pstd::vector<float> wavelengths;
         PiecewiseLinear2D<3> spectra;
@@ -846,15 +673,7 @@ namespace spectra
         bool isotropic;
         PiecewiseLinear2D<2> luminance;
 
-        MeasuredBxDFData(Allocator alloc)
-            : ndf(alloc),
-              sigma(alloc),
-              vndf(alloc),
-              luminance(alloc),
-              spectra(alloc),
-              wavelengths(alloc)
-        {
-        }
+        MeasuredBxDFData(Allocator alloc) : ndf(alloc), sigma(alloc), vndf(alloc), luminance(alloc), spectra(alloc), wavelengths(alloc) {}
 
         static MeasuredBxDFData* Create(const std::string& filename, Allocator alloc);
 
@@ -862,135 +681,95 @@ namespace spectra
         std::string filename;
     };
 
-    MeasuredBxDFData* MeasuredBxDFData::Create(const std::string& filename, Allocator alloc)
-    {
-        Tensor tf = Tensor(filename);
-        auto& theta_i = tf.field("theta_i");
-        auto& phi_i = tf.field("phi_i");
-        auto& ndf = tf.field("ndf");
-        auto& sigma = tf.field("sigma");
-        auto& vndf = tf.field("vndf");
-        auto& spectra = tf.field("spectra");
-        auto& luminance = tf.field("luminance");
+    MeasuredBxDFData* MeasuredBxDFData::Create(const std::string& filename, Allocator alloc) {
+        Tensor tf         = Tensor(filename);
+        auto& theta_i     = tf.field("theta_i");
+        auto& phi_i       = tf.field("phi_i");
+        auto& ndf         = tf.field("ndf");
+        auto& sigma       = tf.field("sigma");
+        auto& vndf        = tf.field("vndf");
+        auto& spectra     = tf.field("spectra");
+        auto& luminance   = tf.field("luminance");
         auto& wavelengths = tf.field("wavelengths");
         auto& description = tf.field("description");
-        auto& jacobian = tf.field("jacobian");
+        auto& jacobian    = tf.field("jacobian");
 
         if (!(description.shape.size() == 1 && description.dtype == Tensor::UInt8 &&
 
-            theta_i.shape.size() == 1 && theta_i.dtype == Tensor::Float32 &&
+                theta_i.shape.size() == 1 && theta_i.dtype == Tensor::Float32 &&
 
-            phi_i.shape.size() == 1 && phi_i.dtype == Tensor::Float32 &&
+                phi_i.shape.size() == 1 && phi_i.dtype == Tensor::Float32 &&
 
-            wavelengths.shape.size() == 1 && wavelengths.dtype == Tensor::Float32 &&
+                wavelengths.shape.size() == 1 && wavelengths.dtype == Tensor::Float32 &&
 
-            ndf.shape.size() == 2 && ndf.dtype == Tensor::Float32 &&
+                ndf.shape.size() == 2 && ndf.dtype == Tensor::Float32 &&
 
-            sigma.shape.size() == 2 && sigma.dtype == Tensor::Float32 &&
+                sigma.shape.size() == 2 && sigma.dtype == Tensor::Float32 &&
 
-            vndf.shape.size() == 4 && vndf.dtype == Tensor::Float32 &&
-            vndf.shape[0] == phi_i.shape[0] && vndf.shape[1] == theta_i.shape[0] &&
+                vndf.shape.size() == 4 && vndf.dtype == Tensor::Float32 && vndf.shape[0] == phi_i.shape[0] && vndf.shape[1] == theta_i.shape[0] &&
 
-            luminance.shape.size() == 4 && luminance.dtype == Tensor::Float32 &&
-            luminance.shape[0] == phi_i.shape[0] &&
-            luminance.shape[1] == theta_i.shape[0] &&
-            luminance.shape[2] == luminance.shape[3] &&
+                luminance.shape.size() == 4 && luminance.dtype == Tensor::Float32 && luminance.shape[0] == phi_i.shape[0] && luminance.shape[1] == theta_i.shape[0] && luminance.shape[2] == luminance.shape[3] &&
 
-            spectra.dtype == Tensor::Float32 && spectra.shape.size() == 5 &&
-            spectra.shape[0] == phi_i.shape[0] && spectra.shape[1] == theta_i.shape[0] &&
-            spectra.shape[2] == wavelengths.shape[0] &&
-            spectra.shape[3] == spectra.shape[4] &&
+                spectra.dtype == Tensor::Float32 && spectra.shape.size() == 5 && spectra.shape[0] == phi_i.shape[0] && spectra.shape[1] == theta_i.shape[0] && spectra.shape[2] == wavelengths.shape[0] && spectra.shape[3] == spectra.shape[4] &&
 
-            luminance.shape[2] == spectra.shape[3] &&
-            luminance.shape[3] == spectra.shape[4] &&
+                luminance.shape[2] == spectra.shape[3] && luminance.shape[3] == spectra.shape[4] &&
 
-            jacobian.shape.size() == 1 && jacobian.shape[0] == 1 &&
-            jacobian.dtype == Tensor::UInt8))
-        {
+                jacobian.shape.size() == 1 && jacobian.shape[0] == 1 && jacobian.dtype == Tensor::UInt8)) {
             throw std::runtime_error(spectra::diagnostics::Format("%s: invalid BRDF file structure.", filename));
             return nullptr;
         }
 
         MeasuredBxDFData* brdf = alloc.new_object<MeasuredBxDFData>(alloc);
-        brdf->filename = filename;
-        brdf->isotropic = phi_i.shape[0] <= 2;
+        brdf->filename         = filename;
+        brdf->isotropic        = phi_i.shape[0] <= 2;
 
-        if (!brdf->isotropic)
-        {
-            float* phi_i_data = (float*)phi_i.data.get();
-            int reduction =
-                (int)std::rint((2 * Pi) / (phi_i_data[phi_i.shape[0] - 1] - phi_i_data[0]));
-            if (reduction != 1)
-                throw std::runtime_error(spectra::diagnostics::Format("%s: reduction %d (!= 1) not supported", filename, reduction));
+        if (!brdf->isotropic) {
+            float* phi_i_data = (float*) phi_i.data.get();
+            int reduction     = (int) std::rint((2 * Pi) / (phi_i_data[phi_i.shape[0] - 1] - phi_i_data[0]));
+            if (reduction != 1) throw std::runtime_error(spectra::diagnostics::Format("%s: reduction %d (!= 1) not supported", filename, reduction));
         }
 
         /* Construct NDF interpolant data structure */
-        brdf->ndf = PiecewiseLinear2D<0>(alloc, (float*)ndf.data.get(), ndf.shape[1],
-                                         ndf.shape[0], {}, {}, false, false);
+        brdf->ndf = PiecewiseLinear2D<0>(alloc, (float*) ndf.data.get(), ndf.shape[1], ndf.shape[0], {}, {}, false, false);
 
         /* Construct projected surface area interpolant data structure */
-        brdf->sigma = PiecewiseLinear2D<0>(alloc, (float*)sigma.data.get(), sigma.shape[1],
-                                           sigma.shape[0], {}, {}, false, false);
+        brdf->sigma = PiecewiseLinear2D<0>(alloc, (float*) sigma.data.get(), sigma.shape[1], sigma.shape[0], {}, {}, false, false);
 
         /* Construct VNDF warp data structure */
-        brdf->vndf = PiecewiseLinear2D<2>(
-            alloc, (float*)vndf.data.get(), vndf.shape[3], vndf.shape[2],
-            {{(int)phi_i.shape[0], (int)theta_i.shape[0]}},
-            {{(const float*)phi_i.data.get(), (const float*)theta_i.data.get()}});
+        brdf->vndf = PiecewiseLinear2D<2>(alloc, (float*) vndf.data.get(), vndf.shape[3], vndf.shape[2], {{(int) phi_i.shape[0], (int) theta_i.shape[0]}}, {{(const float*) phi_i.data.get(), (const float*) theta_i.data.get()}});
 
         /* Construct Luminance warp data structure */
-        brdf->luminance = PiecewiseLinear2D<2>(
-            alloc, (float*)luminance.data.get(), luminance.shape[3], luminance.shape[2],
-            {{(int)phi_i.shape[0], (int)theta_i.shape[0]}},
-            {{(const float*)phi_i.data.get(), (const float*)theta_i.data.get()}});
+        brdf->luminance = PiecewiseLinear2D<2>(alloc, (float*) luminance.data.get(), luminance.shape[3], luminance.shape[2], {{(int) phi_i.shape[0], (int) theta_i.shape[0]}}, {{(const float*) phi_i.data.get(), (const float*) theta_i.data.get()}});
 
         /* Copy wavelength information */
         size_t size = wavelengths.shape[0];
         brdf->wavelengths.resize(size);
-        for (size_t i = 0; i < size; ++i)
-            brdf->wavelengths[i] = ((const float*)wavelengths.data.get())[i];
+        for (size_t i = 0; i < size; ++i) brdf->wavelengths[i] = ((const float*) wavelengths.data.get())[i];
 
         /* Construct spectral interpolant */
-        brdf->spectra = PiecewiseLinear2D<3>(
-            alloc, (float*)spectra.data.get(), spectra.shape[4], spectra.shape[3],
-            {{(int)phi_i.shape[0], (int)theta_i.shape[0], (int)wavelengths.shape[0]}},
-            {
-                {
-                    (const float*)phi_i.data.get(), (const float*)theta_i.data.get(),
-                    (const float*)wavelengths.data.get()
-                }
-            },
-            false, false);
+        brdf->spectra = PiecewiseLinear2D<3>(alloc, (float*) spectra.data.get(), spectra.shape[4], spectra.shape[3], {{(int) phi_i.shape[0], (int) theta_i.shape[0], (int) wavelengths.shape[0]}}, {{(const float*) phi_i.data.get(), (const float*) theta_i.data.get(), (const float*) wavelengths.data.get()}}, false, false);
 
         return brdf;
     }
 
-    MeasuredBxDFData* MeasuredBxDF::BRDFDataFromFile(const std::string& filename,
-                                                     Allocator alloc)
-    {
+    MeasuredBxDFData* MeasuredBxDF::BRDFDataFromFile(const std::string& filename, Allocator alloc) {
         static std::map<std::string, MeasuredBxDFData*> loadedData;
-        if (loadedData.find(filename) == loadedData.end())
-            loadedData[filename] = MeasuredBxDFData::Create(filename, alloc);
+        if (loadedData.find(filename) == loadedData.end()) loadedData[filename] = MeasuredBxDFData::Create(filename, alloc);
         return loadedData[filename];
     }
 
     // MeasuredBxDF Method Definitions
-    SPECTRA_CPU_GPU SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi,
-                                                    TransportMode mode) const
-    {
+    SPECTRA_CPU_GPU SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         // Check for valid reflection configurations
-        if (!SameHemisphere(wo, wi))
-            return SampledSpectrum(0);
-        if (wo.z < 0)
-        {
+        if (!SameHemisphere(wo, wi)) return SampledSpectrum(0);
+        if (wo.z < 0) {
             wo = -wo;
             wi = -wi;
         }
 
         // Determine half-direction vector $\wm$
         Vector3f wm = wi + wo;
-        if (LengthSquared(wm) == 0)
-            return SampledSpectrum(0);
+        if (LengthSquared(wm) == 0) return SampledSpectrum(0);
         wm = Normalize(wm);
 
         // Map $\wo$ and $\wm$ to the unit square $[0,\,1]^2$
@@ -1005,26 +784,18 @@ namespace spectra
 
         // Evaluate spectral 5D interpolant
         SampledSpectrum fr;
-        for (int i = 0; i < NSpectrumSamples; ++i)
-            fr[i] =
-                std::max<Float>(0, brdf->spectra.Evaluate(ui.p, phi_o, theta_o, lambda[i]));
+        for (int i = 0; i < NSpectrumSamples; ++i) fr[i] = std::max<Float>(0, brdf->spectra.Evaluate(ui.p, phi_o, theta_o, lambda[i]));
 
         // Return measured BRDF value
-        return fr * brdf->ndf.Evaluate(u_wm) /
-            (4 * brdf->sigma.Evaluate(u_wo) * CosTheta(wi));
+        return fr * brdf->ndf.Evaluate(u_wm) / (4 * brdf->sigma.Evaluate(u_wo) * CosTheta(wi));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f u,
-                                                                      TransportMode mode,
-                                                                      BxDFReflTransFlags sampleFlags) const
-    {
+    SPECTRA_CPU_GPU pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         // Check flags and detect interactions in lower hemisphere
-        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-            return {};
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection)) return {};
         bool flipWi = false;
-        if (wo.z <= 0)
-        {
-            wo = -wo;
+        if (wo.z <= 0) {
+            wo     = -wo;
             flipWi = true;
         }
 
@@ -1032,57 +803,47 @@ namespace spectra
         Float theta_o = SphericalTheta(wo), phi_o = std::atan2(wo.y, wo.x);
 
         // Warp sample using luminance distribution
-        auto s = brdf->luminance.Sample(u, phi_o, theta_o);
-        u = s.p;
+        auto s        = brdf->luminance.Sample(u, phi_o, theta_o);
+        u             = s.p;
         Float lum_pdf = s.pdf;
 
         // Sample visible normal distribution of measured BRDF
-        s = brdf->vndf.Sample(u, phi_o, theta_o);
+        s            = brdf->vndf.Sample(u, phi_o, theta_o);
         Point2f u_wm = s.p;
-        Float pdf = s.pdf;
+        Float pdf    = s.pdf;
 
         // Map from microfacet normal to incident direction
         Float phi_m = u2phi(u_wm.y), theta_m = u2theta(u_wm.x);
-        if (brdf->isotropic)
-            phi_m += phi_o;
+        if (brdf->isotropic) phi_m += phi_o;
         Float sinTheta_m = std::sin(theta_m), cosTheta_m = std::cos(theta_m);
         Vector3f wm = SphericalDirection(sinTheta_m, cosTheta_m, phi_m);
         Vector3f wi = Reflect(wo, wm);
-        if (wi.z <= 0)
-            return {};
+        if (wi.z <= 0) return {};
 
         // Interpolate spectral BRDF
         SampledSpectrum fr(0);
-        for (int i = 0; i < NSpectrumSamples; ++i)
-            fr[i] = std::max<Float>(0, brdf->spectra.Evaluate(u, phi_o, theta_o, lambda[i]));
+        for (int i = 0; i < NSpectrumSamples; ++i) fr[i] = std::max<Float>(0, brdf->spectra.Evaluate(u, phi_o, theta_o, lambda[i]));
 
         Point2f u_wo(theta2u(theta_o), phi2u(phi_o));
         fr *= brdf->ndf.Evaluate(u_wm) / (4 * brdf->sigma.Evaluate(u_wo) * AbsCosTheta(wi));
         pdf /= 4 * Dot(wo, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
 
         // Handle interactions in lower hemisphere
-        if (flipWi)
-            wi = -wi;
+        if (flipWi) wi = -wi;
 
         return BSDFSample(fr, wi, pdf * lum_pdf, GlossyReflection);
     }
 
-    SPECTRA_CPU_GPU Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode,
-                                            BxDFReflTransFlags sampleFlags) const
-    {
-        if (!(sampleFlags & BxDFReflTransFlags::Reflection))
-            return 0;
-        if (!SameHemisphere(wo, wi))
-            return 0;
-        if (wo.z < 0)
-        {
+    SPECTRA_CPU_GPU Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+        if (!(sampleFlags & BxDFReflTransFlags::Reflection)) return 0;
+        if (!SameHemisphere(wo, wi)) return 0;
+        if (wo.z < 0) {
             wo = -wo;
             wi = -wi;
         }
 
         Vector3f wm = wi + wo;
-        if (LengthSquared(wm) == 0)
-            return 0;
+        if (LengthSquared(wm) == 0) return 0;
         wm = Normalize(wm);
 
         /* Cartesian -> spherical coordinates */
@@ -1093,52 +854,41 @@ namespace spectra
         Point2f u_wm(theta2u(theta_m), phi2u(brdf->isotropic ? (phi_m - phi_o) : phi_m));
         u_wm.y = u_wm.y - pstd::floor(u_wm.y);
 
-        auto ui = brdf->vndf.Invert(u_wm, phi_o, theta_o);
+        auto ui        = brdf->vndf.Invert(u_wm, phi_o, theta_o);
         Point2f sample = ui.p;
-        Float vndfPDF = ui.pdf;
+        Float vndfPDF  = ui.pdf;
 
-        Float pdf = brdf->luminance.Evaluate(sample, phi_o, theta_o);
+        Float pdf        = brdf->luminance.Evaluate(sample, phi_o, theta_o);
         Float sinTheta_m = std::sqrt(Sqr(wm.x) + Sqr(wm.y));
-        Float jacobian =
-            4.f * Dot(wo, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
+        Float jacobian   = 4.f * Dot(wo, wm) * std::max<Float>(2 * Sqr(Pi) * u_wm.x * sinTheta_m, 1e-6f);
         return vndfPDF * pdf / jacobian;
     }
 
 
     // BxDF Method Definitions
-    SPECTRA_CPU_GPU SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc,
-                                              pstd::span<const Point2f> u2) const
-    {
-        if (wo.z == 0)
-            return {};
+    SPECTRA_CPU_GPU SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc, pstd::span<const Point2f> u2) const {
+        if (wo.z == 0) return {};
         SampledSpectrum r(0.);
         DCHECK_EQ(uc.size(), u2.size());
-        for (size_t i = 0; i < uc.size(); ++i)
-        {
+        for (size_t i = 0; i < uc.size(); ++i) {
             // Compute estimate of $\rho_\roman{hd}$
             pstd::optional<BSDFSample> bs = Sample_f(wo, uc[i], u2[i]);
-            if (bs && bs->pdf > 0)
-                r += bs->f * AbsCosTheta(bs->wi) / bs->pdf;
+            if (bs && bs->pdf > 0) r += bs->f * AbsCosTheta(bs->wi) / bs->pdf;
         }
         return r / uc.size();
     }
 
-    SampledSpectrum BxDF::rho(pstd::span<const Point2f> u1, pstd::span<const Float> uc,
-                              pstd::span<const Point2f> u2) const
-    {
+    SampledSpectrum BxDF::rho(pstd::span<const Point2f> u1, pstd::span<const Float> uc, pstd::span<const Point2f> u2) const {
         DCHECK_EQ(uc.size(), u1.size());
         DCHECK_EQ(u1.size(), u2.size());
         SampledSpectrum r(0.f);
-        for (size_t i = 0; i < uc.size(); ++i)
-        {
+        for (size_t i = 0; i < uc.size(); ++i) {
             // Compute estimate of $\rho_\roman{hh}$
             Vector3f wo = SampleUniformHemisphere(u1[i]);
-            if (wo.z == 0)
-                continue;
-            Float pdfo = UniformHemispherePDF();
+            if (wo.z == 0) continue;
+            Float pdfo                    = UniformHemispherePDF();
             pstd::optional<BSDFSample> bs = Sample_f(wo, uc[i], u2[i]);
-            if (bs && bs->pdf > 0)
-                r += bs->f * AbsCosTheta(bs->wi) * AbsCosTheta(wo) / (pdfo * bs->pdf);
+            if (bs && bs->pdf > 0) r += bs->f * AbsCosTheta(bs->wi) * AbsCosTheta(wo) / (pdfo * bs->pdf);
         }
         return r / (Pi * uc.size());
     }

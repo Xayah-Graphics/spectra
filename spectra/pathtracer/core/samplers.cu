@@ -1,75 +1,57 @@
-#include <spectra/pathtracer/core/samplers.h>
-
+#include <cstdio>
 #include <spectra/pathtracer/core/cameras.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/core/filters.h>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/core/samplers.h>
 #include <spectra/pathtracer/util/string.h>
-
-#include <cstdio>
 #include <string>
 
-namespace spectra
-{
-    SPECTRA_CPU_GPU void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension)
-    {
-        auto start = [&](auto ptr)
-        {
-            return ptr->StartPixelSample(p, sampleIndex, dimension);
-        };
+namespace spectra {
+    SPECTRA_CPU_GPU void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension) {
+        auto start = [&](auto ptr) { return ptr->StartPixelSample(p, sampleIndex, dimension); };
         return Dispatch(start);
     }
 
-    SPECTRA_CPU_GPU int Sampler::SamplesPerPixel() const
-    {
+    SPECTRA_CPU_GPU int Sampler::SamplesPerPixel() const {
         auto spp = [&](auto ptr) { return ptr->SamplesPerPixel(); };
         return Dispatch(spp);
     }
 
-    SPECTRA_CPU_GPU Float Sampler::Get1D()
-    {
+    SPECTRA_CPU_GPU Float Sampler::Get1D() {
         auto get = [&](auto ptr) { return ptr->Get1D(); };
         return Dispatch(get);
     }
 
-    SPECTRA_CPU_GPU Point2f Sampler::Get2D()
-    {
+    SPECTRA_CPU_GPU Point2f Sampler::Get2D() {
         auto get = [&](auto ptr) { return ptr->Get2D(); };
         return Dispatch(get);
     }
 
-    SPECTRA_CPU_GPU Point2f Sampler::GetPixel2D()
-    {
+    SPECTRA_CPU_GPU Point2f Sampler::GetPixel2D() {
         auto get = [&](auto ptr) { return ptr->GetPixel2D(); };
         return Dispatch(get);
     }
 
-    Sampler Sampler::Clone(Allocator alloc)
-    {
+    Sampler Sampler::Clone(Allocator alloc) {
         auto clone = [&](auto ptr) { return ptr->Clone(alloc); };
         return DispatchCPU(clone);
     }
 
 
     // HaltonSampler Method Definitions
-    HaltonSampler::HaltonSampler(int samplesPerPixel, Point2i fullRes,
-                                 RandomizeStrategy randomize, int seed, Allocator alloc)
-        : samplesPerPixel(samplesPerPixel), randomize(randomize)
-    {
-        if (randomize == RandomizeStrategy::PermuteDigits)
-            digitPermutations = ComputeRadicalInversePermutations(seed, alloc);
+    HaltonSampler::HaltonSampler(int samplesPerPixel, Point2i fullRes, RandomizeStrategy randomize, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), randomize(randomize) {
+        if (randomize == RandomizeStrategy::PermuteDigits) digitPermutations = ComputeRadicalInversePermutations(seed, alloc);
         // Find radical inverse base scales and exponents that cover sampling area
-        for (int i = 0; i < 2; ++i)
-        {
-            int base = (i == 0) ? 2 : 3;
+        for (int i = 0; i < 2; ++i) {
+            int base  = (i == 0) ? 2 : 3;
             int scale = 1, exp = 0;
-            while (scale < std::min(fullRes[i], MaxHaltonResolution))
-            {
+            while (scale < std::min(fullRes[i], MaxHaltonResolution)) {
                 scale *= base;
                 ++exp;
             }
-            baseScales[i] = scale;
+            baseScales[i]    = scale;
             baseExponents[i] = exp;
         }
 
@@ -78,19 +60,14 @@ namespace spectra
         multInverse[1] = multiplicativeInverse(baseScales[0], baseScales[1]);
     }
 
-    Sampler HaltonSampler::Clone(Allocator alloc)
-    {
+    Sampler HaltonSampler::Clone(Allocator alloc) {
         return alloc.new_object<HaltonSampler>(*this);
     }
 
 
-    HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters,
-                                         Point2i fullResolution, const FileLoc* loc,
-                                         Allocator alloc)
-    {
+    HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples)
-            nsamp = *Options->pixelSamples;
+        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
         int seed = parameters.GetOneInt("seed", Options->seed);
 
         RandomizeStrategy randomizer;
@@ -106,27 +83,21 @@ namespace spectra
         else
             throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to HaltonSampler", s));
 
-        return alloc.new_object<HaltonSampler>(nsamp, fullResolution, randomizer, seed,
-                                               alloc);
+        return alloc.new_object<HaltonSampler>(nsamp, fullResolution, randomizer, seed, alloc);
     }
 
-    Sampler SobolSampler::Clone(Allocator alloc)
-    {
+    Sampler SobolSampler::Clone(Allocator alloc) {
         return alloc.new_object<SobolSampler>(*this);
     }
 
 
-    Sampler PaddedSobolSampler::Clone(Allocator alloc)
-    {
+    Sampler PaddedSobolSampler::Clone(Allocator alloc) {
         return alloc.new_object<PaddedSobolSampler>(*this);
     }
 
-    PaddedSobolSampler* PaddedSobolSampler::Create(const ParameterDictionary& parameters,
-                                                   const FileLoc* loc, Allocator alloc)
-    {
+    PaddedSobolSampler* PaddedSobolSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples)
-            nsamp = *Options->pixelSamples;
+        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
         int seed = parameters.GetOneInt("seed", Options->seed);
 
         RandomizeStrategy randomizer;
@@ -140,26 +111,20 @@ namespace spectra
         else if (s == "owen")
             randomizer = RandomizeStrategy::Owen;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to PaddedSobolSampler",
-                                                                  s));
+            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to PaddedSobolSampler", s));
 
         return alloc.new_object<PaddedSobolSampler>(nsamp, randomizer, seed);
     }
 
     // ZSobolSampler Method Definitions
-    Sampler ZSobolSampler::Clone(Allocator alloc)
-    {
+    Sampler ZSobolSampler::Clone(Allocator alloc) {
         return alloc.new_object<ZSobolSampler>(*this);
     }
 
 
-    ZSobolSampler* ZSobolSampler::Create(const ParameterDictionary& parameters,
-                                         Point2i fullResolution, const FileLoc* loc,
-                                         Allocator alloc)
-    {
+    ZSobolSampler* ZSobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples)
-            nsamp = *Options->pixelSamples;
+        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
         int seed = parameters.GetOneInt("seed", Options->seed);
 
         RandomizeStrategy randomizer;
@@ -179,30 +144,24 @@ namespace spectra
     }
 
     // PMJ02BNSampler Method Definitions
-    PMJ02BNSampler::PMJ02BNSampler(int samplesPerPixel, int seed, Allocator alloc)
-        : samplesPerPixel(samplesPerPixel), seed(seed)
-    {
+    PMJ02BNSampler::PMJ02BNSampler(int samplesPerPixel, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), seed(seed) {
         if (!IsPowerOf4(samplesPerPixel))
             spectra::diagnostics::PrintWarning("PMJ02BNSampler results are best with power-of-4 samples per "
-                "pixel (1, 4, 16, 64, ...)");
+                                               "pixel (1, 4, 16, 64, ...)");
         // Get sorted pmj02bn samples for pixel samples
-        if (samplesPerPixel > nPMJ02bnSamples)
-            throw std::runtime_error(spectra::diagnostics::Format("PMJ02BNSampler only supports up to %d samples per pixel", nPMJ02bnSamples));
+        if (samplesPerPixel > nPMJ02bnSamples) throw std::runtime_error(spectra::diagnostics::Format("PMJ02BNSampler only supports up to %d samples per pixel", nPMJ02bnSamples));
         // Compute _pixelTileSize_ for pmj02bn pixel samples and allocate _pixelSamples_
-        pixelTileSize =
-            1 << (Log4Int(nPMJ02bnSamples) - Log4Int(RoundUpPow4(samplesPerPixel)));
+        pixelTileSize     = 1 << (Log4Int(nPMJ02bnSamples) - Log4Int(RoundUpPow4(samplesPerPixel)));
         int nPixelSamples = pixelTileSize * pixelTileSize * samplesPerPixel;
-        pixelSamples = alloc.new_object<pstd::vector<Point2f>>(nPixelSamples, alloc);
+        pixelSamples      = alloc.new_object<pstd::vector<Point2f>>(nPixelSamples, alloc);
 
         // Loop over pmj02bn samples and associate them with their pixels
         std::vector<int> nStored(pixelTileSize * pixelTileSize, 0);
-        for (int i = 0; i < nPMJ02bnSamples; ++i)
-        {
+        for (int i = 0; i < nPMJ02bnSamples; ++i) {
             Point2f p = GetPMJ02BNSample(0, i);
             p *= pixelTileSize;
             int pixelOffset = int(p.x) + int(p.y) * pixelTileSize;
-            if (nStored[pixelOffset] == samplesPerPixel)
-            {
+            if (nStored[pixelOffset] == samplesPerPixel) {
                 CHECK(!IsPowerOf4(samplesPerPixel));
                 continue;
             }
@@ -212,52 +171,38 @@ namespace spectra
             ++nStored[pixelOffset];
         }
 
-        for (int i = 0; i < nStored.size(); ++i)
-            CHECK_EQ(nStored[i], samplesPerPixel);
-        for (int c : nStored)
-            DCHECK_EQ(c, samplesPerPixel);
+        for (int i = 0; i < nStored.size(); ++i) CHECK_EQ(nStored[i], samplesPerPixel);
+        for (int c : nStored) DCHECK_EQ(c, samplesPerPixel);
     }
 
-    PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters,
-                                           const FileLoc* loc, Allocator alloc)
-    {
+    PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples)
-            nsamp = *Options->pixelSamples;
+        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
         int seed = parameters.GetOneInt("seed", Options->seed);
         return alloc.new_object<PMJ02BNSampler>(nsamp, seed, alloc);
     }
 
-    Sampler PMJ02BNSampler::Clone(Allocator alloc)
-    {
+    Sampler PMJ02BNSampler::Clone(Allocator alloc) {
         return alloc.new_object<PMJ02BNSampler>(*this);
     }
 
 
-    Sampler IndependentSampler::Clone(Allocator alloc)
-    {
+    Sampler IndependentSampler::Clone(Allocator alloc) {
         return alloc.new_object<IndependentSampler>(*this);
     }
 
-    IndependentSampler* IndependentSampler::Create(const ParameterDictionary& parameters,
-                                                   const FileLoc* loc, Allocator alloc)
-    {
+    IndependentSampler* IndependentSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
         int ns = parameters.GetOneInt("pixelsamples", 4);
-        if (Options->pixelSamples)
-            ns = *Options->pixelSamples;
+        if (Options->pixelSamples) ns = *Options->pixelSamples;
         int seed = parameters.GetOneInt("seed", Options->seed);
         return alloc.new_object<IndependentSampler>(ns, seed);
     }
 
     // SobolSampler Method Definitions
 
-    SobolSampler* SobolSampler::Create(const ParameterDictionary& parameters,
-                                       Point2i fullResolution, const FileLoc* loc,
-                                       Allocator alloc)
-    {
+    SobolSampler* SobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples)
-            nsamp = *Options->pixelSamples;
+        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
 
         RandomizeStrategy randomizer;
         std::string s = parameters.GetOneString("randomization", "fastowen");
@@ -279,23 +224,18 @@ namespace spectra
 
     // StratifiedSampler Method Definitions
 
-    Sampler StratifiedSampler::Clone(Allocator alloc)
-    {
+    Sampler StratifiedSampler::Clone(Allocator alloc) {
         return alloc.new_object<StratifiedSampler>(*this);
     }
 
-    StratifiedSampler* StratifiedSampler::Create(const ParameterDictionary& parameters,
-                                                 const FileLoc* loc, Allocator alloc)
-    {
-        bool jitter = parameters.GetOneBool("jitter", true);
+    StratifiedSampler* StratifiedSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+        bool jitter  = parameters.GetOneBool("jitter", true);
         int xSamples = parameters.GetOneInt("xsamples", 4);
         int ySamples = parameters.GetOneInt("ysamples", 4);
-        if (Options->pixelSamples)
-        {
+        if (Options->pixelSamples) {
             int nSamples = *Options->pixelSamples;
-            int div = std::sqrt(nSamples);
-            while (nSamples % div)
-            {
+            int div      = std::sqrt(nSamples);
+            while (nSamples % div) {
                 CHECK_GT(div, 0);
                 --div;
             }
@@ -309,56 +249,46 @@ namespace spectra
     }
 
     // MLTSampler Method Definitions
-    SPECTRA_CPU_GPU Float MLTSampler::Get1D()
-    {
+    SPECTRA_CPU_GPU Float MLTSampler::Get1D() {
         int index = GetNextIndex();
         EnsureReady(index);
         return X[index].value;
     }
 
-    SPECTRA_CPU_GPU Point2f MLTSampler::Get2D()
-    {
+    SPECTRA_CPU_GPU Point2f MLTSampler::Get2D() {
         return {Get1D(), Get1D()};
     }
 
-    SPECTRA_CPU_GPU Point2f MLTSampler::GetPixel2D()
-    {
+    SPECTRA_CPU_GPU Point2f MLTSampler::GetPixel2D() {
         return Get2D();
     }
 
-    Sampler MLTSampler::Clone(Allocator alloc)
-    {
+    Sampler MLTSampler::Clone(Allocator alloc) {
         SPECTRA_FATAL("MLTSampler::Clone() is not implemented");
         return {};
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::StartIteration()
-    {
+    SPECTRA_CPU_GPU void MLTSampler::StartIteration() {
         currentIteration++;
         largeStep = rng.Uniform<Float>() < largeStepProbability;
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::Accept()
-    {
-        if (largeStep)
-            lastLargeStepIteration = currentIteration;
+    SPECTRA_CPU_GPU void MLTSampler::Accept() {
+        if (largeStep) lastLargeStepIteration = currentIteration;
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::EnsureReady(int index)
-    {
+    SPECTRA_CPU_GPU void MLTSampler::EnsureReady(int index) {
 #if defined(__CUDA_ARCH__)
         SPECTRA_FATAL("MLTSampler not supported on GPU--needs vector resize...");
         return;
 #else
         // Enlarge _MLTSampler::X_ if necessary and get current $\VEC{X}_i$
-        if (index >= X.size())
-            X.resize(index + 1);
+        if (index >= X.size()) X.resize(index + 1);
         PrimarySample& X_i = X[index];
 
         // Reset $\VEC{X}_i$ if a large step took place in the meantime
-        if (X_i.lastModificationIteration < lastLargeStepIteration)
-        {
-            X_i.value = rng.Uniform<Float>();
+        if (X_i.lastModificationIteration < lastLargeStepIteration) {
+            X_i.value                     = rng.Uniform<Float>();
             X_i.lastModificationIteration = lastLargeStepIteration;
         }
 
@@ -366,12 +296,11 @@ namespace spectra
         X_i.Backup();
         if (largeStep)
             X_i.value = rng.Uniform<Float>();
-        else
-        {
+        else {
             int64_t nSmall = currentIteration - X_i.lastModificationIteration;
             // Apply _nSmall_ small step mutations to $\VEC{X}_i$
-            Float effSigma = sigma * std::sqrt((Float)nSmall);
-            Float delta = SampleNormal(rng.Uniform<Float>(), 0, effSigma);
+            Float effSigma = sigma * std::sqrt((Float) nSmall);
+            Float delta    = SampleNormal(rng.Uniform<Float>(), 0, effSigma);
             X_i.value += delta;
             X_i.value -= pstd::floor(X_i.value);
         }
@@ -380,26 +309,21 @@ namespace spectra
 #endif
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::Reject()
-    {
+    SPECTRA_CPU_GPU void MLTSampler::Reject() {
         for (auto& X_i : X)
-            if (X_i.lastModificationIteration == currentIteration)
-                X_i.Restore();
+            if (X_i.lastModificationIteration == currentIteration) X_i.Restore();
         --currentIteration;
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::StartStream(int index)
-    {
+    SPECTRA_CPU_GPU void MLTSampler::StartStream(int index) {
         DCHECK_LT(index, streamCount);
         streamIndex = index;
         sampleIndex = 0;
     }
 
-    std::string MLTSampler::DumpState() const
-    {
+    std::string MLTSampler::DumpState() const {
         std::string state;
-        for (const PrimarySample& Xi : X)
-        {
+        for (const PrimarySample& Xi : X) {
             char value[64];
             std::snprintf(value, sizeof(value), "%f,", Xi.value);
             state += value;
@@ -408,27 +332,20 @@ namespace spectra
         return state;
     }
 
-    DebugMLTSampler DebugMLTSampler::Create(pstd::span<const std::string> state,
-                                            int nSampleStreams)
-    {
+    DebugMLTSampler DebugMLTSampler::Create(pstd::span<const std::string> state, int nSampleStreams) {
         DebugMLTSampler ds(nSampleStreams);
         ds.u.resize(state.size());
-        for (size_t i = 0; i < state.size(); ++i)
-        {
-            if (!Atof(state[i], &ds.u[i]))
-                throw std::runtime_error(spectra::diagnostics::Format("Invalid value in --debugstate: %s", state[i]));
+        for (size_t i = 0; i < state.size(); ++i) {
+            if (!Atof(state[i], &ds.u[i])) throw std::runtime_error(spectra::diagnostics::Format("Invalid value in --debugstate: %s", state[i]));
         }
         return ds;
     }
 
     // Sampler Method Definitions
-    Sampler Sampler::Create(const std::string& name, const ParameterDictionary& parameters,
-                            Point2i fullRes, const FileLoc* loc, Allocator alloc)
-    {
+    Sampler Sampler::Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullRes, const FileLoc* loc, Allocator alloc) {
         Sampler sampler = nullptr;
-        if (name == "zsobol")
-            sampler = ZSobolSampler::Create(parameters, fullRes, loc, alloc);
-            // Create remainder of _Sampler_ types
+        if (name == "zsobol") sampler = ZSobolSampler::Create(parameters, fullRes, loc, alloc);
+        // Create remainder of _Sampler_ types
         else if (name == "paddedsobol")
             sampler = PaddedSobolSampler::Create(parameters, loc, alloc);
         else if (name == "halton")
@@ -443,8 +360,7 @@ namespace spectra
             sampler = StratifiedSampler::Create(parameters, loc, alloc);
         else
             throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: sampler type unknown.", name));
-        if (!sampler)
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create sampler.", name));
+        if (!sampler) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create sampler.", name));
         parameters.ReportUnused();
 
         return sampler;

@@ -1,18 +1,15 @@
 #ifndef SPECTRA_PATHTRACER_BASE_MATERIAL_H
 #define SPECTRA_PATHTRACER_BASE_MATERIAL_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <map>
 #include <spectra/pathtracer/base/bssrdf.h>
 #include <spectra/pathtracer/base/texture.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/taggedptr.h>
-
-#include <map>
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     class BSDF;
     class Image;
     class SampledWavelengths;
@@ -35,31 +32,23 @@ namespace spectra
     class MixMaterial;
 
     // Material Definition
-    class Material
-        : public TaggedPointer< // Material Types
-            CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial,
-            DielectricMaterial, DiffuseMaterial, DiffuseTransmissionMaterial, HairMaterial,
-            MeasuredMaterial, SubsurfaceMaterial, ThinDielectricMaterial, MixMaterial
+    class Material : public TaggedPointer< // Material Types
+                         CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial, DielectricMaterial, DiffuseMaterial, DiffuseTransmissionMaterial, HairMaterial, MeasuredMaterial, SubsurfaceMaterial, ThinDielectricMaterial, MixMaterial
 
-        >
-    {
+                         > {
     public:
         // Material Interface
         using TaggedPointer::TaggedPointer;
 
-        static Material Create(const std::string& name,
-                               const TextureParameterDictionary& parameters, Image* normalMap,
-                               /*const */ std::map<std::string, Material>& namedMaterials,
-                               const FileLoc* loc, Allocator alloc);
+        static Material Create(const std::string& name, const TextureParameterDictionary& parameters, Image* normalMap,
+            /*const */ std::map<std::string, Material>& namedMaterials, const FileLoc* loc, Allocator alloc);
 
 
         template <typename TextureEvaluator>
-        inline BSDF GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                            SampledWavelengths& lambda, ScratchBuffer& buf) const;
+        inline BSDF GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, ScratchBuffer& buf) const;
 
         template <typename TextureEvaluator>
-        inline BSSRDF GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                SampledWavelengths& lambda, ScratchBuffer& buf) const;
+        inline BSSRDF GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, ScratchBuffer& buf) const;
 
         template <typename TextureEvaluator>
         SPECTRA_CPU_GPU inline bool CanEvaluateTextures(TextureEvaluator texEval) const;
@@ -72,4 +61,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_BASE_MATERIAL_H
+#endif // SPECTRA_PATHTRACER_BASE_MATERIAL_H

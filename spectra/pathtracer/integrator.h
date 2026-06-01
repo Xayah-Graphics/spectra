@@ -16,27 +16,23 @@
 #include <spectra/pathtracer/wavefront/workitems.h>
 #include <spectra/pathtracer/wavefront/workqueue.h>
 
-namespace spectra::scene
-{
+namespace spectra::scene {
     class Scene;
 } // namespace spectra::scene
 
-namespace spectra::optix
-{
+namespace spectra::optix {
     class SpectraOptiXAggregate;
 } // namespace spectra::optix
 
-namespace spectra::pathtracer
-{
-    class GpuRuntime
-    {
+namespace spectra::pathtracer {
+    class GpuRuntime {
     public:
         explicit GpuRuntime(const SpectraOptions& options);
         ~GpuRuntime() noexcept;
 
-        GpuRuntime(const GpuRuntime&) = delete;
-        GpuRuntime(GpuRuntime&&) noexcept = delete;
-        GpuRuntime& operator=(const GpuRuntime&) = delete;
+        GpuRuntime(const GpuRuntime&)                = delete;
+        GpuRuntime(GpuRuntime&&) noexcept            = delete;
+        GpuRuntime& operator=(const GpuRuntime&)     = delete;
         GpuRuntime& operator=(GpuRuntime&&) noexcept = delete;
 
         void ResetOptions(const SpectraOptions& options);
@@ -46,8 +42,7 @@ namespace spectra::pathtracer
         bool initialized{false};
     };
 
-    class WavefrontPathtracer
-    {
+    class WavefrontPathtracer {
     public:
         WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, scene::Scene& scene);
 
@@ -86,13 +81,11 @@ namespace spectra::pathtracer
         template <typename F>
         void Do(const char* description, F&& func);
 
-        RayQueue* CurrentRayQueue(int wavefrontDepth)
-        {
+        RayQueue* CurrentRayQueue(int wavefrontDepth) {
             return rayQueues[wavefrontDepth & 1];
         }
 
-        RayQueue* NextRayQueue(int wavefrontDepth)
-        {
+        RayQueue* NextRayQueue(int wavefrontDepth) {
             return rayQueues[(wavefrontDepth + 1) & 1];
         }
 
@@ -128,19 +121,19 @@ namespace spectra::pathtracer
 
         optix::SpectraOptiXAggregate* aggregate = nullptr;
 
-        MediumSampleQueue* mediumSampleQueue = nullptr;
+        MediumSampleQueue* mediumSampleQueue   = nullptr;
         MediumScatterQueue* mediumScatterQueue = nullptr;
 
         EscapedRayQueue* escapedRayQueue = nullptr;
 
         HitAreaLightQueue* hitAreaLightQueue = nullptr;
 
-        MaterialEvalQueue* basicEvalMaterialQueue = nullptr;
+        MaterialEvalQueue* basicEvalMaterialQueue     = nullptr;
         MaterialEvalQueue* universalEvalMaterialQueue = nullptr;
 
         ShadowRayQueue* shadowRayQueue = nullptr;
 
-        GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue = nullptr;
+        GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue     = nullptr;
         SubsurfaceScatterQueue* subsurfaceScatterQueue = nullptr;
     };
 } // namespace spectra::pathtracer

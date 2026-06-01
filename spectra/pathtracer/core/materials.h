@@ -1,9 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_CORE_MATERIALS_H
 #define SPECTRA_PATHTRACER_CORE_MATERIALS_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <memory>
 #include <spectra/pathtracer/base/bssrdf.h>
 #include <spectra/pathtracer/base/material.h>
 #include <spectra/pathtracer/core/bsdf.h>
@@ -11,26 +9,21 @@
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/textures.h>
 #include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/taggedptr.h>
 #include <spectra/pathtracer/util/transform.h>
-
-#include <memory>
 #include <string>
 #include <type_traits>
 
-namespace spectra
-{
+namespace spectra {
     // MaterialEvalContext Definition
-    struct MaterialEvalContext : public TextureEvalContext
-    {
+    struct MaterialEvalContext : public TextureEvalContext {
         // MaterialEvalContext Public Methods
         MaterialEvalContext() = default;
         SPECTRA_CPU_GPU
-        MaterialEvalContext(const SurfaceInteraction& si)
-            : TextureEvalContext(si), wo(si.wo), ns(si.shading.n), dpdus(si.shading.dpdu)
-        {
-        }
+        MaterialEvalContext(const SurfaceInteraction& si) : TextureEvalContext(si), wo(si.wo), ns(si.shading.n), dpdus(si.shading.dpdu) {}
 
 
         Vector3f wo;
@@ -39,24 +32,12 @@ namespace spectra
     };
 
     // NormalBumpEvalContext Definition
-    struct NormalBumpEvalContext
-    {
+    struct NormalBumpEvalContext {
         // NormalBumpEvalContext Public Methods
         NormalBumpEvalContext() = default;
         SPECTRA_CPU_GPU
-        NormalBumpEvalContext(const SurfaceInteraction& si)
-            : p(si.p()),
-              uv(si.uv),
-              n(si.n),
-              dudx(si.dudx),
-              dudy(si.dudy),
-              dvdx(si.dvdx),
-              dvdy(si.dvdy),
-              dpdx(si.dpdx),
-              dpdy(si.dpdy),
-              faceIndex(si.faceIndex)
-        {
-            shading.n = si.shading.n;
+        NormalBumpEvalContext(const SurfaceInteraction& si) : p(si.p()), uv(si.uv), n(si.n), dudx(si.dudx), dudy(si.dudy), dvdx(si.dvdx), dvdy(si.dvdy), dpdx(si.dpdx), dpdy(si.dpdy), faceIndex(si.faceIndex) {
+            shading.n    = si.shading.n;
             shading.dpdu = si.shading.dpdu;
             shading.dpdv = si.shading.dpdv;
             shading.dndu = si.shading.dndu;
@@ -65,10 +46,8 @@ namespace spectra
 
 
         SPECTRA_CPU_GPU
-        operator TextureEvalContext() const
-        {
-            return TextureEvalContext(p, dpdx, dpdy, n, uv, dudx, dudy, dvdx, dvdy,
-                                      faceIndex);
+        operator TextureEvalContext() const {
+            return TextureEvalContext(p, dpdx, dpdy, n, uv, dudx, dudy, dvdx, dvdy, faceIndex);
         }
 
         // NormalBumpEvalContext Public Members
@@ -76,8 +55,7 @@ namespace spectra
         Point2f uv;
         Normal3f n;
 
-        struct
-        {
+        struct {
             Normal3f n;
             Vector3f dpdu, dpdv;
             Normal3f dndu, dndv;
@@ -88,107 +66,86 @@ namespace spectra
         int faceIndex = 0;
     };
 
-    SPECTRA_CPU_GPU void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx,
-                                   Vector3f* dpdu, Vector3f* dpdv);
+    SPECTRA_CPU_GPU void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx, Vector3f* dpdu, Vector3f* dpdv);
 
     // Bump Mapping Function Definitions
     template <typename TextureEvaluator>
-    SPECTRA_CPU_GPU void BumpMap(TextureEvaluator texEval, FloatTexture displacement,
-                                 const NormalBumpEvalContext& ctx, Vector3f* dpdu,
-                                 Vector3f* dpdv)
-    {
+    SPECTRA_CPU_GPU void BumpMap(TextureEvaluator texEval, FloatTexture displacement, const NormalBumpEvalContext& ctx, Vector3f* dpdu, Vector3f* dpdv) {
         DCHECK(texEval.CanEvaluate({displacement}, {}));
         // Compute offset positions and evaluate displacement texture
         TextureEvalContext shiftedCtx = ctx;
         // Shift _shiftedCtx_ _du_ in the $u$ direction
         Float du = .5f * (std::abs(ctx.dudx) + std::abs(ctx.dudy));
-        if (du == 0)
-            du = .0005f;
-        shiftedCtx.p = ctx.p + du * ctx.shading.dpdu;
+        if (du == 0) du = .0005f;
+        shiftedCtx.p  = ctx.p + du * ctx.shading.dpdu;
         shiftedCtx.uv = ctx.uv + Vector2f(du, 0.f);
 
         Float uDisplace = texEval(displacement, shiftedCtx);
         // Shift _shiftedCtx_ _dv_ in the $v$ direction
         Float dv = .5f * (std::abs(ctx.dvdx) + std::abs(ctx.dvdy));
-        if (dv == 0)
-            dv = .0005f;
-        shiftedCtx.p = ctx.p + dv * ctx.shading.dpdv;
+        if (dv == 0) dv = .0005f;
+        shiftedCtx.p  = ctx.p + dv * ctx.shading.dpdv;
         shiftedCtx.uv = ctx.uv + Vector2f(0.f, dv);
 
         Float vDisplace = texEval(displacement, shiftedCtx);
-        Float displace = texEval(displacement, ctx);
+        Float displace  = texEval(displacement, ctx);
 
         // Compute bump-mapped differential geometry
-        *dpdu = ctx.shading.dpdu + (uDisplace - displace) / du * Vector3f(ctx.shading.n) +
-            displace * Vector3f(ctx.shading.dndu);
-        *dpdv = ctx.shading.dpdv + (vDisplace - displace) / dv * Vector3f(ctx.shading.n) +
-            displace * Vector3f(ctx.shading.dndv);
+        *dpdu = ctx.shading.dpdu + (uDisplace - displace) / du * Vector3f(ctx.shading.n) + displace * Vector3f(ctx.shading.dndu);
+        *dpdv = ctx.shading.dpdv + (vDisplace - displace) / dv * Vector3f(ctx.shading.n) + displace * Vector3f(ctx.shading.dndv);
     }
 
     // DielectricMaterial Definition
-    class DielectricMaterial
-    {
+    class DielectricMaterial {
     public:
         // DielectricMaterial Type Definitions
-        using BxDF = DielectricBxDF;
+        using BxDF   = DielectricBxDF;
         using BSSRDF = void;
 
         // DielectricMaterial Public Methods
-        DielectricMaterial(FloatTexture uRoughness, FloatTexture vRoughness, Spectrum eta,
-                           FloatTexture displacement, Image* normalMap, bool remapRoughness)
-            : normalMap(normalMap),
-              displacement(displacement),
-              uRoughness(uRoughness),
-              vRoughness(vRoughness),
-              eta(eta),
-              remapRoughness(remapRoughness)
-        {
+        DielectricMaterial(FloatTexture uRoughness, FloatTexture vRoughness, Spectrum eta, FloatTexture displacement, Image* normalMap, bool remapRoughness) : normalMap(normalMap), displacement(displacement), uRoughness(uRoughness), vRoughness(vRoughness), eta(eta), remapRoughness(remapRoughness) {}
+
+        static const char* Name() {
+            return "DielectricMaterial";
         }
 
-        static const char* Name() { return "DielectricMaterial"; }
-
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return texEval.CanEvaluate({uRoughness, vRoughness}, {});
         }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static DielectricMaterial* Create(const TextureParameterDictionary& parameters,
-                                          Image* normalMap, const FileLoc* loc,
-                                          Allocator alloc);
-
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda) const
-        {
+        FloatTexture GetDisplacement() const {
+            return displacement;
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
+
+        static DielectricMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU DielectricBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                               SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU DielectricBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             // Compute index of refraction for dielectric material
             Float sampledEta = eta(lambda[0]);
-            if (!eta.template Is<ConstantSpectrum>())
-                lambda.TerminateSecondary();
+            if (!eta.template Is<ConstantSpectrum>()) lambda.TerminateSecondary();
             // Handle edge case in case lambda[0] is beyond the wavelengths stored by the
             // Spectrum.
-            if (sampledEta == 0)
-                sampledEta = 1;
+            if (sampledEta == 0) sampledEta = 1;
 
             // Create microfacet distribution for dielectric material
             Float urough = texEval(uRoughness, ctx), vrough = texEval(vRoughness, ctx);
-            if (remapRoughness)
-            {
+            if (remapRoughness) {
                 urough = TrowbridgeReitzDistribution::RoughnessToAlpha(urough);
                 vrough = TrowbridgeReitzDistribution::RoughnessToAlpha(vrough);
             }
@@ -208,60 +165,53 @@ namespace spectra
     };
 
     // ThinDielectricMaterial Definition
-    class ThinDielectricMaterial
-    {
+    class ThinDielectricMaterial {
     public:
-        using BxDF = ThinDielectricBxDF;
+        using BxDF   = ThinDielectricBxDF;
         using BSSRDF = void;
         // ThinDielectricMaterial Public Methods
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return true;
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU ThinDielectricBxDF GetBxDF(TextureEvaluator texEval,
-                                                   MaterialEvalContext ctx,
-                                                   SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU ThinDielectricBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             // Compute index of refraction for dielectric material
             Float sampledEta = eta(lambda[0]);
-            if (!eta.template Is<ConstantSpectrum>())
-                lambda.TerminateSecondary();
+            if (!eta.template Is<ConstantSpectrum>()) lambda.TerminateSecondary();
             // Handle edge case in case lambda[0] is beyond the wavelengths stored by the
             // Spectrum.
-            if (sampledEta == 0)
-                sampledEta = 1;
+            if (sampledEta == 0) sampledEta = 1;
 
             // Return BxDF for _ThinDielectricMaterial_
             return ThinDielectricBxDF(sampledEta);
         }
 
-        ThinDielectricMaterial(Spectrum eta, FloatTexture displacement, Image* normalMap)
-            : displacement(displacement), normalMap(normalMap), eta(eta)
-        {
+        ThinDielectricMaterial(Spectrum eta, FloatTexture displacement, Image* normalMap) : displacement(displacement), normalMap(normalMap), eta(eta) {}
+
+        static const char* Name() {
+            return "ThinDielectricMaterial";
         }
 
-        static const char* Name() { return "ThinDielectricMaterial"; }
+        SPECTRA_CPU_GPU
+        FloatTexture GetDisplacement() const {
+            return displacement;
+        }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
 
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static ThinDielectricMaterial* Create(const TextureParameterDictionary& parameters,
-                                              Image* normalMap, const FileLoc* loc,
-                                              Allocator alloc);
+        static ThinDielectricMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda) const
-        {
-        }
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {}
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // ThinDielectricMaterial Private Data
@@ -271,41 +221,38 @@ namespace spectra
     };
 
     // MixMaterial Definition
-    class MixMaterial
-    {
+    class MixMaterial {
     public:
         // MixMaterial Type Definitions
-        using BxDF = void;
+        using BxDF   = void;
         using BSSRDF = void;
 
         // MixMaterial Public Methods
-        MixMaterial(Material m[2], FloatTexture amount) : amount(amount)
-        {
+        MixMaterial(Material m[2], FloatTexture amount) : amount(amount) {
             materials[0] = m[0];
             materials[1] = m[1];
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU Material ChooseMaterial(TextureEvaluator texEval,
-                                                MaterialEvalContext ctx) const
-        {
+        SPECTRA_CPU_GPU Material ChooseMaterial(TextureEvaluator texEval, MaterialEvalContext ctx) const {
             Float amt = texEval(amount, ctx);
-            if (amt <= 0)
-                return materials[0];
-            if (amt >= 1)
-                return materials[1];
+            if (amt <= 0) return materials[0];
+            if (amt >= 1) return materials[1];
             Float u = HashFloat(ctx.p, ctx.wo, materials[0], materials[1]);
             return (amt < u) ? materials[0] : materials[1];
         }
 
         SPECTRA_CPU_GPU
-        Material GetMaterial(int i) const { return materials[i]; }
+        Material GetMaterial(int i) const {
+            return materials[i];
+        }
 
-        static const char* Name() { return "MixMaterial"; }
+        static const char* Name() {
+            return "MixMaterial";
+        }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const
-        {
+        FloatTexture GetDisplacement() const {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
 #endif
@@ -313,40 +260,34 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const
-        {
+        const Image* GetNormalMap() const {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
 #endif
             return nullptr;
         }
 
-        static MixMaterial* Create(Material materials[2],
-                                   const TextureParameterDictionary& parameters,
-                                   const FileLoc* loc, Allocator alloc);
+        static MixMaterial* Create(Material materials[2], const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("Shouldn't be called");
 #endif
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return texEval.CanEvaluate({amount}, {});
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                     SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU void GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("MixMaterial::GetBxDF() shouldn't be called");
 #endif
@@ -359,60 +300,39 @@ namespace spectra
     };
 
     // HairMaterial Definition
-    class HairMaterial
-    {
+    class HairMaterial {
     public:
-        using BxDF = HairBxDF;
+        using BxDF   = HairBxDF;
         using BSSRDF = void;
 
         // HairMaterial Public Methods
-        HairMaterial(SpectrumTexture sigma_a, SpectrumTexture color, FloatTexture eumelanin,
-                     FloatTexture pheomelanin, FloatTexture eta, FloatTexture beta_m,
-                     FloatTexture beta_n, FloatTexture alpha)
-            : sigma_a(sigma_a),
-              color(color),
-              eumelanin(eumelanin),
-              pheomelanin(pheomelanin),
-              eta(eta),
-              beta_m(beta_m),
-              beta_n(beta_n),
-              alpha(alpha)
-        {
-        }
+        HairMaterial(SpectrumTexture sigma_a, SpectrumTexture color, FloatTexture eumelanin, FloatTexture pheomelanin, FloatTexture eta, FloatTexture beta_m, FloatTexture beta_n, FloatTexture alpha) : sigma_a(sigma_a), color(color), eumelanin(eumelanin), pheomelanin(pheomelanin), eta(eta), beta_m(beta_m), beta_n(beta_n), alpha(alpha) {}
 
-        static const char* Name() { return "HairMaterial"; }
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
-            return texEval.CanEvaluate({eumelanin, pheomelanin, eta, beta_m, beta_n, alpha},
-                                       {sigma_a, color});
+        static const char* Name() {
+            return "HairMaterial";
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU HairBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                         SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
+            return texEval.CanEvaluate({eumelanin, pheomelanin, eta, beta_m, beta_n, alpha}, {sigma_a, color});
+        }
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU HairBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             Float bm = std::max<Float>(1e-2, std::min<Float>(1.0, texEval(beta_m, ctx)));
             Float bn = std::max<Float>(1e-2, std::min<Float>(1.0, texEval(beta_n, ctx)));
-            Float a = texEval(alpha, ctx);
-            Float e = texEval(eta, ctx);
+            Float a  = texEval(alpha, ctx);
+            Float e  = texEval(eta, ctx);
 
             SampledSpectrum sig_a;
             if (sigma_a)
                 sig_a = ClampZero(texEval(sigma_a, ctx, lambda));
-            else if (color)
-            {
+            else if (color) {
                 SampledSpectrum c = Clamp(texEval(color, ctx, lambda), 0, 1);
-                sig_a = HairBxDF::SigmaAFromReflectance(c, bn, lambda);
-            }
-            else
-            {
+                sig_a             = HairBxDF::SigmaAFromReflectance(c, bn, lambda);
+            } else {
                 CHECK(eumelanin || pheomelanin);
-                sig_a = HairBxDF::SigmaAFromConcentration(
-                        std::max(Float(0), eumelanin ? texEval(eumelanin, ctx) : 0),
-                        std::max(Float(0), pheomelanin ? texEval(pheomelanin, ctx) : 0))
-                    .Sample(lambda);
+                sig_a = HairBxDF::SigmaAFromConcentration(std::max(Float(0), eumelanin ? texEval(eumelanin, ctx) : 0), std::max(Float(0), pheomelanin ? texEval(pheomelanin, ctx) : 0)).Sample(lambda);
             }
 
             // Offset along width
@@ -420,22 +340,24 @@ namespace spectra
             return HairBxDF(h, e, sig_a, bm, bn, a);
         }
 
-        static HairMaterial* Create(const TextureParameterDictionary& parameters,
-                                    const FileLoc* loc, Allocator alloc);
+        static HairMaterial* Create(const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return nullptr; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return nullptr; }
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda) const
-        {
+        FloatTexture GetDisplacement() const {
+            return nullptr;
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return nullptr;
+        }
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // HairMaterial Private Data
@@ -445,50 +367,46 @@ namespace spectra
     };
 
     // DiffuseMaterial Definition
-    class DiffuseMaterial
-    {
+    class DiffuseMaterial {
     public:
         // DiffuseMaterial Type Definitions
-        using BxDF = DiffuseBxDF;
+        using BxDF   = DiffuseBxDF;
         using BSSRDF = void;
 
         // DiffuseMaterial Public Methods
-        static const char* Name() { return "DiffuseMaterial"; }
-
-        SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static DiffuseMaterial* Create(const TextureParameterDictionary& parameters,
-                                       Image* normalMap, const FileLoc* loc, Allocator alloc);
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda, void*) const
-        {
+        static const char* Name() {
+            return "DiffuseMaterial";
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
-
-
-        DiffuseMaterial(SpectrumTexture reflectance, FloatTexture displacement,
-                        Image* normalMap)
-            : normalMap(normalMap), displacement(displacement), reflectance(reflectance)
-        {
+        SPECTRA_CPU_GPU
+        FloatTexture GetDisplacement() const {
+            return displacement;
         }
 
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
+
+        static DiffuseMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, void*) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
+
+
+        DiffuseMaterial(SpectrumTexture reflectance, FloatTexture displacement, Image* normalMap) : normalMap(normalMap), displacement(displacement), reflectance(reflectance) {}
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return texEval.CanEvaluate({}, {reflectance});
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU DiffuseBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                            SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU DiffuseBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
             return DiffuseBxDF(r);
         }
@@ -501,80 +419,63 @@ namespace spectra
     };
 
     // ConductorMaterial Definition
-    class ConductorMaterial
-    {
+    class ConductorMaterial {
     public:
-        using BxDF = ConductorBxDF;
+        using BxDF   = ConductorBxDF;
         using BSSRDF = void;
 
         // ConductorMaterial Public Methods
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return texEval.CanEvaluate({uRoughness, vRoughness}, {eta, k, reflectance});
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU ConductorBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                              SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU ConductorBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             // Return BSDF for _ConductorMaterial_
             Float uRough = texEval(uRoughness, ctx), vRough = texEval(vRoughness, ctx);
-            if (remapRoughness)
-            {
+            if (remapRoughness) {
                 uRough = TrowbridgeReitzDistribution::RoughnessToAlpha(uRough);
                 vRough = TrowbridgeReitzDistribution::RoughnessToAlpha(vRough);
             }
             SampledSpectrum etas, ks;
-            if (eta)
-            {
+            if (eta) {
                 etas = texEval(eta, ctx, lambda);
-                ks = texEval(k, ctx, lambda);
-            }
-            else
-            {
+                ks   = texEval(k, ctx, lambda);
+            } else {
                 // Avoid r==0 NaN case...
                 SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, .9999);
-                etas = SampledSpectrum(1.f);
-                ks = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
+                etas              = SampledSpectrum(1.f);
+                ks                = 2 * Sqrt(r) / Sqrt(ClampZero(SampledSpectrum(1) - r));
             }
             TrowbridgeReitzDistribution distrib(uRough, vRough);
             return ConductorBxDF(distrib, etas, ks);
         }
 
-        ConductorMaterial(SpectrumTexture eta, SpectrumTexture k, SpectrumTexture reflectance,
-                          FloatTexture uRoughness, FloatTexture vRoughness,
-                          FloatTexture displacement, Image* normalMap, bool remapRoughness)
-            : displacement(displacement),
-              normalMap(normalMap),
-              eta(eta),
-              k(k),
-              reflectance(reflectance),
-              uRoughness(uRoughness),
-              vRoughness(vRoughness),
-              remapRoughness(remapRoughness)
-        {
+        ConductorMaterial(SpectrumTexture eta, SpectrumTexture k, SpectrumTexture reflectance, FloatTexture uRoughness, FloatTexture vRoughness, FloatTexture displacement, Image* normalMap, bool remapRoughness) : displacement(displacement), normalMap(normalMap), eta(eta), k(k), reflectance(reflectance), uRoughness(uRoughness), vRoughness(vRoughness), remapRoughness(remapRoughness) {}
+
+        static const char* Name() {
+            return "ConductorMaterial";
         }
 
-        static const char* Name() { return "ConductorMaterial"; }
+        SPECTRA_CPU_GPU
+        FloatTexture GetDisplacement() const {
+            return displacement;
+        }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
 
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static ConductorMaterial* Create(const TextureParameterDictionary& parameters,
-                                         Image* normalMap, const FileLoc* loc,
-                                         Allocator alloc);
+        static ConductorMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda) const
-        {
-        }
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {}
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // ConductorMaterial Private Data
@@ -586,63 +487,43 @@ namespace spectra
     };
 
     // CoatedDiffuseMaterial Definition
-    class CoatedDiffuseMaterial
-    {
+    class CoatedDiffuseMaterial {
     public:
-        using BxDF = CoatedDiffuseBxDF;
+        using BxDF   = CoatedDiffuseBxDF;
         using BSSRDF = void;
         // CoatedDiffuseMaterial Public Methods
-        CoatedDiffuseMaterial(SpectrumTexture reflectance, FloatTexture uRoughness,
-                              FloatTexture vRoughness, FloatTexture thickness,
-                              SpectrumTexture albedo, FloatTexture g, Spectrum eta,
-                              FloatTexture displacement, Image* normalMap,
-                              bool remapRoughness, int maxDepth, int nSamples)
-            : displacement(displacement),
-              normalMap(normalMap),
-              reflectance(reflectance),
-              uRoughness(uRoughness),
-              vRoughness(vRoughness),
-              thickness(thickness),
-              albedo(albedo),
-              g(g),
-              eta(eta),
-              remapRoughness(remapRoughness),
-              maxDepth(maxDepth),
-              nSamples(nSamples)
-        {
-        }
+        CoatedDiffuseMaterial(SpectrumTexture reflectance, FloatTexture uRoughness, FloatTexture vRoughness, FloatTexture thickness, SpectrumTexture albedo, FloatTexture g, Spectrum eta, FloatTexture displacement, Image* normalMap, bool remapRoughness, int maxDepth, int nSamples) : displacement(displacement), normalMap(normalMap), reflectance(reflectance), uRoughness(uRoughness), vRoughness(vRoughness), thickness(thickness), albedo(albedo), g(g), eta(eta), remapRoughness(remapRoughness), maxDepth(maxDepth), nSamples(nSamples) {}
 
-        static const char* Name() { return "CoatedDiffuseMaterial"; }
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
-            return texEval.CanEvaluate({uRoughness, vRoughness, thickness, g},
-                                       {reflectance, albedo});
+        static const char* Name() {
+            return "CoatedDiffuseMaterial";
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU CoatedDiffuseBxDF GetBxDF(TextureEvaluator texEval,
-                                                  const MaterialEvalContext& ctx,
-                                                  SampledWavelengths& lambda) const;
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
+            return texEval.CanEvaluate({uRoughness, vRoughness, thickness, g}, {reflectance, albedo});
+        }
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU CoatedDiffuseBxDF GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static CoatedDiffuseMaterial* Create(const TextureParameterDictionary& parameters,
-                                             Image* normalMap, const FileLoc* loc,
-                                             Allocator alloc);
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx,
-                                       SampledWavelengths& lambda) const
-        {
+        FloatTexture GetDisplacement() const {
+            return displacement;
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
+
+        static CoatedDiffuseMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // CoatedDiffuseMaterial Private Members
@@ -656,74 +537,43 @@ namespace spectra
     };
 
     // CoatedConductorMaterial Definition
-    class CoatedConductorMaterial
-    {
+    class CoatedConductorMaterial {
     public:
-        using BxDF = CoatedConductorBxDF;
+        using BxDF   = CoatedConductorBxDF;
         using BSSRDF = void;
         // CoatedConductorMaterial Public Methods
-        CoatedConductorMaterial(FloatTexture interfaceURoughness,
-                                FloatTexture interfaceVRoughness, FloatTexture thickness,
-                                Spectrum interfaceEta, FloatTexture g, SpectrumTexture albedo,
-                                FloatTexture conductorURoughness,
-                                FloatTexture conductorVRoughness,
-                                SpectrumTexture conductorEta, SpectrumTexture k,
-                                SpectrumTexture reflectance, FloatTexture displacement,
-                                Image* normalMap, bool remapRoughness, int maxDepth,
-                                int nSamples)
-            : displacement(displacement),
-              normalMap(normalMap),
-              interfaceURoughness(interfaceURoughness),
-              interfaceVRoughness(interfaceVRoughness),
-              thickness(thickness),
-              interfaceEta(interfaceEta),
-              albedo(albedo),
-              g(g),
-              conductorURoughness(conductorURoughness),
-              conductorVRoughness(conductorVRoughness),
-              conductorEta(conductorEta),
-              k(k),
-              reflectance(reflectance),
-              remapRoughness(remapRoughness),
-              maxDepth(maxDepth),
-              nSamples(nSamples)
-        {
-        }
+        CoatedConductorMaterial(FloatTexture interfaceURoughness, FloatTexture interfaceVRoughness, FloatTexture thickness, Spectrum interfaceEta, FloatTexture g, SpectrumTexture albedo, FloatTexture conductorURoughness, FloatTexture conductorVRoughness, SpectrumTexture conductorEta, SpectrumTexture k, SpectrumTexture reflectance, FloatTexture displacement, Image* normalMap, bool remapRoughness, int maxDepth, int nSamples) : displacement(displacement), normalMap(normalMap), interfaceURoughness(interfaceURoughness), interfaceVRoughness(interfaceVRoughness), thickness(thickness), interfaceEta(interfaceEta), albedo(albedo), g(g), conductorURoughness(conductorURoughness), conductorVRoughness(conductorVRoughness), conductorEta(conductorEta), k(k), reflectance(reflectance), remapRoughness(remapRoughness), maxDepth(maxDepth), nSamples(nSamples) {}
 
-        static const char* Name() { return "CoatedConductorMaterial"; }
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
-            return texEval.CanEvaluate({
-                                           interfaceURoughness, interfaceVRoughness, thickness,
-                                           g, conductorURoughness, conductorVRoughness
-                                       },
-                                       {conductorEta, k, reflectance, albedo});
+        static const char* Name() {
+            return "CoatedConductorMaterial";
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU CoatedConductorBxDF GetBxDF(TextureEvaluator texEval,
-                                                    const MaterialEvalContext& ctx,
-                                                    SampledWavelengths& lambda) const;
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
+            return texEval.CanEvaluate({interfaceURoughness, interfaceVRoughness, thickness, g, conductorURoughness, conductorVRoughness}, {conductorEta, k, reflectance, albedo});
+        }
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU CoatedConductorBxDF GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static CoatedConductorMaterial* Create(const TextureParameterDictionary& parameters,
-                                               Image* normalMap, const FileLoc* loc,
-                                               Allocator alloc);
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx,
-                                       SampledWavelengths& lambda, void*) const
-        {
+        FloatTexture GetDisplacement() const {
+            return displacement;
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
+
+        static CoatedConductorMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda, void*) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // CoatedConductorMaterial Private Members
@@ -740,53 +590,32 @@ namespace spectra
     };
 
     // SubsurfaceMaterial Definition
-    class SubsurfaceMaterial
-    {
+    class SubsurfaceMaterial {
     public:
         // SubsurfaceMaterial Type Definitions
-        using BxDF = DielectricBxDF;
+        using BxDF   = DielectricBxDF;
         using BSSRDF = TabulatedBSSRDF;
 
         // SubsurfaceMaterial Public Methods
-        SubsurfaceMaterial(Float scale, SpectrumTexture sigma_a, SpectrumTexture sigma_s,
-                           SpectrumTexture reflectance, SpectrumTexture mfp, Float g,
-                           Float eta, FloatTexture uRoughness, FloatTexture vRoughness,
-                           FloatTexture displacement, Image* normalMap, bool remapRoughness,
-                           Allocator alloc)
-            : displacement(displacement),
-              normalMap(normalMap),
-              scale(scale),
-              sigma_a(sigma_a),
-              sigma_s(sigma_s),
-              reflectance(reflectance),
-              mfp(mfp),
-              uRoughness(uRoughness),
-              vRoughness(vRoughness),
-              eta(eta),
-              remapRoughness(remapRoughness),
-              table(100, 64, alloc)
-        {
+        SubsurfaceMaterial(Float scale, SpectrumTexture sigma_a, SpectrumTexture sigma_s, SpectrumTexture reflectance, SpectrumTexture mfp, Float g, Float eta, FloatTexture uRoughness, FloatTexture vRoughness, FloatTexture displacement, Image* normalMap, bool remapRoughness, Allocator alloc) : displacement(displacement), normalMap(normalMap), scale(scale), sigma_a(sigma_a), sigma_s(sigma_s), reflectance(reflectance), mfp(mfp), uRoughness(uRoughness), vRoughness(vRoughness), eta(eta), remapRoughness(remapRoughness), table(100, 64, alloc) {
             ComputeBeamDiffusionBSSRDF(g, eta, &table);
         }
 
-        static const char* Name() { return "SubsurfaceMaterial"; }
+        static const char* Name() {
+            return "SubsurfaceMaterial";
+        }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return texEval.CanEvaluate({uRoughness, vRoughness}, {sigma_a, sigma_s});
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU DielectricBxDF GetBxDF(TextureEvaluator texEval,
-                                               const MaterialEvalContext& ctx,
-                                               SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU DielectricBxDF GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
             // Initialize BSDF for _SubsurfaceMaterial_
 
             Float urough = texEval(uRoughness, ctx), vrough = texEval(vRoughness, ctx);
-            if (remapRoughness)
-            {
+            if (remapRoughness) {
                 urough = TrowbridgeReitzDistribution::RoughnessToAlpha(urough);
                 vrough = TrowbridgeReitzDistribution::RoughnessToAlpha(vrough);
             }
@@ -797,40 +626,38 @@ namespace spectra
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU TabulatedBSSRDF GetBSSRDF(TextureEvaluator texEval,
-                                                  const MaterialEvalContext& ctx,
-                                                  SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU TabulatedBSSRDF GetBSSRDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
             SampledSpectrum sig_a, sig_s;
-            if (sigma_a && sigma_s)
-            {
+            if (sigma_a && sigma_s) {
                 // Evaluate textures for $\sigma_\roman{a}$ and $\sigma_\roman{s}$
                 sig_a = ClampZero(scale * texEval(sigma_a, ctx, lambda));
                 sig_s = ClampZero(scale * texEval(sigma_s, ctx, lambda));
-            }
-            else
-            {
+            } else {
                 // Compute _sig_a_ and _sig_s_ from reflectance and mfp
                 DCHECK(reflectance && mfp);
                 SampledSpectrum mfree = ClampZero(scale * texEval(mfp, ctx, lambda));
-                SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
+                SampledSpectrum r     = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
                 SubsurfaceFromDiffuse(table, r, mfree, &sig_a, &sig_s);
             }
             return TabulatedBSSRDF(ctx.p, ctx.ns, ctx.wo, eta, sig_a, sig_s, &table);
         }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
+        FloatTexture GetDisplacement() const {
+            return displacement;
+        }
 
         SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
 
         SPECTRA_CPU_GPU
-        static constexpr bool HasSubsurfaceScattering() { return true; }
+        static constexpr bool HasSubsurfaceScattering() {
+            return true;
+        }
 
-        static SubsurfaceMaterial* Create(const TextureParameterDictionary& parameters,
-                                          Image* normalMap, const FileLoc* loc,
-                                          Allocator alloc);
+        static SubsurfaceMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
 
     private:
         // SubsurfaceMaterial Private Members
@@ -844,58 +671,47 @@ namespace spectra
     };
 
     // DiffuseTransmissionMaterial Definition
-    class DiffuseTransmissionMaterial
-    {
+    class DiffuseTransmissionMaterial {
     public:
-        using BxDF = DiffuseTransmissionBxDF;
+        using BxDF   = DiffuseTransmissionBxDF;
         using BSSRDF = void;
         // DiffuseTransmissionMaterial Public Methods
-        DiffuseTransmissionMaterial(SpectrumTexture reflectance,
-                                    SpectrumTexture transmittance, FloatTexture displacement,
-                                    Image* normalMap, Float scale)
-            : displacement(displacement),
-              normalMap(normalMap),
-              reflectance(reflectance),
-              transmittance(transmittance),
-              scale(scale)
-        {
+        DiffuseTransmissionMaterial(SpectrumTexture reflectance, SpectrumTexture transmittance, FloatTexture displacement, Image* normalMap, Float scale) : displacement(displacement), normalMap(normalMap), reflectance(reflectance), transmittance(transmittance), scale(scale) {}
+
+        static const char* Name() {
+            return "DiffuseTransmissionMaterial";
         }
 
-        static const char* Name() { return "DiffuseTransmissionMaterial"; }
-
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return texEval.CanEvaluate({}, {reflectance, transmittance});
         }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU DiffuseTransmissionBxDF GetBxDF(TextureEvaluator texEval,
-                                                        MaterialEvalContext ctx,
-                                                        SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU DiffuseTransmissionBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             SampledSpectrum r = Clamp(scale * texEval(reflectance, ctx, lambda), 0, 1);
             SampledSpectrum t = Clamp(scale * texEval(transmittance, ctx, lambda), 0, 1);
             return DiffuseTransmissionBxDF(r, t);
         }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static DiffuseTransmissionMaterial* Create(
-            const TextureParameterDictionary& parameters, Image* normalMap,
-            const FileLoc* loc, Allocator alloc);
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda) const
-        {
+        FloatTexture GetDisplacement() const {
+            return displacement;
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
+
+        static DiffuseTransmissionMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // DiffuseTransmissionMaterial Private Data
@@ -906,47 +722,45 @@ namespace spectra
     };
 
     // MeasuredMaterial Definition
-    class MeasuredMaterial
-    {
+    class MeasuredMaterial {
     public:
-        using BxDF = MeasuredBxDF;
+        using BxDF   = MeasuredBxDF;
         using BSSRDF = void;
         // MeasuredMaterial Public Methods
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU MeasuredBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                             SampledWavelengths& lambda) const
-        {
+        SPECTRA_CPU_GPU MeasuredBxDF GetBxDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda) const {
             return MeasuredBxDF(brdf, lambda);
         }
 
-        MeasuredMaterial(const std::string& filename, FloatTexture displacement,
-                         Image* normalMap, Allocator alloc);
+        MeasuredMaterial(const std::string& filename, FloatTexture displacement, Image* normalMap, Allocator alloc);
 
-        static const char* Name() { return "MeasuredMaterial"; }
+        static const char* Name() {
+            return "MeasuredMaterial";
+        }
 
         template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const
-        {
+        SPECTRA_CPU_GPU bool CanEvaluateTextures(TextureEvaluator texEval) const {
             return true;
         }
 
         SPECTRA_CPU_GPU
-        FloatTexture GetDisplacement() const { return displacement; }
-
-        SPECTRA_CPU_GPU
-        const Image* GetNormalMap() const { return normalMap; }
-
-        static MeasuredMaterial* Create(const TextureParameterDictionary& parameters,
-                                        Image* normalMap, const FileLoc* loc,
-                                        Allocator alloc);
-
-        template <typename TextureEvaluator>
-        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                       SampledWavelengths& lambda, void*) const
-        {
+        FloatTexture GetDisplacement() const {
+            return displacement;
         }
 
-        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() { return false; }
+        SPECTRA_CPU_GPU
+        const Image* GetNormalMap() const {
+            return normalMap;
+        }
+
+        static MeasuredMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+
+        template <typename TextureEvaluator>
+        SPECTRA_CPU_GPU void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, void*) const {}
+
+        SPECTRA_CPU_GPU static constexpr bool HasSubsurfaceScattering() {
+            return false;
+        }
 
     private:
         // MeasuredMaterial Private Members
@@ -957,22 +771,17 @@ namespace spectra
 
     // Material Inline Method Definitions
     template <typename TextureEvaluator>
-    inline BSDF Material::GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                  SampledWavelengths& lambda,
-                                  ScratchBuffer& scratchBuffer) const
-    {
+    inline BSDF Material::GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, ScratchBuffer& scratchBuffer) const {
         // Define _getBSDF_ lambda function for _Material::GetBSDF()_
-        auto getBSDF = [&](auto mtl) -> BSDF
-        {
-            using ConcreteMtl = typename std::remove_reference_t<decltype(*mtl)>;
+        auto getBSDF = [&](auto mtl) -> BSDF {
+            using ConcreteMtl  = typename std::remove_reference_t<decltype(*mtl)>;
             using ConcreteBxDF = typename ConcreteMtl::BxDF;
             if constexpr (std::is_same_v<ConcreteBxDF, void>)
                 return BSDF();
-            else
-            {
+            else {
                 // Allocate memory for _ConcreteBxDF_ and return _BSDF_ for material
                 ConcreteBxDF* bxdf = scratchBuffer.Alloc<ConcreteBxDF>();
-                *bxdf = mtl->GetBxDF(texEval, ctx, lambda);
+                *bxdf              = mtl->GetBxDF(texEval, ctx, lambda);
                 return BSDF(ctx.ns, ctx.dpdus, bxdf);
             }
         };
@@ -981,50 +790,41 @@ namespace spectra
     }
 
     template <typename TextureEvaluator>
-    SPECTRA_CPU_GPU inline bool Material::CanEvaluateTextures(TextureEvaluator texEval) const
-    {
+    SPECTRA_CPU_GPU inline bool Material::CanEvaluateTextures(TextureEvaluator texEval) const {
         auto eval = [&](auto ptr) { return ptr->CanEvaluateTextures(texEval); };
         return Dispatch(eval);
     }
 
     template <typename TextureEvaluator>
-    inline BSSRDF Material::GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx,
-                                      SampledWavelengths& lambda,
-                                      ScratchBuffer& scratchBuffer) const
-    {
-        auto get = [&](auto mtl) -> BSSRDF
-        {
-            using Material = typename std::remove_reference_t<decltype(*mtl)>;
+    inline BSSRDF Material::GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, ScratchBuffer& scratchBuffer) const {
+        auto get = [&](auto mtl) -> BSSRDF {
+            using Material       = typename std::remove_reference_t<decltype(*mtl)>;
             using MaterialBSSRDF = typename Material::BSSRDF;
             if constexpr (std::is_same_v<MaterialBSSRDF, void>)
                 return nullptr;
-            else
-            {
+            else {
                 MaterialBSSRDF* bssrdf = scratchBuffer.Alloc<MaterialBSSRDF>();
-                *bssrdf = mtl->GetBSSRDF(texEval, ctx, lambda);
+                *bssrdf                = mtl->GetBSSRDF(texEval, ctx, lambda);
                 return BSSRDF(bssrdf);
             }
         };
         return DispatchCPU(get);
     }
 
-    SPECTRA_CPU_GPU inline bool Material::HasSubsurfaceScattering() const
-    {
+    SPECTRA_CPU_GPU inline bool Material::HasSubsurfaceScattering() const {
         auto has = [&](auto ptr) { return ptr->HasSubsurfaceScattering(); };
         return Dispatch(has);
     }
 
-    SPECTRA_CPU_GPU inline FloatTexture Material::GetDisplacement() const
-    {
+    SPECTRA_CPU_GPU inline FloatTexture Material::GetDisplacement() const {
         auto disp = [&](auto ptr) { return ptr->GetDisplacement(); };
         return Dispatch(disp);
     }
 
-    SPECTRA_CPU_GPU inline const Image* Material::GetNormalMap() const
-    {
+    SPECTRA_CPU_GPU inline const Image* Material::GetNormalMap() const {
         auto nmap = [&](auto ptr) { return ptr->GetNormalMap(); };
         return Dispatch(nmap);
     }
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_CORE_MATERIALS_H
+#endif // SPECTRA_PATHTRACER_CORE_MATERIALS_H

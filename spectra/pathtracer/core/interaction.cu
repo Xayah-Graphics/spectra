@@ -1,7 +1,7 @@
-#include <spectra/pathtracer/core/interaction.h>
-
+#include <cmath>
 #include <spectra/pathtracer/base/camera.h>
 #include <spectra/pathtracer/core/cameras.h>
+#include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/lights.h>
 #include <spectra/pathtracer/core/materials.h>
 #include <spectra/pathtracer/core/options.h>
@@ -11,47 +11,37 @@
 #include <spectra/pathtracer/util/math.h>
 #include <spectra/pathtracer/util/rng.h>
 
-#include <cmath>
-
-namespace spectra
-{
+namespace spectra {
     // SurfaceInteraction Method Definitions
-    SPECTRA_CPU_GPU void SurfaceInteraction::ComputeDifferentials(const RayDifferential& ray, Camera camera,
-                                                                  int samplesPerPixel)
-    {
-        if (GetOptions().disableTextureFiltering)
-        {
+    SPECTRA_CPU_GPU void SurfaceInteraction::ComputeDifferentials(const RayDifferential& ray, Camera camera, int samplesPerPixel) {
+        if (GetOptions().disableTextureFiltering) {
             dudx = dudy = dvdx = dvdy = 0;
             dpdx = dpdy = Vector3f(0, 0, 0);
             return;
         }
-        if (ray.hasDifferentials && Dot(n, ray.rxDirection) != 0 &&
-            Dot(n, ray.ryDirection) != 0)
-        {
+        if (ray.hasDifferentials && Dot(n, ray.rxDirection) != 0 && Dot(n, ray.ryDirection) != 0) {
             // Estimate screen-space change in $\pt{}$ using ray differentials
             // Compute auxiliary intersection points with plane, _px_ and _py_
-            Float d = -Dot(n, Vector3f(p()));
+            Float d  = -Dot(n, Vector3f(p()));
             Float tx = (-Dot(n, Vector3f(ray.rxOrigin)) - d) / Dot(n, ray.rxDirection);
             DCHECK(!IsInf(tx) && !IsNaN(tx));
             Point3f px = ray.rxOrigin + tx * ray.rxDirection;
-            Float ty = (-Dot(n, Vector3f(ray.ryOrigin)) - d) / Dot(n, ray.ryDirection);
+            Float ty   = (-Dot(n, Vector3f(ray.ryOrigin)) - d) / Dot(n, ray.ryDirection);
             DCHECK(!IsInf(ty) && !IsNaN(ty));
             Point3f py = ray.ryOrigin + ty * ray.ryDirection;
 
             dpdx = px - p();
             dpdy = py - p();
-        }
-        else
-        {
+        } else {
             // Approximate screen-space change in $\pt{}$ based on camera projection
             camera.Approximate_dp_dxy(p(), n, time, samplesPerPixel, &dpdx, &dpdy);
         }
         // Estimate screen-space change in $(u,v)$
         // Compute $\transpose{\XFORM{A}} \XFORM{A}$ and its determinant
         Float ata00 = Dot(dpdu, dpdu), ata01 = Dot(dpdu, dpdv);
-        Float ata11 = Dot(dpdv, dpdv);
+        Float ata11  = Dot(dpdv, dpdv);
         Float invDet = 1 / DifferenceOfProducts(ata00, ata11, ata01, ata01);
-        invDet = IsFinite(invDet) ? invDet : 0.f;
+        invDet       = IsFinite(invDet) ? invDet : 0.f;
 
         // Compute $\transpose{\XFORM{A}} \VEC{b}$ for $x$ and $y$
         Float atb0x = Dot(dpdu, dpdx), atb1x = Dot(dpdv, dpdx);
@@ -70,57 +60,45 @@ namespace spectra
         dvdy = IsFinite(dvdy) ? Clamp(dvdy, -1e8f, 1e8f) : 0.f;
     }
 
-    SPECTRA_CPU_GPU void SurfaceInteraction::SkipIntersection(RayDifferential* ray, Float t) const
-    {
-        *((Ray*)ray) = SpawnRay(ray->d);
-        if (ray->hasDifferentials)
-        {
+    SPECTRA_CPU_GPU void SurfaceInteraction::SkipIntersection(RayDifferential* ray, Float t) const {
+        *((Ray*) ray) = SpawnRay(ray->d);
+        if (ray->hasDifferentials) {
             ray->rxOrigin = ray->rxOrigin + t * ray->rxDirection;
             ray->ryOrigin = ray->ryOrigin + t * ray->ryDirection;
         }
     }
 
-    SPECTRA_CPU_GPU RayDifferential SurfaceInteraction::SpawnRay(const RayDifferential& rayi,
-                                                                 const BSDF& bsdf, Vector3f wi, int flags,
-                                                                 Float eta) const
-    {
+    SPECTRA_CPU_GPU RayDifferential SurfaceInteraction::SpawnRay(const RayDifferential& rayi, const BSDF& bsdf, Vector3f wi, int flags, Float eta) const {
         RayDifferential rd(SpawnRay(wi));
-        if (rayi.hasDifferentials)
-        {
+        if (rayi.hasDifferentials) {
             // Compute ray differentials for specular reflection or transmission
             // Compute common factors for specular ray differentials
-            Normal3f n = shading.n;
-            Normal3f dndx = shading.dndu * dudx + shading.dndv * dvdx;
-            Normal3f dndy = shading.dndu * dudy + shading.dndv * dvdy;
+            Normal3f n     = shading.n;
+            Normal3f dndx  = shading.dndu * dudx + shading.dndv * dvdx;
+            Normal3f dndy  = shading.dndu * dudy + shading.dndv * dvdy;
             Vector3f dwodx = -rayi.rxDirection - wo, dwody = -rayi.ryDirection - wo;
 
-            if (flags == SpecularReflection)
-            {
+            if (flags == SpecularReflection) {
                 // Initialize origins of specular differential rays
                 rd.hasDifferentials = true;
-                rd.rxOrigin = p() + dpdx;
-                rd.ryOrigin = p() + dpdy;
+                rd.rxOrigin         = p() + dpdx;
+                rd.ryOrigin         = p() + dpdy;
 
                 // Compute differential reflected directions
                 Float dwoDotn_dx = Dot(dwodx, n) + Dot(wo, dndx);
                 Float dwoDotn_dy = Dot(dwody, n) + Dot(wo, dndy);
-                rd.rxDirection =
-                    wi - dwodx + 2 * Vector3f(Dot(wo, n) * dndx + dwoDotn_dx * n);
-                rd.ryDirection =
-                    wi - dwody + 2 * Vector3f(Dot(wo, n) * dndy + dwoDotn_dy * n);
-            }
-            else if (flags == SpecularTransmission)
-            {
+                rd.rxDirection   = wi - dwodx + 2 * Vector3f(Dot(wo, n) * dndx + dwoDotn_dx * n);
+                rd.ryDirection   = wi - dwody + 2 * Vector3f(Dot(wo, n) * dndy + dwoDotn_dy * n);
+            } else if (flags == SpecularTransmission) {
                 // Initialize origins of specular differential rays
                 rd.hasDifferentials = true;
-                rd.rxOrigin = p() + dpdx;
-                rd.ryOrigin = p() + dpdy;
+                rd.rxOrigin         = p() + dpdx;
+                rd.ryOrigin         = p() + dpdy;
 
                 // Compute differential transmitted directions
                 // Find oriented surface normal for transmission
-                if (Dot(wo, n) < 0)
-                {
-                    n = -n;
+                if (Dot(wo, n) < 0) {
+                    n    = -n;
                     dndx = -dndx;
                     dndy = -dndy;
                 }
@@ -128,46 +106,37 @@ namespace spectra
                 // Compute partial derivatives of $\mu$
                 Float dwoDotn_dx = Dot(dwodx, n) + Dot(wo, dndx);
                 Float dwoDotn_dy = Dot(dwody, n) + Dot(wo, dndy);
-                Float mu = Dot(wo, n) / eta - AbsDot(wi, n);
-                Float dmudx = dwoDotn_dx * (1 / eta + 1 / Sqr(eta) * Dot(wo, n) / Dot(wi, n));
-                Float dmudy = dwoDotn_dy * (1 / eta + 1 / Sqr(eta) * Dot(wo, n) / Dot(wi, n));
+                Float mu         = Dot(wo, n) / eta - AbsDot(wi, n);
+                Float dmudx      = dwoDotn_dx * (1 / eta + 1 / Sqr(eta) * Dot(wo, n) / Dot(wi, n));
+                Float dmudy      = dwoDotn_dy * (1 / eta + 1 / Sqr(eta) * Dot(wo, n) / Dot(wi, n));
 
                 rd.rxDirection = wi - eta * dwodx + Vector3f(mu * dndx + dmudx * n);
                 rd.ryDirection = wi - eta * dwody + Vector3f(mu * dndy + dmudy * n);
             }
         }
         // Squash potentially troublesome differentials
-        if (LengthSquared(rd.rxDirection) > 1e16f || LengthSquared(rd.ryDirection) > 1e16f ||
-            LengthSquared(Vector3f(rd.rxOrigin)) > 1e16f ||
-            LengthSquared(Vector3f(rd.ryOrigin)) > 1e16f)
-            rd.hasDifferentials = false;
+        if (LengthSquared(rd.rxDirection) > 1e16f || LengthSquared(rd.ryDirection) > 1e16f || LengthSquared(Vector3f(rd.rxOrigin)) > 1e16f || LengthSquared(Vector3f(rd.ryOrigin)) > 1e16f) rd.hasDifferentials = false;
 
         return rd;
     }
 
-    BSDF SurfaceInteraction::GetBSDF(const RayDifferential& ray, SampledWavelengths& lambda,
-                                     Camera camera, ScratchBuffer& scratchBuffer,
-                                     Sampler sampler)
-    {
+    BSDF SurfaceInteraction::GetBSDF(const RayDifferential& ray, SampledWavelengths& lambda, Camera camera, ScratchBuffer& scratchBuffer, Sampler sampler) {
         // Estimate $(u,v)$ and position differentials at intersection point
         ComputeDifferentials(ray, camera, sampler.SamplesPerPixel());
 
         // Resolve _MixMaterial_ if necessary
-        while (material.Is<MixMaterial>())
-        {
+        while (material.Is<MixMaterial>()) {
             MixMaterial* mix = material.Cast<MixMaterial>();
-            material = mix->ChooseMaterial(UniversalTextureEvaluator(), *this);
+            material         = mix->ChooseMaterial(UniversalTextureEvaluator(), *this);
         }
 
         // Return unset _BSDF_ if surface has a null material
-        if (!material)
-            return {};
+        if (!material) return {};
 
         // Evaluate normal or bump map, if present
         FloatTexture displacement = material.GetDisplacement();
-        const Image* normalMap = material.GetNormalMap();
-        if (displacement || normalMap)
-        {
+        const Image* normalMap    = material.GetNormalMap();
+        if (displacement || normalMap) {
             // Get shading $\dpdu$ and $\dpdv$ using normal or bump map
             Vector3f dpdu, dpdv;
             if (normalMap)
@@ -180,28 +149,21 @@ namespace spectra
         }
 
         // Return BSDF for surface interaction
-        BSDF bsdf =
-            material.GetBSDF(UniversalTextureEvaluator(), *this, lambda, scratchBuffer);
+        BSDF bsdf = material.GetBSDF(UniversalTextureEvaluator(), *this, lambda, scratchBuffer);
         return bsdf;
     }
 
-    BSSRDF SurfaceInteraction::GetBSSRDF(const RayDifferential& ray,
-                                         SampledWavelengths& lambda, Camera camera,
-                                         ScratchBuffer& scratchBuffer)
-    {
+    BSSRDF SurfaceInteraction::GetBSSRDF(const RayDifferential& ray, SampledWavelengths& lambda, Camera camera, ScratchBuffer& scratchBuffer) {
         // Resolve _MixMaterial_ if necessary
-        while (material.Is<MixMaterial>())
-        {
+        while (material.Is<MixMaterial>()) {
             MixMaterial* mix = material.Cast<MixMaterial>();
-            material = mix->ChooseMaterial(UniversalTextureEvaluator(), *this);
+            material         = mix->ChooseMaterial(UniversalTextureEvaluator(), *this);
         }
 
         return material.GetBSSRDF(UniversalTextureEvaluator(), *this, lambda, scratchBuffer);
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum SurfaceInteraction::Le(Vector3f w,
-                                                           const SampledWavelengths& lambda) const
-    {
+    SPECTRA_CPU_GPU SampledSpectrum SurfaceInteraction::Le(Vector3f w, const SampledWavelengths& lambda) const {
         return areaLight ? areaLight.L(p(), n, uv, w, lambda) : SampledSpectrum(0.f);
     }
 } // namespace spectra

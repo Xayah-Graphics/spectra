@@ -1,45 +1,40 @@
 #ifndef SPECTRA_PATHTRACER_GPU_MEMORY_H
 #define SPECTRA_PATHTRACER_GPU_MEMORY_H
 
-#include <spectra/pathtracer/util/float.h>
-
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/pstd.h>
-
 #include <atomic>
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/math.h>
+#include <spectra/pathtracer/util/pstd.h>
 #include <type_traits>
 #include <unordered_map>
 
-namespace spectra
-{
-    class CUDAMemoryResource : public pstd::pmr::memory_resource
-    {
+namespace spectra {
+    class CUDAMemoryResource : public pstd::pmr::memory_resource {
         void* do_allocate(size_t size, size_t alignment);
         void do_deallocate(void* p, size_t bytes, size_t alignment);
 
-        bool do_is_equal(const memory_resource& other) const noexcept
-        {
+        bool do_is_equal(const memory_resource& other) const noexcept {
             return this == &other;
         }
     };
 
-    class CUDATrackedMemoryResource : public CUDAMemoryResource
-    {
+    class CUDATrackedMemoryResource : public CUDAMemoryResource {
     public:
         void* do_allocate(size_t size, size_t alignment);
         void do_deallocate(void* p, size_t bytes, size_t alignment);
 
-        bool do_is_equal(const memory_resource& other) const noexcept
-        {
+        bool do_is_equal(const memory_resource& other) const noexcept {
             return this == &other;
         }
 
         void PrefetchToGPU() const;
-        size_t BytesAllocated() const { return bytesAllocated; }
+        size_t BytesAllocated() const {
+            return bytesAllocated;
+        }
 
         static CUDATrackedMemoryResource singleton;
 
@@ -50,4 +45,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_GPU_MEMORY_H
+#endif // SPECTRA_PATHTRACER_GPU_MEMORY_H

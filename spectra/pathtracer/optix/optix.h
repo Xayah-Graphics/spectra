@@ -1,31 +1,26 @@
 #ifndef SPECTRA_OPTIX_OPTIX_H
 #define SPECTRA_OPTIX_OPTIX_H
 
-#include <spectra/pathtracer/util/float.h>
-
+#include <optix.h>
 #include <spectra/pathtracer/base/light.h>
 #include <spectra/pathtracer/base/material.h>
 #include <spectra/pathtracer/base/medium.h>
 #include <spectra/pathtracer/base/shape.h>
 #include <spectra/pathtracer/base/texture.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/wavefront/workitems.h>
 #include <spectra/pathtracer/wavefront/workqueue.h>
 
-#include <optix.h>
-
-namespace spectra
-{
+namespace spectra {
     class TriangleMesh;
     class BilinearPatchMesh;
 } // namespace spectra
 
-namespace spectra::optix
-{
+namespace spectra::optix {
     inline constexpr OptixPayloadTypeID SpectraOptiXPayloadType = OPTIX_PAYLOAD_TYPE_ID_0;
 
-    struct TriangleMeshRecord
-    {
+    struct TriangleMeshRecord {
         const TriangleMesh* mesh;
         Material material;
         FloatTexture alphaTexture;
@@ -33,8 +28,7 @@ namespace spectra::optix
         MediumInterface* mediumInterface;
     };
 
-    struct BilinearMeshRecord
-    {
+    struct BilinearMeshRecord {
         const BilinearPatchMesh* mesh;
         Material material;
         FloatTexture alphaTexture;
@@ -42,8 +36,7 @@ namespace spectra::optix
         MediumInterface* mediumInterface;
     };
 
-    struct QuadricRecord
-    {
+    struct QuadricRecord {
         Shape shape;
         Material material;
         FloatTexture alphaTexture;
@@ -51,8 +44,7 @@ namespace spectra::optix
         MediumInterface* mediumInterface;
     };
 
-    struct RayIntersectParameters
-    {
+    struct RayIntersectParameters {
         OptixTraversableHandle traversable;
 
         const RayQueue* rayQueue;
@@ -73,4 +65,4 @@ namespace spectra::optix
     };
 } // namespace spectra::optix
 
-#endif  // SPECTRA_OPTIX_OPTIX_H
+#endif // SPECTRA_OPTIX_OPTIX_H

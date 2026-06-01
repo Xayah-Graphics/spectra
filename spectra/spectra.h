@@ -8,25 +8,23 @@
 #endif
 #endif
 
-#include <imgui.h>
-#include <vulkan/vulkan_raii.hpp>
-
 #include <cstdint>
 #include <functional>
+#include <imgui.h>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <vulkan/vulkan_raii.hpp>
+
 struct GLFWwindow;
 
-namespace xayah
-{
+namespace xayah {
     class Spectra;
 
-    enum class SpectraDockSlot
-    {
+    enum class SpectraDockSlot {
         Center,
         Left,
         LeftBottom,
@@ -36,8 +34,7 @@ namespace xayah
         Floating,
     };
 
-    struct SpectraPanel
-    {
+    struct SpectraPanel {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -53,42 +50,38 @@ namespace xayah
         std::move_only_function<void()> draw{};
     };
 
-    struct SpectraFrameInfo
-    {
+    struct SpectraFrameInfo {
         std::uint32_t frame_index{};
         std::uint32_t image_index{};
     };
 
-    struct SpectraFrameResult
-    {
+    struct SpectraFrameResult {
         std::optional<vk::Semaphore> completion_semaphore{};
         bool close_requested{false};
         std::optional<std::string> window_detail{};
     };
 
-    class SpectraPlugin
-    {
+    class SpectraPlugin {
     public:
         virtual ~SpectraPlugin() = default;
 
-        [[nodiscard]] virtual std::string_view name() const = 0;
-        virtual void attach(Spectra& spectra) = 0;
-        virtual void detach(Spectra& spectra) noexcept = 0;
-        virtual void before_imgui_shutdown(Spectra& spectra) noexcept = 0;
-        virtual void after_imgui_created(Spectra& spectra) = 0;
+        [[nodiscard]] virtual std::string_view name() const                                                   = 0;
+        virtual void attach(Spectra& spectra)                                                                 = 0;
+        virtual void detach(Spectra& spectra) noexcept                                                        = 0;
+        virtual void before_imgui_shutdown(Spectra& spectra) noexcept                                         = 0;
+        virtual void after_imgui_created(Spectra& spectra)                                                    = 0;
         [[nodiscard]] virtual SpectraFrameResult begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) = 0;
-        virtual void record_frame(const vk::raii::CommandBuffer& command_buffer) = 0;
+        virtual void record_frame(const vk::raii::CommandBuffer& command_buffer)                              = 0;
     };
 
-    class Spectra
-    {
+    class Spectra {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
 
-        Spectra(const Spectra& other) = delete;
-        Spectra(Spectra&& other) noexcept = delete;
-        Spectra& operator=(const Spectra& other) = delete;
+        Spectra(const Spectra& other)                = delete;
+        Spectra(Spectra&& other) noexcept            = delete;
+        Spectra& operator=(const Spectra& other)     = delete;
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
         void register_plugin(std::unique_ptr<SpectraPlugin> plugin);
@@ -122,8 +115,7 @@ namespace xayah
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
 
-        struct
-        {
+        struct {
             vk::raii::Context context{};
             vk::raii::Instance instance{nullptr};
             vk::raii::DebugUtilsMessengerEXT debug_messenger{nullptr};
@@ -134,16 +126,14 @@ namespace xayah
             vk::raii::CommandPool command_pool{nullptr};
         } context;
 
-        struct
-        {
+        struct {
             std::shared_ptr<GLFWwindow> window{};
             vk::raii::SurfaceKHR surface{nullptr};
             bool resize_requested{false};
             bool glfw_initialized{false};
         } surface;
 
-        struct
-        {
+        struct {
             vk::raii::SwapchainKHR handle{nullptr};
             std::vector<vk::Image> images{};
             std::vector<vk::raii::ImageView> image_views{};
@@ -154,14 +144,12 @@ namespace xayah
             vk::Extent2D extent{};
         } swapchain;
 
-        struct
-        {
+        struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
             bool initialized{false};
         } imgui;
 
-        struct
-        {
+        struct {
             std::uint32_t frame_count{2};
             std::uint32_t frame_index{0};
             vk::raii::CommandBuffers command_buffers{nullptr};
@@ -171,8 +159,7 @@ namespace xayah
             std::vector<vk::raii::Fence> in_flight_fences{};
         } sync;
 
-        struct
-        {
+        struct {
             std::string base{};
             std::string detail{};
             std::uint64_t frame_count{0};

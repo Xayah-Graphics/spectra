@@ -1,30 +1,23 @@
+#include <cuda.h>
+#include <cuda_runtime.h>
 #include <spectra/pathtracer/gpu/memory.h>
-
 #include <spectra/pathtracer/gpu/util.h>
 #include <spectra/pathtracer/util/check.h>
 
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-namespace spectra
-{
-    void* CUDAMemoryResource::do_allocate(size_t size, size_t alignment)
-    {
+namespace spectra {
+    void* CUDAMemoryResource::do_allocate(size_t size, size_t alignment) {
         void* ptr;
         CUDA_CHECK(cudaMallocManaged(&ptr, size));
         CHECK_EQ(0, intptr_t(ptr) % alignment);
         return ptr;
     }
 
-    void CUDAMemoryResource::do_deallocate(void* p, size_t bytes, size_t alignment)
-    {
+    void CUDAMemoryResource::do_deallocate(void* p, size_t bytes, size_t alignment) {
         CUDA_CHECK(cudaFree(p));
     }
 
-    void* CUDATrackedMemoryResource::do_allocate(size_t size, size_t alignment)
-    {
-        if (size == 0)
-            return nullptr;
+    void* CUDATrackedMemoryResource::do_allocate(size_t size, size_t alignment) {
+        if (size == 0) return nullptr;
 
         void* ptr;
         CUDA_CHECK(cudaMallocManaged(&ptr, size));
@@ -37,10 +30,8 @@ namespace spectra
         return ptr;
     }
 
-    void CUDATrackedMemoryResource::do_deallocate(void* p, size_t size, size_t alignment)
-    {
-        if (!p)
-            return;
+    void CUDATrackedMemoryResource::do_deallocate(void* p, size_t size, size_t alignment) {
+        if (!p) return;
 
         CUDA_CHECK(cudaFree(p));
 
@@ -51,21 +42,18 @@ namespace spectra
         bytesAllocated -= size;
     }
 
-    void CUDATrackedMemoryResource::PrefetchToGPU() const
-    {
+    void CUDATrackedMemoryResource::PrefetchToGPU() const {
         int deviceIndex;
         CUDA_CHECK(cudaGetDevice(&deviceIndex));
 
         std::lock_guard<std::mutex> lock(mutex);
 
         size_t bytes = 0;
-        for (auto iter : allocations)
-        {
+        for (auto iter : allocations) {
             cudaMemLocation location = {};
-            location.type = cudaMemLocationTypeDevice;
-            location.id = deviceIndex;
-            CUDA_CHECK(
-                cudaMemPrefetchAsync(iter.first, iter.second, location, 0 /* stream */));
+            location.type            = cudaMemLocationTypeDevice;
+            location.id              = deviceIndex;
+            CUDA_CHECK(cudaMemPrefetchAsync(iter.first, iter.second, location, 0 /* stream */));
             bytes += iter.second;
         }
         CUDA_CHECK(cudaDeviceSynchronize());

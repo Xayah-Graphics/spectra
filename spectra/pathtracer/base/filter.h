@@ -3,14 +3,11 @@
 
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/memory.h>
-
 #include <spectra/pathtracer/util/taggedptr.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     class ParameterDictionary;
     struct FileLoc;
 
@@ -23,15 +20,12 @@ namespace spectra
     class TriangleFilter;
 
     // Filter Definition
-    class Filter : public TaggedPointer<BoxFilter, GaussianFilter, MitchellFilter,
-                                        LanczosSincFilter, TriangleFilter>
-    {
+    class Filter : public TaggedPointer<BoxFilter, GaussianFilter, MitchellFilter, LanczosSincFilter, TriangleFilter> {
     public:
         // Filter Interface
         using TaggedPointer::TaggedPointer;
 
-        static Filter Create(const std::string& name, const ParameterDictionary& parameters,
-                             const FileLoc* loc, Allocator alloc);
+        static Filter Create(const std::string& name, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU Vector2f Radius() const;
 
@@ -43,4 +37,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_BASE_FILTER_H
+#endif // SPECTRA_PATHTRACER_BASE_FILTER_H

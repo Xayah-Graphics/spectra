@@ -1,38 +1,31 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_BUFFERCACHE_H
 #define SPECTRA_PATHTRACER_UTIL_BUFFERCACHE_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/hash.h>
-#include <spectra/pathtracer/util/pstd.h>
-#include <spectra/pathtracer/util/vecmath.h>
-
 #include <atomic>
 #include <cstring>
 #include <shared_mutex>
+#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/hash.h>
+#include <spectra/pathtracer/util/memory.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/vecmath.h>
 #include <string>
 #include <unordered_set>
 
-namespace spectra
-{
+namespace spectra {
     // BufferCache Definition
     template <typename T>
-    class BufferCache
-    {
+    class BufferCache {
     public:
         // BufferCache Public Methods
-        const T* LookupOrAdd(pstd::span<const T> buf, Allocator alloc)
-        {
+        const T* LookupOrAdd(pstd::span<const T> buf, Allocator alloc) {
             // Return pointer to data if _buf_ contents are already in the cache
             Buffer lookupBuffer(buf.data(), buf.size());
             int shardIndex = uint32_t(lookupBuffer.hash) >> (32 - logShards);
             DCHECK(shardIndex >= 0 && shardIndex < nShards);
             mutex[shardIndex].lock_shared();
-            if (auto iter = cache[shardIndex].find(lookupBuffer);
-                iter != cache[shardIndex].end())
-            {
+            if (auto iter = cache[shardIndex].find(lookupBuffer); iter != cache[shardIndex].end()) {
                 const T* ptr = iter->ptr;
                 mutex[shardIndex].unlock_shared();
                 DCHECK(std::memcmp(buf.data(), iter->ptr, buf.size() * sizeof(T)) == 0);
@@ -46,9 +39,7 @@ namespace spectra
             bytesUsed += buf.size() * sizeof(T);
             mutex[shardIndex].lock();
             // Handle the case of another thread adding the buffer first
-            if (auto iter = cache[shardIndex].find(lookupBuffer);
-                iter != cache[shardIndex].end())
-            {
+            if (auto iter = cache[shardIndex].find(lookupBuffer); iter != cache[shardIndex].end()) {
                 const T* cachePtr = iter->ptr;
                 mutex[shardIndex].unlock();
                 alloc.deallocate_object(ptr, buf.size());
@@ -60,39 +51,38 @@ namespace spectra
             return ptr;
         }
 
-        size_t BytesUsed() const { return bytesUsed; }
+        size_t BytesUsed() const {
+            return bytesUsed;
+        }
 
     private:
         // BufferCache::Buffer Definition
-        struct Buffer
-        {
+        struct Buffer {
             // BufferCache::Buffer Public Methods
             Buffer() = default;
 
-            Buffer(const T* ptr, size_t size) : ptr(ptr), size(size)
-            {
+            Buffer(const T* ptr, size_t size) : ptr(ptr), size(size) {
                 hash = HashBuffer(ptr, size);
             }
 
-            bool operator==(const Buffer& b) const
-            {
-                return size == b.size && hash == b.hash &&
-                    std::memcmp(ptr, b.ptr, size * sizeof(T)) == 0;
+            bool operator==(const Buffer& b) const {
+                return size == b.size && hash == b.hash && std::memcmp(ptr, b.ptr, size * sizeof(T)) == 0;
             }
 
             const T* ptr = nullptr;
-            size_t size = 0, hash;
+            size_t size  = 0, hash;
         };
 
         // BufferCache::BufferHasher Definition
-        struct BufferHasher
-        {
-            size_t operator()(const Buffer& b) const { return b.hash; }
+        struct BufferHasher {
+            size_t operator()(const Buffer& b) const {
+                return b.hash;
+            }
         };
 
         // BufferCache Private Members
         static constexpr int logShards = 6;
-        static constexpr int nShards = 1 << logShards;
+        static constexpr int nShards   = 1 << logShards;
         std::shared_mutex mutex[nShards];
         std::unordered_set<Buffer, BufferHasher> cache[nShards];
         std::atomic<size_t> bytesUsed{};
@@ -108,4 +98,4 @@ namespace spectra
     void InitBufferCaches();
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_UTIL_BUFFERCACHE_H
+#endif // SPECTRA_PATHTRACER_UTIL_BUFFERCACHE_H

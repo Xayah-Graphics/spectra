@@ -1,29 +1,23 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_HASH_H
 #define SPECTRA_PATHTRACER_UTIL_HASH_H
 
-#include <spectra/pathtracer/util/float.h>
-
-#include <spectra/pathtracer/util/check.h>
-
-#include <string.h>
 #include <cstdint>
 #include <cstring>
+#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/util/float.h>
+#include <string.h>
 
-namespace spectra
-{
+namespace spectra {
     // https://github.com/explosion/murmurhash/blob/master/murmurhash/MurmurHash2.cpp
-    SPECTRA_CPU_GPU inline uint64_t MurmurHash64A(const unsigned char* key, size_t len,
-                                                  uint64_t seed)
-    {
+    SPECTRA_CPU_GPU inline uint64_t MurmurHash64A(const unsigned char* key, size_t len, uint64_t seed) {
         const uint64_t m = 0xc6a4a7935bd1e995ull;
-        const int r = 47;
+        const int r      = 47;
 
         uint64_t h = seed ^ (len * m);
 
         const unsigned char* end = key + 8 * (len / 8);
 
-        while (key != end)
-        {
+        while (key != end) {
             uint64_t k;
             std::memcpy(&k, key, sizeof(uint64_t));
             key += 8;
@@ -36,23 +30,14 @@ namespace spectra
             h *= m;
         }
 
-        switch (len & 7)
-        {
-        case 7:
-            h ^= uint64_t(key[6]) << 48;
-        case 6:
-            h ^= uint64_t(key[5]) << 40;
-        case 5:
-            h ^= uint64_t(key[4]) << 32;
-        case 4:
-            h ^= uint64_t(key[3]) << 24;
-        case 3:
-            h ^= uint64_t(key[2]) << 16;
-        case 2:
-            h ^= uint64_t(key[1]) << 8;
-        case 1:
-            h ^= uint64_t(key[0]);
-            h *= m;
+        switch (len & 7) {
+        case 7: h ^= uint64_t(key[6]) << 48;
+        case 6: h ^= uint64_t(key[5]) << 40;
+        case 5: h ^= uint64_t(key[4]) << 32;
+        case 4: h ^= uint64_t(key[3]) << 24;
+        case 3: h ^= uint64_t(key[2]) << 16;
+        case 2: h ^= uint64_t(key[1]) << 8;
+        case 1: h ^= uint64_t(key[0]); h *= m;
         };
 
         h ^= h >> r;
@@ -66,8 +51,7 @@ namespace spectra
     // http://zimbry.blogspot.ch/2011/09/better-bit-mixing-improving-on.html
     SPECTRA_CPU_GPU inline uint64_t MixBits(uint64_t v);
 
-    inline uint64_t MixBits(uint64_t v)
-    {
+    inline uint64_t MixBits(uint64_t v) {
         v ^= (v >> 31);
         v *= 0x7fb5d329728ea185;
         v ^= (v >> 27);
@@ -77,9 +61,8 @@ namespace spectra
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline uint64_t HashBuffer(const T* ptr, size_t nElements, uint64_t seed = 0)
-    {
-        return MurmurHash64A((const unsigned char*)ptr, nElements * sizeof(T), seed);
+    SPECTRA_CPU_GPU inline uint64_t HashBuffer(const T* ptr, size_t nElements, uint64_t seed = 0) {
+        return MurmurHash64A((const unsigned char*) ptr, nElements * sizeof(T), seed);
     }
 
     template <typename... Args>
@@ -89,33 +72,28 @@ namespace spectra
     SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf, Args...);
 
     template <>
-    SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf)
-    {
-    }
+    SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf) {}
 
     template <typename T, typename... Args>
-    SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf, T v, Args... args)
-    {
+    SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf, T v, Args... args) {
         memcpy(buf, &v, sizeof(T));
         hashRecursiveCopy(buf + sizeof(T), args...);
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline uint64_t Hash(Args... args)
-    {
+    SPECTRA_CPU_GPU inline uint64_t Hash(Args... args) {
         // C++, you never cease to amaze: https://stackoverflow.com/a/57246704
         constexpr size_t sz = (sizeof(Args) + ... + 0);
-        constexpr size_t n = (sz + 7) / 8;
+        constexpr size_t n  = (sz + 7) / 8;
         uint64_t buf[n];
-        hashRecursiveCopy((char*)buf, args...);
-        return MurmurHash64A((const unsigned char*)buf, sz, 0);
+        hashRecursiveCopy((char*) buf, args...);
+        return MurmurHash64A((const unsigned char*) buf, sz, 0);
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline Float HashFloat(Args... args)
-    {
+    SPECTRA_CPU_GPU inline Float HashFloat(Args... args) {
         return uint32_t(Hash(args...)) * 0x1p-32f;
     }
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_UTIL_HASH_H
+#endif // SPECTRA_PATHTRACER_UTIL_HASH_H

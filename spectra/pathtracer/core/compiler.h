@@ -3,7 +3,7 @@
 
 #if defined(__CUDACC__)
 #define SPECTRA_CPU_GPU __host__ __device__
-#define SPECTRA_GPU __device__
+#define SPECTRA_GPU     __device__
 #if defined(__CUDA_ARCH__)
 #define SPECTRA_CONST __device__ const
 #else
@@ -17,4 +17,4 @@
 
 #define SPECTRA_CPU_GPU_LAMBDA(...) [ =, *this ] SPECTRA_CPU_GPU(__VA_ARGS__) mutable
 
-#endif  // SPECTRA_COMPILER_H
+#endif // SPECTRA_COMPILER_H

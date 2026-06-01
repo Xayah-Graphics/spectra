@@ -3,13 +3,10 @@
 
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/memory.h>
-
 #include <spectra/pathtracer/util/taggedptr.h>
-
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     class TextureParameterDictionary;
     class SampledSpectrum;
     class SampledWavelengths;
@@ -35,23 +32,15 @@ namespace spectra
     class WrinkledTexture;
 
     // FloatTexture Definition
-    class FloatTexture
-        : public TaggedPointer< // FloatTextures
-            FloatImageTexture, GPUFloatImageTexture, FloatMixTexture,
-            FloatDirectionMixTexture, FloatScaledTexture, FloatConstantTexture,
-            FloatBilerpTexture, FloatCheckerboardTexture, FloatDotsTexture, FBmTexture,
-            FloatPtexTexture, GPUFloatPtexTexture, WindyTexture, WrinkledTexture
+    class FloatTexture : public TaggedPointer< // FloatTextures
+                             FloatImageTexture, GPUFloatImageTexture, FloatMixTexture, FloatDirectionMixTexture, FloatScaledTexture, FloatConstantTexture, FloatBilerpTexture, FloatCheckerboardTexture, FloatDotsTexture, FBmTexture, FloatPtexTexture, GPUFloatPtexTexture, WindyTexture, WrinkledTexture
 
-        >
-    {
+                             > {
     public:
         // FloatTexture Interface
         using TaggedPointer::TaggedPointer;
 
-        static FloatTexture Create(const std::string& name,
-                                   const Transform& renderFromTexture,
-                                   const TextureParameterDictionary& parameters,
-                                   const FileLoc* loc, Allocator alloc);
+        static FloatTexture Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
 
         SPECTRA_CPU_GPU inline Float Evaluate(TextureEvalContext ctx) const;
@@ -73,29 +62,19 @@ namespace spectra
     class SpectrumScaledTexture;
 
     // SpectrumTexture Definition
-    class SpectrumTexture
-        : public TaggedPointer< // SpectrumTextures
-            SpectrumImageTexture, GPUSpectrumImageTexture, SpectrumMixTexture,
-            SpectrumDirectionMixTexture, SpectrumScaledTexture, SpectrumConstantTexture,
-            SpectrumBilerpTexture, SpectrumCheckerboardTexture, MarbleTexture,
-            SpectrumDotsTexture, SpectrumPtexTexture, GPUSpectrumPtexTexture
+    class SpectrumTexture : public TaggedPointer< // SpectrumTextures
+                                SpectrumImageTexture, GPUSpectrumImageTexture, SpectrumMixTexture, SpectrumDirectionMixTexture, SpectrumScaledTexture, SpectrumConstantTexture, SpectrumBilerpTexture, SpectrumCheckerboardTexture, MarbleTexture, SpectrumDotsTexture, SpectrumPtexTexture, GPUSpectrumPtexTexture
 
-        >
-    {
+                                > {
     public:
         // SpectrumTexture Interface
         using TaggedPointer::TaggedPointer;
 
-        static SpectrumTexture Create(const std::string& name,
-                                      const Transform& renderFromTexture,
-                                      const TextureParameterDictionary& parameters,
-                                      SpectrumType spectrumType, const FileLoc* loc,
-                                      Allocator alloc);
+        static SpectrumTexture Create(const std::string& name, const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
 
-        SPECTRA_CPU_GPU inline SampledSpectrum Evaluate(TextureEvalContext ctx,
-                                                        SampledWavelengths lambda) const;
+        SPECTRA_CPU_GPU inline SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_BASE_TEXTURE_H
+#endif // SPECTRA_PATHTRACER_BASE_TEXTURE_H

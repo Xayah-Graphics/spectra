@@ -1,19 +1,16 @@
 #ifndef SPECTRA_PATHTRACER_GPU_UTIL_H
 #define SPECTRA_PATHTRACER_GPU_UTIL_H
 
-#include <spectra/pathtracer/util/float.h>
-
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/util/parallel.h>
-
+#include <cuda.h>
+#include <cuda_runtime_api.h>
 #include <map>
+#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/parallel.h>
 #include <typeindex>
 #include <typeinfo>
 #include <vector>
-
-#include <cuda.h>
-#include <cuda_runtime_api.h>
 
 #ifdef NVTX
 #ifdef UNICODE
@@ -23,12 +20,12 @@
 
 #ifdef RGB
 #undef RGB
-#endif  // RGB
+#endif // RGB
 #endif
 
-#define CUDA_CHECK(EXPR)                                        \
-    if (EXPR != cudaSuccess) {                                  \
-        cudaError_t error = cudaGetLastError();                 \
+#define CUDA_CHECK(EXPR)                                            \
+    if (EXPR != cudaSuccess) {                                      \
+        cudaError_t error = cudaGetLastError();                     \
         SPECTRA_FATAL("CUDA error: %s", cudaGetErrorString(error)); \
     } else /* eat semicolon */
 
@@ -36,29 +33,25 @@
     do {                                                            \
         CUresult result = EXPR;                                     \
         if (result != CUDA_SUCCESS) {                               \
-            const char *str;                                        \
+            const char* str;                                        \
             CHECK_EQ(CUDA_SUCCESS, cuGetErrorString(result, &str)); \
-            SPECTRA_FATAL("CUDA error: %s", str);                       \
+            SPECTRA_FATAL("CUDA error: %s", str);                   \
         }                                                           \
     } while (false) /* eat semicolon */
 
-namespace spectra
-{
+namespace spectra {
     template <typename F>
-    inline int GetBlockSize(const char* description, F kernel)
-    {
+    inline int GetBlockSize(const char* description, F kernel) {
         // Note: this isn't reentrant, but that's fine for our purposes...
         static std::map<std::type_index, int> kernelBlockSizes;
 
         std::type_index index = std::type_index(typeid(F));
 
         auto iter = kernelBlockSizes.find(index);
-        if (iter != kernelBlockSizes.end())
-            return iter->second;
+        if (iter != kernelBlockSizes.end()) return iter->second;
 
         int minGridSize, blockSize;
-        CUDA_CHECK(
-            cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, kernel, 0, 0));
+        CUDA_CHECK(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, kernel, 0, 0));
         kernelBlockSizes[index] = blockSize;
 
         return blockSize;
@@ -66,11 +59,9 @@ namespace spectra
 
 #ifdef __NVCC__
     template <typename F>
-    __global__ void Kernel(F func, int nItems)
-    {
+    __global__ void Kernel(F func, int nItems) {
         int tid = blockIdx.x * blockDim.x + threadIdx.x;
-        if (tid >= nItems)
-            return;
+        if (tid >= nItems) return;
 
         func(tid);
     }
@@ -80,8 +71,7 @@ namespace spectra
     void GPUParallelFor(const char* description, int nItems, F func);
 
     template <typename F>
-    void GPUParallelFor(const char* description, int nItems, F func)
-    {
+    void GPUParallelFor(const char* description, int nItems, F func) {
 #ifdef NVTX
         nvtxRangePush(description);
 #endif
@@ -100,7 +90,7 @@ namespace spectra
 #endif
     }
 
-#endif  // __NVCC__
+#endif // __NVCC__
 
     // GPU Synchronization Function Declarations
     void GPUWait();
@@ -114,4 +104,4 @@ namespace spectra
     void GPUNameStream(cudaStream_t stream, const char* name);
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_GPU_UTIL_H
+#endif // SPECTRA_PATHTRACER_GPU_UTIL_H

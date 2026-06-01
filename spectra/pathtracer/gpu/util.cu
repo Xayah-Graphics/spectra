@@ -1,11 +1,8 @@
-#include <spectra/pathtracer/gpu/util.h>
-
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-
 #include <cstdio>
+#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/core/options.h>
+#include <spectra/pathtracer/gpu/util.h>
+#include <spectra/pathtracer/util/check.h>
 #include <string>
 
 #ifdef NVTX
@@ -13,23 +10,20 @@
 #include <windows.h>
 #else
 #include <sys/syscall.h>
-#endif  // SPECTRA_IS_WINDOWS
+#endif // SPECTRA_IS_WINDOWS
 #include "nvtx3/nvToolsExt.h"
 #include "nvtx3/nvToolsExtCuda.h"
 #endif
 
-namespace spectra
-{
-    void GPUInit()
-    {
+namespace spectra {
+    void GPUInit() {
         cudaFree(nullptr);
 
         int driverVersion;
         CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
         int runtimeVersion;
         CUDA_CHECK(cudaRuntimeGetVersion(&runtimeVersion));
-        auto versionToString = [](int version)
-        {
+        auto versionToString = [](int version) {
             int major = version / 1000;
             int minor = (version - major * 1000) / 10;
             return std::to_string(major) + "." + std::to_string(minor);
@@ -38,8 +32,7 @@ namespace spectra
         int nDevices;
         CUDA_CHECK(cudaGetDeviceCount(&nDevices));
         std::string devices;
-        for (int i = 0; i < nDevices; ++i)
-        {
+        for (int i = 0; i < nDevices; ++i) {
             cudaDeviceProp deviceProperties;
             CUDA_CHECK(cudaGetDeviceProperties(&deviceProperties, i));
             CHECK(deviceProperties.canMapHostMemory);
@@ -50,12 +43,9 @@ namespace spectra
 
             char deviceString[512];
             std::snprintf(deviceString, sizeof(deviceString),
-                          "CUDA device %d (%s) with %g MiB, %d SMs running at %g MHz "
-                          "with shader model %d.%d",
-                          i, deviceProperties.name,
-                          static_cast<double>(deviceProperties.totalGlobalMem) / (1024. * 1024.),
-                          deviceProperties.multiProcessorCount, static_cast<double>(clockRate) / 1000.,
-                          deviceProperties.major, deviceProperties.minor);
+                "CUDA device %d (%s) with %g MiB, %d SMs running at %g MHz "
+                "with shader model %d.%d",
+                i, deviceProperties.name, static_cast<double>(deviceProperties.totalGlobalMem) / (1024. * 1024.), deviceProperties.multiProcessorCount, static_cast<double>(clockRate) / 1000., deviceProperties.major, deviceProperties.minor);
             devices += deviceString;
             devices += "\n";
         }
@@ -68,7 +58,7 @@ namespace spectra
                                                                   "Please select a single GPU and use the --gpu-device command line "
                                                                   "option to specify it.\n"
                                                                   "Found devices:\n%s",
-                                                                  devices));
+                devices));
 #endif
 
         int device = Options->gpuDevice ? *Options->gpuDevice : 0;
@@ -78,11 +68,8 @@ namespace spectra
         CUDA_CHECK(cudaSetDevice(device));
 
         int hasUnifiedAddressing;
-        CUDA_CHECK(cudaDeviceGetAttribute(&hasUnifiedAddressing, cudaDevAttrUnifiedAddressing,
-            device));
-        if (!hasUnifiedAddressing)
-            SPECTRA_FATAL("The selected GPU device (%d) does not support unified addressing.",
-                      device);
+        CUDA_CHECK(cudaDeviceGetAttribute(&hasUnifiedAddressing, cudaDevAttrUnifiedAddressing, device));
+        if (!hasUnifiedAddressing) SPECTRA_FATAL("The selected GPU device (%d) does not support unified addressing.", device);
 
         CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
         size_t stackSize;
@@ -98,17 +85,15 @@ namespace spectra
 #else
         nvtxNameOsThread(syscall(SYS_gettid), "MAIN_THREAD");
 #endif
-#endif  // NVTX
+#endif // NVTX
     }
 
-    void GPUThreadInit()
-    {
+    void GPUThreadInit() {
         int device = Options->gpuDevice ? *Options->gpuDevice : 0;
         CUDA_CHECK(cudaSetDevice(device));
     }
 
-    void GPURegisterThread(const char* name)
-    {
+    void GPURegisterThread(const char* name) {
 #ifdef NVTX
 #ifdef SPECTRA_IS_WINDOWS
         nvtxNameOsThread(GetCurrentThreadId(), name);
@@ -118,20 +103,17 @@ namespace spectra
 #endif
     }
 
-    void GPUNameStream(cudaStream_t stream, const char* name)
-    {
+    void GPUNameStream(cudaStream_t stream, const char* name) {
 #ifdef NVTX
         nvtxNameCuStream(stream, name);
 #endif
     }
 
-    void GPUWait()
-    {
+    void GPUWait() {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    void GPUMemset(void* ptr, int byte, size_t bytes)
-    {
+    void GPUMemset(void* ptr, int byte, size_t bytes) {
         CUDA_CHECK(cudaMemset(ptr, byte, bytes));
     }
 } // namespace spectra

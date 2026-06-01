@@ -1,59 +1,49 @@
 #ifndef SPECTRA_PATHTRACER_CORE_LIGHTSAMPLERS_H
 #define SPECTRA_PATHTRACER_CORE_LIGHTSAMPLERS_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <algorithm>
+#include <cstdint>
 #include <spectra/pathtracer/base/light.h>
 #include <spectra/pathtracer/base/lightsampler.h>
-#include <spectra/pathtracer/core/lights.h>  // LightBounds. Should that live elsewhere?
+#include <spectra/pathtracer/core/lights.h> // LightBounds. Should that live elsewhere?
 #include <spectra/pathtracer/util/containers.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/hash.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/sampling.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
-#include <algorithm>
-#include <cstdint>
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     // UniformLightSampler Definition
-    class UniformLightSampler
-    {
+    class UniformLightSampler {
     public:
         // UniformLightSampler Public Methods
-        UniformLightSampler(pstd::span<const Light> lights, Allocator alloc)
-            : lights(lights.begin(), lights.end(), alloc)
-        {
-        }
+        UniformLightSampler(pstd::span<const Light> lights, Allocator alloc) : lights(lights.begin(), lights.end(), alloc) {}
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(Float u) const
-        {
-            if (lights.empty())
-                return {};
+        pstd::optional<SampledLight> Sample(Float u) const {
+            if (lights.empty()) return {};
             int lightIndex = std::min<int>(u * lights.size(), lights.size() - 1);
             return SampledLight{lights[lightIndex], 1.f / lights.size()};
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(Light light) const
-        {
-            if (lights.empty())
-                return 0;
+        Float PMF(Light light) const {
+            if (lights.empty()) return 0;
             return 1.f / lights.size();
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const
-        {
+        pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const {
             return Sample(u);
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(const LightSampleContext& ctx, Light light) const { return PMF(light); }
+        Float PMF(const LightSampleContext& ctx, Light light) const {
+            return PMF(light);
+        }
 
     private:
         // UniformLightSampler Private Members
@@ -61,38 +51,34 @@ namespace spectra
     };
 
     // PowerLightSampler Definition
-    class PowerLightSampler
-    {
+    class PowerLightSampler {
     public:
         // PowerLightSampler Public Methods
         PowerLightSampler(pstd::span<const Light> lights, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(Float u) const
-        {
-            if (!aliasTable.size())
-                return {};
+        pstd::optional<SampledLight> Sample(Float u) const {
+            if (!aliasTable.size()) return {};
             Float pmf;
             int lightIndex = aliasTable.Sample(u, &pmf);
             return SampledLight{lights[lightIndex], pmf};
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(Light light) const
-        {
-            if (!aliasTable.size())
-                return 0;
+        Float PMF(Light light) const {
+            if (!aliasTable.size()) return 0;
             return aliasTable.PMF(lightToIndex[light]);
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const
-        {
+        pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const {
             return Sample(u);
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(const LightSampleContext& ctx, Light light) const { return PMF(light); }
+        Float PMF(const LightSampleContext& ctx, Light light) const {
+            return PMF(light);
+        }
 
     private:
         // PowerLightSampler Private Members
@@ -102,86 +88,66 @@ namespace spectra
     };
 
     // CompactLightBounds Definition
-    class CompactLightBounds
-    {
+    class CompactLightBounds {
     public:
         // CompactLightBounds Public Methods
         CompactLightBounds() = default;
 
         SPECTRA_CPU_GPU
-        CompactLightBounds(const LightBounds& lb, const Bounds3f& allb)
-            : w(Normalize(lb.w)),
-              phi(lb.phi),
-              qCosTheta_o(QuantizeCos(lb.cosTheta_o)),
-              qCosTheta_e(QuantizeCos(lb.cosTheta_e)),
-              twoSided(lb.twoSided)
-        {
+        CompactLightBounds(const LightBounds& lb, const Bounds3f& allb) : w(Normalize(lb.w)), phi(lb.phi), qCosTheta_o(QuantizeCos(lb.cosTheta_o)), qCosTheta_e(QuantizeCos(lb.cosTheta_e)), twoSided(lb.twoSided) {
             // Quantize bounding box into _qb_
-            for (int c = 0; c < 3; ++c)
-            {
-                qb[0][c] =
-                    pstd::floor(QuantizeBounds(lb.bounds[0][c], allb.pMin[c], allb.pMax[c]));
-                qb[1][c] =
-                    pstd::ceil(QuantizeBounds(lb.bounds[1][c], allb.pMin[c], allb.pMax[c]));
+            for (int c = 0; c < 3; ++c) {
+                qb[0][c] = pstd::floor(QuantizeBounds(lb.bounds[0][c], allb.pMin[c], allb.pMax[c]));
+                qb[1][c] = pstd::ceil(QuantizeBounds(lb.bounds[1][c], allb.pMin[c], allb.pMax[c]));
             }
         }
 
 
         SPECTRA_CPU_GPU
-        bool TwoSided() const { return twoSided; }
-
-        SPECTRA_CPU_GPU
-        Float CosTheta_o() const { return 2 * (qCosTheta_o / 32767.f) - 1; }
-
-        SPECTRA_CPU_GPU
-        Float CosTheta_e() const { return 2 * (qCosTheta_e / 32767.f) - 1; }
-
-        SPECTRA_CPU_GPU
-        Bounds3f Bounds(const Bounds3f& allb) const
-        {
-            return {
-                Point3f(Lerp(qb[0][0] / 65535.f, allb.pMin.x, allb.pMax.x),
-                        Lerp(qb[0][1] / 65535.f, allb.pMin.y, allb.pMax.y),
-                        Lerp(qb[0][2] / 65535.f, allb.pMin.z, allb.pMax.z)),
-                Point3f(Lerp(qb[1][0] / 65535.f, allb.pMin.x, allb.pMax.x),
-                        Lerp(qb[1][1] / 65535.f, allb.pMin.y, allb.pMax.y),
-                        Lerp(qb[1][2] / 65535.f, allb.pMin.z, allb.pMax.z))
-            };
+        bool TwoSided() const {
+            return twoSided;
         }
 
         SPECTRA_CPU_GPU
-        Float Importance(Point3f p, Normal3f n, const Bounds3f& allb) const
-        {
-            Bounds3f bounds = Bounds(allb);
+        Float CosTheta_o() const {
+            return 2 * (qCosTheta_o / 32767.f) - 1;
+        }
+
+        SPECTRA_CPU_GPU
+        Float CosTheta_e() const {
+            return 2 * (qCosTheta_e / 32767.f) - 1;
+        }
+
+        SPECTRA_CPU_GPU
+        Bounds3f Bounds(const Bounds3f& allb) const {
+            return {Point3f(Lerp(qb[0][0] / 65535.f, allb.pMin.x, allb.pMax.x), Lerp(qb[0][1] / 65535.f, allb.pMin.y, allb.pMax.y), Lerp(qb[0][2] / 65535.f, allb.pMin.z, allb.pMax.z)), Point3f(Lerp(qb[1][0] / 65535.f, allb.pMin.x, allb.pMax.x), Lerp(qb[1][1] / 65535.f, allb.pMin.y, allb.pMax.y), Lerp(qb[1][2] / 65535.f, allb.pMin.z, allb.pMax.z))};
+        }
+
+        SPECTRA_CPU_GPU
+        Float Importance(Point3f p, Normal3f n, const Bounds3f& allb) const {
+            Bounds3f bounds  = Bounds(allb);
             Float cosTheta_o = CosTheta_o(), cosTheta_e = CosTheta_e();
             // Return importance for light bounds at reference point
             // Compute clamped squared distance to reference point
             Point3f pc = (bounds.pMin + bounds.pMax) / 2;
-            Float d2 = DistanceSquared(p, pc);
-            d2 = std::max(d2, Length(bounds.Diagonal()) / 2);
+            Float d2   = DistanceSquared(p, pc);
+            d2         = std::max(d2, Length(bounds.Diagonal()) / 2);
 
             // Define cosine and sine clamped subtraction lambdas
-            auto cosSubClamped = [](Float sinTheta_a, Float cosTheta_a, Float sinTheta_b,
-                                    Float cosTheta_b) -> Float
-            {
-                if (cosTheta_a > cosTheta_b)
-                    return 1;
+            auto cosSubClamped = [](Float sinTheta_a, Float cosTheta_a, Float sinTheta_b, Float cosTheta_b) -> Float {
+                if (cosTheta_a > cosTheta_b) return 1;
                 return cosTheta_a * cosTheta_b + sinTheta_a * sinTheta_b;
             };
 
-            auto sinSubClamped = [](Float sinTheta_a, Float cosTheta_a, Float sinTheta_b,
-                                    Float cosTheta_b) -> Float
-            {
-                if (cosTheta_a > cosTheta_b)
-                    return 0;
+            auto sinSubClamped = [](Float sinTheta_a, Float cosTheta_a, Float sinTheta_b, Float cosTheta_b) -> Float {
+                if (cosTheta_a > cosTheta_b) return 0;
                 return sinTheta_a * cosTheta_b - cosTheta_a * sinTheta_b;
             };
 
             // Compute sine and cosine of angle to vector _w_, $\theta_\roman{w}$
-            Vector3f wi = Normalize(p - pc);
+            Vector3f wi      = Normalize(p - pc);
             Float cosTheta_w = Dot(Vector3f(w), wi);
-            if (twoSided)
-                cosTheta_w = std::abs(cosTheta_w);
+            if (twoSided) cosTheta_w = std::abs(cosTheta_w);
             Float sinTheta_w = SafeSqrt(1 - Sqr(cosTheta_w));
 
             // Compute $\cos\,\theta_\roman{\+b}$ for reference point
@@ -192,20 +158,17 @@ namespace spectra
             Float sinTheta_o = SafeSqrt(1 - Sqr(cosTheta_o));
             Float cosTheta_x = cosSubClamped(sinTheta_w, cosTheta_w, sinTheta_o, cosTheta_o);
             Float sinTheta_x = sinSubClamped(sinTheta_w, cosTheta_w, sinTheta_o, cosTheta_o);
-            Float cosThetap = cosSubClamped(sinTheta_x, cosTheta_x, sinTheta_b, cosTheta_b);
-            if (cosThetap <= cosTheta_e)
-                return 0;
+            Float cosThetap  = cosSubClamped(sinTheta_x, cosTheta_x, sinTheta_b, cosTheta_b);
+            if (cosThetap <= cosTheta_e) return 0;
 
             // Return final importance at reference point
             Float importance = phi * cosThetap / d2;
             DCHECK_GE(importance, -1e-3);
             // Account for $\cos\theta_\roman{i}$ in importance at surfaces
-            if (n != Normal3f(0, 0, 0))
-            {
-                Float cosTheta_i = AbsDot(wi, n);
-                Float sinTheta_i = SafeSqrt(1 - Sqr(cosTheta_i));
-                Float cosThetap_i =
-                    cosSubClamped(sinTheta_i, cosTheta_i, sinTheta_b, cosTheta_b);
+            if (n != Normal3f(0, 0, 0)) {
+                Float cosTheta_i  = AbsDot(wi, n);
+                Float sinTheta_i  = SafeSqrt(1 - Sqr(cosTheta_i));
+                Float cosThetap_i = cosSubClamped(sinTheta_i, cosTheta_i, sinTheta_b, cosTheta_b);
                 importance *= cosThetap_i;
             }
 
@@ -216,18 +179,15 @@ namespace spectra
     private:
         // CompactLightBounds Private Methods
         SPECTRA_CPU_GPU
-        static unsigned int QuantizeCos(Float c)
-        {
+        static unsigned int QuantizeCos(Float c) {
             CHECK(c >= -1 && c <= 1);
             return pstd::floor(32767.f * ((c + 1) / 2));
         }
 
         SPECTRA_CPU_GPU
-        static Float QuantizeBounds(Float c, Float min, Float max)
-        {
+        static Float QuantizeBounds(Float c, Float min, Float max) {
             CHECK(c >= min && c <= max);
-            if (min == max)
-                return 0;
+            if (min == max) return 0;
             return 65535.f * Clamp((c - min) / (max - min), 0, 1);
         }
 
@@ -235,8 +195,7 @@ namespace spectra
         OctahedralVector w;
         Float phi = 0;
 
-        struct
-        {
+        struct {
             unsigned int qCosTheta_o : 15;
             unsigned int qCosTheta_e : 15;
             unsigned int twoSided : 1;
@@ -246,27 +205,19 @@ namespace spectra
     };
 
     // LightBVHNode Definition
-    struct alignas(32) LightBVHNode
-    {
+    struct alignas(32) LightBVHNode {
         // LightBVHNode Public Methods
         LightBVHNode() = default;
         SPECTRA_CPU_GPU
-        LightBVHNode(const CompactLightBounds& lightBounds, unsigned int childOrLightIndex,
-                     unsigned int isLeaf)
-            : lightBounds(lightBounds), childOrLightIndex(childOrLightIndex), isLeaf(isLeaf)
-        {
-        }
+        LightBVHNode(const CompactLightBounds& lightBounds, unsigned int childOrLightIndex, unsigned int isLeaf) : lightBounds(lightBounds), childOrLightIndex(childOrLightIndex), isLeaf(isLeaf) {}
 
         SPECTRA_CPU_GPU
-        static LightBVHNode MakeLeaf(unsigned int lightIndex, const CompactLightBounds& cb)
-        {
+        static LightBVHNode MakeLeaf(unsigned int lightIndex, const CompactLightBounds& cb) {
             return LightBVHNode(cb, lightIndex, 1);
         }
 
         SPECTRA_CPU_GPU
-        static LightBVHNode MakeInterior(unsigned int child1Index,
-                                         const CompactLightBounds& cb)
-        {
+        static LightBVHNode MakeInterior(unsigned int child1Index, const CompactLightBounds& cb) {
             return LightBVHNode(cb, child1Index, 0);
         }
 
@@ -277,80 +228,57 @@ namespace spectra
         // LightBVHNode Public Members
         CompactLightBounds lightBounds;
 
-        struct
-        {
+        struct {
             unsigned int childOrLightIndex : 31;
             unsigned int isLeaf : 1;
         };
     };
 
     // BVHLightSampler Definition
-    class BVHLightSampler
-    {
+    class BVHLightSampler {
     public:
         // BVHLightSampler Public Methods
         BVHLightSampler(pstd::span<const Light> lights, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const
-        {
+        pstd::optional<SampledLight> Sample(const LightSampleContext& ctx, Float u) const {
             // Compute infinite light sampling probability _pInfinite_
-            Float pInfinite = Float(infiniteLights.size()) /
-                Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
+            Float pInfinite = Float(infiniteLights.size()) / Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
 
-            if (u < pInfinite)
-            {
+            if (u < pInfinite) {
                 // Sample infinite lights with uniform probability
                 u /= pInfinite;
-                int index =
-                    std::min<int>(u * infiniteLights.size(), infiniteLights.size() - 1);
+                int index = std::min<int>(u * infiniteLights.size(), infiniteLights.size() - 1);
                 Float pmf = pInfinite / infiniteLights.size();
                 return SampledLight{infiniteLights[index], pmf};
-            }
-            else
-            {
+            } else {
                 // Traverse light BVH to sample light
-                if (nodes.empty())
-                    return {};
+                if (nodes.empty()) return {};
                 // Declare common variables for light BVH traversal
-                Point3f p = ctx.p();
-                Normal3f n = ctx.ns;
-                u = std::min<Float>((u - pInfinite) / (1 - pInfinite), OneMinusEpsilon);
+                Point3f p     = ctx.p();
+                Normal3f n    = ctx.ns;
+                u             = std::min<Float>((u - pInfinite) / (1 - pInfinite), OneMinusEpsilon);
                 int nodeIndex = 0;
-                Float pmf = 1 - pInfinite;
+                Float pmf     = 1 - pInfinite;
 
-                while (true)
-                {
+                while (true) {
                     // Process light BVH node for light sampling
                     LightBVHNode node = nodes[nodeIndex];
-                    if (!node.isLeaf)
-                    {
+                    if (!node.isLeaf) {
                         // Compute light BVH child node importances
-                        const LightBVHNode* children[2] = {
-                            &nodes[nodeIndex + 1],
-                            &nodes[node.childOrLightIndex]
-                        };
-                        Float ci[2] = {
-                            children[0]->lightBounds.Importance(p, n, allLightBounds),
-                            children[1]->lightBounds.Importance(p, n, allLightBounds)
-                        };
-                        if (ci[0] == 0 && ci[1] == 0)
-                            return {};
+                        const LightBVHNode* children[2] = {&nodes[nodeIndex + 1], &nodes[node.childOrLightIndex]};
+                        Float ci[2]                     = {children[0]->lightBounds.Importance(p, n, allLightBounds), children[1]->lightBounds.Importance(p, n, allLightBounds)};
+                        if (ci[0] == 0 && ci[1] == 0) return {};
 
                         // Randomly sample light BVH child node
                         Float nodePMF;
                         int child = SampleDiscrete(ci, u, &nodePMF, &u);
                         pmf *= nodePMF;
                         nodeIndex = (child == 0) ? (nodeIndex + 1) : node.childOrLightIndex;
-                    }
-                    else
-                    {
+                    } else {
                         // Confirm light has nonzero importance before returning light sample
-                        if (nodeIndex > 0)
-                            DCHECK_GT(node.lightBounds.Importance(p, n, allLightBounds), 0);
-                        if (nodeIndex > 0 ||
-                            node.lightBounds.Importance(p, n, allLightBounds) > 0)
-                            return SampledLight{lights[node.childOrLightIndex], pmf};
+                        if (nodeIndex > 0) DCHECK_GT(node.lightBounds.Importance(p, n, allLightBounds), 0);
+                        if (nodeIndex > 0 || node.lightBounds.Importance(p, n, allLightBounds) > 0) return SampledLight{lights[node.childOrLightIndex], pmf};
                         return {};
                     }
                 }
@@ -358,39 +286,31 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(const LightSampleContext& ctx, Light light) const
-        {
+        Float PMF(const LightSampleContext& ctx, Light light) const {
             // Handle infinite _light_ PMF computation
-            if (!lightToBitTrail.HasKey(light))
-                return 1.f / (infiniteLights.size() + (nodes.empty() ? 0 : 1));
+            if (!lightToBitTrail.HasKey(light)) return 1.f / (infiniteLights.size() + (nodes.empty() ? 0 : 1));
 
             // Initialize local variables for BVH traversal for PMF computation
             uint32_t bitTrail = lightToBitTrail[light];
-            Point3f p = ctx.p();
-            Normal3f n = ctx.ns;
+            Point3f p         = ctx.p();
+            Normal3f n        = ctx.ns;
             // Compute infinite light sampling probability _pInfinite_
-            Float pInfinite = Float(infiniteLights.size()) /
-                Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
+            Float pInfinite = Float(infiniteLights.size()) / Float(infiniteLights.size() + (nodes.empty() ? 0 : 1));
 
-            Float pmf = 1 - pInfinite;
+            Float pmf     = 1 - pInfinite;
             int nodeIndex = 0;
 
             // Compute light's PMF by walking down tree nodes to the light
-            while (true)
-            {
+            while (true) {
                 const LightBVHNode* node = &nodes[nodeIndex];
-                if (node->isLeaf)
-                {
+                if (node->isLeaf) {
                     DCHECK_EQ(light, lights[node->childOrLightIndex]);
                     return pmf;
                 }
                 // Compute child importances and update PMF for current node
                 const LightBVHNode* child0 = &nodes[nodeIndex + 1];
                 const LightBVHNode* child1 = &nodes[node->childOrLightIndex];
-                Float ci[2] = {
-                    child0->lightBounds.Importance(p, n, allLightBounds),
-                    child1->lightBounds.Importance(p, n, allLightBounds)
-                };
+                Float ci[2]                = {child0->lightBounds.Importance(p, n, allLightBounds), child1->lightBounds.Importance(p, n, allLightBounds)};
                 DCHECK_GT(ci[bitTrail & 1], 0);
                 pmf *= ci[bitTrail & 1] / (ci[0] + ci[1]);
 
@@ -401,38 +321,28 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(Float u) const
-        {
-            if (lights.empty())
-                return {};
+        pstd::optional<SampledLight> Sample(Float u) const {
+            if (lights.empty()) return {};
             int lightIndex = std::min<int>(u * lights.size(), lights.size() - 1);
             return SampledLight{lights[lightIndex], 1.f / lights.size()};
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(Light light) const
-        {
-            if (lights.empty())
-                return 0;
+        Float PMF(Light light) const {
+            if (lights.empty()) return 0;
             return 1.f / lights.size();
         }
 
     private:
         // BVHLightSampler Private Methods
-        std::pair<int, LightBounds> buildBVH(
-            std::vector<std::pair<int, LightBounds>>& bvhLights, int start, int end,
-            uint32_t bitTrail, int depth);
+        std::pair<int, LightBounds> buildBVH(std::vector<std::pair<int, LightBounds>>& bvhLights, int start, int end, uint32_t bitTrail, int depth);
 
-        Float EvaluateCost(const LightBounds& b, const Bounds3f& bounds, int dim) const
-        {
+        Float EvaluateCost(const LightBounds& b, const Bounds3f& bounds, int dim) const {
             // Evaluate direction bounds measure for _LightBounds_
             Float theta_o = std::acos(b.cosTheta_o), theta_e = std::acos(b.cosTheta_e);
-            Float theta_w = std::min(theta_o + theta_e, Pi);
+            Float theta_w    = std::min(theta_o + theta_e, Pi);
             Float sinTheta_o = SafeSqrt(1 - Sqr(b.cosTheta_o));
-            Float M_omega = 2 * Pi * (1 - b.cosTheta_o) +
-                Pi / 2 *
-                (2 * theta_w * sinTheta_o - std::cos(theta_o - 2 * theta_w) -
-                    2 * theta_o * sinTheta_o + b.cosTheta_o);
+            Float M_omega    = 2 * Pi * (1 - b.cosTheta_o) + Pi / 2 * (2 * theta_w * sinTheta_o - std::cos(theta_o - 2 * theta_w) - 2 * theta_o * sinTheta_o + b.cosTheta_o);
 
             // Return complete cost estimate for _LightBounds_
             Float Kr = MaxComponentValue(bounds.Diagonal()) / bounds.Diagonal()[dim];
@@ -448,8 +358,7 @@ namespace spectra
     };
 
     // ExhaustiveLightSampler Definition
-    class ExhaustiveLightSampler
-    {
+    class ExhaustiveLightSampler {
     public:
         ExhaustiveLightSampler(pstd::span<const Light> lights, Allocator alloc);
 
@@ -460,20 +369,16 @@ namespace spectra
         Float PMF(const LightSampleContext& ctx, Light light) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<SampledLight> Sample(Float u) const
-        {
-            if (lights.empty())
-                return {};
+        pstd::optional<SampledLight> Sample(Float u) const {
+            if (lights.empty()) return {};
 
             int lightIndex = std::min<int>(u * lights.size(), lights.size() - 1);
             return SampledLight{lights[lightIndex], 1.f / lights.size()};
         }
 
         SPECTRA_CPU_GPU
-        Float PMF(Light light) const
-        {
-            if (lights.empty())
-                return 0;
+        Float PMF(Light light) const {
+            if (lights.empty()) return 0;
             return 1.f / lights.size();
         }
 
@@ -484,4 +389,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_CORE_LIGHTSAMPLERS_H
+#endif // SPECTRA_PATHTRACER_CORE_LIGHTSAMPLERS_H

@@ -1,15 +1,13 @@
 #ifndef SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H
 #define SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <atomic>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/gpu/util.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/parallel.h>
 #include <spectra/pathtracer/util/pstd.h>
-
-#include <atomic>
 #include <utility>
 
 #if defined(__CUDA_ARCH__)
@@ -21,29 +19,24 @@
 #if (__CUDA_ARCH__ < 600)
 #define SPECTRA_USE_LEGACY_CUDA_ATOMICS
 #endif
-#endif  // SPECTRA_IS_WINDOWS
+#endif // SPECTRA_IS_WINDOWS
 
 #ifndef SPECTRA_USE_LEGACY_CUDA_ATOMICS
 #include <cuda/atomic>
 #endif
-#endif  // __CUDA_ARCH__
+#endif // __CUDA_ARCH__
 
-namespace spectra
-{
+namespace spectra {
     // WorkQueue Definition
     template <typename WorkItem>
-    class WorkQueue : public SOA<WorkItem>
-    {
+    class WorkQueue : public SOA<WorkItem> {
     public:
         // WorkQueue Public Methods
         WorkQueue() = default;
 
-        WorkQueue(int n, Allocator alloc) : SOA<WorkItem>(n, alloc)
-        {
-        }
+        WorkQueue(int n, Allocator alloc) : SOA<WorkItem>(n, alloc) {}
 
-        WorkQueue& operator=(const WorkQueue& w)
-        {
+        WorkQueue& operator=(const WorkQueue& w) {
             SOA<WorkItem>::operator=(w);
 #if defined(__CUDA_ARCH__) && defined(SPECTRA_USE_LEGACY_CUDA_ATOMICS)
             size = w.size;
@@ -54,8 +47,7 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        int Size() const
-        {
+        int Size() const {
 #if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
             return size;
@@ -68,8 +60,7 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        void Reset()
-        {
+        void Reset() {
 #if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
             size = 0;
@@ -82,9 +73,8 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        int Push(WorkItem w)
-        {
-            int index = AllocateEntry();
+        int Push(WorkItem w) {
+            int index      = AllocateEntry();
             (*this)[index] = w;
             return index;
         }
@@ -92,8 +82,7 @@ namespace spectra
     protected:
         // WorkQueue Protected Methods
         SPECTRA_CPU_GPU
-        int AllocateEntry()
-        {
+        int AllocateEntry() {
 #if defined(__CUDA_ARCH__)
 #ifdef SPECTRA_USE_LEGACY_CUDA_ATOMICS
             return atomicAdd(&size, 1);
@@ -115,18 +104,14 @@ namespace spectra
 #endif
 #else
         std::atomic<int> size{0};
-#endif  // __CUDA_ARCH__
+#endif // __CUDA_ARCH__
     };
 
     // WorkQueue Inline Functions
     template <typename F, typename WorkItem>
-    void ForAllQueued(const char* desc, const WorkQueue<WorkItem>* q, int maxQueued,
-                      F&& func)
-    {
-        GPUParallelFor(desc, maxQueued, [=] SPECTRA_GPU(int index) mutable
-        {
-            if (index >= q->Size())
-                return;
+    void ForAllQueued(const char* desc, const WorkQueue<WorkItem>* q, int maxQueued, F&& func) {
+        GPUParallelFor(desc, maxQueued, [=] SPECTRA_GPU(int index) mutable {
+            if (index >= q->Size()) return;
             func((*q)[index]);
         });
     }
@@ -136,36 +121,33 @@ namespace spectra
     class MultiWorkQueue;
 
     template <typename... Ts>
-    class MultiWorkQueue<TypePack<Ts...>>
-    {
+    class MultiWorkQueue<TypePack<Ts...>> {
     public:
         // MultiWorkQueue Public Methods
         template <typename T>
-        SPECTRA_CPU_GPU WorkQueue<T>* Get()
-        {
+        SPECTRA_CPU_GPU WorkQueue<T>* Get() {
             return &pstd::get<WorkQueue<T>>(queues);
         }
 
-        MultiWorkQueue(int n, Allocator alloc, pstd::span<const bool> haveType)
-        {
+        MultiWorkQueue(int n, Allocator alloc, pstd::span<const bool> haveType) {
             int index = 0;
             ((*Get<Ts>() = WorkQueue<Ts>(haveType[index++] ? n : 1, alloc)), ...);
         }
 
         template <typename T>
-        SPECTRA_CPU_GPU int Size() const
-        {
+        SPECTRA_CPU_GPU int Size() const {
             return Get<T>()->Size();
         }
 
         template <typename T>
-        SPECTRA_CPU_GPU int Push(const T& value)
-        {
+        SPECTRA_CPU_GPU int Push(const T& value) {
             return Get<T>()->Push(value);
         }
 
         SPECTRA_CPU_GPU
-        void Reset() { (Get<Ts>()->Reset(), ...); }
+        void Reset() {
+            (Get<Ts>()->Reset(), ...);
+        }
 
     private:
         // MultiWorkQueue Private Members
@@ -173,4 +155,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H
+#endif // SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H

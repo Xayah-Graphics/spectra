@@ -1,24 +1,20 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_MIPMAP_H
 #define SPECTRA_PATHTRACER_UTIL_MIPMAP_H
 
+#include <memory>
 #include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
 #include <spectra/pathtracer/util/image.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
-#include <memory>
 #include <string>
 #include <vector>
 
-namespace spectra
-{
+namespace spectra {
     // FilterFunction Definition
     enum class FilterFunction { Point, Bilinear, Trilinear, EWA };
 
-    inline pstd::optional<FilterFunction> ParseFilter(const std::string& f)
-    {
+    inline pstd::optional<FilterFunction> ParseFilter(const std::string& f) {
         if (f == "ewa" || f == "EWA")
             return FilterFunction::EWA;
         else if (f == "trilinear")
@@ -32,41 +28,40 @@ namespace spectra
     }
 
     // MIPMapFilterOptions Definition
-    struct MIPMapFilterOptions
-    {
+    struct MIPMapFilterOptions {
         FilterFunction filter = FilterFunction::EWA;
-        Float maxAnisotropy = 8.f;
+        Float maxAnisotropy   = 8.f;
 
-        bool operator<(MIPMapFilterOptions o) const
-        {
+        bool operator<(MIPMapFilterOptions o) const {
             return std::tie(filter, maxAnisotropy) < std::tie(o.filter, o.maxAnisotropy);
         }
     };
 
     // MIPMap Definition
-    class MIPMap
-    {
+    class MIPMap {
     public:
         // MIPMap Public Methods
-        MIPMap(Image image, const RGBColorSpace* colorSpace, WrapMode wrapMode,
-               Allocator alloc, const MIPMapFilterOptions& options);
-        static MIPMap* CreateFromFile(const std::string& filename,
-                                      const MIPMapFilterOptions& options, WrapMode wrapMode,
-                                      ColorEncoding encoding, Allocator alloc);
+        MIPMap(Image image, const RGBColorSpace* colorSpace, WrapMode wrapMode, Allocator alloc, const MIPMapFilterOptions& options);
+        static MIPMap* CreateFromFile(const std::string& filename, const MIPMapFilterOptions& options, WrapMode wrapMode, ColorEncoding encoding, Allocator alloc);
 
         template <typename T>
         T Filter(Point2f st, Vector2f dstdx, Vector2f dstdy) const;
 
 
-        Point2i LevelResolution(int level) const
-        {
+        Point2i LevelResolution(int level) const {
             CHECK(level >= 0 && level < pyramid.size());
             return pyramid[level].Resolution();
         }
 
-        int Levels() const { return int(pyramid.size()); }
-        const RGBColorSpace* GetRGBColorSpace() const { return colorSpace; }
-        const Image& GetLevel(int level) const { return pyramid[level]; }
+        int Levels() const {
+            return int(pyramid.size());
+        }
+        const RGBColorSpace* GetRGBColorSpace() const {
+            return colorSpace;
+        }
+        const Image& GetLevel(int level) const {
+            return pyramid[level];
+        }
 
     private:
         // MIPMap Private Methods
@@ -85,4 +80,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_UTIL_MIPMAP_H
+#endif // SPECTRA_PATHTRACER_UTIL_MIPMAP_H

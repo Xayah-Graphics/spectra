@@ -1,58 +1,54 @@
 #ifndef SPECTRA_PATHTRACER_UTIL_MATH_H
 #define SPECTRA_PATHTRACER_UTIL_MATH_H
 
-#include <spectra/pathtracer/util/float.h>
-
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/pstd.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/pstd.h>
 #include <string>
 #include <type_traits>
 
 #ifdef SPECTRA_HAS_INTRIN_H
 #include <intrin.h>
-#endif  // SPECTRA_HAS_INTRIN_H
+#endif // SPECTRA_HAS_INTRIN_H
 
-namespace spectra
-{
+namespace spectra {
     template <typename T>
     struct SOA;
 
 #if defined(__CUDA_ARCH__)
 
 #define ShadowEpsilon 0.0001f
-#define Pi Float(3.14159265358979323846)
-#define InvPi Float(0.31830988618379067154)
-#define Inv2Pi Float(0.15915494309189533577)
-#define Inv4Pi Float(0.07957747154594766788)
-#define PiOver2 Float(1.57079632679489661923)
-#define PiOver4 Float(0.78539816339744830961)
-#define Sqrt2 Float(1.41421356237309504880)
+#define Pi            Float(3.14159265358979323846)
+#define InvPi         Float(0.31830988618379067154)
+#define Inv2Pi        Float(0.15915494309189533577)
+#define Inv4Pi        Float(0.07957747154594766788)
+#define PiOver2       Float(1.57079632679489661923)
+#define PiOver4       Float(0.78539816339744830961)
+#define Sqrt2         Float(1.41421356237309504880)
 
 #else
 
     // Mathematical Constants
     constexpr Float ShadowEpsilon = 0.0001f;
 
-    constexpr Float Pi = 3.14159265358979323846;
-    constexpr Float InvPi = 0.31830988618379067154;
-    constexpr Float Inv2Pi = 0.15915494309189533577;
-    constexpr Float Inv4Pi = 0.07957747154594766788;
+    constexpr Float Pi      = 3.14159265358979323846;
+    constexpr Float InvPi   = 0.31830988618379067154;
+    constexpr Float Inv2Pi  = 0.15915494309189533577;
+    constexpr Float Inv4Pi  = 0.07957747154594766788;
     constexpr Float PiOver2 = 1.57079632679489661923;
     constexpr Float PiOver4 = 0.78539816339744830961;
-    constexpr Float Sqrt2 = 1.41421356237309504880;
+    constexpr Float Sqrt2   = 1.41421356237309504880;
 
 #endif
 
     // Bit Operation Inline Functions
     SPECTRA_CPU_GPU
-    inline uint32_t ReverseBits32(uint32_t n)
-    {
+    inline uint32_t ReverseBits32(uint32_t n) {
 #if defined(__CUDA_ARCH__)
         return __brev(n);
 #else
@@ -66,13 +62,12 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline uint64_t ReverseBits64(uint64_t n)
-    {
+    inline uint64_t ReverseBits64(uint64_t n) {
 #if defined(__CUDA_ARCH__)
         return __brevll(n);
 #else
-        uint64_t n0 = ReverseBits32((uint32_t)n);
-        uint64_t n1 = ReverseBits32((uint32_t)(n >> 32));
+        uint64_t n0 = ReverseBits32((uint32_t) n);
+        uint64_t n1 = ReverseBits32((uint32_t) (n >> 32));
         return (n0 << 32) | n1;
 #endif
     }
@@ -80,8 +75,7 @@ namespace spectra
     // https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
     // updated to 64 bits.
     SPECTRA_CPU_GPU
-    inline uint64_t LeftShift2(uint64_t x)
-    {
+    inline uint64_t LeftShift2(uint64_t x) {
         x &= 0xffffffff;
         x = (x ^ (x << 16)) & 0x0000ffff0000ffff;
         x = (x ^ (x << 8)) & 0x00ff00ff00ff00ff;
@@ -92,17 +86,14 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline uint64_t EncodeMorton2(uint32_t x, uint32_t y)
-    {
+    inline uint64_t EncodeMorton2(uint32_t x, uint32_t y) {
         return (LeftShift2(y) << 1) | LeftShift2(x);
     }
 
     SPECTRA_CPU_GPU
-    inline uint32_t LeftShift3(uint32_t x)
-    {
+    inline uint32_t LeftShift3(uint32_t x) {
         DCHECK_LE(x, (1u << 10));
-        if (x == (1 << 10))
-            --x;
+        if (x == (1 << 10)) --x;
         x = (x | (x << 16)) & 0b00000011000000000000000011111111;
         // x = ---- --98 ---- ---- ---- ---- 7654 3210
         x = (x | (x << 8)) & 0b00000011000000001111000000001111;
@@ -114,8 +105,7 @@ namespace spectra
         return x;
     }
 
-    SPECTRA_CPU_GPU inline uint32_t EncodeMorton3(float x, float y, float z)
-    {
+    SPECTRA_CPU_GPU inline uint32_t EncodeMorton3(float x, float y, float z) {
         DCHECK_GE(x, 0);
         DCHECK_GE(y, 0);
         DCHECK_GE(z, 0);
@@ -123,8 +113,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline uint32_t Compact1By1(uint64_t x)
-    {
+    inline uint32_t Compact1By1(uint64_t x) {
         // TODO: as of Haswell, the PEXT instruction could do all this in a
         // single instruction.
         // x = -f-e -d-c -b-a -9-8 -7-6 -5-4 -3-2 -1-0
@@ -143,15 +132,13 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline void DecodeMorton2(uint64_t v, uint32_t* x, uint32_t* y)
-    {
+    inline void DecodeMorton2(uint64_t v, uint32_t* x, uint32_t* y) {
         *x = Compact1By1(v);
         *y = Compact1By1(v >> 1);
     }
 
     SPECTRA_CPU_GPU
-    inline uint32_t Compact1By2(uint32_t x)
-    {
+    inline uint32_t Compact1By2(uint32_t x) {
         x &= 0x09249249; // x = ---- 9--8 --7- -6-- 5--4 --3- -2-- 1--0
         x = (x ^ (x >> 2)) & 0x030c30c3; // x = ---- --98 ---- 76-- --54 ---- 32-- --10
         x = (x ^ (x >> 4)) & 0x0300f00f; // x = ---- --98 ---- ---- 7654 ---- ---- 3210
@@ -162,56 +149,54 @@ namespace spectra
 
     // CompensatedSum Definition
     template <typename Float>
-    class CompensatedSum
-    {
+    class CompensatedSum {
     public:
         // CompensatedSum Public Methods
         CompensatedSum() = default;
         SPECTRA_CPU_GPU
-        explicit CompensatedSum(Float v) : sum(v)
-        {
-        }
+        explicit CompensatedSum(Float v) : sum(v) {}
 
         SPECTRA_CPU_GPU
-        CompensatedSum& operator=(Float v)
-        {
+        CompensatedSum& operator=(Float v) {
             sum = v;
-            c = 0;
+            c   = 0;
             return *this;
         }
 
         SPECTRA_CPU_GPU
-        CompensatedSum& operator+=(Float v)
-        {
-            Float delta = v - c;
+        CompensatedSum& operator+=(Float v) {
+            Float delta  = v - c;
             Float newSum = sum + delta;
-            c = (newSum - sum) - delta;
-            sum = newSum;
+            c            = (newSum - sum) - delta;
+            sum          = newSum;
             return *this;
         }
 
         SPECTRA_CPU_GPU
-        explicit operator Float() const { return sum; }
+        explicit operator Float() const {
+            return sum;
+        }
 
     private:
         Float sum = 0, c = 0;
     };
 
     // CompensatedFloat Definition
-    struct CompensatedFloat
-    {
+    struct CompensatedFloat {
     public:
         // CompensatedFloat Public Methods
         SPECTRA_CPU_GPU
-        CompensatedFloat(Float v, Float err = 0) : v(v), err(err)
-        {
+        CompensatedFloat(Float v, Float err = 0) : v(v), err(err) {}
+
+        SPECTRA_CPU_GPU
+        explicit operator float() const {
+            return v + err;
         }
 
         SPECTRA_CPU_GPU
-        explicit operator float() const { return v + err; }
-
-        SPECTRA_CPU_GPU
-        explicit operator double() const { return double(v) + double(err); }
+        explicit operator double() const {
+            return double(v) + double(err);
+        }
 
 
         Float v, err;
@@ -222,39 +207,32 @@ namespace spectra
     SPECTRA_CPU_GPU inline Float SinXOverX(Float x);
 
     // Math Inline Functions
-    SPECTRA_CPU_GPU inline Float Lerp(Float x, Float a, Float b)
-    {
+    SPECTRA_CPU_GPU inline Float Lerp(Float x, Float a, Float b) {
         return (1 - x) * a + x * b;
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> FMA(T a, T b,
-                                                                                   T c)
-    {
+    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> FMA(T a, T b, T c) {
         return a * b + c;
     }
 
     SPECTRA_CPU_GPU inline Float Sinc(Float);
-    SPECTRA_CPU_GPU inline Float WindowedSinc(Float x, Float radius, Float tau)
-    {
-        if (std::abs(x) > radius)
-            return 0;
+    SPECTRA_CPU_GPU inline Float WindowedSinc(Float x, Float radius, Float tau) {
+        if (std::abs(x) > radius) return 0;
         return Sinc(x) * Sinc(x / tau);
     }
 
-    SPECTRA_CPU_GPU inline Float Sinc(Float x)
-    {
+    SPECTRA_CPU_GPU inline Float Sinc(Float x) {
         return SinXOverX(Pi * x);
     }
 
 #ifdef SPECTRA_IS_MSVC
 #pragma warning(push)
-#pragma warning(disable : 4018)  // signed/unsigned mismatch
+#pragma warning(disable : 4018) // signed/unsigned mismatch
 #endif
 
     template <typename T, typename U, typename V>
-    SPECTRA_CPU_GPU inline constexpr T Clamp(T val, U low, V high)
-    {
+    SPECTRA_CPU_GPU inline constexpr T Clamp(T val, U low, V high) {
         if (val < low)
             return T(low);
         else if (val > high)
@@ -268,157 +246,129 @@ namespace spectra
 #endif
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T Mod(T a, T b)
-    {
+    SPECTRA_CPU_GPU inline T Mod(T a, T b) {
         T result = a - (a / b) * b;
-        return (T)((result < 0) ? result + b : result);
+        return (T) ((result < 0) ? result + b : result);
     }
 
     template <>
-    SPECTRA_CPU_GPU inline Float Mod(Float a, Float b)
-    {
+    SPECTRA_CPU_GPU inline Float Mod(Float a, Float b) {
         return std::fmod(a, b);
     }
 
-    SPECTRA_CPU_GPU inline Float Radians(Float deg)
-    {
+    SPECTRA_CPU_GPU inline Float Radians(Float deg) {
         return (Pi / 180) * deg;
     }
 
-    SPECTRA_CPU_GPU inline Float Degrees(Float rad)
-    {
+    SPECTRA_CPU_GPU inline Float Degrees(Float rad) {
         return (180 / Pi) * rad;
     }
 
-    SPECTRA_CPU_GPU inline Float SmoothStep(Float x, Float a, Float b)
-    {
-        if (a == b)
-            return (x < a) ? 0 : 1;
+    SPECTRA_CPU_GPU inline Float SmoothStep(Float x, Float a, Float b) {
+        if (a == b) return (x < a) ? 0 : 1;
         DCHECK_LT(a, b);
         Float t = Clamp((x - a) / (b - a), 0, 1);
         return t * t * (3 - 2 * t);
     }
 
-    SPECTRA_CPU_GPU inline float SafeSqrt(float x)
-    {
+    SPECTRA_CPU_GPU inline float SafeSqrt(float x) {
         DCHECK_GE(x, -1e-3f); // not too negative
         return std::sqrt(std::max(0.f, x));
     }
 
     SPECTRA_CPU_GPU
-    inline double SafeSqrt(double x)
-    {
+    inline double SafeSqrt(double x) {
         DCHECK_GE(x, -1e-3); // not too negative
         return std::sqrt(std::max(0., x));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline constexpr T Sqr(T v)
-    {
+    SPECTRA_CPU_GPU inline constexpr T Sqr(T v) {
         return v * v;
     }
 
     // Would be nice to allow Float to be a template type here, but it is tricky:
     // https://stackoverflow.com/questions/5101516/why-function-template-cannot-be-partially-specialized
     template <int n>
-    SPECTRA_CPU_GPU inline constexpr float Pow(float v)
-    {
-        if constexpr (n < 0)
-            return 1 / Pow<-n>(v);
+    SPECTRA_CPU_GPU inline constexpr float Pow(float v) {
+        if constexpr (n < 0) return 1 / Pow<-n>(v);
         float n2 = Pow<n / 2>(v);
         return n2 * n2 * Pow<n & 1>(v);
     }
 
     template <>
-    SPECTRA_CPU_GPU inline constexpr float Pow<1>(float v)
-    {
+    SPECTRA_CPU_GPU inline constexpr float Pow<1>(float v) {
         return v;
     }
 
     template <>
-    SPECTRA_CPU_GPU inline constexpr float Pow<0>(float v)
-    {
+    SPECTRA_CPU_GPU inline constexpr float Pow<0>(float v) {
         return 1;
     }
 
     template <int n>
-    SPECTRA_CPU_GPU inline constexpr double Pow(double v)
-    {
-        if constexpr (n < 0)
-            return 1 / Pow<-n>(v);
+    SPECTRA_CPU_GPU inline constexpr double Pow(double v) {
+        if constexpr (n < 0) return 1 / Pow<-n>(v);
         double n2 = Pow<n / 2>(v);
         return n2 * n2 * Pow<n & 1>(v);
     }
 
     template <>
-    SPECTRA_CPU_GPU inline constexpr double Pow<1>(double v)
-    {
+    SPECTRA_CPU_GPU inline constexpr double Pow<1>(double v) {
         return v;
     }
 
     template <>
-    SPECTRA_CPU_GPU inline constexpr double Pow<0>(double v)
-    {
+    SPECTRA_CPU_GPU inline constexpr double Pow<0>(double v) {
         return 1;
     }
 
     template <typename Float, typename C>
-    SPECTRA_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c)
-    {
+    SPECTRA_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c) {
         return c;
     }
 
     template <typename Float, typename C, typename... Args>
-    SPECTRA_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c, Args... cRemaining)
-    {
+    SPECTRA_CPU_GPU inline constexpr Float EvaluatePolynomial(Float t, C c, Args... cRemaining) {
         return FMA(t, EvaluatePolynomial(t, cRemaining...), c);
     }
 
     // http://www.plunk.org/~hatch/rightway.html
-    SPECTRA_CPU_GPU inline Float SinXOverX(Float x)
-    {
-        if (1 - x * x == 1)
-            return 1;
+    SPECTRA_CPU_GPU inline Float SinXOverX(Float x) {
+        if (1 - x * x == 1) return 1;
         return std::sin(x) / x;
     }
 
-    SPECTRA_CPU_GPU inline float SafeASin(float x)
-    {
+    SPECTRA_CPU_GPU inline float SafeASin(float x) {
         DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::asin(Clamp(x, -1, 1));
     }
 
-    SPECTRA_CPU_GPU inline float SafeACos(float x)
-    {
+    SPECTRA_CPU_GPU inline float SafeACos(float x) {
         DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::acos(Clamp(x, -1, 1));
     }
 
     SPECTRA_CPU_GPU
-    inline double SafeASin(double x)
-    {
+    inline double SafeASin(double x) {
         DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::asin(Clamp(x, -1, 1));
     }
 
     SPECTRA_CPU_GPU
-    inline double SafeACos(double x)
-    {
+    inline double SafeACos(double x) {
         DCHECK(x >= -1.0001 && x <= 1.0001);
         return std::acos(Clamp(x, -1, 1));
     }
 
-    SPECTRA_CPU_GPU inline Float Log2(Float x)
-    {
+    SPECTRA_CPU_GPU inline Float Log2(Float x) {
         const Float invLog2 = 1.442695040888963387004650940071;
         return std::log(x) * invLog2;
     }
 
-    SPECTRA_CPU_GPU inline int Log2Int(float v)
-    {
+    SPECTRA_CPU_GPU inline int Log2Int(float v) {
         DCHECK_GT(v, 0);
-        if (v < 1)
-            return -Log2Int(1 / v);
+        if (v < 1) return -Log2Int(1 / v);
         // https://graphics.stanford.edu/~seander/bithacks.html#IntegerLog
         // (With an additional check of the significant to get round-to-nearest
         // rather than round down.)
@@ -430,11 +380,9 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline int Log2Int(double v)
-    {
+    inline int Log2Int(double v) {
         DCHECK_GT(v, 0);
-        if (v < 1)
-            return -Log2Int(1 / v);
+        if (v < 1) return -Log2Int(1 / v);
         // https://graphics.stanford.edu/~seander/bithacks.html#IntegerLog
         // (With an additional check of the significant to get round-to-nearest
         // rather than round down.)
@@ -445,14 +393,12 @@ namespace spectra
         return Exponent(v) + ((Significand(v) >= midsignif) ? 1 : 0);
     }
 
-    SPECTRA_CPU_GPU inline int Log2Int(uint32_t v)
-    {
+    SPECTRA_CPU_GPU inline int Log2Int(uint32_t v) {
 #if defined(__CUDA_ARCH__)
         return 31 - __clz(v);
 #elif defined(SPECTRA_HAS_INTRIN_H)
         unsigned long lz = 0;
-        if (_BitScanReverse(&lz, v))
-            return lz;
+        if (_BitScanReverse(&lz, v)) return lz;
         return 0;
 #else
         return 31 - __builtin_clz(v);
@@ -460,14 +406,12 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline int Log2Int(int32_t v)
-    {
-        return Log2Int((uint32_t)v);
+    inline int Log2Int(int32_t v) {
+        return Log2Int((uint32_t) v);
     }
 
     SPECTRA_CPU_GPU
-    inline int Log2Int(uint64_t v)
-    {
+    inline int Log2Int(uint64_t v) {
 #if defined(__CUDA_ARCH__)
         return 64 - __clzll(v);
 #elif defined(SPECTRA_HAS_INTRIN_H)
@@ -479,28 +423,25 @@ namespace spectra
             lz += 32;
         else
             _BitScanReverse(&lz, v & 0xffffffff);
-#endif  // _WIN64
+#endif // _WIN64
         return lz;
-#else   // SPECTRA_HAS_INTRIN_H
+#else // SPECTRA_HAS_INTRIN_H
         return 63 - __builtin_clzll(v);
 #endif
     }
 
     SPECTRA_CPU_GPU
-    inline int Log2Int(int64_t v)
-    {
-        return Log2Int((uint64_t)v);
+    inline int Log2Int(int64_t v) {
+        return Log2Int((uint64_t) v);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline int Log4Int(T v)
-    {
+    SPECTRA_CPU_GPU inline int Log4Int(T v) {
         return Log2Int(v) / 2;
     }
 
     // https://stackoverflow.com/a/10792321
-    SPECTRA_CPU_GPU inline float FastExp(float x)
-    {
+    SPECTRA_CPU_GPU inline float FastExp(float x) {
 #if defined(__CUDA_ARCH__)
         return __expf(x);
 #else
@@ -509,17 +450,15 @@ namespace spectra
 
         // Find integer and fractional components of $x'$
         float fxp = pstd::floor(xp), f = xp - fxp;
-        int i = (int)fxp;
+        int i = (int) fxp;
 
         // Evaluate polynomial approximation of $2^f$
         float twoToF = EvaluatePolynomial(f, 1.f, 0.695556856f, 0.226173572f, 0.0781455737f);
 
         // Scale $2^f$ by $2^i$ and return final result
         int exponent = Exponent(twoToF) + i;
-        if (exponent < -126)
-            return 0;
-        if (exponent > 127)
-            return Infinity;
+        if (exponent < -126) return 0;
+        if (exponent > 127) return Infinity;
         uint32_t bits = FloatToBits(twoToF);
         bits &= 0b10000000011111111111111111111111u;
         bits |= (exponent + 127) << 23;
@@ -527,33 +466,26 @@ namespace spectra
 #endif
     }
 
-    SPECTRA_CPU_GPU inline Float Gaussian(Float x, Float mu = 0, Float sigma = 1)
-    {
-        return 1 / std::sqrt(2 * Pi * sigma * sigma) *
-            FastExp(-Sqr(x - mu) / (2 * sigma * sigma));
+    SPECTRA_CPU_GPU inline Float Gaussian(Float x, Float mu = 0, Float sigma = 1) {
+        return 1 / std::sqrt(2 * Pi * sigma * sigma) * FastExp(-Sqr(x - mu) / (2 * sigma * sigma));
     }
 
-    SPECTRA_CPU_GPU inline Float GaussianIntegral(Float x0, Float x1, Float mu = 0,
-                                                  Float sigma = 1)
-    {
+    SPECTRA_CPU_GPU inline Float GaussianIntegral(Float x0, Float x1, Float mu = 0, Float sigma = 1) {
         DCHECK_GT(sigma, 0);
         Float sigmaRoot2 = sigma * Float(1.414213562373095);
         return 0.5f * (std::erf((mu - x0) / sigmaRoot2) - std::erf((mu - x1) / sigmaRoot2));
     }
 
-    SPECTRA_CPU_GPU inline Float Logistic(Float x, Float s)
-    {
+    SPECTRA_CPU_GPU inline Float Logistic(Float x, Float s) {
         x = std::abs(x);
         return std::exp(-x / s) / (s * Sqr(1 + std::exp(-x / s)));
     }
 
-    SPECTRA_CPU_GPU inline Float LogisticCDF(Float x, Float s)
-    {
+    SPECTRA_CPU_GPU inline Float LogisticCDF(Float x, Float s) {
         return 1 / (1 + std::exp(-x / s));
     }
 
-    SPECTRA_CPU_GPU inline Float TrimmedLogistic(Float x, Float s, Float a, Float b)
-    {
+    SPECTRA_CPU_GPU inline Float TrimmedLogistic(Float x, Float s, Float a, Float b) {
         DCHECK_LT(a, b);
         return Logistic(x, s) / (LogisticCDF(b, s) - LogisticCDF(a, s));
     }
@@ -563,35 +495,30 @@ namespace spectra
     SPECTRA_CPU_GPU inline Float LogI0(Float x);
 
     template <typename Predicate>
-    SPECTRA_CPU_GPU inline size_t FindInterval(size_t sz, const Predicate& pred)
-    {
+    SPECTRA_CPU_GPU inline size_t FindInterval(size_t sz, const Predicate& pred) {
         using ssize_t = std::make_signed_t<size_t>;
-        ssize_t size = (ssize_t)sz - 2, first = 1;
-        while (size > 0)
-        {
+        ssize_t size = (ssize_t) sz - 2, first = 1;
+        while (size > 0) {
             // Evaluate predicate at midpoint and update _first_ and _size_
-            size_t half = (size_t)size >> 1, middle = first + half;
+            size_t half = (size_t) size >> 1, middle = first + half;
             bool predResult = pred(middle);
-            first = predResult ? middle + 1 : first;
-            size = predResult ? size - (half + 1) : half;
+            first           = predResult ? middle + 1 : first;
+            size            = predResult ? size - (half + 1) : half;
         }
-        return (size_t)Clamp((ssize_t)first - 1, 0, sz - 2);
+        return (size_t) Clamp((ssize_t) first - 1, 0, sz - 2);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline constexpr bool IsPowerOf2(T v)
-    {
+    SPECTRA_CPU_GPU inline constexpr bool IsPowerOf2(T v) {
         return v && !(v & (v - 1));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool IsPowerOf4(T v)
-    {
+    SPECTRA_CPU_GPU inline bool IsPowerOf4(T v) {
         return v == 1 << (2 * Log4Int(v));
     }
 
-    SPECTRA_CPU_GPU inline constexpr int32_t RoundUpPow2(int32_t v)
-    {
+    SPECTRA_CPU_GPU inline constexpr int32_t RoundUpPow2(int32_t v) {
         v--;
         v |= v >> 1;
         v |= v >> 2;
@@ -602,8 +529,7 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline constexpr int64_t RoundUpPow2(int64_t v)
-    {
+    inline constexpr int64_t RoundUpPow2(int64_t v) {
         v--;
         v |= v >> 1;
         v |= v >> 2;
@@ -615,47 +541,40 @@ namespace spectra
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T RoundUpPow4(T v)
-    {
+    SPECTRA_CPU_GPU inline T RoundUpPow4(T v) {
         return IsPowerOf4(v) ? v : (1 << (2 * (1 + Log4Int(v))));
     }
 
-    SPECTRA_CPU_GPU inline CompensatedFloat TwoProd(Float a, Float b)
-    {
+    SPECTRA_CPU_GPU inline CompensatedFloat TwoProd(Float a, Float b) {
         Float ab = a * b;
         return {ab, FMA(a, b, -ab)};
     }
 
-    SPECTRA_CPU_GPU inline CompensatedFloat TwoSum(Float a, Float b)
-    {
+    SPECTRA_CPU_GPU inline CompensatedFloat TwoSum(Float a, Float b) {
         Float s = a + b, delta = s - a;
         return {s, (a - (s - delta)) + (b - delta)};
     }
 
     template <typename Ta, typename Tb, typename Tc, typename Td>
-    SPECTRA_CPU_GPU inline auto DifferenceOfProducts(Ta a, Tb b, Tc c, Td d)
-    {
-        auto cd = c * d;
+    SPECTRA_CPU_GPU inline auto DifferenceOfProducts(Ta a, Tb b, Tc c, Td d) {
+        auto cd                   = c * d;
         auto differenceOfProducts = FMA(a, b, -cd);
-        auto error = FMA(-c, d, cd);
+        auto error                = FMA(-c, d, cd);
         return differenceOfProducts + error;
     }
 
     template <typename Ta, typename Tb, typename Tc, typename Td>
-    SPECTRA_CPU_GPU inline auto SumOfProducts(Ta a, Tb b, Tc c, Td d)
-    {
-        auto cd = c * d;
+    SPECTRA_CPU_GPU inline auto SumOfProducts(Ta a, Tb b, Tc c, Td d) {
+        auto cd            = c * d;
         auto sumOfProducts = FMA(a, b, cd);
-        auto error = FMA(c, d, -cd);
+        auto error         = FMA(c, d, -cd);
         return sumOfProducts + error;
     }
 
-    namespace internal
-    {
+    namespace internal {
         // InnerProduct Helper Functions
         template <typename Float>
-        SPECTRA_CPU_GPU inline CompensatedFloat InnerProduct(Float a, Float b)
-        {
+        SPECTRA_CPU_GPU inline CompensatedFloat InnerProduct(Float a, Float b) {
             return TwoProd(a, b);
         }
 
@@ -665,95 +584,77 @@ namespace spectra
         // Accurate summation, dot product and polynomial evaluation in complex
         // floating point arithmetic, Graillat and Menissier-Morain.
         template <typename Float, typename... T>
-        SPECTRA_CPU_GPU inline CompensatedFloat InnerProduct(Float a, Float b, T... terms)
-        {
-            CompensatedFloat ab = TwoProd(a, b);
-            CompensatedFloat tp = InnerProduct(terms...);
+        SPECTRA_CPU_GPU inline CompensatedFloat InnerProduct(Float a, Float b, T... terms) {
+            CompensatedFloat ab  = TwoProd(a, b);
+            CompensatedFloat tp  = InnerProduct(terms...);
             CompensatedFloat sum = TwoSum(ab.v, tp.v);
             return {sum.v, ab.err + (tp.err + sum.err)};
         }
     } // namespace internal
 
     template <typename... T>
-    SPECTRA_CPU_GPU inline std::enable_if_t<std::conjunction_v<std::is_arithmetic<T>...>, Float>
-    InnerProduct(T... terms)
-    {
+    SPECTRA_CPU_GPU inline std::enable_if_t<std::conjunction_v<std::is_arithmetic<T>...>, Float> InnerProduct(T... terms) {
         CompensatedFloat ip = internal::InnerProduct(terms...);
         return Float(ip);
     }
 
-    SPECTRA_CPU_GPU inline bool Quadratic(float a, float b, float c, float* t0, float* t1)
-    {
+    SPECTRA_CPU_GPU inline bool Quadratic(float a, float b, float c, float* t0, float* t1) {
         // Handle case of $a=0$ for quadratic solution
-        if (a == 0)
-        {
-            if (b == 0)
-                return false;
+        if (a == 0) {
+            if (b == 0) return false;
             *t0 = *t1 = -c / b;
             return true;
         }
 
         // Find quadratic discriminant
         float discrim = DifferenceOfProducts(b, b, 4 * a, c);
-        if (discrim < 0)
-            return false;
+        if (discrim < 0) return false;
         float rootDiscrim = std::sqrt(discrim);
 
         // Compute quadratic _t_ values
         float q = -0.5f * (b + pstd::copysign(rootDiscrim, b));
-        *t0 = q / a;
-        *t1 = c / q;
-        if (*t0 > *t1)
-            pstd::swap(*t0, *t1);
+        *t0     = q / a;
+        *t1     = c / q;
+        if (*t0 > *t1) pstd::swap(*t0, *t1);
 
         return true;
     }
 
     SPECTRA_CPU_GPU
-    inline bool Quadratic(double a, double b, double c, double* t0, double* t1)
-    {
+    inline bool Quadratic(double a, double b, double c, double* t0, double* t1) {
         // Find quadratic discriminant
         double discrim = DifferenceOfProducts(b, b, 4 * a, c);
-        if (discrim < 0)
-            return false;
+        if (discrim < 0) return false;
         double rootDiscrim = std::sqrt(discrim);
 
-        if (a == 0)
-        {
+        if (a == 0) {
             *t0 = *t1 = -c / b;
             return true;
         }
 
         // Compute quadratic _t_ values
         double q = -0.5 * (b + pstd::copysign(rootDiscrim, b));
-        *t0 = q / a;
-        *t1 = c / q;
-        if (*t0 > *t1)
-            pstd::swap(*t0, *t1);
+        *t0      = q / a;
+        *t1      = c / q;
+        if (*t0 > *t1) pstd::swap(*t0, *t1);
         return true;
     }
 
     template <typename Func>
-    SPECTRA_CPU_GPU inline Float NewtonBisection(Float x0, Float x1, Func f, Float xEps = 1e-6f,
-                                                 Float fEps = 1e-6f)
-    {
+    SPECTRA_CPU_GPU inline Float NewtonBisection(Float x0, Float x1, Func f, Float xEps = 1e-6f, Float fEps = 1e-6f) {
         // Check function endpoints for roots
         DCHECK_LT(x0, x1);
         Float fx0 = f(x0).first, fx1 = f(x1).first;
-        if (std::abs(fx0) < fEps)
-            return x0;
-        if (std::abs(fx1) < fEps)
-            return x1;
+        if (std::abs(fx0) < fEps) return x0;
+        if (std::abs(fx1) < fEps) return x1;
         bool startIsNegative = fx0 < 0;
 
         // Set initial midpoint using linear approximation of _f_
         Float xMid = x0 + (x1 - x0) * -fx0 / (fx1 - fx0);
 
-        while (true)
-        {
+        while (true) {
             // Fall back to bisection if _xMid_ is out of bounds
-            if (!(x0 < xMid && xMid < x1))
-                xMid = (x0 + x1) / 2;
+            if (!(x0 < xMid && xMid < x1)) xMid = (x0 + x1) / 2;
 
             // Evaluate function and narrow bracket range _[x0, x1]_
             std::pair<Float, Float> fxMid = f(xMid);
@@ -764,8 +665,7 @@ namespace spectra
                 x1 = xMid;
 
             // Stop the iteration if converged
-            if ((x1 - x0) < xEps || std::abs(fxMid.first) < fEps)
-                return xMid;
+            if ((x1 - x0) < xEps || std::abs(fxMid.first) < fEps) return xMid;
 
             // Perform a Newton step
             xMid -= fxMid.first / fxMid.second;
@@ -773,27 +673,22 @@ namespace spectra
     }
 
     template <int N>
-    pstd::optional<SquareMatrix<N>> LinearLeastSquares(const Float A[][N], const Float B[][N],
-                                                       int rows);
+    pstd::optional<SquareMatrix<N>> LinearLeastSquares(const Float A[][N], const Float B[][N], int rows);
 
     template <int N>
-    pstd::optional<SquareMatrix<N>> LinearLeastSquares(const Float A[][N], const Float B[][N],
-                                                       int rows)
-    {
+    pstd::optional<SquareMatrix<N>> LinearLeastSquares(const Float A[][N], const Float B[][N], int rows) {
         SquareMatrix<N> AtA = SquareMatrix<N>::Zero();
         SquareMatrix<N> AtB = SquareMatrix<N>::Zero();
 
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j)
-                for (int r = 0; r < rows; ++r)
-                {
+                for (int r = 0; r < rows; ++r) {
                     AtA[i][j] += A[r][i] * A[r][j];
                     AtB[i][j] += A[r][i] * B[r][j];
                 }
 
         auto AtAi = Inverse(AtA);
-        if (!AtAi)
-            return {};
+        if (!AtAi) return {};
         return Transpose(*AtAi * AtB);
     }
 
@@ -804,16 +699,14 @@ namespace spectra
     SPECTRA_CPU_GPU inline int PermutationElement(uint32_t i, uint32_t n, uint32_t seed);
 
     SPECTRA_CPU_GPU
-    inline int PermutationElement(uint32_t i, uint32_t l, uint32_t p)
-    {
+    inline int PermutationElement(uint32_t i, uint32_t l, uint32_t p) {
         uint32_t w = l - 1;
         w |= w >> 1;
         w |= w >> 2;
         w |= w >> 4;
         w |= w >> 8;
         w |= w >> 16;
-        do
-        {
+        do {
             i ^= p;
             i *= 0xe170893d;
             i ^= p >> 16;
@@ -832,14 +725,12 @@ namespace spectra
             i *= 0xc860a3df;
             i &= w;
             i ^= i >> 5;
-        }
-        while (i >= l);
+        } while (i >= l);
         return (i + p) % l;
     }
 
     SPECTRA_CPU_GPU
-    inline Float ErfInv(Float a)
-    {
+    inline Float ErfInv(Float a) {
 #if defined(__CUDA_ARCH__)
         return erfinv(a);
 #else
@@ -847,8 +738,7 @@ namespace spectra
         float p;
         float t = std::log(std::max(FMA(a, -a, 1), std::numeric_limits<Float>::min()));
         CHECK(!IsNaN(t) && !IsInf(t));
-        if (std::abs(t) > 6.125f)
-        {
+        if (std::abs(t) > 6.125f) {
             // maximum ulp error = 2.35793
             p = 3.03697567e-10f; //  0x1.4deb44p-32
             p = FMA(p, t, 2.93243101e-8f); //  0x1.f7c9aep-26
@@ -859,9 +749,7 @@ namespace spectra
             p = FMA(p, t, 4.83185798e-3f); //  0x1.3ca920p-8
             p = FMA(p, t, -2.64646143e-1f); // -0x1.0eff66p-2
             p = FMA(p, t, 8.40016484e-1f); //  0x1.ae16a4p-1
-        }
-        else
-        {
+        } else {
             // maximum ulp error = 2.35456
             p = 5.43877832e-9f; //  0x1.75c000p-28
             p = FMA(p, t, 1.43286059e-7f); //  0x1.33b458p-23
@@ -875,21 +763,18 @@ namespace spectra
             p = FMA(p, t, 8.86226892e-1f); //  0x1.c5bf88p-1
         }
         return a * p;
-#endif  // __CUDA_ARCH__
+#endif // __CUDA_ARCH__
     }
 
     SPECTRA_CPU_GPU
-    inline Float I0(Float x)
-    {
-        Float val = 0;
-        Float x2i = 1;
+    inline Float I0(Float x) {
+        Float val     = 0;
+        Float x2i     = 1;
         int64_t ifact = 1;
-        int i4 = 1;
+        int i4        = 1;
         // I0(x) \approx Sum_i x^(2i) / (4^i (i!)^2)
-        for (int i = 0; i < 10; ++i)
-        {
-            if (i > 1)
-                ifact *= i;
+        for (int i = 0; i < 10; ++i) {
+            if (i > 1) ifact *= i;
             val += x2i / (i4 * Sqr(ifact));
             x2i *= x * x;
             i4 *= 4;
@@ -898,166 +783,157 @@ namespace spectra
     }
 
     SPECTRA_CPU_GPU
-    inline Float LogI0(Float x)
-    {
+    inline Float LogI0(Float x) {
         if (x > 12)
             return x + 0.5f * (-std::log(2 * Pi) + std::log(1 / x) + 1 / (8 * x));
         else
             return std::log(I0(x));
     }
 
-    SPECTRA_CPU_GPU inline Float Min4(Float a, Float b, Float c, Float d)
-    {
+    SPECTRA_CPU_GPU inline Float Min4(Float a, Float b, Float c, Float d) {
         return std::min(std::min(a, b), std::min(c, d));
     }
 
-    SPECTRA_CPU_GPU inline Float Max4(Float a, Float b, Float c, Float d)
-    {
+    SPECTRA_CPU_GPU inline Float Max4(Float a, Float b, Float c, Float d) {
         return std::max(std::max(a, b), std::max(c, d));
     }
 
     // Interval Definition
-    class Interval
-    {
+    class Interval {
     public:
         // Interval Public Methods
         Interval() = default;
         SPECTRA_CPU_GPU
-        explicit Interval(Float v) : low(v), high(v)
-        {
-        }
+        explicit Interval(Float v) : low(v), high(v) {}
 
-        SPECTRA_CPU_GPU constexpr Interval(Float low, Float high)
-            : low(std::min(low, high)), high(std::max(low, high))
-        {
-        }
+        SPECTRA_CPU_GPU constexpr Interval(Float low, Float high) : low(std::min(low, high)), high(std::max(low, high)) {}
 
         SPECTRA_CPU_GPU
-        static Interval FromValueAndError(Float v, Float err)
-        {
+        static Interval FromValueAndError(Float v, Float err) {
             Interval i;
             if (err == 0)
                 i.low = i.high = v;
-            else
-            {
-                i.low = SubRoundDown(v, err);
+            else {
+                i.low  = SubRoundDown(v, err);
                 i.high = AddRoundUp(v, err);
             }
             return i;
         }
 
         SPECTRA_CPU_GPU
-        Interval& operator=(Float v)
-        {
+        Interval& operator=(Float v) {
             low = high = v;
             return *this;
         }
 
         SPECTRA_CPU_GPU
-        Float UpperBound() const { return high; }
+        Float UpperBound() const {
+            return high;
+        }
 
         SPECTRA_CPU_GPU
-        Float LowerBound() const { return low; }
+        Float LowerBound() const {
+            return low;
+        }
 
         SPECTRA_CPU_GPU
-        Float Midpoint() const { return (low + high) / 2; }
+        Float Midpoint() const {
+            return (low + high) / 2;
+        }
 
         SPECTRA_CPU_GPU
-        Float Width() const { return high - low; }
+        Float Width() const {
+            return high - low;
+        }
 
         SPECTRA_CPU_GPU
-        Float operator[](int i) const
-        {
+        Float operator[](int i) const {
             DCHECK(i == 0 || i == 1);
             return (i == 0) ? low : high;
         }
 
         SPECTRA_CPU_GPU
-        explicit operator Float() const { return Midpoint(); }
+        explicit operator Float() const {
+            return Midpoint();
+        }
 
         SPECTRA_CPU_GPU
-        bool Exactly(Float v) const { return low == v && high == v; }
+        bool Exactly(Float v) const {
+            return low == v && high == v;
+        }
 
         SPECTRA_CPU_GPU
-        bool operator==(Float v) const { return Exactly(v); }
+        bool operator==(Float v) const {
+            return Exactly(v);
+        }
 
         SPECTRA_CPU_GPU
-        Interval operator-() const { return {-high, -low}; }
+        Interval operator-() const {
+            return {-high, -low};
+        }
 
         SPECTRA_CPU_GPU
-        Interval operator+(Interval i) const
-        {
+        Interval operator+(Interval i) const {
             return {AddRoundDown(low, i.low), AddRoundUp(high, i.high)};
         }
 
         SPECTRA_CPU_GPU
-        Interval operator-(Interval i) const
-        {
+        Interval operator-(Interval i) const {
             return {SubRoundDown(low, i.high), SubRoundUp(high, i.low)};
         }
 
         SPECTRA_CPU_GPU
-        Interval operator*(Interval i) const
-        {
-            Float lp[4] = {
-                MulRoundDown(low, i.low), MulRoundDown(high, i.low),
-                MulRoundDown(low, i.high), MulRoundDown(high, i.high)
-            };
-            Float hp[4] = {
-                MulRoundUp(low, i.low), MulRoundUp(high, i.low),
-                MulRoundUp(low, i.high), MulRoundUp(high, i.high)
-            };
-            return {
-                Min4(lp[0], lp[1], lp[2], lp[3]),
-                Max4(hp[0], hp[1], hp[2], hp[3])
-            };
+        Interval operator*(Interval i) const {
+            Float lp[4] = {MulRoundDown(low, i.low), MulRoundDown(high, i.low), MulRoundDown(low, i.high), MulRoundDown(high, i.high)};
+            Float hp[4] = {MulRoundUp(low, i.low), MulRoundUp(high, i.low), MulRoundUp(low, i.high), MulRoundUp(high, i.high)};
+            return {Min4(lp[0], lp[1], lp[2], lp[3]), Max4(hp[0], hp[1], hp[2], hp[3])};
         }
 
         SPECTRA_CPU_GPU
         Interval operator/(Interval i) const;
 
-        SPECTRA_CPU_GPU bool operator==(Interval i) const
-        {
+        SPECTRA_CPU_GPU bool operator==(Interval i) const {
             return low == i.low && high == i.high;
         }
 
         SPECTRA_CPU_GPU
-        bool operator!=(Float f) const { return f < low || f > high; }
+        bool operator!=(Float f) const {
+            return f < low || f > high;
+        }
 
 
-        SPECTRA_CPU_GPU Interval& operator+=(Interval i)
-        {
+        SPECTRA_CPU_GPU Interval& operator+=(Interval i) {
             *this = Interval(*this + i);
             return *this;
         }
 
-        SPECTRA_CPU_GPU Interval& operator-=(Interval i)
-        {
+        SPECTRA_CPU_GPU Interval& operator-=(Interval i) {
             *this = Interval(*this - i);
             return *this;
         }
 
-        SPECTRA_CPU_GPU Interval& operator*=(Interval i)
-        {
+        SPECTRA_CPU_GPU Interval& operator*=(Interval i) {
             *this = Interval(*this * i);
             return *this;
         }
 
-        SPECTRA_CPU_GPU Interval& operator/=(Interval i)
-        {
+        SPECTRA_CPU_GPU Interval& operator/=(Interval i) {
             *this = Interval(*this / i);
             return *this;
         }
 
         SPECTRA_CPU_GPU
-        Interval& operator+=(Float f) { return *this += Interval(f); }
+        Interval& operator+=(Float f) {
+            return *this += Interval(f);
+        }
 
         SPECTRA_CPU_GPU
-        Interval& operator-=(Float f) { return *this -= Interval(f); }
+        Interval& operator-=(Float f) {
+            return *this -= Interval(f);
+        }
 
         SPECTRA_CPU_GPU
-        Interval& operator*=(Float f)
-        {
+        Interval& operator*=(Float f) {
             if (f > 0)
                 *this = Interval(MulRoundDown(f, low), MulRoundUp(f, high));
             else
@@ -1066,8 +942,7 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        Interval& operator/=(Float f)
-        {
+        Interval& operator/=(Float f) {
             if (f > 0)
                 *this = Interval(DivRoundDown(low, f), DivRoundUp(high, f));
             else
@@ -1086,70 +961,51 @@ namespace spectra
     };
 
     // Interval Inline Functions
-    SPECTRA_CPU_GPU inline bool InRange(Float v, Interval i)
-    {
+    SPECTRA_CPU_GPU inline bool InRange(Float v, Interval i) {
         return v >= i.LowerBound() && v <= i.UpperBound();
     }
 
-    SPECTRA_CPU_GPU inline bool InRange(Interval a, Interval b)
-    {
+    SPECTRA_CPU_GPU inline bool InRange(Interval a, Interval b) {
         return a.LowerBound() <= b.UpperBound() && a.UpperBound() >= b.LowerBound();
     }
 
-    SPECTRA_CPU_GPU inline Interval Interval::operator/(Interval i) const
-    {
+    SPECTRA_CPU_GPU inline Interval Interval::operator/(Interval i) const {
         if (InRange(0, i))
             // The interval we're dividing by straddles zero, so just
             // return an interval of everything.
             return Interval(-Infinity, Infinity);
 
-        Float lowQuot[4] = {
-            DivRoundDown(low, i.low), DivRoundDown(high, i.low),
-            DivRoundDown(low, i.high), DivRoundDown(high, i.high)
-        };
-        Float highQuot[4] = {
-            DivRoundUp(low, i.low), DivRoundUp(high, i.low),
-            DivRoundUp(low, i.high), DivRoundUp(high, i.high)
-        };
-        return {
-            Min4(lowQuot[0], lowQuot[1], lowQuot[2], lowQuot[3]),
-            Max4(highQuot[0], highQuot[1], highQuot[2], highQuot[3])
-        };
+        Float lowQuot[4]  = {DivRoundDown(low, i.low), DivRoundDown(high, i.low), DivRoundDown(low, i.high), DivRoundDown(high, i.high)};
+        Float highQuot[4] = {DivRoundUp(low, i.low), DivRoundUp(high, i.low), DivRoundUp(low, i.high), DivRoundUp(high, i.high)};
+        return {Min4(lowQuot[0], lowQuot[1], lowQuot[2], lowQuot[3]), Max4(highQuot[0], highQuot[1], highQuot[2], highQuot[3])};
     }
 
-    SPECTRA_CPU_GPU inline Interval Sqr(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval Sqr(Interval i) {
         Float alow = std::abs(i.LowerBound()), ahigh = std::abs(i.UpperBound());
-        if (alow > ahigh)
-            pstd::swap(alow, ahigh);
-        if (InRange(0, i))
-            return Interval(0, MulRoundUp(ahigh, ahigh));
+        if (alow > ahigh) pstd::swap(alow, ahigh);
+        if (InRange(0, i)) return Interval(0, MulRoundUp(ahigh, ahigh));
         return Interval(MulRoundDown(alow, alow), MulRoundUp(ahigh, ahigh));
     }
 
     SPECTRA_CPU_GPU inline Interval MulPow2(Float s, Interval i);
     SPECTRA_CPU_GPU inline Interval MulPow2(Interval i, Float s);
 
-    SPECTRA_CPU_GPU inline Interval operator+(Float f, Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval operator+(Float f, Interval i) {
         return Interval(f) + i;
     }
 
-    SPECTRA_CPU_GPU inline Interval operator-(Float f, Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval operator-(Float f, Interval i) {
         return Interval(f) - i;
     }
 
-    SPECTRA_CPU_GPU inline Interval operator*(Float f, Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval operator*(Float f, Interval i) {
         if (f > 0)
             return Interval(MulRoundDown(f, i.LowerBound()), MulRoundUp(f, i.UpperBound()));
         else
             return Interval(MulRoundDown(f, i.UpperBound()), MulRoundUp(f, i.LowerBound()));
     }
 
-    SPECTRA_CPU_GPU inline Interval operator/(Float f, Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval operator/(Float f, Interval i) {
         if (InRange(0, i))
             // The interval we're dividing by straddles zero, so just
             // return an interval of everything.
@@ -1161,28 +1017,23 @@ namespace spectra
             return Interval(DivRoundDown(f, i.LowerBound()), DivRoundUp(f, i.UpperBound()));
     }
 
-    SPECTRA_CPU_GPU inline Interval operator+(Interval i, Float f)
-    {
+    SPECTRA_CPU_GPU inline Interval operator+(Interval i, Float f) {
         return i + Interval(f);
     }
 
-    SPECTRA_CPU_GPU inline Interval operator-(Interval i, Float f)
-    {
+    SPECTRA_CPU_GPU inline Interval operator-(Interval i, Float f) {
         return i - Interval(f);
     }
 
-    SPECTRA_CPU_GPU inline Interval operator*(Interval i, Float f)
-    {
+    SPECTRA_CPU_GPU inline Interval operator*(Interval i, Float f) {
         if (f > 0)
             return Interval(MulRoundDown(f, i.LowerBound()), MulRoundUp(f, i.UpperBound()));
         else
             return Interval(MulRoundDown(f, i.UpperBound()), MulRoundUp(f, i.LowerBound()));
     }
 
-    SPECTRA_CPU_GPU inline Interval operator/(Interval i, Float f)
-    {
-        if (f == 0)
-            return Interval(-Infinity, Infinity);
+    SPECTRA_CPU_GPU inline Interval operator/(Interval i, Float f) {
+        if (f == 0) return Interval(-Infinity, Infinity);
 
         if (f > 0)
             return Interval(DivRoundDown(i.LowerBound(), f), DivRoundUp(i.UpperBound(), f));
@@ -1190,115 +1041,82 @@ namespace spectra
             return Interval(DivRoundDown(i.UpperBound(), f), DivRoundUp(i.LowerBound(), f));
     }
 
-    SPECTRA_CPU_GPU inline Float Floor(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Float Floor(Interval i) {
         return pstd::floor(i.LowerBound());
     }
 
-    SPECTRA_CPU_GPU inline Float Ceil(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Float Ceil(Interval i) {
         return pstd::ceil(i.UpperBound());
     }
 
-    SPECTRA_CPU_GPU inline Float floor(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Float floor(Interval i) {
         return Floor(i);
     }
 
-    SPECTRA_CPU_GPU inline Float ceil(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Float ceil(Interval i) {
         return Ceil(i);
     }
 
-    SPECTRA_CPU_GPU inline Float Min(Interval a, Interval b)
-    {
+    SPECTRA_CPU_GPU inline Float Min(Interval a, Interval b) {
         return std::min(a.LowerBound(), b.LowerBound());
     }
 
-    SPECTRA_CPU_GPU inline Float Max(Interval a, Interval b)
-    {
+    SPECTRA_CPU_GPU inline Float Max(Interval a, Interval b) {
         return std::max(a.UpperBound(), b.UpperBound());
     }
 
-    SPECTRA_CPU_GPU inline Float min(Interval a, Interval b)
-    {
+    SPECTRA_CPU_GPU inline Float min(Interval a, Interval b) {
         return Min(a, b);
     }
 
-    SPECTRA_CPU_GPU inline Float max(Interval a, Interval b)
-    {
+    SPECTRA_CPU_GPU inline Float max(Interval a, Interval b) {
         return Max(a, b);
     }
 
-    SPECTRA_CPU_GPU inline Interval Sqrt(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval Sqrt(Interval i) {
         return {SqrtRoundDown(i.LowerBound()), SqrtRoundUp(i.UpperBound())};
     }
 
-    SPECTRA_CPU_GPU inline Interval sqrt(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval sqrt(Interval i) {
         return Sqrt(i);
     }
 
-    SPECTRA_CPU_GPU inline Interval FMA(Interval a, Interval b, Interval c)
-    {
-        Float low = Min4(FMARoundDown(a.LowerBound(), b.LowerBound(), c.LowerBound()),
-                         FMARoundDown(a.UpperBound(), b.LowerBound(), c.LowerBound()),
-                         FMARoundDown(a.LowerBound(), b.UpperBound(), c.LowerBound()),
-                         FMARoundDown(a.UpperBound(), b.UpperBound(), c.LowerBound()));
-        Float high = Max4(FMARoundUp(a.LowerBound(), b.LowerBound(), c.UpperBound()),
-                          FMARoundUp(a.UpperBound(), b.LowerBound(), c.UpperBound()),
-                          FMARoundUp(a.LowerBound(), b.UpperBound(), c.UpperBound()),
-                          FMARoundUp(a.UpperBound(), b.UpperBound(), c.UpperBound()));
+    SPECTRA_CPU_GPU inline Interval FMA(Interval a, Interval b, Interval c) {
+        Float low  = Min4(FMARoundDown(a.LowerBound(), b.LowerBound(), c.LowerBound()), FMARoundDown(a.UpperBound(), b.LowerBound(), c.LowerBound()), FMARoundDown(a.LowerBound(), b.UpperBound(), c.LowerBound()), FMARoundDown(a.UpperBound(), b.UpperBound(), c.LowerBound()));
+        Float high = Max4(FMARoundUp(a.LowerBound(), b.LowerBound(), c.UpperBound()), FMARoundUp(a.UpperBound(), b.LowerBound(), c.UpperBound()), FMARoundUp(a.LowerBound(), b.UpperBound(), c.UpperBound()), FMARoundUp(a.UpperBound(), b.UpperBound(), c.UpperBound()));
         return Interval(low, high);
     }
 
-    SPECTRA_CPU_GPU inline Interval DifferenceOfProducts(Interval a, Interval b, Interval c,
-                                                         Interval d)
-    {
-        Float ab[4] = {
-            a.LowerBound() * b.LowerBound(), a.UpperBound() * b.LowerBound(),
-            a.LowerBound() * b.UpperBound(), a.UpperBound() * b.UpperBound()
-        };
-        Float abLow = Min4(ab[0], ab[1], ab[2], ab[3]);
-        Float abHigh = Max4(ab[0], ab[1], ab[2], ab[3]);
-        int abLowIndex = abLow == ab[0] ? 0 : (abLow == ab[1] ? 1 : (abLow == ab[2] ? 2 : 3));
-        int abHighIndex =
-            abHigh == ab[0] ? 0 : (abHigh == ab[1] ? 1 : (abHigh == ab[2] ? 2 : 3));
+    SPECTRA_CPU_GPU inline Interval DifferenceOfProducts(Interval a, Interval b, Interval c, Interval d) {
+        Float ab[4]     = {a.LowerBound() * b.LowerBound(), a.UpperBound() * b.LowerBound(), a.LowerBound() * b.UpperBound(), a.UpperBound() * b.UpperBound()};
+        Float abLow     = Min4(ab[0], ab[1], ab[2], ab[3]);
+        Float abHigh    = Max4(ab[0], ab[1], ab[2], ab[3]);
+        int abLowIndex  = abLow == ab[0] ? 0 : (abLow == ab[1] ? 1 : (abLow == ab[2] ? 2 : 3));
+        int abHighIndex = abHigh == ab[0] ? 0 : (abHigh == ab[1] ? 1 : (abHigh == ab[2] ? 2 : 3));
 
-        Float cd[4] = {
-            c.LowerBound() * d.LowerBound(), c.UpperBound() * d.LowerBound(),
-            c.LowerBound() * d.UpperBound(), c.UpperBound() * d.UpperBound()
-        };
-        Float cdLow = Min4(cd[0], cd[1], cd[2], cd[3]);
-        Float cdHigh = Max4(cd[0], cd[1], cd[2], cd[3]);
-        int cdLowIndex = cdLow == cd[0] ? 0 : (cdLow == cd[1] ? 1 : (cdLow == cd[2] ? 2 : 3));
-        int cdHighIndex =
-            cdHigh == cd[0] ? 0 : (cdHigh == cd[1] ? 1 : (cdHigh == cd[2] ? 2 : 3));
+        Float cd[4]     = {c.LowerBound() * d.LowerBound(), c.UpperBound() * d.LowerBound(), c.LowerBound() * d.UpperBound(), c.UpperBound() * d.UpperBound()};
+        Float cdLow     = Min4(cd[0], cd[1], cd[2], cd[3]);
+        Float cdHigh    = Max4(cd[0], cd[1], cd[2], cd[3]);
+        int cdLowIndex  = cdLow == cd[0] ? 0 : (cdLow == cd[1] ? 1 : (cdLow == cd[2] ? 2 : 3));
+        int cdHighIndex = cdHigh == cd[0] ? 0 : (cdHigh == cd[1] ? 1 : (cdHigh == cd[2] ? 2 : 3));
 
         // Invert cd Indices since it's subtracted...
-        Float low = DifferenceOfProducts(a[abLowIndex & 1], b[abLowIndex >> 1],
-                                         c[cdHighIndex & 1], d[cdHighIndex >> 1]);
-        Float high = DifferenceOfProducts(a[abHighIndex & 1], b[abHighIndex >> 1],
-                                          c[cdLowIndex & 1], d[cdLowIndex >> 1]);
+        Float low  = DifferenceOfProducts(a[abLowIndex & 1], b[abLowIndex >> 1], c[cdHighIndex & 1], d[cdHighIndex >> 1]);
+        Float high = DifferenceOfProducts(a[abHighIndex & 1], b[abHighIndex >> 1], c[cdLowIndex & 1], d[cdLowIndex >> 1]);
         DCHECK_LE(low, high);
 
         return {NextFloatDown(NextFloatDown(low)), NextFloatUp(NextFloatUp(high))};
     }
 
-    SPECTRA_CPU_GPU inline Interval SumOfProducts(Interval a, Interval b, Interval c,
-                                                  Interval d)
-    {
+    SPECTRA_CPU_GPU inline Interval SumOfProducts(Interval a, Interval b, Interval c, Interval d) {
         return DifferenceOfProducts(a, b, -c, d);
     }
 
-    SPECTRA_CPU_GPU inline Interval MulPow2(Float s, Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval MulPow2(Float s, Interval i) {
         return MulPow2(i, s);
     }
 
-    SPECTRA_CPU_GPU inline Interval MulPow2(Interval i, Float s)
-    {
+    SPECTRA_CPU_GPU inline Interval MulPow2(Interval i, Float s) {
         Float as = std::abs(s);
         if (as < 1)
             DCHECK_EQ(1 / as, 1ull << Log2Int(1 / as));
@@ -1306,12 +1124,10 @@ namespace spectra
             DCHECK_EQ(as, 1ull << Log2Int(as));
 
         // Multiplication by powers of 2 is exaact
-        return Interval(std::min(i.LowerBound() * s, i.UpperBound() * s),
-                        std::max(i.LowerBound() * s, i.UpperBound() * s));
+        return Interval(std::min(i.LowerBound() * s, i.UpperBound() * s), std::max(i.LowerBound() * s, i.UpperBound() * s));
     }
 
-    SPECTRA_CPU_GPU inline Interval Abs(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval Abs(Interval i) {
         if (i.LowerBound() >= 0)
             // The entire interval is greater than zero, so we're all set.
             return i;
@@ -1323,83 +1139,68 @@ namespace spectra
             return Interval(0, std::max(-i.LowerBound(), i.UpperBound()));
     }
 
-    SPECTRA_CPU_GPU inline Interval abs(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval abs(Interval i) {
         return Abs(i);
     }
 
-    SPECTRA_CPU_GPU inline Interval ACos(Interval i)
-    {
-        Float low = std::acos(std::min<Float>(1, i.UpperBound()));
+    SPECTRA_CPU_GPU inline Interval ACos(Interval i) {
+        Float low  = std::acos(std::min<Float>(1, i.UpperBound()));
         Float high = std::acos(std::max<Float>(-1, i.LowerBound()));
 
         return Interval(std::max<Float>(0, NextFloatDown(low)), NextFloatUp(high));
     }
 
-    SPECTRA_CPU_GPU inline Interval Sin(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval Sin(Interval i) {
         CHECK_GE(i.LowerBound(), -1e-16);
         CHECK_LE(i.UpperBound(), 2.0001 * Pi);
-        Float low = std::sin(std::max<Float>(0, i.LowerBound()));
+        Float low  = std::sin(std::max<Float>(0, i.LowerBound()));
         Float high = std::sin(i.UpperBound());
-        if (low > high)
-            pstd::swap(low, high);
-        low = std::max<Float>(-1, NextFloatDown(low));
+        if (low > high) pstd::swap(low, high);
+        low  = std::max<Float>(-1, NextFloatDown(low));
         high = std::min<Float>(1, NextFloatUp(high));
-        if (InRange(Pi / 2, i))
-            high = 1;
-        if (InRange((3.f / 2.f) * Pi, i))
-            low = -1;
+        if (InRange(Pi / 2, i)) high = 1;
+        if (InRange((3.f / 2.f) * Pi, i)) low = -1;
 
         return Interval(low, high);
     }
 
-    SPECTRA_CPU_GPU inline Interval Cos(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval Cos(Interval i) {
         CHECK_GE(i.LowerBound(), -1e-16);
         CHECK_LE(i.UpperBound(), 2.0001 * Pi);
-        Float low = std::cos(std::max<Float>(0, i.LowerBound()));
+        Float low  = std::cos(std::max<Float>(0, i.LowerBound()));
         Float high = std::cos(i.UpperBound());
-        if (low > high)
-            pstd::swap(low, high);
-        low = std::max<Float>(-1, NextFloatDown(low));
+        if (low > high) pstd::swap(low, high);
+        low  = std::max<Float>(-1, NextFloatDown(low));
         high = std::min<Float>(1, NextFloatUp(high));
-        if (InRange(Pi, i))
-            low = -1;
+        if (InRange(Pi, i)) low = -1;
 
         return Interval(low, high);
     }
 
-    SPECTRA_CPU_GPU inline bool Quadratic(Interval a, Interval b, Interval c, Interval* t0,
-                                          Interval* t1)
-    {
+    SPECTRA_CPU_GPU inline bool Quadratic(Interval a, Interval b, Interval c, Interval* t0, Interval* t1) {
         // Find quadratic discriminant
         Interval discrim = DifferenceOfProducts(b, b, MulPow2(4, a), c);
-        if (discrim.LowerBound() < 0)
-            return false;
+        if (discrim.LowerBound() < 0) return false;
         Interval floatRootDiscrim = Sqrt(discrim);
 
         // Compute quadratic _t_ values
         Interval q;
-        if ((Float)b < 0)
+        if ((Float) b < 0)
             q = MulPow2(-.5, b - floatRootDiscrim);
         else
             q = MulPow2(-.5, b + floatRootDiscrim);
         *t0 = q / a;
         *t1 = c / q;
-        if (t0->LowerBound() > t1->LowerBound())
-            pstd::swap(*t0, *t1);
+        if (t0->LowerBound() > t1->LowerBound()) pstd::swap(*t0, *t1);
         return true;
     }
 
-    SPECTRA_CPU_GPU inline Interval SumSquares(Interval i)
-    {
+    SPECTRA_CPU_GPU inline Interval SumSquares(Interval i) {
         return Sqr(i);
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline Interval SumSquares(Interval i, Args... args)
-    {
+    SPECTRA_CPU_GPU inline Interval SumSquares(Interval i, Args... args) {
         Interval ss = FMA(i, i, SumSquares(args...));
         return Interval(std::max<Float>(0, ss.LowerBound()), ss.UpperBound());
     }
@@ -1408,28 +1209,20 @@ namespace spectra
     SPECTRA_CPU_GPU
     Float CatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> values, Float x);
     SPECTRA_CPU_GPU
-    bool CatmullRomWeights(pstd::span<const Float> nodes, Float x, int* offset,
-                           pstd::span<Float> weights);
+    bool CatmullRomWeights(pstd::span<const Float> nodes, Float x, int* offset, pstd::span<Float> weights);
     SPECTRA_CPU_GPU
-    Float IntegrateCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> values,
-                              pstd::span<Float> cdf);
+    Float IntegrateCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> values, pstd::span<Float> cdf);
     SPECTRA_CPU_GPU
-    Float InvertCatmullRom(pstd::span<const Float> x, pstd::span<const Float> values,
-                           Float u);
+    Float InvertCatmullRom(pstd::span<const Float> x, pstd::span<const Float> values, Float u);
 
-    namespace
-    {
+    namespace {
         template <int N>
-        SPECTRA_CPU_GPU inline void init(Float m[N][N], int i, int j)
-        {
-        }
+        SPECTRA_CPU_GPU inline void init(Float m[N][N], int i, int j) {}
 
         template <int N, typename... Args>
-        SPECTRA_CPU_GPU inline void init(Float m[N][N], int i, int j, Float v, Args... args)
-        {
+        SPECTRA_CPU_GPU inline void init(Float m[N][N], int i, int j, Float v, Args... args) {
             m[i][j] = v;
-            if (++j == N)
-            {
+            if (++j == N) {
                 ++i;
                 j = 0;
             }
@@ -1437,13 +1230,10 @@ namespace spectra
         }
 
         template <int N>
-        SPECTRA_CPU_GPU inline void initDiag(Float m[N][N], int i)
-        {
-        }
+        SPECTRA_CPU_GPU inline void initDiag(Float m[N][N], int i) {}
 
         template <int N, typename... Args>
-        SPECTRA_CPU_GPU inline void initDiag(Float m[N][N], int i, Float v, Args... args)
-        {
+        SPECTRA_CPU_GPU inline void initDiag(Float m[N][N], int i, Float v, Args... args) {
             m[i][i] = v;
             initDiag<N>(m, i + 1, args...);
         }
@@ -1451,118 +1241,93 @@ namespace spectra
 
     // SquareMatrix Definition
     template <int N>
-    class SquareMatrix
-    {
+    class SquareMatrix {
     public:
         // SquareMatrix Public Methods
         SPECTRA_CPU_GPU
-        static SquareMatrix Zero()
-        {
+        static SquareMatrix Zero() {
             SquareMatrix m;
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    m.m[i][j] = 0;
+                for (int j = 0; j < N; ++j) m.m[i][j] = 0;
             return m;
         }
 
         SPECTRA_CPU_GPU
-        SquareMatrix()
-        {
+        SquareMatrix() {
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    m[i][j] = (i == j) ? 1 : 0;
+                for (int j = 0; j < N; ++j) m[i][j] = (i == j) ? 1 : 0;
         }
 
         SPECTRA_CPU_GPU
-        SquareMatrix(const Float mat[N][N])
-        {
+        SquareMatrix(const Float mat[N][N]) {
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    m[i][j] = mat[i][j];
+                for (int j = 0; j < N; ++j) m[i][j] = mat[i][j];
         }
 
         SPECTRA_CPU_GPU
         SquareMatrix(pstd::span<const Float> t);
 
         template <typename... Args>
-        SPECTRA_CPU_GPU SquareMatrix(Float v, Args... args)
-        {
-            static_assert(1 + sizeof...(Args) == N * N,
-                          "Incorrect number of values provided to SquareMatrix constructor");
+        SPECTRA_CPU_GPU SquareMatrix(Float v, Args... args) {
+            static_assert(1 + sizeof...(Args) == N * N, "Incorrect number of values provided to SquareMatrix constructor");
             init<N>(m, 0, 0, v, args...);
         }
 
         template <typename... Args>
-        SPECTRA_CPU_GPU static SquareMatrix Diag(Float v, Args... args)
-        {
-            static_assert(1 + sizeof...(Args) == N,
-                          "Incorrect number of values provided to SquareMatrix::Diag");
+        SPECTRA_CPU_GPU static SquareMatrix Diag(Float v, Args... args) {
+            static_assert(1 + sizeof...(Args) == N, "Incorrect number of values provided to SquareMatrix::Diag");
             SquareMatrix m;
             initDiag<N>(m.m, 0, v, args...);
             return m;
         }
 
         SPECTRA_CPU_GPU
-        SquareMatrix operator+(const SquareMatrix& m) const
-        {
+        SquareMatrix operator+(const SquareMatrix& m) const {
             SquareMatrix r = *this;
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    r.m[i][j] += m.m[i][j];
+                for (int j = 0; j < N; ++j) r.m[i][j] += m.m[i][j];
             return r;
         }
 
         SPECTRA_CPU_GPU
-        SquareMatrix operator*(Float s) const
-        {
+        SquareMatrix operator*(Float s) const {
             SquareMatrix r = *this;
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    r.m[i][j] *= s;
+                for (int j = 0; j < N; ++j) r.m[i][j] *= s;
             return r;
         }
 
         SPECTRA_CPU_GPU
-        SquareMatrix operator/(Float s) const
-        {
+        SquareMatrix operator/(Float s) const {
             DCHECK_NE(s, 0);
             SquareMatrix r = *this;
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    r.m[i][j] /= s;
+                for (int j = 0; j < N; ++j) r.m[i][j] /= s;
             return r;
         }
 
         SPECTRA_CPU_GPU
-        bool operator==(const SquareMatrix<N>& m2) const
-        {
+        bool operator==(const SquareMatrix<N>& m2) const {
             for (int i = 0; i < N; ++i)
                 for (int j = 0; j < N; ++j)
-                    if (m[i][j] != m2.m[i][j])
-                        return false;
+                    if (m[i][j] != m2.m[i][j]) return false;
             return true;
         }
 
         SPECTRA_CPU_GPU
-        bool operator!=(const SquareMatrix<N>& m2) const
-        {
+        bool operator!=(const SquareMatrix<N>& m2) const {
             for (int i = 0; i < N; ++i)
                 for (int j = 0; j < N; ++j)
-                    if (m[i][j] != m2.m[i][j])
-                        return true;
+                    if (m[i][j] != m2.m[i][j]) return true;
             return false;
         }
 
         SPECTRA_CPU_GPU
-        bool operator<(const SquareMatrix<N>& m2) const
-        {
+        bool operator<(const SquareMatrix<N>& m2) const {
             for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                {
-                    if (m[i][j] < m2.m[i][j])
-                        return true;
-                    if (m[i][j] > m2.m[i][j])
-                        return false;
+                for (int j = 0; j < N; ++j) {
+                    if (m[i][j] < m2.m[i][j]) return true;
+                    if (m[i][j] > m2.m[i][j]) return false;
                 }
             return false;
         }
@@ -1572,10 +1337,14 @@ namespace spectra
 
 
         SPECTRA_CPU_GPU
-        pstd::span<const Float> operator[](int i) const { return m[i]; }
+        pstd::span<const Float> operator[](int i) const {
+            return m[i];
+        }
 
         SPECTRA_CPU_GPU
-        pstd::span<Float> operator[](int i) { return pstd::span<Float>(m[i]); }
+        pstd::span<Float> operator[](int i) {
+            return pstd::span<Float>(m[i]);
+        }
 
     private:
         Float m[N][N];
@@ -1583,17 +1352,12 @@ namespace spectra
 
     // SquareMatrix Inline Methods
     template <int N>
-    SPECTRA_CPU_GPU inline bool SquareMatrix<N>::IsIdentity() const
-    {
+    SPECTRA_CPU_GPU inline bool SquareMatrix<N>::IsIdentity() const {
         for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-            {
-                if (i == j)
-                {
-                    if (m[i][j] != 1)
-                        return false;
-                }
-                else if (m[i][j] != 0)
+            for (int j = 0; j < N; ++j) {
+                if (i == j) {
+                    if (m[i][j] != 1) return false;
+                } else if (m[i][j] != 0)
                     return false;
             }
         return true;
@@ -1601,20 +1365,16 @@ namespace spectra
 
     // SquareMatrix Inline Functions
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(Float s, const SquareMatrix<N>& m)
-    {
+    SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(Float s, const SquareMatrix<N>& m) {
         return m * s;
     }
 
     template <typename Tresult, int N, typename T>
-    SPECTRA_CPU_GPU inline Tresult Mul(const SquareMatrix<N>& m, const T& v)
-    {
+    SPECTRA_CPU_GPU inline Tresult Mul(const SquareMatrix<N>& m, const T& v) {
         Tresult result;
-        for (int i = 0; i < N; ++i)
-        {
+        for (int i = 0; i < N; ++i) {
             result[i] = 0;
-            for (int j = 0; j < N; ++j)
-                result[i] += m[i][j] * v[j];
+            for (int j = 0; j < N; ++j) result[i] += m[i][j] * v[j];
         }
         return result;
     }
@@ -1623,13 +1383,11 @@ namespace spectra
     SPECTRA_CPU_GPU Float Determinant(const SquareMatrix<N>& m);
 
     template <>
-    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<3>& m)
-    {
+    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<3>& m) {
         Float minor12 = DifferenceOfProducts(m[1][1], m[2][2], m[1][2], m[2][1]);
         Float minor02 = DifferenceOfProducts(m[1][0], m[2][2], m[1][2], m[2][0]);
         Float minor01 = DifferenceOfProducts(m[1][0], m[2][1], m[1][1], m[2][0]);
-        return FMA(m[0][2], minor01,
-                   DifferenceOfProducts(m[0][0], minor12, m[0][1], minor02));
+        return FMA(m[0][2], minor01, DifferenceOfProducts(m[0][0], minor12, m[0][1], minor02));
     }
 
     template <int N>
@@ -1638,29 +1396,24 @@ namespace spectra
     SPECTRA_CPU_GPU pstd::optional<SquareMatrix<N>> Inverse(const SquareMatrix<N>&);
 
     template <int N>
-    SPECTRA_CPU_GPU SquareMatrix<N> InvertOrExit(const SquareMatrix<N>& m)
-    {
+    SPECTRA_CPU_GPU SquareMatrix<N> InvertOrExit(const SquareMatrix<N>& m) {
         pstd::optional<SquareMatrix<N>> inv = Inverse(m);
         CHECK(inv.has_value());
         return *inv;
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> Transpose(const SquareMatrix<N>& m)
-    {
+    SPECTRA_CPU_GPU inline SquareMatrix<N> Transpose(const SquareMatrix<N>& m) {
         SquareMatrix<N> r;
         for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-                r[i][j] = m[j][i];
+            for (int j = 0; j < N; ++j) r[i][j] = m[j][i];
         return r;
     }
 
     template <>
-    SPECTRA_CPU_GPU inline pstd::optional<SquareMatrix<3>> Inverse(const SquareMatrix<3>& m)
-    {
+    SPECTRA_CPU_GPU inline pstd::optional<SquareMatrix<3>> Inverse(const SquareMatrix<3>& m) {
         Float det = Determinant(m);
-        if (det == 0)
-            return {};
+        if (det == 0) return {};
         Float invDet = 1 / det;
 
         SquareMatrix<3> r;
@@ -1679,77 +1432,58 @@ namespace spectra
     }
 
     template <int N, typename T>
-    SPECTRA_CPU_GPU inline T operator*(const SquareMatrix<N>& m, const T& v)
-    {
+    SPECTRA_CPU_GPU inline T operator*(const SquareMatrix<N>& m, const T& v) {
         return Mul<T>(m, v);
     }
 
     template <>
-    SPECTRA_CPU_GPU inline SquareMatrix<4> operator*(const SquareMatrix<4>& m1,
-                                                     const SquareMatrix<4>& m2)
-    {
+    SPECTRA_CPU_GPU inline SquareMatrix<4> operator*(const SquareMatrix<4>& m1, const SquareMatrix<4>& m2) {
         SquareMatrix<4> r;
         for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                r[i][j] = InnerProduct(m1[i][0], m2[0][j], m1[i][1], m2[1][j], m1[i][2],
-                                       m2[2][j], m1[i][3], m2[3][j]);
+            for (int j = 0; j < 4; ++j) r[i][j] = InnerProduct(m1[i][0], m2[0][j], m1[i][1], m2[1][j], m1[i][2], m2[2][j], m1[i][3], m2[3][j]);
         return r;
     }
 
     template <>
-    SPECTRA_CPU_GPU inline SquareMatrix<3> operator*(const SquareMatrix<3>& m1,
-                                                     const SquareMatrix<3>& m2)
-    {
+    SPECTRA_CPU_GPU inline SquareMatrix<3> operator*(const SquareMatrix<3>& m1, const SquareMatrix<3>& m2) {
         SquareMatrix<3> r;
         for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                r[i][j] =
-                    InnerProduct(m1[i][0], m2[0][j], m1[i][1], m2[1][j], m1[i][2], m2[2][j]);
+            for (int j = 0; j < 3; ++j) r[i][j] = InnerProduct(m1[i][0], m2[0][j], m1[i][1], m2[1][j], m1[i][2], m2[2][j]);
         return r;
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(const SquareMatrix<N>& m1,
-                                                     const SquareMatrix<N>& m2)
-    {
+    SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(const SquareMatrix<N>& m1, const SquareMatrix<N>& m2) {
         SquareMatrix<N> r;
         for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-            {
+            for (int j = 0; j < N; ++j) {
                 r[i][j] = 0;
-                for (int k = 0; k < N; ++k)
-                    r[i][j] = FMA(m1[i][k], m2[k][j], r[i][j]);
+                for (int k = 0; k < N; ++k) r[i][j] = FMA(m1[i][k], m2[k][j], r[i][j]);
             }
         return r;
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N>::SquareMatrix(pstd::span<const Float> t)
-    {
+    SPECTRA_CPU_GPU inline SquareMatrix<N>::SquareMatrix(pstd::span<const Float> t) {
         CHECK_EQ(N * N, t.size());
-        for (int i = 0; i < N * N; ++i)
-            m[i / N][i % N] = t[i];
+        for (int i = 0; i < N * N; ++i) m[i / N][i % N] = t[i];
     }
 
     template <int N>
-    SPECTRA_CPU_GPU SquareMatrix<N> operator*(const SquareMatrix<N>& m1,
-                                              const SquareMatrix<N>& m2);
+    SPECTRA_CPU_GPU SquareMatrix<N> operator*(const SquareMatrix<N>& m1, const SquareMatrix<N>& m2);
 
     template <>
-    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<1>& m)
-    {
+    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<1>& m) {
         return m[0][0];
     }
 
     template <>
-    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<2>& m)
-    {
+    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<2>& m) {
         return DifferenceOfProducts(m[0][0], m[1][1], m[0][1], m[1][0]);
     }
 
     template <>
-    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<4>& m)
-    {
+    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<4>& m) {
         Float s0 = DifferenceOfProducts(m[0][0], m[1][1], m[1][0], m[0][1]);
         Float s1 = DifferenceOfProducts(m[0][0], m[1][2], m[1][0], m[0][2]);
         Float s2 = DifferenceOfProducts(m[0][0], m[1][3], m[1][0], m[0][3]);
@@ -1766,22 +1500,18 @@ namespace spectra
         Float c4 = DifferenceOfProducts(m[2][1], m[3][3], m[3][1], m[2][3]);
         Float c5 = DifferenceOfProducts(m[2][2], m[3][3], m[3][2], m[2][3]);
 
-        return (DifferenceOfProducts(s0, c5, s1, c4) + DifferenceOfProducts(s2, c3, -s3, c2) +
-            DifferenceOfProducts(s5, c0, s4, c1));
+        return (DifferenceOfProducts(s0, c5, s1, c4) + DifferenceOfProducts(s2, c3, -s3, c2) + DifferenceOfProducts(s5, c0, s4, c1));
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<N>& m)
-    {
+    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<N>& m) {
         SquareMatrix<N - 1> sub;
         Float det = 0;
         // Inefficient, but we don't currently use N>4 anyway..
-        for (int i = 0; i < N; ++i)
-        {
+        for (int i = 0; i < N; ++i) {
             // Sub-matrix without row 0 and column i
             for (int j = 0; j < N - 1; ++j)
-                for (int k = 0; k < N - 1; ++k)
-                    sub[j][k] = m[j + 1][k < i ? k : k + 1];
+                for (int k = 0; k < N - 1; ++k) sub[j][k] = m[j + 1][k < i ? k : k + 1];
 
             Float sign = (i & 1) ? -1 : 1;
             det += sign * m[0][i] * Determinant(sub);
@@ -1790,8 +1520,7 @@ namespace spectra
     }
 
     template <>
-    SPECTRA_CPU_GPU inline pstd::optional<SquareMatrix<4>> Inverse(const SquareMatrix<4>& m)
-    {
+    SPECTRA_CPU_GPU inline pstd::optional<SquareMatrix<4>> Inverse(const SquareMatrix<4>& m) {
         // Via: https://github.com/google/ion/blob/master/ion/math/matrixutils.cc,
         // (c) Google, Apache license.
 
@@ -1819,39 +1548,16 @@ namespace spectra
         Float c5 = DifferenceOfProducts(m[2][2], m[3][3], m[3][2], m[2][3]);
 
         Float determinant = InnerProduct(s0, c5, -s1, c4, s2, c3, s3, c2, s5, c0, -s4, c1);
-        if (determinant == 0)
-            return {};
+        if (determinant == 0) return {};
         Float s = 1 / determinant;
 
-        Float inv[4][4] = {
-            {
-                s * InnerProduct(m[1][1], c5, m[1][3], c3, -m[1][2], c4),
-                s * InnerProduct(-m[0][1], c5, m[0][2], c4, -m[0][3], c3),
-                s * InnerProduct(m[3][1], s5, m[3][3], s3, -m[3][2], s4),
-                s * InnerProduct(-m[2][1], s5, m[2][2], s4, -m[2][3], s3)
-            },
+        Float inv[4][4] = {{s * InnerProduct(m[1][1], c5, m[1][3], c3, -m[1][2], c4), s * InnerProduct(-m[0][1], c5, m[0][2], c4, -m[0][3], c3), s * InnerProduct(m[3][1], s5, m[3][3], s3, -m[3][2], s4), s * InnerProduct(-m[2][1], s5, m[2][2], s4, -m[2][3], s3)},
 
-            {
-                s * InnerProduct(-m[1][0], c5, m[1][2], c2, -m[1][3], c1),
-                s * InnerProduct(m[0][0], c5, m[0][3], c1, -m[0][2], c2),
-                s * InnerProduct(-m[3][0], s5, m[3][2], s2, -m[3][3], s1),
-                s * InnerProduct(m[2][0], s5, m[2][3], s1, -m[2][2], s2)
-            },
+            {s * InnerProduct(-m[1][0], c5, m[1][2], c2, -m[1][3], c1), s * InnerProduct(m[0][0], c5, m[0][3], c1, -m[0][2], c2), s * InnerProduct(-m[3][0], s5, m[3][2], s2, -m[3][3], s1), s * InnerProduct(m[2][0], s5, m[2][3], s1, -m[2][2], s2)},
 
-            {
-                s * InnerProduct(m[1][0], c4, m[1][3], c0, -m[1][1], c2),
-                s * InnerProduct(-m[0][0], c4, m[0][1], c2, -m[0][3], c0),
-                s * InnerProduct(m[3][0], s4, m[3][3], s0, -m[3][1], s2),
-                s * InnerProduct(-m[2][0], s4, m[2][1], s2, -m[2][3], s0)
-            },
+            {s * InnerProduct(m[1][0], c4, m[1][3], c0, -m[1][1], c2), s * InnerProduct(-m[0][0], c4, m[0][1], c2, -m[0][3], c0), s * InnerProduct(m[3][0], s4, m[3][3], s0, -m[3][1], s2), s * InnerProduct(-m[2][0], s4, m[2][1], s2, -m[2][3], s0)},
 
-            {
-                s * InnerProduct(-m[1][0], c3, m[1][1], c1, -m[1][2], c0),
-                s * InnerProduct(m[0][0], c3, m[0][2], c0, -m[0][1], c1),
-                s * InnerProduct(-m[3][0], s3, m[3][1], s1, -m[3][2], s0),
-                s * InnerProduct(m[2][0], s3, m[2][2], s0, -m[2][1], s1)
-            }
-        };
+            {s * InnerProduct(-m[1][0], c3, m[1][1], c1, -m[1][2], c0), s * InnerProduct(m[0][0], c3, m[0][2], c0, -m[0][1], c1), s * InnerProduct(-m[3][0], s3, m[3][1], s1, -m[3][2], s0), s * InnerProduct(m[2][0], s3, m[2][2], s0, -m[2][1], s1)}};
 
         return SquareMatrix<4>(inv);
     }
@@ -1861,4 +1567,4 @@ namespace spectra
     extern template class SquareMatrix<4>;
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_UTIL_MATH_H
+#endif // SPECTRA_PATHTRACER_UTIL_MATH_H

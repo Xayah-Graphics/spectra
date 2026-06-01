@@ -1,8 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_CORE_INTERACTION_H
 #define SPECTRA_PATHTRACER_CORE_INTERACTION_H
 
-#include <spectra/pathtracer/util/float.h>
-
+#include <limits>
 #include <spectra/pathtracer/base/bssrdf.h>
 #include <spectra/pathtracer/base/camera.h>
 #include <spectra/pathtracer/base/light.h>
@@ -10,157 +9,128 @@
 #include <spectra/pathtracer/base/medium.h>
 #include <spectra/pathtracer/base/sampler.h>
 #include <spectra/pathtracer/core/ray.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/taggedptr.h>
 #include <spectra/pathtracer/util/vecmath.h>
 
-#include <limits>
-
-namespace spectra
-{
+namespace spectra {
     class BSDF;
     class MediumInteraction;
     class SurfaceInteraction;
 
     // Interaction Definition
-    class Interaction
-    {
+    class Interaction {
     public:
         // Interaction Public Methods
         Interaction() = default;
 
         SPECTRA_CPU_GPU
-        Interaction(Point3fi pi, Normal3f n, Point2f uv, Vector3f wo, Float time)
-            : pi(pi), n(n), uv(uv), wo(Normalize(wo)), time(time)
-        {
+        Interaction(Point3fi pi, Normal3f n, Point2f uv, Vector3f wo, Float time) : pi(pi), n(n), uv(uv), wo(Normalize(wo)), time(time) {}
+
+        SPECTRA_CPU_GPU
+        Point3f p() const {
+            return Point3f(pi);
         }
 
         SPECTRA_CPU_GPU
-        Point3f p() const { return Point3f(pi); }
-
-        SPECTRA_CPU_GPU
-        bool IsSurfaceInteraction() const { return n != Normal3f(0, 0, 0); }
-
-        SPECTRA_CPU_GPU
-        bool IsMediumInteraction() const { return !IsSurfaceInteraction(); }
-
-        SPECTRA_CPU_GPU
-        const SurfaceInteraction& AsSurface() const
-        {
-            CHECK(IsSurfaceInteraction());
-            return (const SurfaceInteraction&)*this;
+        bool IsSurfaceInteraction() const {
+            return n != Normal3f(0, 0, 0);
         }
 
         SPECTRA_CPU_GPU
-        SurfaceInteraction& AsSurface()
-        {
+        bool IsMediumInteraction() const {
+            return !IsSurfaceInteraction();
+        }
+
+        SPECTRA_CPU_GPU
+        const SurfaceInteraction& AsSurface() const {
             CHECK(IsSurfaceInteraction());
-            return (SurfaceInteraction&)*this;
+            return (const SurfaceInteraction&) *this;
+        }
+
+        SPECTRA_CPU_GPU
+        SurfaceInteraction& AsSurface() {
+            CHECK(IsSurfaceInteraction());
+            return (SurfaceInteraction&) *this;
         }
 
         // used by medium ctor
         SPECTRA_CPU_GPU
-        Interaction(Point3f p, Vector3f wo, Float time, Medium medium)
-            : pi(p), time(time), wo(wo), medium(medium)
-        {
-        }
+        Interaction(Point3f p, Vector3f wo, Float time, Medium medium) : pi(p), time(time), wo(wo), medium(medium) {}
 
         SPECTRA_CPU_GPU
-        Interaction(Point3f p, Normal3f n, Float time, Medium medium)
-            : pi(p), n(n), time(time), medium(medium)
-        {
-        }
+        Interaction(Point3f p, Normal3f n, Float time, Medium medium) : pi(p), n(n), time(time), medium(medium) {}
 
         SPECTRA_CPU_GPU
-        Interaction(Point3f p, Point2f uv) : pi(p), uv(uv)
-        {
-        }
+        Interaction(Point3f p, Point2f uv) : pi(p), uv(uv) {}
 
         SPECTRA_CPU_GPU
-        Interaction(const Point3fi& pi, Normal3f n, Float time = 0, Point2f uv = {})
-            : pi(pi), n(n), uv(uv), time(time)
-        {
-        }
+        Interaction(const Point3fi& pi, Normal3f n, Float time = 0, Point2f uv = {}) : pi(pi), n(n), uv(uv), time(time) {}
 
         SPECTRA_CPU_GPU
-        Interaction(const Point3fi& pi, Normal3f n, Point2f uv) : pi(pi), n(n), uv(uv)
-        {
-        }
+        Interaction(const Point3fi& pi, Normal3f n, Point2f uv) : pi(pi), n(n), uv(uv) {}
 
         SPECTRA_CPU_GPU
-        Interaction(Point3f p, Float time, Medium medium)
-            : pi(p), time(time), medium(medium)
-        {
-        }
+        Interaction(Point3f p, Float time, Medium medium) : pi(p), time(time), medium(medium) {}
 
         SPECTRA_CPU_GPU
-        Interaction(Point3f p, const MediumInterface* mediumInterface)
-            : pi(p), mediumInterface(mediumInterface)
-        {
-        }
+        Interaction(Point3f p, const MediumInterface* mediumInterface) : pi(p), mediumInterface(mediumInterface) {}
 
         SPECTRA_CPU_GPU
-        Interaction(Point3f p, Float time, const MediumInterface* mediumInterface)
-            : pi(p), time(time), mediumInterface(mediumInterface)
-        {
-        }
+        Interaction(Point3f p, Float time, const MediumInterface* mediumInterface) : pi(p), time(time), mediumInterface(mediumInterface) {}
 
         SPECTRA_CPU_GPU
-        const MediumInteraction& AsMedium() const
-        {
+        const MediumInteraction& AsMedium() const {
             CHECK(IsMediumInteraction());
-            return (const MediumInteraction&)*this;
+            return (const MediumInteraction&) *this;
         }
 
         SPECTRA_CPU_GPU
-        MediumInteraction& AsMedium()
-        {
+        MediumInteraction& AsMedium() {
             CHECK(IsMediumInteraction());
-            return (MediumInteraction&)*this;
+            return (MediumInteraction&) *this;
         }
 
 
         SPECTRA_CPU_GPU
-        Point3f OffsetRayOrigin(Vector3f w) const { return spectra::OffsetRayOrigin(pi, n, w); }
+        Point3f OffsetRayOrigin(Vector3f w) const {
+            return spectra::OffsetRayOrigin(pi, n, w);
+        }
 
         SPECTRA_CPU_GPU
-        Point3f OffsetRayOrigin(Point3f pt) const { return OffsetRayOrigin(pt - p()); }
+        Point3f OffsetRayOrigin(Point3f pt) const {
+            return OffsetRayOrigin(pt - p());
+        }
 
         SPECTRA_CPU_GPU
-        RayDifferential SpawnRay(Vector3f d) const
-        {
+        RayDifferential SpawnRay(Vector3f d) const {
             return RayDifferential(OffsetRayOrigin(d), d, time, GetMedium(d));
         }
 
         SPECTRA_CPU_GPU
-        Ray SpawnRayTo(Point3f p2) const
-        {
-            Ray r = spectra::SpawnRayTo(pi, n, time, p2);
+        Ray SpawnRayTo(Point3f p2) const {
+            Ray r    = spectra::SpawnRayTo(pi, n, time, p2);
             r.medium = GetMedium(r.d);
             return r;
         }
 
         SPECTRA_CPU_GPU
-        Ray SpawnRayTo(const Interaction& it) const
-        {
-            Ray r = spectra::SpawnRayTo(pi, n, time, it.pi, it.n);
+        Ray SpawnRayTo(const Interaction& it) const {
+            Ray r    = spectra::SpawnRayTo(pi, n, time, it.pi, it.n);
             r.medium = GetMedium(r.d);
             return r;
         }
 
         SPECTRA_CPU_GPU
-        Medium GetMedium(Vector3f w) const
-        {
-            if (mediumInterface)
-                return Dot(w, n) > 0 ? mediumInterface->outside : mediumInterface->inside;
+        Medium GetMedium(Vector3f w) const {
+            if (mediumInterface) return Dot(w, n) > 0 ? mediumInterface->outside : mediumInterface->inside;
             return medium;
         }
 
         SPECTRA_CPU_GPU
-        Medium GetMedium() const
-        {
-            if (mediumInterface)
-                DCHECK_EQ(mediumInterface->inside, mediumInterface->outside);
+        Medium GetMedium() const {
+            if (mediumInterface) DCHECK_EQ(mediumInterface->inside, mediumInterface->outside);
             return mediumInterface ? mediumInterface->inside : medium;
         }
 
@@ -171,25 +141,18 @@ namespace spectra
         Normal3f n;
         Point2f uv;
         const MediumInterface* mediumInterface = nullptr;
-        Medium medium = nullptr;
+        Medium medium                          = nullptr;
     };
 
     // MediumInteraction Definition
-    class MediumInteraction : public Interaction
-    {
+    class MediumInteraction : public Interaction {
     public:
         // MediumInteraction Public Methods
         SPECTRA_CPU_GPU
-        MediumInteraction() : phase(nullptr)
-        {
-        }
+        MediumInteraction() : phase(nullptr) {}
 
         SPECTRA_CPU_GPU
-        MediumInteraction(Point3f p, Vector3f wo, Float time, Medium medium,
-                          PhaseFunction phase)
-            : Interaction(p, wo, time, medium), phase(phase)
-        {
-        }
+        MediumInteraction(Point3f p, Vector3f wo, Float time, Medium medium, PhaseFunction phase) : Interaction(p, wo, time, medium), phase(phase) {}
 
 
         // MediumInteraction Public Members
@@ -197,49 +160,34 @@ namespace spectra
     };
 
     // SurfaceInteraction Definition
-    class SurfaceInteraction : public Interaction
-    {
+    class SurfaceInteraction : public Interaction {
     public:
         // SurfaceInteraction Public Methods
         SurfaceInteraction() = default;
 
         SPECTRA_CPU_GPU
-        SurfaceInteraction(Point3fi pi, Point2f uv, Vector3f wo, Vector3f dpdu, Vector3f dpdv,
-                           Normal3f dndu, Normal3f dndv, Float time, bool flipNormal)
-            : Interaction(pi, Normal3f(Normalize(Cross(dpdu, dpdv))), uv, wo, time),
-              dpdu(dpdu),
-              dpdv(dpdv),
-              dndu(dndu),
-              dndv(dndv)
-        {
+        SurfaceInteraction(Point3fi pi, Point2f uv, Vector3f wo, Vector3f dpdu, Vector3f dpdv, Normal3f dndu, Normal3f dndv, Float time, bool flipNormal) : Interaction(pi, Normal3f(Normalize(Cross(dpdu, dpdv))), uv, wo, time), dpdu(dpdu), dpdv(dpdv), dndu(dndu), dndv(dndv) {
             // Initialize shading geometry from true geometry
-            shading.n = n;
+            shading.n    = n;
             shading.dpdu = dpdu;
             shading.dpdv = dpdv;
             shading.dndu = dndu;
             shading.dndv = dndv;
 
             // Adjust normal based on orientation and handedness
-            if (flipNormal)
-            {
+            if (flipNormal) {
                 n *= -1;
                 shading.n *= -1;
             }
         }
 
         SPECTRA_CPU_GPU
-        SurfaceInteraction(Point3fi pi, Point2f uv, Vector3f wo, Vector3f dpdu, Vector3f dpdv,
-                           Normal3f dndu, Normal3f dndv, Float time, bool flipNormal,
-                           int faceIndex)
-            : SurfaceInteraction(pi, uv, wo, dpdu, dpdv, dndu, dndv, time, flipNormal)
-        {
+        SurfaceInteraction(Point3fi pi, Point2f uv, Vector3f wo, Vector3f dpdu, Vector3f dpdv, Normal3f dndu, Normal3f dndv, Float time, bool flipNormal, int faceIndex) : SurfaceInteraction(pi, uv, wo, dpdu, dpdv, dndu, dndv, time, flipNormal) {
             this->faceIndex = faceIndex;
         }
 
         SPECTRA_CPU_GPU
-        void SetShadingGeometry(Normal3f ns, Vector3f dpdus, Vector3f dpdvs, Normal3f dndus,
-                                Normal3f dndvs, bool orientationIsAuthoritative)
-        {
+        void SetShadingGeometry(Normal3f ns, Vector3f dpdus, Vector3f dpdvs, Normal3f dndus, Normal3f dndvs, bool orientationIsAuthoritative) {
             // Compute _shading.n_ for _SurfaceInteraction_
             shading.n = ns;
             DCHECK_NE(shading.n, Normal3f(0, 0, 0));
@@ -253,20 +201,15 @@ namespace spectra
             shading.dpdv = dpdvs;
             shading.dndu = dndus;
             shading.dndv = dndvs;
-            while (LengthSquared(shading.dpdu) > 1e16f ||
-                LengthSquared(shading.dpdv) > 1e16f)
-            {
+            while (LengthSquared(shading.dpdu) > 1e16f || LengthSquared(shading.dpdv) > 1e16f) {
                 shading.dpdu /= 1e8f;
                 shading.dpdv /= 1e8f;
             }
         }
 
 
-        void SetIntersectionProperties(Material mtl, Light area,
-                                       const MediumInterface* primMediumInterface,
-                                       Medium rayMedium)
-        {
-            material = mtl;
+        void SetIntersectionProperties(Material mtl, Light area, const MediumInterface* primMediumInterface, Medium rayMedium) {
+            material  = mtl;
             areaLight = area;
             CHECK_GE(Dot(n, shading.n), 0.);
             // Set medium properties at surface intersection
@@ -277,21 +220,17 @@ namespace spectra
         }
 
         SPECTRA_CPU_GPU
-        void ComputeDifferentials(const RayDifferential& r, Camera camera,
-                                  int samplesPerPixel);
+        void ComputeDifferentials(const RayDifferential& r, Camera camera, int samplesPerPixel);
 
         SPECTRA_CPU_GPU
         void SkipIntersection(RayDifferential* ray, Float t) const;
 
         using Interaction::SpawnRay;
         SPECTRA_CPU_GPU
-        RayDifferential SpawnRay(const RayDifferential& rayi, const BSDF& bsdf, Vector3f wi,
-                                 int /*BxDFFlags*/ flags, Float eta) const;
+        RayDifferential SpawnRay(const RayDifferential& rayi, const BSDF& bsdf, Vector3f wi, int /*BxDFFlags*/ flags, Float eta) const;
 
-        BSDF GetBSDF(const RayDifferential& ray, SampledWavelengths& lambda, Camera camera,
-                     ScratchBuffer& scratchBuffer, Sampler sampler);
-        BSSRDF GetBSSRDF(const RayDifferential& ray, SampledWavelengths& lambda,
-                         Camera camera, ScratchBuffer& scratchBuffer);
+        BSDF GetBSDF(const RayDifferential& ray, SampledWavelengths& lambda, Camera camera, ScratchBuffer& scratchBuffer, Sampler sampler);
+        BSSRDF GetBSSRDF(const RayDifferential& ray, SampledWavelengths& lambda, Camera camera, ScratchBuffer& scratchBuffer);
 
         SPECTRA_CPU_GPU
         SampledSpectrum Le(Vector3f w, const SampledWavelengths& lambda) const;
@@ -300,8 +239,7 @@ namespace spectra
         Vector3f dpdu, dpdv;
         Normal3f dndu, dndv;
 
-        struct
-        {
+        struct {
             Normal3f n;
             Vector3f dpdu, dpdv;
             Normal3f dndu, dndv;
@@ -315,4 +253,4 @@ namespace spectra
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_CORE_INTERACTION_H
+#endif // SPECTRA_PATHTRACER_CORE_INTERACTION_H

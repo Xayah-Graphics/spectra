@@ -1,12 +1,11 @@
-#include <spectra/pathtracer/util/float.h>
-
-#include <spectra/pathtracer/optix/aggregate.h>
-#include <spectra/pathtracer/optix/optix.h>
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/materials.h>
 #include <spectra/pathtracer/core/media.h>
 #include <spectra/pathtracer/core/shapes.h>
 #include <spectra/pathtracer/core/textures.h>
+#include <spectra/pathtracer/optix/aggregate.h>
+#include <spectra/pathtracer/optix/optix.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/rng.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <spectra/pathtracer/util/vecmath.h>
@@ -14,71 +13,56 @@
 
 // Make shader support functions visible to OptiX-IR, which is compiled as a
 // separate device module from spectra_gpu_lib.
+#include <optix_device.h>
 #include <spectra/pathtracer/util/color.cu>
 #include <spectra/pathtracer/util/colorspace.cu>
 #include <spectra/pathtracer/util/noise.cu>
 #include <spectra/pathtracer/util/spectrum.cu>
 #include <spectra/pathtracer/util/transform.cu>
-
-#include <optix_device.h>
-
 #include <utility>
 
 extern "C" {
 extern __constant__ spectra::optix::RayIntersectParameters params;
 }
 
-namespace spectra::optix
-{
+namespace spectra::optix {
     ///////////////////////////////////////////////////////////////////////////
     // Utility functions
 
     // Payload management
-    __device__ inline uint32_t packPointer0(void* ptr)
-    {
+    __device__ inline uint32_t packPointer0(void* ptr) {
         uint64_t uptr = reinterpret_cast<uint64_t>(ptr);
         return uptr >> 32;
     }
 
-    __device__ inline uint32_t packPointer1(void* ptr)
-    {
+    __device__ inline uint32_t packPointer1(void* ptr) {
         uint64_t uptr = reinterpret_cast<uint64_t>(ptr);
         return uint32_t(uptr);
     }
 
     template <typename T>
-    static __forceinline__ __device__ T* getPayload()
-    {
+    static __forceinline__ __device__ T* getPayload() {
         uint32_t p0 = optixGetPayload_0(), p1 = optixGetPayload_1();
         const uint64_t uptr = (uint64_t(p0) << 32) | p1;
         return reinterpret_cast<T*>(uptr);
     }
 
     template <typename... Args>
-    __device__ inline void Trace(OptixTraversableHandle traversable, Ray ray,
-                                 Float tMax, OptixRayFlags flags, Args&&... payload)
-    {
+    __device__ inline void Trace(OptixTraversableHandle traversable, Ray ray, Float tMax, OptixRayFlags flags, Args&&... payload) {
         static constexpr float eps = 1e-7f;
 
-        optixTrace(SpectraOptiXPayloadType, traversable, make_float3(ray.o.x, ray.o.y, ray.o.z),
-                   make_float3(ray.d.x, ray.d.y, ray.d.z), eps, tMax, ray.time,
-                   OptixVisibilityMask(255), flags, 0, /* ray type */
-                   1, /* number of ray types */
-                   0, /* missSBTIndex */
-                   std::forward<Args>(payload)...);
+        optixTrace(SpectraOptiXPayloadType, traversable, make_float3(ray.o.x, ray.o.y, ray.o.z), make_float3(ray.d.x, ray.d.y, ray.d.z), eps, tMax, ray.time, OptixVisibilityMask(255), flags, 0, /* ray type */
+            1, /* number of ray types */
+            0, /* missSBTIndex */
+            std::forward<Args>(payload)...);
     }
 
     ///////////////////////////////////////////////////////////////////////////
     // Closest hit
 
-    struct ClosestHitContext
-    {
+    struct ClosestHitContext {
         ClosestHitContext() = default;
-        __device__
-        ClosestHitContext(Medium rayMedium, bool shadowRay)
-            : rayMedium(rayMedium), shadowRay(shadowRay)
-        {
-        }
+        __device__ ClosestHitContext(Medium rayMedium, bool shadowRay) : rayMedium(rayMedium), shadowRay(shadowRay) {}
 
         Medium rayMedium;
         bool shadowRay;
@@ -89,24 +73,20 @@ namespace spectra::optix
         Material material;
         MediumInterface mediumInterface;
 
-        __device__
-        Ray SpawnRayTo(const Point3f& p) const
-        {
+        __device__ Ray SpawnRayTo(const Point3f& p) const {
             Interaction intr(piHit, nHit);
             intr.mediumInterface = &mediumInterface;
             return intr.SpawnRayTo(p);
         }
     };
 
-    extern "C" __global__ void __raygen__findClosest()
-    {
+    extern "C" __global__ void __raygen__findClosest() {
         int rayIndex(optixGetLaunchIndex().x);
-        if (rayIndex >= params.rayQueue->Size())
-            return;
+        if (rayIndex >= params.rayQueue->Size()) return;
 
         RayWorkItem r = (*params.rayQueue)[rayIndex];
-        Ray ray = r.ray;
-        Float tMax = 1e30f;
+        Ray ray       = r.ray;
+        Float tMax    = 1e30f;
 
         ClosestHitContext ctx(ray.medium, false);
         uint32_t p0 = packPointer0(&ctx), p1 = packPointer1(&ctx);
@@ -115,18 +95,14 @@ namespace spectra::optix
         uint32_t missed = 0;
         Trace(params.traversable, ray, tMax, OPTIX_RAY_FLAG_NONE, p0, p1, missed);
 
-        if (missed)
-            EnqueueWorkAfterMiss(r, params.mediumSampleQueue, params.escapedRayQueue);
+        if (missed) EnqueueWorkAfterMiss(r, params.mediumSampleQueue, params.escapedRayQueue);
     }
 
-    extern "C" __global__ void __miss__noop()
-    {
+    extern "C" __global__ void __miss__noop() {
         optixSetPayload_2(1);
     }
 
-    static __forceinline__ __device__ void ProcessClosestIntersection(
-        SurfaceInteraction intr)
-    {
+    static __forceinline__ __device__ void ProcessClosestIntersection(SurfaceInteraction intr) {
         int rayIndex = optixGetLaunchIndex().x;
 
         Medium rayMedium = getPayload<ClosestHitContext>()->rayMedium;
@@ -135,39 +111,26 @@ namespace spectra::optix
         else
             getPayload<ClosestHitContext>()->mediumInterface = MediumInterface(rayMedium);
 
-        getPayload<ClosestHitContext>()->piHit = intr.pi;
-        getPayload<ClosestHitContext>()->nHit = intr.n;
+        getPayload<ClosestHitContext>()->piHit    = intr.pi;
+        getPayload<ClosestHitContext>()->nHit     = intr.n;
         getPayload<ClosestHitContext>()->material = intr.material;
 
-        if (getPayload<ClosestHitContext>()->shadowRay)
-            return;
+        if (getPayload<ClosestHitContext>()->shadowRay) return;
 
         // We only have the ray queue (and it only makes sense to access) for
         // regular closest hit rays.
         RayWorkItem r = (*params.rayQueue)[rayIndex];
 
-        EnqueueWorkAfterIntersection(r, rayMedium, optixGetRayTmax(), intr, params.mediumSampleQueue,
-                                     params.nextRayQueue, params.hitAreaLightQueue,
-                                     params.basicEvalMaterialQueue,
-                                     params.universalEvalMaterialQueue);
+        EnqueueWorkAfterIntersection(r, rayMedium, optixGetRayTmax(), intr, params.mediumSampleQueue, params.nextRayQueue, params.hitAreaLightQueue, params.basicEvalMaterialQueue, params.universalEvalMaterialQueue);
     }
 
-    static __forceinline__ __device__ Transform getWorldFromInstance()
-    {
+    static __forceinline__ __device__ Transform getWorldFromInstance() {
         assert(optixGetTransformListSize() == 1);
         float worldFromObj[12], objFromWorld[12];
         optixGetObjectToWorldTransformMatrix(worldFromObj);
         optixGetWorldToObjectTransformMatrix(objFromWorld);
-        SquareMatrix<4> worldFromObjM(worldFromObj[0], worldFromObj[1], worldFromObj[2],
-                                      worldFromObj[3], worldFromObj[4], worldFromObj[5],
-                                      worldFromObj[6], worldFromObj[7], worldFromObj[8],
-                                      worldFromObj[9], worldFromObj[10], worldFromObj[11],
-                                      0.f, 0.f, 0.f, 1.f);
-        SquareMatrix<4> objFromWorldM(objFromWorld[0], objFromWorld[1], objFromWorld[2],
-                                      objFromWorld[3], objFromWorld[4], objFromWorld[5],
-                                      objFromWorld[6], objFromWorld[7], objFromWorld[8],
-                                      objFromWorld[9], objFromWorld[10], objFromWorld[11],
-                                      0.f, 0.f, 0.f, 1.f);
+        SquareMatrix<4> worldFromObjM(worldFromObj[0], worldFromObj[1], worldFromObj[2], worldFromObj[3], worldFromObj[4], worldFromObj[5], worldFromObj[6], worldFromObj[7], worldFromObj[8], worldFromObj[9], worldFromObj[10], worldFromObj[11], 0.f, 0.f, 0.f, 1.f);
+        SquareMatrix<4> objFromWorldM(objFromWorld[0], objFromWorld[1], objFromWorld[2], objFromWorld[3], objFromWorld[4], objFromWorld[5], objFromWorld[6], objFromWorld[7], objFromWorld[8], objFromWorld[9], objFromWorld[10], objFromWorld[11], 0.f, 0.f, 0.f, 1.f);
 
         return Transform(worldFromObjM, objFromWorldM);
     }
@@ -175,91 +138,74 @@ namespace spectra::optix
     ///////////////////////////////////////////////////////////////////////////
     // Triangles
 
-    static __forceinline__ __device__ SurfaceInteraction
-    getTriangleIntersection()
-    {
-        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*)optixGetSbtDataPointer();
+    static __forceinline__ __device__ SurfaceInteraction getTriangleIntersection() {
+        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*) optixGetSbtDataPointer();
 
         float b1 = optixGetTriangleBarycentrics().x;
         float b2 = optixGetTriangleBarycentrics().y;
         float b0 = 1 - b1 - b2;
 
-        float3 rd = optixGetWorldRayDirection();
+        float3 rd   = optixGetWorldRayDirection();
         Vector3f wo = -Vector3f(rd.x, rd.y, rd.z);
 
         Transform worldFromInstance = getWorldFromInstance();
 
         Float time = optixGetRayTime();
-        wo = worldFromInstance.ApplyInverse(wo);
+        wo         = worldFromInstance.ApplyInverse(wo);
 
         TriangleIntersection ti{b0, b1, b2, optixGetRayTmax()};
-        SurfaceInteraction intr =
-            Triangle::InteractionFromIntersection(rec.mesh, optixGetPrimitiveIndex(),
-                                                  ti, time, wo);
+        SurfaceInteraction intr = Triangle::InteractionFromIntersection(rec.mesh, optixGetPrimitiveIndex(), ti, time, wo);
         return worldFromInstance(intr);
     }
 
-    static __forceinline__ __device__ bool alphaKilled(const TriangleMeshRecord& rec)
-    {
-        if (!rec.alphaTexture)
-            return false;
+    static __forceinline__ __device__ bool alphaKilled(const TriangleMeshRecord& rec) {
+        if (!rec.alphaTexture) return false;
 
         SurfaceInteraction intr = getTriangleIntersection();
 
         BasicTextureEvaluator eval;
         Float alpha = eval(rec.alphaTexture, intr);
-        if (alpha >= 1)
-            return false;
+        if (alpha >= 1) return false;
         if (alpha <= 0)
             return true;
-        else
-        {
+        else {
             float3 o = optixGetWorldRayOrigin();
             float3 d = optixGetWorldRayDirection();
-            Float u = HashFloat(o, d);
+            Float u  = HashFloat(o, d);
             return u > alpha;
         }
     }
 
-    extern "C" __global__ void __closesthit__triangle()
-    {
-        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*)optixGetSbtDataPointer();
+    extern "C" __global__ void __closesthit__triangle() {
+        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*) optixGetSbtDataPointer();
 
         SurfaceInteraction intr = getTriangleIntersection();
 
-        if (rec.mediumInterface && rec.mediumInterface->IsMediumTransition())
-            intr.mediumInterface = rec.mediumInterface;
+        if (rec.mediumInterface && rec.mediumInterface->IsMediumTransition()) intr.mediumInterface = rec.mediumInterface;
         intr.material = rec.material;
-        if (!rec.areaLights.empty())
-            intr.areaLight = rec.areaLights[optixGetPrimitiveIndex()];
+        if (!rec.areaLights.empty()) intr.areaLight = rec.areaLights[optixGetPrimitiveIndex()];
 
         ProcessClosestIntersection(intr);
     }
 
-    extern "C" __global__ void __anyhit__triangle()
-    {
-        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*)optixGetSbtDataPointer();
+    extern "C" __global__ void __anyhit__triangle() {
+        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*) optixGetSbtDataPointer();
 
-        if (alphaKilled(rec))
-            optixIgnoreIntersection();
+        if (alphaKilled(rec)) optixIgnoreIntersection();
     }
 
-    extern "C" __global__ void __anyhit__shadowTriangle()
-    {
-        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*)optixGetSbtDataPointer();
+    extern "C" __global__ void __anyhit__shadowTriangle() {
+        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*) optixGetSbtDataPointer();
 
-        if (alphaKilled(rec))
-            optixIgnoreIntersection();
+        if (alphaKilled(rec)) optixIgnoreIntersection();
     }
 
     ///////////////////////////////////////////////////////////////////////////
     // Shadow rays
 
-    extern "C" __global__ void __raygen__shadow()
-    {
+    extern "C" __global__ void __raygen__shadow() {
         int index = optixGetLaunchIndex().x;
-        if (index >= params.shadowRayQueue->Size())
-            return;
+        if (index >= params.shadowRayQueue->Size()) return;
 
         ShadowRayWorkItem sr = (*params.shadowRayQueue)[index];
 
@@ -269,58 +215,49 @@ namespace spectra::optix
         RecordShadowRayResult(sr, &params.pixelSampleState, !missed);
     }
 
-    extern "C" __global__ void __miss__shadow()
-    {
+    extern "C" __global__ void __miss__shadow() {
         optixSetPayload_0(1);
     }
 
-    extern "C" __global__ void __raygen__shadow_Tr()
-    {
+    extern "C" __global__ void __raygen__shadow_Tr() {
         int index = optixGetLaunchIndex().x;
-        if (index >= params.shadowRayQueue->Size())
-            return;
+        if (index >= params.shadowRayQueue->Size()) return;
 
         ShadowRayWorkItem sr = (*params.shadowRayQueue)[index];
 
         ClosestHitContext ctx;
 
-        TraceTransmittance(sr, &params.pixelSampleState,
-                           [&](Ray ray, Float tMax) -> TransmittanceTraceResult
-                           {
-                               ctx = ClosestHitContext(ray.medium, true);
-                               uint32_t p0 = packPointer0(&ctx), p1 = packPointer1(&ctx);
+        TraceTransmittance(
+            sr, &params.pixelSampleState,
+            [&](Ray ray, Float tMax) -> TransmittanceTraceResult {
+                ctx         = ClosestHitContext(ray.medium, true);
+                uint32_t p0 = packPointer0(&ctx), p1 = packPointer1(&ctx);
 
-                               uint32_t missed = 0;
+                uint32_t missed = 0;
 
-                               Trace(params.traversable, ray, tMax, OPTIX_RAY_FLAG_NONE, p0, p1, missed);
+                Trace(params.traversable, ray, tMax, OPTIX_RAY_FLAG_NONE, p0, p1, missed);
 
-                               return TransmittanceTraceResult{!missed, Point3f(ctx.piHit), ctx.material};
-                           },
-                           [&](Point3f p) -> Ray
-                           {
-                               return ctx.SpawnRayTo(p);
-                           });
+                return TransmittanceTraceResult{!missed, Point3f(ctx.piHit), ctx.material};
+            },
+            [&](Point3f p) -> Ray { return ctx.SpawnRayTo(p); });
     }
 
-    extern "C" __global__ void __miss__shadow_Tr()
-    {
+    extern "C" __global__ void __miss__shadow_Tr() {
         optixSetPayload_2(1);
     }
 
     /////////////////////////////////////////////////////////////////////////////////////
     // Quadrics
 
-    static __device__ inline SurfaceInteraction getQuadricIntersection(
-        const QuadricIntersection& si)
-    {
-        QuadricRecord& rec = *((QuadricRecord*)optixGetSbtDataPointer());
+    static __device__ inline SurfaceInteraction getQuadricIntersection(const QuadricIntersection& si) {
+        QuadricRecord& rec = *((QuadricRecord*) optixGetSbtDataPointer());
 
-        float3 rd = optixGetWorldRayDirection();
+        float3 rd   = optixGetWorldRayDirection();
         Vector3f wo = -Vector3f(rd.x, rd.y, rd.z);
-        Float time = optixGetRayTime();
+        Float time  = optixGetRayTime();
 
         Transform worldFromInstance = getWorldFromInstance();
-        wo = worldFromInstance.ApplyInverse(wo);
+        wo                          = worldFromInstance.ApplyInverse(wo);
 
         SurfaceInteraction intr;
         if (const Sphere* sphere = rec.shape.CastOrNullptr<Sphere>())
@@ -335,35 +272,27 @@ namespace spectra::optix
         return intr;
     }
 
-    extern "C" __global__ void __closesthit__quadric()
-    {
-        QuadricRecord& rec = *((QuadricRecord*)optixGetSbtDataPointer());
+    extern "C" __global__ void __closesthit__quadric() {
+        QuadricRecord& rec = *((QuadricRecord*) optixGetSbtDataPointer());
         QuadricIntersection qi;
-        qi.pObj =
-            Point3f(BitsToFloat(optixGetAttribute_0()), BitsToFloat(optixGetAttribute_1()),
-                    BitsToFloat(optixGetAttribute_2()));
-        qi.phi = BitsToFloat(optixGetAttribute_3());
+        qi.pObj = Point3f(BitsToFloat(optixGetAttribute_0()), BitsToFloat(optixGetAttribute_1()), BitsToFloat(optixGetAttribute_2()));
+        qi.phi  = BitsToFloat(optixGetAttribute_3());
 
         SurfaceInteraction intr = getQuadricIntersection(qi);
-        if (rec.mediumInterface && rec.mediumInterface->IsMediumTransition())
-            intr.mediumInterface = rec.mediumInterface;
+        if (rec.mediumInterface && rec.mediumInterface->IsMediumTransition()) intr.mediumInterface = rec.mediumInterface;
         intr.material = rec.material;
-        if (rec.areaLight)
-            intr.areaLight = rec.areaLight;
+        if (rec.areaLight) intr.areaLight = rec.areaLight;
 
         Transform worldFromInstance = getWorldFromInstance();
-        intr = worldFromInstance(intr);
+        intr                        = worldFromInstance(intr);
 
         ProcessClosestIntersection(intr);
     }
 
-    extern "C" __global__ void __anyhit__shadowQuadric()
-    {
-    }
+    extern "C" __global__ void __anyhit__shadowQuadric() {}
 
-    extern "C" __global__ void __intersection__quadric()
-    {
-        QuadricRecord& rec = *((QuadricRecord*)optixGetSbtDataPointer());
+    extern "C" __global__ void __intersection__quadric() {
+        QuadricRecord& rec = *((QuadricRecord*) optixGetSbtDataPointer());
 
         float3 org = optixGetObjectRayOrigin();
         float3 dir = optixGetObjectRayDirection();
@@ -378,136 +307,114 @@ namespace spectra::optix
         else if (const Disk* disk = rec.shape.CastOrNullptr<Disk>())
             isect = disk->BasicIntersect(ray, tMax);
 
-        if (!isect)
-            return;
+        if (!isect) return;
 
-        if (rec.alphaTexture)
-        {
+        if (rec.alphaTexture) {
             SurfaceInteraction intr = getQuadricIntersection(*isect);
 
             BasicTextureEvaluator eval;
             Float alpha = eval(rec.alphaTexture, intr);
-            if (alpha < 1)
-            {
+            if (alpha < 1) {
                 if (alpha == 0)
                     // No hit
                     return;
 
                 float3 o = optixGetWorldRayOrigin();
                 float3 d = optixGetWorldRayDirection();
-                Float u = HashFloat(o.x, o.y, o.z, d.x, d.y, d.z);
+                Float u  = HashFloat(o.x, o.y, o.z, d.x, d.y, d.z);
                 if (u > alpha)
                     // no hit
                     return;
             }
         }
 
-        optixReportIntersection(isect->tHit, 0 /* hit kind */, FloatToBits(isect->pObj.x),
-                                FloatToBits(isect->pObj.y), FloatToBits(isect->pObj.z),
-                                FloatToBits(isect->phi));
+        optixReportIntersection(isect->tHit, 0 /* hit kind */, FloatToBits(isect->pObj.x), FloatToBits(isect->pObj.y), FloatToBits(isect->pObj.z), FloatToBits(isect->phi));
     }
 
     ///////////////////////////////////////////////////////////////////////////
     // Bilinear patches
 
-    static __forceinline__ __device__ SurfaceInteraction
-    getBilinearPatchIntersection(Point2f uv)
-    {
-        BilinearMeshRecord& rec = *((BilinearMeshRecord*)optixGetSbtDataPointer());
+    static __forceinline__ __device__ SurfaceInteraction getBilinearPatchIntersection(Point2f uv) {
+        BilinearMeshRecord& rec = *((BilinearMeshRecord*) optixGetSbtDataPointer());
 
-        float3 rd = optixGetWorldRayDirection();
+        float3 rd   = optixGetWorldRayDirection();
         Vector3f wo = -Vector3f(rd.x, rd.y, rd.z);
 
         Transform worldFromInstance = getWorldFromInstance();
-        wo = worldFromInstance.ApplyInverse(wo);
+        wo                          = worldFromInstance.ApplyInverse(wo);
 
-        return BilinearPatch::InteractionFromIntersection(rec.mesh, optixGetPrimitiveIndex(),
-                                                          uv, optixGetRayTime(), wo);
+        return BilinearPatch::InteractionFromIntersection(rec.mesh, optixGetPrimitiveIndex(), uv, optixGetRayTime(), wo);
     }
 
-    extern "C" __global__ void __closesthit__bilinearPatch()
-    {
-        BilinearMeshRecord& rec = *((BilinearMeshRecord*)optixGetSbtDataPointer());
+    extern "C" __global__ void __closesthit__bilinearPatch() {
+        BilinearMeshRecord& rec = *((BilinearMeshRecord*) optixGetSbtDataPointer());
 
         Point2f uv(BitsToFloat(optixGetAttribute_0()), BitsToFloat(optixGetAttribute_1()));
 
         SurfaceInteraction intr = getBilinearPatchIntersection(uv);
-        if (rec.mediumInterface && rec.mediumInterface->IsMediumTransition())
-            intr.mediumInterface = rec.mediumInterface;
+        if (rec.mediumInterface && rec.mediumInterface->IsMediumTransition()) intr.mediumInterface = rec.mediumInterface;
         intr.material = rec.material;
-        if (!rec.areaLights.empty())
-            intr.areaLight = rec.areaLights[optixGetPrimitiveIndex()];
+        if (!rec.areaLights.empty()) intr.areaLight = rec.areaLights[optixGetPrimitiveIndex()];
 
         Transform worldFromInstance = getWorldFromInstance();
-        intr = worldFromInstance(intr);
+        intr                        = worldFromInstance(intr);
 
         ProcessClosestIntersection(intr);
     }
 
-    extern "C" __global__ void __anyhit__shadowBilinearPatch()
-    {
-    }
+    extern "C" __global__ void __anyhit__shadowBilinearPatch() {}
 
-    extern "C" __global__ void __intersection__bilinearPatch()
-    {
-        BilinearMeshRecord& rec = *((BilinearMeshRecord*)optixGetSbtDataPointer());
+    extern "C" __global__ void __intersection__bilinearPatch() {
+        BilinearMeshRecord& rec = *((BilinearMeshRecord*) optixGetSbtDataPointer());
 
         float3 org = optixGetObjectRayOrigin();
         float3 dir = optixGetObjectRayDirection();
         Float tMax = optixGetRayTmax();
         Ray ray(Point3f(org.x, org.y, org.z), Vector3f(dir.x, dir.y, dir.z));
 
-        int vertexIndex = 4 * optixGetPrimitiveIndex();
-        Point3f p00 = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex]];
-        Point3f p10 = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex + 1]];
-        Point3f p01 = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex + 2]];
-        Point3f p11 = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex + 3]];
-        pstd::optional<BilinearIntersection> isect =
-            IntersectBilinearPatch(ray, tMax, p00, p10, p01, p11);
+        int vertexIndex                            = 4 * optixGetPrimitiveIndex();
+        Point3f p00                                = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex]];
+        Point3f p10                                = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex + 1]];
+        Point3f p01                                = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex + 2]];
+        Point3f p11                                = rec.mesh->p[rec.mesh->vertexIndices[vertexIndex + 3]];
+        pstd::optional<BilinearIntersection> isect = IntersectBilinearPatch(ray, tMax, p00, p10, p01, p11);
 
-        if (!isect)
-            return;
+        if (!isect) return;
 
-        if (rec.alphaTexture)
-        {
+        if (rec.alphaTexture) {
             SurfaceInteraction intr = getBilinearPatchIntersection(isect->uv);
             BasicTextureEvaluator eval;
             Float alpha = eval(rec.alphaTexture, intr);
-            if (alpha < 1)
-            {
+            if (alpha < 1) {
                 if (alpha == 0)
                     // No hit
                     return;
 
                 float3 o = optixGetWorldRayOrigin();
                 float3 d = optixGetWorldRayDirection();
-                Float u = HashFloat(o, d);
+                Float u  = HashFloat(o, d);
                 if (u > alpha)
                     // no hit
                     return;
             }
         }
 
-        optixReportIntersection(isect->t, 0 /* hit kind */, FloatToBits(isect->uv[0]),
-                                FloatToBits(isect->uv[1]));
+        optixReportIntersection(isect->t, 0 /* hit kind */, FloatToBits(isect->uv[0]), FloatToBits(isect->uv[1]));
     }
 
     ///////////////////////////////////////////////////////////////////////////
     // Random hit (for subsurface scattering)
 
-    struct RandomHitPayload
-    {
+    struct RandomHitPayload {
         WeightedReservoirSampler<SubsurfaceInteraction> wrs;
         Material material;
         pstd::optional<SurfaceInteraction> intr;
     };
 
-    extern "C" __global__ void __raygen__randomHit()
-    {
+    extern "C" __global__ void __raygen__randomHit() {
         // Keep as uint32_t so can pass directly to optixTrace.
         uint32_t index = optixGetLaunchIndex().x;
-        if (index >= params.subsurfaceScatterQueue->Size())
-            return;
+        if (index >= params.subsurfaceScatterQueue->Size()) return;
 
         SubsurfaceScatterWorkItem s = (*params.subsurfaceScatterQueue)[index];
 
@@ -521,79 +428,64 @@ namespace spectra::optix
 
 
         int depth = 0;
-        while (LengthSquared(ray.d) > 0 && ++depth < 100)
-        {
+        while (LengthSquared(ray.d) > 0 && ++depth < 100) {
             Trace(params.traversable, ray, 1.f /* tMax */, OPTIX_RAY_FLAG_NONE, ptr0, ptr1);
 
-            if (payload.intr)
-            {
+            if (payload.intr) {
                 ray = payload.intr->SpawnRayTo(s.p1);
                 payload.intr.reset();
-            }
-            else
+            } else
                 break;
         }
 
-        if (payload.wrs.HasSample() &&
-            payload.wrs.WeightSum() > 0)
-        {
+        if (payload.wrs.HasSample() && payload.wrs.WeightSum() > 0) {
             // TODO: latter check shouldn't be needed...
             const SubsurfaceInteraction& si = payload.wrs.GetSample();
 
             params.subsurfaceScatterQueue->reservoirPDF[index] = payload.wrs.SampleProbability();
-            params.subsurfaceScatterQueue->ssi[index] = payload.wrs.GetSample();
-        }
-        else
+            params.subsurfaceScatterQueue->ssi[index]          = payload.wrs.GetSample();
+        } else
             params.subsurfaceScatterQueue->reservoirPDF[index] = 0;
     }
 
-    extern "C" __global__ void __closesthit__randomHitTriangle()
-    {
-        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*)optixGetSbtDataPointer();
+    extern "C" __global__ void __closesthit__randomHitTriangle() {
+        const TriangleMeshRecord& rec = *(const TriangleMeshRecord*) optixGetSbtDataPointer();
 
         RandomHitPayload* p = getPayload<RandomHitPayload>();
 
 
         SurfaceInteraction intr = getTriangleIntersection();
-        p->intr = intr;
+        p->intr                 = intr;
 
-        if (rec.material == p->material)
-            p->wrs.Add([&] __device__ () { return intr; }, 1.f);
+        if (rec.material == p->material) p->wrs.Add([&] __device__() { return intr; }, 1.f);
     }
 
-    extern "C" __global__ void __closesthit__randomHitBilinearPatch()
-    {
-        BilinearMeshRecord& rec = *(BilinearMeshRecord*)optixGetSbtDataPointer();
+    extern "C" __global__ void __closesthit__randomHitBilinearPatch() {
+        BilinearMeshRecord& rec = *(BilinearMeshRecord*) optixGetSbtDataPointer();
 
         RandomHitPayload* p = getPayload<RandomHitPayload>();
 
 
-        Point2f uv(BitsToFloat(optixGetAttribute_0()),
-                   BitsToFloat(optixGetAttribute_1()));
+        Point2f uv(BitsToFloat(optixGetAttribute_0()), BitsToFloat(optixGetAttribute_1()));
         SurfaceInteraction intr = getBilinearPatchIntersection(uv);
-        p->intr = intr;
+        p->intr                 = intr;
 
-        if (rec.material == p->material)
-            p->wrs.Add([&] __device__ () { return intr; }, 1.f);
+        if (rec.material == p->material) p->wrs.Add([&] __device__() { return intr; }, 1.f);
     }
 
-    extern "C" __global__ void __closesthit__randomHitQuadric()
-    {
-        QuadricRecord& rec = *((QuadricRecord*)optixGetSbtDataPointer());
+    extern "C" __global__ void __closesthit__randomHitQuadric() {
+        QuadricRecord& rec = *((QuadricRecord*) optixGetSbtDataPointer());
 
         RandomHitPayload* p = getPayload<RandomHitPayload>();
 
 
         QuadricIntersection qi;
-        qi.pObj = Point3f(BitsToFloat(optixGetAttribute_0()),
-                          BitsToFloat(optixGetAttribute_1()),
-                          BitsToFloat(optixGetAttribute_2()));
-        qi.phi = BitsToFloat(optixGetAttribute_3());
+        qi.pObj = Point3f(BitsToFloat(optixGetAttribute_0()), BitsToFloat(optixGetAttribute_1()), BitsToFloat(optixGetAttribute_2()));
+        qi.phi  = BitsToFloat(optixGetAttribute_3());
 
         SurfaceInteraction intr = getQuadricIntersection(qi);
-        p->intr = intr;
+        p->intr                 = intr;
 
-        if (rec.material == p->material)
-            p->wrs.Add([&] __device__ () { return intr; }, 1.f);
+        if (rec.material == p->material) p->wrs.Add([&] __device__() { return intr; }, 1.f);
     }
 } // namespace spectra::optix

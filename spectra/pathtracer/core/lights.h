@@ -5,48 +5,39 @@
 // Copyright (c) 2020, Weta Digital, Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <functional>
+#include <memory>
 #include <spectra/pathtracer/base/light.h>
 #include <spectra/pathtracer/base/medium.h>
 #include <spectra/pathtracer/base/texture.h>
+#include <spectra/pathtracer/core/diagnostics.h>
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/shapes.h>
 #include <spectra/pathtracer/core/textures.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/image.h>
-#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/sampling.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
-#include <functional>
-#include <memory>
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     std::string ToString(LightType type);
 
     // Light Inline Functions
-    SPECTRA_CPU_GPU inline bool IsDeltaLight(LightType type)
-    {
+    SPECTRA_CPU_GPU inline bool IsDeltaLight(LightType type) {
         return (type == LightType::DeltaPosition || type == LightType::DeltaDirection);
     }
 
     // LightLiSample Definition
-    struct LightLiSample
-    {
+    struct LightLiSample {
         // LightLiSample Public Methods
         LightLiSample() = default;
         SPECTRA_CPU_GPU
-        LightLiSample(const SampledSpectrum& L, Vector3f wi, Float pdf,
-                      const Interaction& pLight)
-            : L(L), wi(wi), pdf(pdf), pLight(pLight)
-        {
-        }
+        LightLiSample(const SampledSpectrum& L, Vector3f wi, Float pdf, const Interaction& pLight) : L(L), wi(wi), pdf(pdf), pLight(pLight) {}
 
 
         SampledSpectrum L;
@@ -56,27 +47,22 @@ namespace spectra
     };
 
     // LightLeSample Definition
-    struct LightLeSample
-    {
+    struct LightLeSample {
         // LightLeSample Public Methods
         LightLeSample() = default;
         SPECTRA_CPU_GPU
-        LightLeSample(const SampledSpectrum& L, const Ray& ray, Float pdfPos, Float pdfDir)
-            : L(L), ray(ray), pdfPos(pdfPos), pdfDir(pdfDir)
-        {
-        }
+        LightLeSample(const SampledSpectrum& L, const Ray& ray, Float pdfPos, Float pdfDir) : L(L), ray(ray), pdfPos(pdfPos), pdfDir(pdfDir) {}
 
         SPECTRA_CPU_GPU
-        LightLeSample(const SampledSpectrum& L, const Ray& ray, const Interaction& intr,
-                      Float pdfPos, Float pdfDir)
-            : L(L), ray(ray), intr(intr), pdfPos(pdfPos), pdfDir(pdfDir)
-        {
+        LightLeSample(const SampledSpectrum& L, const Ray& ray, const Interaction& intr, Float pdfPos, Float pdfDir) : L(L), ray(ray), intr(intr), pdfPos(pdfPos), pdfDir(pdfDir) {
             CHECK(this->intr->n != Normal3f(0, 0, 0));
         }
 
 
         SPECTRA_CPU_GPU
-        Float AbsCosTheta(Vector3f w) const { return intr ? AbsDot(w, intr->n) : 1; }
+        Float AbsCosTheta(Vector3f w) const {
+            return intr ? AbsDot(w, intr->n) : 1;
+        }
 
         // LightLeSample Public Members
         SampledSpectrum L;
@@ -86,29 +72,23 @@ namespace spectra
     };
 
     // LightSampleContext Definition
-    class LightSampleContext
-    {
+    class LightSampleContext {
     public:
         // LightSampleContext Public Methods
         LightSampleContext() = default;
         SPECTRA_CPU_GPU
-        LightSampleContext(const SurfaceInteraction& si)
-            : pi(si.pi), n(si.n), ns(si.shading.n)
-        {
-        }
+        LightSampleContext(const SurfaceInteraction& si) : pi(si.pi), n(si.n), ns(si.shading.n) {}
 
         SPECTRA_CPU_GPU
-        LightSampleContext(const Interaction& intr) : pi(intr.pi)
-        {
-        }
+        LightSampleContext(const Interaction& intr) : pi(intr.pi) {}
 
         SPECTRA_CPU_GPU
-        LightSampleContext(Point3fi pi, Normal3f n, Normal3f ns) : pi(pi), n(n), ns(ns)
-        {
-        }
+        LightSampleContext(Point3fi pi, Normal3f n, Normal3f ns) : pi(pi), n(n), ns(ns) {}
 
         SPECTRA_CPU_GPU
-        Point3f p() const { return Point3f(pi); }
+        Point3f p() const {
+            return Point3f(pi);
+        }
 
         // LightSampleContext Public Members
         Point3fi pi;
@@ -116,16 +96,16 @@ namespace spectra
     };
 
     // LightBounds Definition
-    class LightBounds
-    {
+    class LightBounds {
     public:
         // LightBounds Public Methods
         LightBounds() = default;
-        LightBounds(const Bounds3f& b, Vector3f w, Float phi, Float cosTheta_o,
-                    Float cosTheta_e, bool twoSided);
+        LightBounds(const Bounds3f& b, Vector3f w, Float phi, Float cosTheta_o, Float cosTheta_e, bool twoSided);
 
         SPECTRA_CPU_GPU
-        Point3f Centroid() const { return (bounds.pMin + bounds.pMax) / 2; }
+        Point3f Centroid() const {
+            return (bounds.pMin + bounds.pMax) / 2;
+        }
 
         SPECTRA_CPU_GPU
         Float Importance(Point3f p, Normal3f n) const;
@@ -142,26 +122,23 @@ namespace spectra
     LightBounds Union(const LightBounds& a, const LightBounds& b);
 
     // LightBase Definition
-    class LightBase
-    {
+    class LightBase {
     public:
         // LightBase Public Methods
-        LightBase(LightType type, const Transform& renderFromLight,
-                  const MediumInterface& mediumInterface);
+        LightBase(LightType type, const Transform& renderFromLight, const MediumInterface& mediumInterface);
 
         SPECTRA_CPU_GPU
-        LightType Type() const { return type; }
+        LightType Type() const {
+            return type;
+        }
 
         SPECTRA_CPU_GPU
-        SampledSpectrum L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
-                          const SampledWavelengths& lambda) const
-        {
+        SampledSpectrum L(Point3f p, Normal3f n, Point2f uv, Vector3f w, const SampledWavelengths& lambda) const {
             return SampledSpectrum(0.f);
         }
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Le(const Ray&, const SampledWavelengths&) const
-        {
+        SampledSpectrum Le(const Ray&, const SampledWavelengths&) const {
             return SampledSpectrum(0.f);
         }
 
@@ -177,37 +154,23 @@ namespace spectra
     };
 
     // PointLight Definition
-    class PointLight : public LightBase
-    {
+    class PointLight : public LightBase {
     public:
         // PointLight Public Methods
-        PointLight(Transform renderFromLight, MediumInterface mediumInterface, Spectrum I,
-                   Float scale)
-            : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface),
-              I(LookupSpectrum(I)),
-              scale(scale)
-        {
-        }
+        PointLight(Transform renderFromLight, MediumInterface mediumInterface, Spectrum I, Float scale) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), I(LookupSpectrum(I)), scale(scale) {}
 
-        static PointLight* Create(const Transform& renderFromLight, Medium medium,
-                                  const ParameterDictionary& parameters,
-                                  const RGBColorSpace* colorSpace, const FileLoc* loc,
-                                  Allocator alloc);
+        static PointLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
-        }
+        void Preprocess(const Bounds3f& sceneBounds) {}
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
@@ -215,19 +178,15 @@ namespace spectra
 
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const
-        {
-            Point3f p = renderFromLight(Point3f(0, 0, 0));
-            Vector3f wi = Normalize(p - ctx.p());
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const {
+            Point3f p          = renderFromLight(Point3f(0, 0, 0));
+            Vector3f wi        = Normalize(p - ctx.p());
             SampledSpectrum Li = scale * I->Sample(lambda) / DistanceSquared(p, ctx.p());
             return LightLiSample(Li, wi, 1, Interaction(p, &mediumInterface));
         }
 
         SPECTRA_CPU_GPU
-        Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const
-        {
+        Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const {
             return 0;
         }
 
@@ -238,59 +197,44 @@ namespace spectra
     };
 
     // DistantLight Definition
-    class DistantLight : public LightBase
-    {
+    class DistantLight : public LightBase {
     public:
         // DistantLight Public Methods
-        DistantLight(const Transform& renderFromLight, Spectrum Lemit, Float scale)
-            : LightBase(LightType::DeltaDirection, renderFromLight, {}),
-              Lemit(LookupSpectrum(Lemit)),
-              scale(scale)
-        {
-        }
+        DistantLight(const Transform& renderFromLight, Spectrum Lemit, Float scale) : LightBase(LightType::DeltaDirection, renderFromLight, {}), Lemit(LookupSpectrum(Lemit)), scale(scale) {}
 
-        static DistantLight* Create(const Transform& renderFromLight,
-                                    const ParameterDictionary& parameters,
-                                    const RGBColorSpace* colorSpace, const FileLoc* loc,
-                                    Allocator alloc);
+        static DistantLight* Create(const Transform& renderFromLight, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
 
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
         SPECTRA_CPU_GPU
-        Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const
-        {
+        Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const {
             return 0;
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
-        pstd::optional<LightBounds> Bounds() const { return {}; }
+        pstd::optional<LightBounds> Bounds() const {
+            return {};
+        }
 
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
+        void Preprocess(const Bounds3f& sceneBounds) {
             sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const
-        {
-            Vector3f wi = Normalize(renderFromLight(Vector3f(0, 0, 1)));
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const {
+            Vector3f wi      = Normalize(renderFromLight(Vector3f(0, 0, 1)));
             Point3f pOutside = ctx.p() + wi * (2 * sceneRadius);
-            return LightLiSample(scale * Lemit->Sample(lambda), wi, 1,
-                                 Interaction(pOutside, nullptr));
+            return LightLiSample(scale * Lemit->Sample(lambda), wi, 1, Interaction(pOutside, nullptr));
         }
 
     private:
@@ -302,26 +246,17 @@ namespace spectra
     };
 
     // ProjectionLight Definition
-    class ProjectionLight : public LightBase
-    {
+    class ProjectionLight : public LightBase {
     public:
         // ProjectionLight Public Methods
-        ProjectionLight(Transform renderFromLight, MediumInterface medium, Image image,
-                        const RGBColorSpace* colorSpace, Float scale, Float fov,
-                        Allocator alloc);
+        ProjectionLight(Transform renderFromLight, MediumInterface medium, Image image, const RGBColorSpace* colorSpace, Float scale, Float fov, Allocator alloc);
 
-        static ProjectionLight* Create(const Transform& renderFromLight, Medium medium,
-                                       const ParameterDictionary& parameters,
-                                       const FileLoc* loc, Allocator alloc);
+        static ProjectionLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
-        }
+        void Preprocess(const Bounds3f& sceneBounds) {}
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const;
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const;
         SPECTRA_CPU_GPU
         SampledSpectrum I(Vector3f w, const SampledWavelengths& lambda) const;
 
@@ -331,14 +266,12 @@ namespace spectra
         Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
@@ -357,27 +290,17 @@ namespace spectra
     };
 
     // GoniometricLight Definition
-    class GoniometricLight : public LightBase
-    {
+    class GoniometricLight : public LightBase {
     public:
         // GoniometricLight Public Methods
-        GoniometricLight(const Transform& renderFromLight,
-                         const MediumInterface& mediumInterface, Spectrum I, Float scale,
-                         Image image, Allocator alloc);
+        GoniometricLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum I, Float scale, Image image, Allocator alloc);
 
-        static GoniometricLight* Create(const Transform& renderFromLight, Medium medium,
-                                        const ParameterDictionary& parameters,
-                                        const RGBColorSpace* colorSpace, const FileLoc* loc,
-                                        Allocator alloc);
+        static GoniometricLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
-        }
+        void Preprocess(const Bounds3f& sceneBounds) {}
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const;
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const;
 
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
@@ -385,14 +308,12 @@ namespace spectra
         Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
@@ -400,8 +321,7 @@ namespace spectra
 
 
         SPECTRA_CPU_GPU
-        SampledSpectrum I(Vector3f w, const SampledWavelengths& lambda) const
-        {
+        SampledSpectrum I(Vector3f w, const SampledWavelengths& lambda) const {
             Point2f uv = EqualAreaSphereToSquare(w);
             return scale * Iemit->Sample(lambda) * image.LookupNearestChannel(uv, 0);
         }
@@ -415,70 +335,49 @@ namespace spectra
     };
 
     // DiffuseAreaLight Definition
-    class DiffuseAreaLight : public LightBase
-    {
+    class DiffuseAreaLight : public LightBase {
     public:
         // DiffuseAreaLight Public Methods
-        DiffuseAreaLight(const Transform& renderFromLight,
-                         const MediumInterface& mediumInterface, Spectrum Le, Float scale,
-                         const Shape shape, FloatTexture alpha, Image image,
-                         const RGBColorSpace* imageColorSpace, bool twoSided);
+        DiffuseAreaLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Le, Float scale, const Shape shape, FloatTexture alpha, Image image, const RGBColorSpace* imageColorSpace, bool twoSided);
 
-        static DiffuseAreaLight* Create(const Transform& renderFromLight, Medium medium,
-                                        const ParameterDictionary& parameters,
-                                        const RGBColorSpace* colorSpace, const FileLoc* loc,
-                                        Allocator alloc, const Shape shape,
-                                        FloatTexture alpha);
+        static DiffuseAreaLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc, const Shape shape, FloatTexture alpha);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
-        }
+        void Preprocess(const Bounds3f& sceneBounds) {}
 
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const;
 
         pstd::optional<LightBounds> Bounds() const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for area lights");
         }
 
 
         SPECTRA_CPU_GPU
-        SampledSpectrum L(Point3f p, Normal3f n, Point2f uv, Vector3f w,
-                          const SampledWavelengths& lambda) const
-        {
+        SampledSpectrum L(Point3f p, Normal3f n, Point2f uv, Vector3f w, const SampledWavelengths& lambda) const {
             // Check for zero emitted radiance from point on area light
-            if (!twoSided && Dot(n, w) < 0)
-                return SampledSpectrum(0.f);
-            if (AlphaMasked(Interaction(p, uv)))
-                return SampledSpectrum(0.f);
+            if (!twoSided && Dot(n, w) < 0) return SampledSpectrum(0.f);
+            if (AlphaMasked(Interaction(p, uv))) return SampledSpectrum(0.f);
 
-            if (image)
-            {
+            if (image) {
                 // Return _DiffuseAreaLight_ emission using image
                 RGB rgb;
                 uv[1] = 1 - uv[1];
-                for (int c = 0; c < 3; ++c)
-                    rgb[c] = image.BilerpChannel(uv, c);
+                for (int c = 0; c < 3; ++c) rgb[c] = image.BilerpChannel(uv, c);
                 RGBIlluminantSpectrum spec(*imageColorSpace, ClampZero(rgb));
                 return scale * spec.Sample(lambda);
-            }
-            else
+            } else
                 return scale * Lemit->Sample(lambda);
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const;
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
         Float PDF_Li(LightSampleContext ctx, Vector3f wi, bool allowIncompletePDF) const;
@@ -496,32 +395,26 @@ namespace spectra
 
         // DiffuseAreaLight Private Methods
         SPECTRA_CPU_GPU
-        bool AlphaMasked(const Interaction& intr) const
-        {
-            if (!alpha)
-                return false;
+        bool AlphaMasked(const Interaction& intr) const {
+            if (!alpha) return false;
 #if defined(__CUDA_ARCH__)
             Float a = BasicTextureEvaluator()(alpha, intr);
 #else
             Float a = UniversalTextureEvaluator()(alpha, intr);
-#endif  // __CUDA_ARCH__
-            if (a >= 1)
-                return false;
-            if (a <= 0)
-                return true;
+#endif // __CUDA_ARCH__
+            if (a >= 1) return false;
+            if (a <= 0) return true;
             return HashFloat(intr.p()) > a;
         }
     };
 
     // UniformInfiniteLight Definition
-    class UniformInfiniteLight : public LightBase
-    {
+    class UniformInfiniteLight : public LightBase {
     public:
         // UniformInfiniteLight Public Methods
         UniformInfiniteLight(const Transform& renderFromLight, Spectrum Lemit, Float scale);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
+        void Preprocess(const Bounds3f& sceneBounds) {
             sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
         }
 
@@ -530,25 +423,23 @@ namespace spectra
         SPECTRA_CPU_GPU
         SampledSpectrum Le(const Ray& ray, const SampledWavelengths& lambda) const;
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const;
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const;
         SPECTRA_CPU_GPU
         Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
-        pstd::optional<LightBounds> Bounds() const { return {}; }
+        pstd::optional<LightBounds> Bounds() const {
+            return {};
+        }
 
     private:
         // UniformInfiniteLight Private Members
@@ -559,16 +450,12 @@ namespace spectra
     };
 
     // ImageInfiniteLight Definition
-    class ImageInfiniteLight : public LightBase
-    {
+    class ImageInfiniteLight : public LightBase {
     public:
         // ImageInfiniteLight Public Methods
-        ImageInfiniteLight(Transform renderFromLight, Image image,
-                           const RGBColorSpace* imageColorSpace, Float scale,
-                           std::string filename, Allocator alloc);
+        ImageInfiniteLight(Transform renderFromLight, Image image, const RGBColorSpace* imageColorSpace, Float scale, std::string filename, Allocator alloc);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
+        void Preprocess(const Bounds3f& sceneBounds) {
             sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
         }
 
@@ -578,31 +465,25 @@ namespace spectra
         Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Le(const Ray& ray, const SampledWavelengths& lambda) const
-        {
+        SampledSpectrum Le(const Ray& ray, const SampledWavelengths& lambda) const {
             Vector3f wLight = Normalize(renderFromLight.ApplyInverse(ray.d));
-            Point2f uv = EqualAreaSphereToSquare(wLight);
+            Point2f uv      = EqualAreaSphereToSquare(wLight);
             return ImageLe(uv, lambda);
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const
-        {
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const {
             // Find $(u,v)$ sample coordinates in infinite light texture
             Float mapPDF = 0;
             Point2f uv;
@@ -610,32 +491,29 @@ namespace spectra
                 uv = compensatedDistribution.Sample(u, &mapPDF);
             else
                 uv = distribution.Sample(u, &mapPDF);
-            if (mapPDF == 0)
-                return {};
+            if (mapPDF == 0) return {};
 
             // Convert infinite light sample point to direction
             Vector3f wLight = EqualAreaSquareToSphere(uv);
-            Vector3f wi = renderFromLight(wLight);
+            Vector3f wi     = renderFromLight(wLight);
 
             // Compute PDF for sampled infinite light direction
             Float pdf = mapPDF / (4 * Pi);
 
             // Return radiance value for infinite light direction
-            return LightLiSample(
-                ImageLe(uv, lambda), wi, pdf,
-                Interaction(ctx.p() + wi * (2 * sceneRadius), &mediumInterface));
+            return LightLiSample(ImageLe(uv, lambda), wi, pdf, Interaction(ctx.p() + wi * (2 * sceneRadius), &mediumInterface));
         }
 
-        pstd::optional<LightBounds> Bounds() const { return {}; }
+        pstd::optional<LightBounds> Bounds() const {
+            return {};
+        }
 
     private:
         // ImageInfiniteLight Private Methods
         SPECTRA_CPU_GPU
-        SampledSpectrum ImageLe(Point2f uv, const SampledWavelengths& lambda) const
-        {
+        SampledSpectrum ImageLe(Point2f uv, const SampledWavelengths& lambda) const {
             RGB rgb;
-            for (int c = 0; c < 3; ++c)
-                rgb[c] = image.LookupNearestChannel(uv, c, WrapMode::OctahedralSphere);
+            for (int c = 0; c < 3; ++c) rgb[c] = image.LookupNearestChannel(uv, c, WrapMode::OctahedralSphere);
             RGBIlluminantSpectrum spec(*imageColorSpace, ClampZero(rgb));
             return scale * spec.Sample(lambda);
         }
@@ -651,17 +529,12 @@ namespace spectra
     };
 
     // PortalImageInfiniteLight Definition
-    class PortalImageInfiniteLight : public LightBase
-    {
+    class PortalImageInfiniteLight : public LightBase {
     public:
         // PortalImageInfiniteLight Public Methods
-        PortalImageInfiniteLight(const Transform& renderFromLight, Image image,
-                                 const RGBColorSpace* imageColorSpace, Float scale,
-                                 const std::string& filename, std::vector<Point3f> portal,
-                                 Allocator alloc);
+        PortalImageInfiniteLight(const Transform& renderFromLight, Image image, const RGBColorSpace* imageColorSpace, Float scale, const std::string& filename, std::vector<Point3f> portal, Allocator alloc);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
+        void Preprocess(const Bounds3f& sceneBounds) {
             sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
         }
 
@@ -671,26 +544,24 @@ namespace spectra
         SampledSpectrum Le(const Ray& ray, const SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const;
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
         Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
-        pstd::optional<LightBounds> Bounds() const { return {}; }
+        pstd::optional<LightBounds> Bounds() const {
+            return {};
+        }
 
     private:
         // PortalImageInfiniteLight Private Methods
@@ -698,51 +569,41 @@ namespace spectra
         SampledSpectrum ImageLookup(Point2f uv, const SampledWavelengths& lambda) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<Point2f> ImageFromRender(Vector3f wRender,
-                                                Float* duv_dw = nullptr) const
-        {
+        pstd::optional<Point2f> ImageFromRender(Vector3f wRender, Float* duv_dw = nullptr) const {
             Vector3f w = portalFrame.ToLocal(wRender);
-            if (w.z <= 0)
-                return {};
+            if (w.z <= 0) return {};
             // Compute Jacobian determinant of mapping $\roman{d}(u,v)/\roman{d}\omega$ if
             // needed
-            if (duv_dw)
-                *duv_dw = Sqr(Pi) * (1 - Sqr(w.x)) * (1 - Sqr(w.y)) / w.z;
+            if (duv_dw) *duv_dw = Sqr(Pi) * (1 - Sqr(w.x)) * (1 - Sqr(w.y)) / w.z;
 
             Float alpha = std::atan2(w.x, w.z), beta = std::atan2(w.y, w.z);
             DCHECK(!IsNaN(alpha + beta));
-            return Point2f(Clamp((alpha + Pi / 2) / Pi, 0, 1),
-                           Clamp((beta + Pi / 2) / Pi, 0, 1));
+            return Point2f(Clamp((alpha + Pi / 2) / Pi, 0, 1), Clamp((beta + Pi / 2) / Pi, 0, 1));
         }
 
         SPECTRA_CPU_GPU
-        Vector3f RenderFromImage(Point2f uv, Float* duv_dw = nullptr) const
-        {
+        Vector3f RenderFromImage(Point2f uv, Float* duv_dw = nullptr) const {
             Float alpha = -Pi / 2 + uv[0] * Pi, beta = -Pi / 2 + uv[1] * Pi;
             Float x = std::tan(alpha), y = std::tan(beta);
             DCHECK(!IsInf(x) && !IsInf(y));
             Vector3f w = Normalize(Vector3f(x, y, 1));
             // Compute Jacobian determinant of mapping $\roman{d}(u,v)/\roman{d}\omega$ if
             // needed
-            if (duv_dw)
-                *duv_dw = Sqr(Pi) * (1 - Sqr(w.x)) * (1 - Sqr(w.y)) / w.z;
+            if (duv_dw) *duv_dw = Sqr(Pi) * (1 - Sqr(w.x)) * (1 - Sqr(w.y)) / w.z;
 
             return portalFrame.FromLocal(w);
         }
 
         SPECTRA_CPU_GPU
-        pstd::optional<Bounds2f> ImageBounds(Point3f p) const
-        {
+        pstd::optional<Bounds2f> ImageBounds(Point3f p) const {
             pstd::optional<Point2f> p0 = ImageFromRender(Normalize(portal[0] - p));
             pstd::optional<Point2f> p1 = ImageFromRender(Normalize(portal[2] - p));
-            if (!p0 || !p1)
-                return {};
+            if (!p0 || !p1) return {};
             return Bounds2f(*p0, *p1);
         }
 
         SPECTRA_CPU_GPU
-        Float Area() const
-        {
+        Float Area() const {
             return Length(portal[1] - portal[0]) * Length(portal[3] - portal[0]);
         }
 
@@ -759,21 +620,14 @@ namespace spectra
     };
 
     // SpotLight Definition
-    class SpotLight : public LightBase
-    {
+    class SpotLight : public LightBase {
     public:
         // SpotLight Public Methods
-        SpotLight(const Transform& renderFromLight, const MediumInterface& m, Spectrum I,
-                  Float scale, Float totalWidth, Float falloffStart);
+        SpotLight(const Transform& renderFromLight, const MediumInterface& m, Spectrum I, Float scale, Float totalWidth, Float falloffStart);
 
-        static SpotLight* Create(const Transform& renderFromLight, Medium medium,
-                                 const ParameterDictionary& parameters,
-                                 const RGBColorSpace* colorSpace, const FileLoc* loc,
-                                 Allocator alloc);
+        static SpotLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
 
-        void Preprocess(const Bounds3f& sceneBounds)
-        {
-        }
+        void Preprocess(const Bounds3f& sceneBounds) {}
 
         SPECTRA_CPU_GPU
         SampledSpectrum I(Vector3f w, SampledWavelengths) const;
@@ -784,14 +638,12 @@ namespace spectra
         Float PDF_Li(LightSampleContext, Vector3f, bool allowIncompletePDF) const;
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2,
-                                               SampledWavelengths& lambda, Float time) const;
+        pstd::optional<LightLeSample> SampleLe(Point2f u1, Point2f u2, SampledWavelengths& lambda, Float time) const;
         SPECTRA_CPU_GPU
         void PDF_Le(const Ray&, Float* pdfPos, Float* pdfDir) const;
 
         SPECTRA_CPU_GPU
-        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const
-        {
+        void PDF_Le(const Interaction&, Vector3f w, Float* pdfPos, Float* pdfDir) const {
             SPECTRA_FATAL("Shouldn't be called for non-area lights");
         }
 
@@ -799,18 +651,14 @@ namespace spectra
 
 
         SPECTRA_CPU_GPU
-        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u,
-                                               SampledWavelengths lambda,
-                                               bool allowIncompletePDF) const
-        {
-            Point3f p = renderFromLight(Point3f(0, 0, 0));
+        pstd::optional<LightLiSample> SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const {
+            Point3f p   = renderFromLight(Point3f(0, 0, 0));
             Vector3f wi = Normalize(p - ctx.p());
             // Compute incident radiance _Li_ for _SpotLight_
-            Vector3f wLight = Normalize(renderFromLight.ApplyInverse(-wi));
+            Vector3f wLight    = Normalize(renderFromLight.ApplyInverse(-wi));
             SampledSpectrum Li = I(wLight, lambda) / DistanceSquared(p, ctx.p());
 
-            if (!Li)
-                return {};
+            if (!Li) return {};
             return LightLiSample(Li, wi, 1, Interaction(p, &mediumInterface));
         }
 
@@ -821,17 +669,14 @@ namespace spectra
     };
 } // namespace spectra
 
-namespace std
-{
+namespace std {
     template <>
-    struct hash<spectra::Light>
-    {
+    struct hash<spectra::Light> {
         SPECTRA_CPU_GPU
-        size_t operator()(spectra::Light light) const noexcept
-        {
+        size_t operator()(spectra::Light light) const noexcept {
             return spectra::Hash(light.ptr());
         }
     };
 } // namespace std
 
-#endif  // SPECTRA_PATHTRACER_CORE_LIGHTS_H
+#endif // SPECTRA_PATHTRACER_CORE_LIGHTS_H

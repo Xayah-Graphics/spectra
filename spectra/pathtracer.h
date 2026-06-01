@@ -2,34 +2,29 @@
 #define XAYAH_SPECTRA_PATHTRACER_H
 
 #include "spectra.h"
-
-#include <spectra/pathtracer/integrator.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <spectra/pathtracer/integrator.h>
 #include <string>
 #include <string_view>
 
-namespace xayah::pathtracer
-{
+namespace xayah::pathtracer {
     struct RenderPipeline;
     struct SceneState;
 } // namespace xayah::pathtracer
 
-namespace xayah
-{
-    class SpectraPathtracer final : public SpectraPlugin
-    {
+namespace xayah {
+    class SpectraPathtracer final : public SpectraPlugin {
     public:
         explicit SpectraPathtracer(std::filesystem::path scene_path);
         ~SpectraPathtracer() noexcept override;
 
-        SpectraPathtracer(const SpectraPathtracer& other) = delete;
-        SpectraPathtracer(SpectraPathtracer&& other) noexcept = delete;
-        SpectraPathtracer& operator=(const SpectraPathtracer& other) = delete;
+        SpectraPathtracer(const SpectraPathtracer& other)                = delete;
+        SpectraPathtracer(SpectraPathtracer&& other) noexcept            = delete;
+        SpectraPathtracer& operator=(const SpectraPathtracer& other)     = delete;
         SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept = delete;
 
         [[nodiscard]] std::string_view name() const override;
@@ -41,22 +36,19 @@ namespace xayah
         void record_frame(const vk::raii::CommandBuffer& command_buffer) override;
 
     private:
-        struct HostContext
-        {
+        struct HostContext {
             const vk::raii::PhysicalDevice* physical_device{};
             const vk::raii::Device* device{};
             std::uint32_t frame_count{};
             vk::Extent2D swapchain_extent{};
         };
 
-        struct PathtracerStatus
-        {
+        struct PathtracerStatus {
             bool uses_external_completion{false};
             std::string state{};
         };
 
-        struct RollingFloatAverage
-        {
+        struct RollingFloatAverage {
             static constexpr std::size_t sample_count{100};
 
             std::array<float, sample_count> values{};
@@ -106,8 +98,7 @@ namespace xayah
         HostContext host{};
         bool attached{false};
 
-        struct
-        {
+        struct {
             bool viewport_known{false};
             bool viewport_hovered{false};
             bool viewport_focused{false};
@@ -120,8 +111,7 @@ namespace xayah
         std::unique_ptr<xayah::pathtracer::RenderPipeline> render_pipeline{};
         std::unique_ptr<spectra::pathtracer::GpuRuntime> gpu_runtime{};
 
-        struct
-        {
+        struct {
             bool candidate_known{false};
             bool pathtracer_created{false};
             bool rebuilding{false};
@@ -130,8 +120,7 @@ namespace xayah
             std::array<int, 2> active_resolution{0, 0};
         } render_resolution_sync;
 
-        struct
-        {
+        struct {
             bool initialized{false};
             bool input_enabled{false};
             float speed{1.0f};
@@ -146,8 +135,7 @@ namespace xayah
             spectra::Transform camera_from_world{};
         } camera;
 
-        struct
-        {
+        struct {
             RollingFloatAverage frame_milliseconds{};
             RollingFloatAverage throughput_mspp{};
             std::uint64_t current_frame_id{0};

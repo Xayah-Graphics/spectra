@@ -2,14 +2,11 @@
 #define SPECTRA_PATHTRACER_UTIL_FILE_H
 
 #include <spectra/pathtracer/util/float.h>
-
 #include <spectra/pathtracer/util/pstd.h>
-
 #include <string>
 #include <vector>
 
-namespace spectra
-{
+namespace spectra {
     // File and Filename Function Declarations
     std::string ReadFileContents(std::string filename);
     std::string ReadDecompressedFileContents(std::string filename);
@@ -32,4 +29,4 @@ namespace spectra
     FILE* FOpenWrite(std::string filename);
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_UTIL_FILE_H
+#endif // SPECTRA_PATHTRACER_UTIL_FILE_H

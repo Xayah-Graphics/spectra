@@ -1,68 +1,37 @@
 #ifndef SPECTRA_PATHTRACER_CORE_TEXTURES_H
 #define SPECTRA_PATHTRACER_CORE_TEXTURES_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
+#include <initializer_list>
+#include <map>
+#include <mutex>
 #include <spectra/pathtracer/base/texture.h>
 #include <spectra/pathtracer/core/interaction.h>
 #include <spectra/pathtracer/core/paramdict.h>
 #include <spectra/pathtracer/util/colorspace.h>
+#include <spectra/pathtracer/util/float.h>
 #include <spectra/pathtracer/util/math.h>
+#include <spectra/pathtracer/util/memory.h>
 #include <spectra/pathtracer/util/mipmap.h>
 #include <spectra/pathtracer/util/noise.h>
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/taggedptr.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <spectra/pathtracer/util/vecmath.h>
-
-#include <initializer_list>
-#include <map>
-#include <mutex>
 #include <string>
 
-namespace spectra
-{
+namespace spectra {
     // TextureEvalContext Definition
-    struct TextureEvalContext
-    {
+    struct TextureEvalContext {
         // TextureEvalContext Public Methods
         TextureEvalContext() = default;
         SPECTRA_CPU_GPU
-        TextureEvalContext(const Interaction& intr) : p(intr.p()), uv(intr.uv)
-        {
-        }
+        TextureEvalContext(const Interaction& intr) : p(intr.p()), uv(intr.uv) {}
 
         SPECTRA_CPU_GPU
-        TextureEvalContext(const SurfaceInteraction& si)
-            : p(si.p()),
-              dpdx(si.dpdx),
-              dpdy(si.dpdy),
-              n(si.n),
-              uv(si.uv),
-              dudx(si.dudx),
-              dudy(si.dudy),
-              dvdx(si.dvdx),
-              dvdy(si.dvdy),
-              faceIndex(si.faceIndex)
-        {
-        }
+        TextureEvalContext(const SurfaceInteraction& si) : p(si.p()), dpdx(si.dpdx), dpdy(si.dpdy), n(si.n), uv(si.uv), dudx(si.dudx), dudy(si.dudy), dvdx(si.dvdx), dvdy(si.dvdy), faceIndex(si.faceIndex) {}
 
         SPECTRA_CPU_GPU
-        TextureEvalContext(Point3f p, Vector3f dpdx, Vector3f dpdy, Normal3f n, Point2f uv,
-                           Float dudx, Float dudy, Float dvdx, Float dvdy, int faceIndex)
-            : p(p),
-              dpdx(dpdx),
-              dpdy(dpdy),
-              n(n),
-              uv(uv),
-              dudx(dudx),
-              dudy(dudy),
-              dvdx(dvdx),
-              dvdy(dvdy),
-              faceIndex(faceIndex)
-        {
-        }
+        TextureEvalContext(Point3f p, Vector3f dpdx, Vector3f dpdy, Normal3f n, Point2f uv, Float dudx, Float dudy, Float dvdx, Float dvdy, int faceIndex) : p(p), dpdx(dpdx), dpdy(dpdy), n(n), uv(uv), dudx(dudx), dudy(dudy), dvdx(dvdx), dvdy(dvdy), faceIndex(faceIndex) {}
 
 
         Point3f p;
@@ -74,33 +43,26 @@ namespace spectra
     };
 
     // TexCoord2D Definition
-    struct TexCoord2D
-    {
+    struct TexCoord2D {
         Point2f st;
         Float dsdx, dsdy, dtdx, dtdy;
     };
 
     // TexCoord3D Definition
-    struct TexCoord3D
-    {
+    struct TexCoord3D {
         Point3f p;
         Vector3f dpdx, dpdy;
     };
 
     // UVMapping Definition
-    class UVMapping
-    {
+    class UVMapping {
     public:
         // UVMapping Public Methods
-        UVMapping(Float su = 1, Float sv = 1, Float du = 0, Float dv = 0)
-            : su(su), sv(sv), du(du), dv(dv)
-        {
-        }
+        UVMapping(Float su = 1, Float sv = 1, Float du = 0, Float dv = 0) : su(su), sv(sv), du(du), dv(dv) {}
 
 
         SPECTRA_CPU_GPU
-        TexCoord2D Map(TextureEvalContext ctx) const
-        {
+        TexCoord2D Map(TextureEvalContext ctx) const {
             // Compute texture differentials for 2D $(u,v)$ mapping
             Float dsdx = su * ctx.dudx, dsdy = su * ctx.dudy;
             Float dtdx = sv * ctx.dvdx, dtdy = sv * ctx.dvdy;
@@ -114,28 +76,21 @@ namespace spectra
     };
 
     // SphericalMapping Definition
-    class SphericalMapping
-    {
+    class SphericalMapping {
     public:
         // SphericalMapping Public Methods
-        SphericalMapping(const Transform& textureFromRender)
-            : textureFromRender(textureFromRender)
-        {
-        }
+        SphericalMapping(const Transform& textureFromRender) : textureFromRender(textureFromRender) {}
 
 
         SPECTRA_CPU_GPU
-        TexCoord2D Map(TextureEvalContext ctx) const
-        {
+        TexCoord2D Map(TextureEvalContext ctx) const {
             Point3f pt = textureFromRender(ctx.p);
             // Compute $\partial\,s/\partial\,\pt{}$ and $\partial\,t/\partial\,\pt{}$ for
             // spherical mapping
-            Float x2y2 = Sqr(pt.x) + Sqr(pt.y);
+            Float x2y2     = Sqr(pt.x) + Sqr(pt.y);
             Float sqrtx2y2 = std::sqrt(x2y2);
-            Vector3f dsdp = Vector3f(-pt.y, pt.x, 0) / (2 * Pi * x2y2);
-            Vector3f dtdp =
-                1 / (Pi * (x2y2 + Sqr(pt.z))) *
-                Vector3f(pt.x * pt.z / sqrtx2y2, pt.y * pt.z / sqrtx2y2, -sqrtx2y2);
+            Vector3f dsdp  = Vector3f(-pt.y, pt.x, 0) / (2 * Pi * x2y2);
+            Vector3f dtdp  = 1 / (Pi * (x2y2 + Sqr(pt.z))) * Vector3f(pt.x * pt.z / sqrtx2y2, pt.y * pt.z / sqrtx2y2, -sqrtx2y2);
 
             // Compute texture coordinate differentials for spherical mapping
             Vector3f dpdx = textureFromRender(ctx.dpdx);
@@ -155,24 +110,18 @@ namespace spectra
     };
 
     // CylindricalMapping Definition
-    class CylindricalMapping
-    {
+    class CylindricalMapping {
     public:
         // CylindricalMapping Public Methods
-        CylindricalMapping(const Transform& textureFromRender)
-            : textureFromRender(textureFromRender)
-        {
-        }
+        CylindricalMapping(const Transform& textureFromRender) : textureFromRender(textureFromRender) {}
 
 
         SPECTRA_CPU_GPU
-        TexCoord2D Map(TextureEvalContext ctx) const
-        {
+        TexCoord2D Map(TextureEvalContext ctx) const {
             Point3f pt = textureFromRender(ctx.p);
             // Compute texture coordinate differentials for cylinder $(u,v)$ mapping
-            Float x2y2 = Sqr(pt.x) + Sqr(pt.y);
-            Vector3f dsdp = Vector3f(-pt.y, pt.x, 0) / (2 * Pi * x2y2),
-                     dtdp = Vector3f(0, 0, 1);
+            Float x2y2    = Sqr(pt.x) + Sqr(pt.y);
+            Vector3f dsdp = Vector3f(-pt.y, pt.x, 0) / (2 * Pi * x2y2), dtdp = Vector3f(0, 0, 1);
             Vector3f dpdx = textureFromRender(ctx.dpdx), dpdy = textureFromRender(ctx.dpdy);
             Float dsdx = Dot(dsdp, dpdx), dsdy = Dot(dsdp, dpdy);
             Float dtdx = Dot(dtdp, dpdx), dtdy = Dot(dtdp, dpdy);
@@ -187,19 +136,13 @@ namespace spectra
     };
 
     // PlanarMapping Definition
-    class PlanarMapping
-    {
+    class PlanarMapping {
     public:
         // PlanarMapping Public Methods
-        PlanarMapping(const Transform& textureFromRender, Vector3f vs, Vector3f vt, Float ds,
-                      Float dt)
-            : textureFromRender(textureFromRender), vs(vs), vt(vt), ds(ds), dt(dt)
-        {
-        }
+        PlanarMapping(const Transform& textureFromRender, Vector3f vs, Vector3f vt, Float ds, Float dt) : textureFromRender(textureFromRender), vs(vs), vt(vt), ds(ds), dt(dt) {}
 
         SPECTRA_CPU_GPU
-        TexCoord2D Map(TextureEvalContext ctx) const
-        {
+        TexCoord2D Map(TextureEvalContext ctx) const {
             Vector3f vec(textureFromRender(ctx.p));
             // Initialize partial derivatives of planar mapping $(s,t)$ coordinates
             Vector3f dpdx = textureFromRender(ctx.dpdx);
@@ -219,51 +162,34 @@ namespace spectra
     };
 
     // TextureMapping2D Definition
-    class TextureMapping2D : public TaggedPointer<UVMapping, SphericalMapping,
-                                                  CylindricalMapping, PlanarMapping>
-    {
+    class TextureMapping2D : public TaggedPointer<UVMapping, SphericalMapping, CylindricalMapping, PlanarMapping> {
     public:
         // TextureMapping2D Interface
         using TaggedPointer::TaggedPointer;
         SPECTRA_CPU_GPU
-        TextureMapping2D(
-            TaggedPointer<UVMapping, SphericalMapping, CylindricalMapping, PlanarMapping> tp)
-            : TaggedPointer(tp)
-        {
-        }
+        TextureMapping2D(TaggedPointer<UVMapping, SphericalMapping, CylindricalMapping, PlanarMapping> tp) : TaggedPointer(tp) {}
 
-        static TextureMapping2D Create(const ParameterDictionary& parameters,
-                                       const Transform& renderFromTexture, const FileLoc* loc,
-                                       Allocator alloc);
+        static TextureMapping2D Create(const ParameterDictionary& parameters, const Transform& renderFromTexture, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU inline TexCoord2D Map(TextureEvalContext ctx) const;
     };
 
     // TextureMapping2D Inline Functions
-    inline TexCoord2D TextureMapping2D::Map(TextureEvalContext ctx) const
-    {
+    inline TexCoord2D TextureMapping2D::Map(TextureEvalContext ctx) const {
         auto map = [&](auto ptr) { return ptr->Map(ctx); };
         return Dispatch(map);
     }
 
     // PointTransformMapping Definition
-    class PointTransformMapping
-    {
+    class PointTransformMapping {
     public:
         // PointTransformMapping Public Methods
-        PointTransformMapping(const Transform& textureFromRender)
-            : textureFromRender(textureFromRender)
-        {
-        }
+        PointTransformMapping(const Transform& textureFromRender) : textureFromRender(textureFromRender) {}
 
 
         SPECTRA_CPU_GPU
-        TexCoord3D Map(TextureEvalContext ctx) const
-        {
-            return TexCoord3D{
-                textureFromRender(ctx.p), textureFromRender(ctx.dpdx),
-                textureFromRender(ctx.dpdy)
-            };
+        TexCoord3D Map(TextureEvalContext ctx) const {
+            return TexCoord3D{textureFromRender(ctx.p), textureFromRender(ctx.dpdx), textureFromRender(ctx.dpdy)};
         }
 
     private:
@@ -271,95 +197,70 @@ namespace spectra
     };
 
     // TextureMapping3D Definition
-    class TextureMapping3D : public TaggedPointer<PointTransformMapping>
-    {
+    class TextureMapping3D : public TaggedPointer<PointTransformMapping> {
     public:
         // TextureMapping3D Interface
         using TaggedPointer::TaggedPointer;
         SPECTRA_CPU_GPU
-        TextureMapping3D(TaggedPointer<PointTransformMapping> tp) : TaggedPointer(tp)
-        {
-        }
+        TextureMapping3D(TaggedPointer<PointTransformMapping> tp) : TaggedPointer(tp) {}
 
-        static TextureMapping3D Create(const ParameterDictionary& parameters,
-                                       const Transform& renderFromTexture, const FileLoc* loc,
-                                       Allocator alloc);
+        static TextureMapping3D Create(const ParameterDictionary& parameters, const Transform& renderFromTexture, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
         TexCoord3D Map(TextureEvalContext ctx) const;
     };
 
-    inline TexCoord3D TextureMapping3D::Map(TextureEvalContext ctx) const
-    {
+    inline TexCoord3D TextureMapping3D::Map(TextureEvalContext ctx) const {
         auto map = [&](auto ptr) { return ptr->Map(ctx); };
         return Dispatch(map);
     }
 
     // FloatConstantTexture Definition
-    class FloatConstantTexture
-    {
+    class FloatConstantTexture {
     public:
-        FloatConstantTexture(Float value) : value(value)
-        {
-        }
+        FloatConstantTexture(Float value) : value(value) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const { return value; }
+        Float Evaluate(TextureEvalContext ctx) const {
+            return value;
+        }
 
         // FloatConstantTexture Public Methods
-        static FloatConstantTexture* Create(const Transform& renderFromTexture,
-                                            const TextureParameterDictionary& parameters,
-                                            const FileLoc* loc, Allocator alloc);
+        static FloatConstantTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         Float value;
     };
 
     // SpectrumConstantTexture Definition
-    class SpectrumConstantTexture
-    {
+    class SpectrumConstantTexture {
     public:
         // SpectrumConstantTexture Public Methods
-        SpectrumConstantTexture(Spectrum value) : value(value)
-        {
-        }
+        SpectrumConstantTexture(Spectrum value) : value(value) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             return value.Sample(lambda);
         }
 
-        static SpectrumConstantTexture* Create(const Transform& renderFromTexture,
-                                               const TextureParameterDictionary& parameters,
-                                               SpectrumType spectrumType, const FileLoc* loc,
-                                               Allocator alloc);
+        static SpectrumConstantTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         Spectrum value;
     };
 
     // FloatBilerpTexture Definition
-    class FloatBilerpTexture
-    {
+    class FloatBilerpTexture {
     public:
-        FloatBilerpTexture(TextureMapping2D mapping, Float v00, Float v01, Float v10,
-                           Float v11)
-            : mapping(mapping), v00(v00), v01(v01), v10(v10), v11(v11)
-        {
-        }
+        FloatBilerpTexture(TextureMapping2D mapping, Float v00, Float v01, Float v10, Float v11) : mapping(mapping), v00(v00), v01(v01), v10(v10), v11(v11) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             TexCoord2D c = mapping.Map(ctx);
-            return (1 - c.st[0]) * (1 - c.st[1]) * v00 + c.st[0] * (1 - c.st[1]) * v10 +
-                (1 - c.st[0]) * c.st[1] * v01 + c.st[0] * c.st[1] * v11;
+            return (1 - c.st[0]) * (1 - c.st[1]) * v00 + c.st[0] * (1 - c.st[1]) * v10 + (1 - c.st[0]) * c.st[1] * v01 + c.st[0] * c.st[1] * v11;
         }
 
-        static FloatBilerpTexture* Create(const Transform& renderFromTexture,
-                                          const TextureParameterDictionary& parameters,
-                                          const FileLoc* loc, Allocator alloc);
+        static FloatBilerpTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         // BilerpTexture Private Data
@@ -368,29 +269,17 @@ namespace spectra
     };
 
     // SpectrumBilerpTexture Definition
-    class SpectrumBilerpTexture
-    {
+    class SpectrumBilerpTexture {
     public:
-        SpectrumBilerpTexture(TextureMapping2D mapping, Spectrum v00, Spectrum v01,
-                              Spectrum v10, Spectrum v11)
-            : mapping(mapping), v00(v00), v01(v01), v10(v10), v11(v11)
-        {
-        }
+        SpectrumBilerpTexture(TextureMapping2D mapping, Spectrum v00, Spectrum v01, Spectrum v10, Spectrum v11) : mapping(mapping), v00(v00), v01(v01), v10(v10), v11(v11) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             TexCoord2D c = mapping.Map(ctx);
-            return Bilerp({c.st[0], c.st[1]}, {
-                              v00.Sample(lambda), v10.Sample(lambda),
-                              v01.Sample(lambda), v11.Sample(lambda)
-                          });
+            return Bilerp({c.st[0], c.st[1]}, {v00.Sample(lambda), v10.Sample(lambda), v01.Sample(lambda), v11.Sample(lambda)});
         }
 
-        static SpectrumBilerpTexture* Create(const Transform& renderFromTexture,
-                                             const TextureParameterDictionary& parameters,
-                                             SpectrumType spectrumType, const FileLoc* loc,
-                                             Allocator alloc);
+        static SpectrumBilerpTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         // BilerpTexture Private Data
@@ -399,33 +288,22 @@ namespace spectra
     };
 
     SPECTRA_CPU_GPU
-    Float Checkerboard(TextureEvalContext ctx, TextureMapping2D map2D,
-                       TextureMapping3D map3D);
+    Float Checkerboard(TextureEvalContext ctx, TextureMapping2D map2D, TextureMapping3D map3D);
 
-    class FloatCheckerboardTexture
-    {
+    class FloatCheckerboardTexture {
     public:
-        FloatCheckerboardTexture(TextureMapping2D map2D, TextureMapping3D map3D,
-                                 FloatTexture tex1, FloatTexture tex2)
-            : map2D(map2D), map3D(map3D), tex{tex1, tex2}
-        {
-        }
+        FloatCheckerboardTexture(TextureMapping2D map2D, TextureMapping3D map3D, FloatTexture tex1, FloatTexture tex2) : map2D(map2D), map3D(map3D), tex{tex1, tex2} {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
-            Float w = Checkerboard(ctx, map2D, map3D);
+        Float Evaluate(TextureEvalContext ctx) const {
+            Float w  = Checkerboard(ctx, map2D, map3D);
             Float t0 = 0, t1 = 0;
-            if (w != 1)
-                t0 = tex[0].Evaluate(ctx);
-            if (w != 0)
-                t1 = tex[1].Evaluate(ctx);
+            if (w != 1) t0 = tex[0].Evaluate(ctx);
+            if (w != 0) t1 = tex[1].Evaluate(ctx);
             return (1 - w) * t0 + w * t1;
         }
 
-        static FloatCheckerboardTexture* Create(const Transform& renderFromTexture,
-                                                const TextureParameterDictionary& parameters,
-                                                const FileLoc* loc, Allocator alloc);
+        static FloatCheckerboardTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         TextureMapping2D map2D;
@@ -434,30 +312,20 @@ namespace spectra
     };
 
     // SpectrumCheckerboardTexture Definition
-    class SpectrumCheckerboardTexture
-    {
+    class SpectrumCheckerboardTexture {
     public:
         // SpectrumCheckerboardTexture Public Methods
-        SpectrumCheckerboardTexture(TextureMapping2D map2D, TextureMapping3D map3D,
-                                    SpectrumTexture tex1, SpectrumTexture tex2)
-            : map2D(map2D), map3D(map3D), tex{tex1, tex2}
-        {
-        }
+        SpectrumCheckerboardTexture(TextureMapping2D map2D, TextureMapping3D map3D, SpectrumTexture tex1, SpectrumTexture tex2) : map2D(map2D), map3D(map3D), tex{tex1, tex2} {}
 
-        static SpectrumCheckerboardTexture* Create(
-            const Transform& renderFromTexture, const TextureParameterDictionary& parameters,
-            SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
+        static SpectrumCheckerboardTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             Float w = Checkerboard(ctx, map2D, map3D);
             SampledSpectrum t0, t1;
-            if (w != 1)
-                t0 = tex[0].Evaluate(ctx, lambda);
-            if (w != 0)
-                t1 = tex[1].Evaluate(ctx, lambda);
+            if (w != 1) t0 = tex[0].Evaluate(ctx, lambda);
+            if (w != 0) t1 = tex[1].Evaluate(ctx, lambda);
             return (1 - w) * t0 + w * t1;
         }
 
@@ -471,25 +339,17 @@ namespace spectra
     SPECTRA_CPU_GPU
     bool InsidePolkaDot(Point2f st);
 
-    class FloatDotsTexture
-    {
+    class FloatDotsTexture {
     public:
-        FloatDotsTexture(TextureMapping2D mapping, FloatTexture outsideDot,
-                         FloatTexture insideDot)
-            : mapping(mapping), outsideDot(outsideDot), insideDot(insideDot)
-        {
-        }
+        FloatDotsTexture(TextureMapping2D mapping, FloatTexture outsideDot, FloatTexture insideDot) : mapping(mapping), outsideDot(outsideDot), insideDot(insideDot) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             TexCoord2D c = mapping.Map(ctx);
             return InsidePolkaDot(c.st) ? insideDot.Evaluate(ctx) : outsideDot.Evaluate(ctx);
         }
 
-        static FloatDotsTexture* Create(const Transform& renderFromTexture,
-                                        const TextureParameterDictionary& parameters,
-                                        const FileLoc* loc, Allocator alloc);
+        static FloatDotsTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         // DotsTexture Private Data
@@ -498,29 +358,18 @@ namespace spectra
     };
 
     // SpectrumDotsTexture Definition
-    class SpectrumDotsTexture
-    {
+    class SpectrumDotsTexture {
     public:
         // SpectrumDotsTexture Public Methods
-        SpectrumDotsTexture(TextureMapping2D mapping, SpectrumTexture outsideDot,
-                            SpectrumTexture insideDot)
-            : mapping(mapping), outsideDot(outsideDot), insideDot(insideDot)
-        {
-        }
+        SpectrumDotsTexture(TextureMapping2D mapping, SpectrumTexture outsideDot, SpectrumTexture insideDot) : mapping(mapping), outsideDot(outsideDot), insideDot(insideDot) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             TexCoord2D c = mapping.Map(ctx);
-            return InsidePolkaDot(c.st)
-                       ? insideDot.Evaluate(ctx, lambda)
-                       : outsideDot.Evaluate(ctx, lambda);
+            return InsidePolkaDot(c.st) ? insideDot.Evaluate(ctx, lambda) : outsideDot.Evaluate(ctx, lambda);
         }
 
-        static SpectrumDotsTexture* Create(const Transform& renderFromTexture,
-                                           const TextureParameterDictionary& parameters,
-                                           SpectrumType spectrumType, const FileLoc* loc,
-                                           Allocator alloc);
+        static SpectrumDotsTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         // SpectrumDotsTexture Private Members
@@ -529,25 +378,18 @@ namespace spectra
     };
 
     // FBmTexture Definition
-    class FBmTexture
-    {
+    class FBmTexture {
     public:
         // FBmTexture Public Methods
-        FBmTexture(TextureMapping3D mapping, int octaves, Float omega)
-            : mapping(mapping), omega(omega), octaves(octaves)
-        {
-        }
+        FBmTexture(TextureMapping3D mapping, int octaves, Float omega) : mapping(mapping), omega(omega), octaves(octaves) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             TexCoord3D c = mapping.Map(ctx);
             return FBm(c.p, c.dpdx, c.dpdy, omega, octaves);
         }
 
-        static FBmTexture* Create(const Transform& renderFromTexture,
-                                  const TextureParameterDictionary& parameters,
-                                  const FileLoc* loc, Allocator alloc);
+        static FBmTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         TextureMapping3D mapping;
@@ -556,19 +398,12 @@ namespace spectra
     };
 
     // TexInfo Definition
-    struct TexInfo
-    {
+    struct TexInfo {
         // TexInfo Public Methods
-        TexInfo(const std::string& f, MIPMapFilterOptions filterOptions, WrapMode wm,
-                ColorEncoding encoding)
-            : filename(f), filterOptions(filterOptions), wrapMode(wm), encoding(encoding)
-        {
-        }
+        TexInfo(const std::string& f, MIPMapFilterOptions filterOptions, WrapMode wm, ColorEncoding encoding) : filename(f), filterOptions(filterOptions), wrapMode(wm), encoding(encoding) {}
 
-        bool operator<(const TexInfo& t) const
-        {
-            return std::tie(filename, filterOptions, encoding, wrapMode) <
-                std::tie(t.filename, t.filterOptions, t.encoding, t.wrapMode);
+        bool operator<(const TexInfo& t) const {
+            return std::tie(filename, filterOptions, encoding, wrapMode) < std::tie(t.filename, t.filterOptions, t.encoding, t.wrapMode);
         }
 
 
@@ -579,28 +414,21 @@ namespace spectra
     };
 
     // ImageTextureBase Definition
-    class ImageTextureBase
-    {
+    class ImageTextureBase {
     public:
         // ImageTextureBase Public Methods
-        ImageTextureBase(TextureMapping2D mapping, std::string filename,
-                         MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale,
-                         bool invert, ColorEncoding encoding, Allocator alloc)
-            : mapping(mapping), filename(filename), scale(scale), invert(invert)
-        {
+        ImageTextureBase(TextureMapping2D mapping, std::string filename, MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale, bool invert, ColorEncoding encoding, Allocator alloc) : mapping(mapping), filename(filename), scale(scale), invert(invert) {
             // Get _MIPMap_ from texture cache if present
             TexInfo texInfo(filename, filterOptions, wrapMode, encoding);
             std::unique_lock<std::mutex> lock(textureCacheMutex);
-            if (auto iter = textureCache.find(texInfo); iter != textureCache.end())
-            {
+            if (auto iter = textureCache.find(texInfo); iter != textureCache.end()) {
                 mipmap = iter->second;
                 return;
             }
             lock.unlock();
 
             // Create _MIPMap_ for _filename_ and add to texture cache
-            mipmap =
-                MIPMap::CreateFromFile(filename, filterOptions, wrapMode, encoding, alloc);
+            mipmap = MIPMap::CreateFromFile(filename, filterOptions, wrapMode, encoding, alloc);
             lock.lock();
             // This is actually ok, but if it hits, it means we've wastefully
             // loaded this texture. (Note that in that case, should just return
@@ -609,9 +437,13 @@ namespace spectra
             textureCache[texInfo] = mipmap;
         }
 
-        static void ClearCache() { textureCache.clear(); }
+        static void ClearCache() {
+            textureCache.clear();
+        }
 
-        void MultiplyScale(Float s) { scale *= s; }
+        void MultiplyScale(Float s) {
+            scale *= s;
+        }
 
     protected:
         // ImageTextureBase Protected Members
@@ -628,20 +460,12 @@ namespace spectra
     };
 
     // FloatImageTexture Definition
-    class FloatImageTexture : public ImageTextureBase
-    {
+    class FloatImageTexture : public ImageTextureBase {
     public:
-        FloatImageTexture(TextureMapping2D m, const std::string& filename,
-                          MIPMapFilterOptions filterOptions, WrapMode wm, Float scale,
-                          bool invert, ColorEncoding encoding, Allocator alloc)
-            : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding,
-                               alloc)
-        {
-        }
+        FloatImageTexture(TextureMapping2D m, const std::string& filename, MIPMapFilterOptions filterOptions, WrapMode wm, Float scale, bool invert, ColorEncoding encoding, Allocator alloc) : ImageTextureBase(m, filename, filterOptions, wm, scale, invert, encoding, alloc) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
 #if defined(__CUDA_ARCH__)
             assert(!"Should not be called in GPU code");
             return 0;
@@ -655,33 +479,19 @@ namespace spectra
 #endif
         }
 
-        static FloatImageTexture* Create(const Transform& renderFromTexture,
-                                         const TextureParameterDictionary& parameters,
-                                         const FileLoc* loc, Allocator alloc);
+        static FloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
     };
 
     // SpectrumImageTexture Definition
-    class SpectrumImageTexture : public ImageTextureBase
-    {
+    class SpectrumImageTexture : public ImageTextureBase {
     public:
         // SpectrumImageTexture Public Methods
-        SpectrumImageTexture(TextureMapping2D mapping, std::string filename,
-                             MIPMapFilterOptions filterOptions, WrapMode wrapMode,
-                             Float scale, bool invert, ColorEncoding encoding,
-                             SpectrumType spectrumType, Allocator alloc)
-            : ImageTextureBase(mapping, filename, filterOptions, wrapMode, scale, invert,
-                               encoding, alloc),
-              spectrumType(spectrumType)
-        {
-        }
+        SpectrumImageTexture(TextureMapping2D mapping, std::string filename, MIPMapFilterOptions filterOptions, WrapMode wrapMode, Float scale, bool invert, ColorEncoding encoding, SpectrumType spectrumType, Allocator alloc) : ImageTextureBase(mapping, filename, filterOptions, wrapMode, scale, invert, encoding, alloc), spectrumType(spectrumType) {}
 
         SPECTRA_CPU_GPU
         SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;
 
-        static SpectrumImageTexture* Create(const Transform& renderFromTexture,
-                                            const TextureParameterDictionary& parameters,
-                                            SpectrumType spectrumType, const FileLoc* loc,
-                                            Allocator alloc);
+        static SpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         // SpectrumImageTexture Private Members
@@ -689,27 +499,12 @@ namespace spectra
     };
 
 #if defined(__NVCC__)
-    class GPUSpectrumImageTexture
-    {
+    class GPUSpectrumImageTexture {
     public:
-        GPUSpectrumImageTexture(std::string filename, TextureMapping2D mapping,
-                                cudaTextureObject_t texObj, Float scale, bool invert,
-                                bool isSingleChannel, const RGBColorSpace* colorSpace,
-                                SpectrumType spectrumType)
-            : mapping(mapping),
-              filename(filename),
-              texObj(texObj),
-              scale(scale),
-              invert(invert),
-              isSingleChannel(isSingleChannel),
-              colorSpace(colorSpace),
-              spectrumType(spectrumType)
-        {
-        }
+        GPUSpectrumImageTexture(std::string filename, TextureMapping2D mapping, cudaTextureObject_t texObj, Float scale, bool invert, bool isSingleChannel, const RGBColorSpace* colorSpace, SpectrumType spectrumType) : mapping(mapping), filename(filename), texObj(texObj), scale(scale), invert(invert), isSingleChannel(isSingleChannel), colorSpace(colorSpace), spectrumType(spectrumType) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
             return SampledSpectrum(0);
@@ -718,41 +513,30 @@ namespace spectra
             // left
             TexCoord2D c = mapping.Map(ctx);
             RGB rgb;
-            if (isSingleChannel)
-            {
-                float tex = scale * tex2DGrad<float>(texObj, c.st[0], 1 - c.st[1],
-                                                     make_float2(c.dsdx, c.dsdy),
-                                                     make_float2(c.dtdx, c.dtdy));
-                rgb = RGB(tex, tex, tex);
+            if (isSingleChannel) {
+                float tex = scale * tex2DGrad<float>(texObj, c.st[0], 1 - c.st[1], make_float2(c.dsdx, c.dsdy), make_float2(c.dtdx, c.dtdy));
+                rgb       = RGB(tex, tex, tex);
+            } else {
+                float4 tex = tex2DGrad<float4>(texObj, c.st[0], 1 - c.st[1], make_float2(c.dsdx, c.dsdy), make_float2(c.dtdx, c.dtdy));
+                rgb        = scale * RGB(tex.x, tex.y, tex.z);
             }
-            else
-            {
-                float4 tex = tex2DGrad<float4>(texObj, c.st[0], 1 - c.st[1],
-                                               make_float2(c.dsdx, c.dsdy),
-                                               make_float2(c.dtdx, c.dtdy));
-                rgb = scale * RGB(tex.x, tex.y, tex.z);
-            }
-            if (invert)
-                rgb = ClampZero(RGB(1, 1, 1) - rgb);
+            if (invert) rgb = ClampZero(RGB(1, 1, 1) - rgb);
             if (spectrumType == SpectrumType::Unbounded)
                 return RGBUnboundedSpectrum(*colorSpace, rgb).Sample(lambda);
-            else if (spectrumType == SpectrumType::Albedo)
-            {
+            else if (spectrumType == SpectrumType::Albedo) {
                 rgb = Clamp(rgb, 0, 1);
                 return RGBAlbedoSpectrum(*colorSpace, rgb).Sample(lambda);
-            }
-            else
+            } else
                 return RGBIlluminantSpectrum(*colorSpace, rgb).Sample(lambda);
 #endif
         }
 
-        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture,
-                                               const TextureParameterDictionary& parameters,
-                                               SpectrumType spectrumType, const FileLoc* loc,
-                                               Allocator alloc);
+        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
 
-        void MultiplyScale(Float s) { scale *= s; }
+        void MultiplyScale(Float s) {
+            scale *= s;
+        }
 
         TextureMapping2D mapping;
         std::string filename;
@@ -763,22 +547,12 @@ namespace spectra
         SpectrumType spectrumType;
     };
 
-    class GPUFloatImageTexture
-    {
+    class GPUFloatImageTexture {
     public:
-        GPUFloatImageTexture(std::string filename, TextureMapping2D mapping,
-                             cudaTextureObject_t texObj, Float scale, bool invert)
-            : mapping(mapping),
-              filename(filename),
-              texObj(texObj),
-              scale(scale),
-              invert(invert)
-        {
-        }
+        GPUFloatImageTexture(std::string filename, TextureMapping2D mapping, cudaTextureObject_t texObj, Float scale, bool invert) : mapping(mapping), filename(filename), texObj(texObj), scale(scale), invert(invert) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
 #if !defined(__CUDA_ARCH__)
             SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
             return 0;
@@ -786,19 +560,17 @@ namespace spectra
             TexCoord2D c = mapping.Map(ctx);
             // flip y coord since image has (0,0) at upper left, texture at lower
             // left
-            Float v = scale * tex2DGrad<float>(texObj, c.st[0], 1 - c.st[1],
-                                               make_float2(c.dsdx, c.dsdy),
-                                               make_float2(c.dtdx, c.dtdy));
+            Float v = scale * tex2DGrad<float>(texObj, c.st[0], 1 - c.st[1], make_float2(c.dsdx, c.dsdy), make_float2(c.dtdx, c.dtdy));
             return invert ? std::max<Float>(0, 1 - v) : v;
 #endif
         }
 
-        static GPUFloatImageTexture* Create(const Transform& renderFromTexture,
-                                            const TextureParameterDictionary& parameters,
-                                            const FileLoc* loc, Allocator alloc);
+        static GPUFloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
 
-        void MultiplyScale(Float s) { scale *= s; }
+        void MultiplyScale(Float s) {
+            scale *= s;
+        }
 
         TextureMapping2D mapping;
         std::string filename;
@@ -807,68 +579,46 @@ namespace spectra
         bool invert;
     };
 
-#else  // __NVCC__
+#else // __NVCC__
 
-    class GPUSpectrumImageTexture
-    {
+    class GPUSpectrumImageTexture {
     public:
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             SPECTRA_FATAL("GPUSpectrumImageTexture::Evaluate called from CPU");
             return SampledSpectrum(0);
         }
 
-        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture,
-                                               const TextureParameterDictionary& parameters,
-                                               SpectrumType spectrumType, const FileLoc* loc,
-                                               Allocator alloc)
-        {
+        static GPUSpectrumImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
             SPECTRA_FATAL("GPUSpectrumImageTexture::Create called outside CUDA texture implementation.");
             return nullptr;
         }
     };
 
-    class GPUFloatImageTexture
-    {
+    class GPUFloatImageTexture {
     public:
-        Float Evaluate(const TextureEvalContext&) const
-        {
+        Float Evaluate(const TextureEvalContext&) const {
             SPECTRA_FATAL("GPUFloatImageTexture::Evaluate called from CPU");
             return 0;
         }
 
-        static GPUFloatImageTexture* Create(const Transform& renderFromTexture,
-                                            const TextureParameterDictionary& parameters,
-                                            const FileLoc* loc, Allocator alloc)
-        {
+        static GPUFloatImageTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
             SPECTRA_FATAL("GPUFloatImageTexture::Create called outside CUDA texture implementation.");
             return nullptr;
         }
     };
 
-#endif  // __NVCC__
+#endif // __NVCC__
 
     // MarbleTexture Definition
-    class MarbleTexture
-    {
+    class MarbleTexture {
     public:
         // MarbleTexture Public Methods
-        MarbleTexture(TextureMapping3D mapping, int octaves, Float omega, Float scale,
-                      Float variation)
-            : mapping(mapping),
-              octaves(octaves),
-              omega(omega),
-              scale(scale),
-              variation(variation)
-        {
-        }
+        MarbleTexture(TextureMapping3D mapping, int octaves, Float omega, Float scale, Float variation) : mapping(mapping), octaves(octaves), omega(omega), scale(scale), variation(variation) {}
 
         SPECTRA_CPU_GPU
         SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;
 
-        static MarbleTexture* Create(const Transform& renderFromTexture,
-                                     const TextureParameterDictionary& parameters,
-                                     const FileLoc* loc, Allocator alloc);
+        static MarbleTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         // MarbleTexture Private Members
@@ -878,30 +628,21 @@ namespace spectra
     };
 
     // FloatMixTexture Definition
-    class FloatMixTexture
-    {
+    class FloatMixTexture {
     public:
         // FloatMixTexture Public Methods
-        FloatMixTexture(FloatTexture tex1, FloatTexture tex2, FloatTexture amount)
-            : tex1(tex1), tex2(tex2), amount(amount)
-        {
-        }
+        FloatMixTexture(FloatTexture tex1, FloatTexture tex2, FloatTexture amount) : tex1(tex1), tex2(tex2), amount(amount) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             Float amt = amount.Evaluate(ctx);
             Float t1 = 0, t2 = 0;
-            if (amt != 1)
-                t1 = tex1.Evaluate(ctx);
-            if (amt != 0)
-                t2 = tex2.Evaluate(ctx);
+            if (amt != 1) t1 = tex1.Evaluate(ctx);
+            if (amt != 0) t2 = tex2.Evaluate(ctx);
             return (1 - amt) * t1 + amt * t2;
         }
 
-        static FloatMixTexture* Create(const Transform& renderFromTexture,
-                                       const TextureParameterDictionary& parameters,
-                                       const FileLoc* loc, Allocator alloc);
+        static FloatMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         FloatTexture tex1, tex2;
@@ -909,30 +650,21 @@ namespace spectra
     };
 
     // FloatDirectionMixTexture Definition
-    class FloatDirectionMixTexture
-    {
+    class FloatDirectionMixTexture {
     public:
         // FloatDirectionMixTexture Public Methods
-        FloatDirectionMixTexture(FloatTexture tex1, FloatTexture tex2, Vector3f dir)
-            : tex1(tex1), tex2(tex2), dir(dir)
-        {
-        }
+        FloatDirectionMixTexture(FloatTexture tex1, FloatTexture tex2, Vector3f dir) : tex1(tex1), tex2(tex2), dir(dir) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             Float amt = AbsDot(ctx.n, dir);
             Float t1 = 0, t2 = 0;
-            if (amt != 0)
-                t1 = tex1.Evaluate(ctx);
-            if (amt != 1)
-                t2 = tex2.Evaluate(ctx);
+            if (amt != 0) t1 = tex1.Evaluate(ctx);
+            if (amt != 1) t2 = tex2.Evaluate(ctx);
             return amt * t1 + (1 - amt) * t2;
         }
 
-        static FloatDirectionMixTexture* Create(const Transform& renderFromTexture,
-                                                const TextureParameterDictionary& parameters,
-                                                const FileLoc* loc, Allocator alloc);
+        static FloatDirectionMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         // FloatDirectionMixTexture Private Members
@@ -941,30 +673,20 @@ namespace spectra
     };
 
     // SpectrumMixTexture Definition
-    class SpectrumMixTexture
-    {
+    class SpectrumMixTexture {
     public:
-        SpectrumMixTexture(SpectrumTexture tex1, SpectrumTexture tex2, FloatTexture amount)
-            : tex1(tex1), tex2(tex2), amount(amount)
-        {
-        }
+        SpectrumMixTexture(SpectrumTexture tex1, SpectrumTexture tex2, FloatTexture amount) : tex1(tex1), tex2(tex2), amount(amount) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             Float amt = amount.Evaluate(ctx);
             SampledSpectrum t1, t2;
-            if (amt != 1)
-                t1 = tex1.Evaluate(ctx, lambda);
-            if (amt != 0)
-                t2 = tex2.Evaluate(ctx, lambda);
+            if (amt != 1) t1 = tex1.Evaluate(ctx, lambda);
+            if (amt != 0) t2 = tex2.Evaluate(ctx, lambda);
             return (1 - amt) * t1 + amt * t2;
         }
 
-        static SpectrumMixTexture* Create(const Transform& renderFromTexture,
-                                          const TextureParameterDictionary& parameters,
-                                          SpectrumType spectrumType, const FileLoc* loc,
-                                          Allocator alloc);
+        static SpectrumMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         SpectrumTexture tex1, tex2;
@@ -972,30 +694,21 @@ namespace spectra
     };
 
     // SpectrumDirectionMixTexture Definition
-    class SpectrumDirectionMixTexture
-    {
+    class SpectrumDirectionMixTexture {
     public:
         // SpectrumDirectionMixTexture Public Methods
-        SpectrumDirectionMixTexture(SpectrumTexture tex1, SpectrumTexture tex2, Vector3f dir)
-            : tex1(tex1), tex2(tex2), dir(dir)
-        {
-        }
+        SpectrumDirectionMixTexture(SpectrumTexture tex1, SpectrumTexture tex2, Vector3f dir) : tex1(tex1), tex2(tex2), dir(dir) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             Float amt = AbsDot(ctx.n, dir);
             SampledSpectrum t1, t2;
-            if (amt != 0)
-                t1 = tex1.Evaluate(ctx, lambda);
-            if (amt != 1)
-                t2 = tex2.Evaluate(ctx, lambda);
+            if (amt != 0) t1 = tex1.Evaluate(ctx, lambda);
+            if (amt != 1) t2 = tex2.Evaluate(ctx, lambda);
             return amt * t1 + (1 - amt) * t2;
         }
 
-        static SpectrumDirectionMixTexture* Create(
-            const Transform& renderFromTexture, const TextureParameterDictionary& parameters,
-            SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
+        static SpectrumDirectionMixTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         // SpectrumDirectionMixTexture Private Members
@@ -1004,15 +717,13 @@ namespace spectra
     };
 
     // PtexTexture Declarations
-    class PtexTextureBase
-    {
+    class PtexTextureBase {
     public:
         PtexTextureBase(const std::string& filename, ColorEncoding encoding, Float scale);
 
         int SampleTexture(TextureEvalContext ctx, float* result) const;
 
     protected:
-
     private:
         bool valid;
         std::string filename;
@@ -1020,72 +731,50 @@ namespace spectra
         Float scale;
     };
 
-    class FloatPtexTexture : public PtexTextureBase
-    {
+    class FloatPtexTexture : public PtexTextureBase {
     public:
-        FloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale)
-            : PtexTextureBase(filename, encoding, scale)
-        {
-        }
+        FloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale) : PtexTextureBase(filename, encoding, scale) {}
 
         SPECTRA_CPU_GPU
         Float Evaluate(TextureEvalContext ctx) const;
-        static FloatPtexTexture* Create(const Transform& renderFromTexture,
-                                        const TextureParameterDictionary& parameters,
-                                        const FileLoc* loc, Allocator alloc);
+        static FloatPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
     };
 
-    class SpectrumPtexTexture : public PtexTextureBase
-    {
+    class SpectrumPtexTexture : public PtexTextureBase {
     public:
-        SpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale,
-                            SpectrumType spectrumType)
-            : PtexTextureBase(filename, encoding, scale), spectrumType(spectrumType)
-        {
-        }
+        SpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType) : PtexTextureBase(filename, encoding, scale), spectrumType(spectrumType) {}
 
         SPECTRA_CPU_GPU
         SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const;
 
-        static SpectrumPtexTexture* Create(const Transform& renderFromTexture,
-                                           const TextureParameterDictionary& parameters,
-                                           SpectrumType spectrumType, const FileLoc* loc,
-                                           Allocator alloc);
+        static SpectrumPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         SpectrumType spectrumType;
     };
 
-    class GPUFloatPtexTexture
-    {
+    class GPUFloatPtexTexture {
     public:
-        GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale,
-                            Allocator alloc);
+        GPUFloatPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             DCHECK(ctx.faceIndex >= 0 && ctx.faceIndex < faceValues.size());
             return faceValues[ctx.faceIndex];
         }
 
-        static GPUFloatPtexTexture* Create(const Transform& renderFromTexture,
-                                           const TextureParameterDictionary& parameters,
-                                           const FileLoc* loc, Allocator alloc);
+        static GPUFloatPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         pstd::vector<Float> faceValues;
     };
 
-    class GPUSpectrumPtexTexture
-    {
+    class GPUSpectrumPtexTexture {
     public:
-        GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding,
-                               Float scale, SpectrumType spectrumType, Allocator alloc);
+        GPUSpectrumPtexTexture(const std::string& filename, ColorEncoding encoding, Float scale, SpectrumType spectrumType, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             CHECK(ctx.faceIndex >= 0 && ctx.faceIndex < faceValues.size());
 
             RGB rgb = faceValues[ctx.faceIndex];
@@ -1103,10 +792,7 @@ namespace spectra
                 return RGBIlluminantSpectrum(*sRGB, rgb).Sample(lambda);
         }
 
-        static GPUSpectrumPtexTexture* Create(const Transform& renderFromTexture,
-                                              const TextureParameterDictionary& parameters,
-                                              SpectrumType spectrumType, const FileLoc* loc,
-                                              Allocator alloc);
+        static GPUSpectrumPtexTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         SpectrumType spectrumType;
@@ -1114,24 +800,17 @@ namespace spectra
     };
 
     // FloatScaledTexture Definition
-    class FloatScaledTexture
-    {
+    class FloatScaledTexture {
     public:
         // FloatScaledTexture Public Methods
-        FloatScaledTexture(FloatTexture tex, FloatTexture scale) : tex(tex), scale(scale)
-        {
-        }
+        FloatScaledTexture(FloatTexture tex, FloatTexture scale) : tex(tex), scale(scale) {}
 
-        static FloatTexture Create(const Transform& renderFromTexture,
-                                   const TextureParameterDictionary& parameters,
-                                   const FileLoc* loc, Allocator alloc);
+        static FloatTexture Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             Float sc = scale.Evaluate(ctx);
-            if (sc == 0)
-                return 0;
+            if (sc == 0) return 0;
             return tex.Evaluate(ctx) * sc;
         }
 
@@ -1140,27 +819,18 @@ namespace spectra
     };
 
     // SpectrumScaledTexture Definition
-    class SpectrumScaledTexture
-    {
+    class SpectrumScaledTexture {
     public:
-        SpectrumScaledTexture(SpectrumTexture tex, FloatTexture scale)
-            : tex(tex), scale(scale)
-        {
-        }
+        SpectrumScaledTexture(SpectrumTexture tex, FloatTexture scale) : tex(tex), scale(scale) {}
 
         SPECTRA_CPU_GPU
-        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const
-        {
+        SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             Float sc = scale.Evaluate(ctx);
-            if (sc == 0)
-                return SampledSpectrum(0.f);
+            if (sc == 0) return SampledSpectrum(0.f);
             return tex.Evaluate(ctx, lambda) * sc;
         }
 
-        static SpectrumTexture Create(const Transform& renderFromTexture,
-                                      const TextureParameterDictionary& parameters,
-                                      SpectrumType spectrumType, const FileLoc* loc,
-                                      Allocator alloc);
+        static SpectrumTexture Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc);
 
     private:
         SpectrumTexture tex;
@@ -1168,51 +838,38 @@ namespace spectra
     };
 
     // WindyTexture Definition
-    class WindyTexture
-    {
+    class WindyTexture {
     public:
         // WindyTexture Public Methods
-        WindyTexture(TextureMapping3D mapping) : mapping(mapping)
-        {
-        }
+        WindyTexture(TextureMapping3D mapping) : mapping(mapping) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
-            TexCoord3D c = mapping.Map(ctx);
+        Float Evaluate(TextureEvalContext ctx) const {
+            TexCoord3D c       = mapping.Map(ctx);
             Float windStrength = FBm(.1f * c.p, .1f * c.dpdx, .1f * c.dpdy, .5, 3);
-            Float waveHeight = FBm(c.p, c.dpdx, c.dpdy, .5, 6);
+            Float waveHeight   = FBm(c.p, c.dpdx, c.dpdy, .5, 6);
             return std::abs(windStrength) * waveHeight;
         }
 
-        static WindyTexture* Create(const Transform& renderFromTexture,
-                                    const TextureParameterDictionary& parameters,
-                                    const FileLoc* loc, Allocator alloc);
+        static WindyTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         TextureMapping3D mapping;
     };
 
     // WrinkledTexture Definition
-    class WrinkledTexture
-    {
+    class WrinkledTexture {
     public:
         // WrinkledTexture Public Methods
-        WrinkledTexture(TextureMapping3D mapping, int octaves, Float omega)
-            : mapping(mapping), octaves(octaves), omega(omega)
-        {
-        }
+        WrinkledTexture(TextureMapping3D mapping, int octaves, Float omega) : mapping(mapping), octaves(octaves), omega(omega) {}
 
         SPECTRA_CPU_GPU
-        Float Evaluate(TextureEvalContext ctx) const
-        {
+        Float Evaluate(TextureEvalContext ctx) const {
             TexCoord3D c = mapping.Map(ctx);
             return Turbulence(c.p, c.dpdx, c.dpdy, omega, octaves);
         }
 
-        static WrinkledTexture* Create(const Transform& renderFromTexture,
-                                       const TextureParameterDictionary& parameters,
-                                       const FileLoc* loc, Allocator alloc);
+        static WrinkledTexture* Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
     private:
         // WrinkledTexture Private Data
@@ -1221,28 +878,22 @@ namespace spectra
         Float omega;
     };
 
-    inline Float FloatTexture::Evaluate(TextureEvalContext ctx) const
-    {
+    inline Float FloatTexture::Evaluate(TextureEvalContext ctx) const {
         auto eval = [&](auto ptr) { return ptr->Evaluate(ctx); };
         return Dispatch(eval);
     }
 
-    inline SampledSpectrum SpectrumTexture::Evaluate(TextureEvalContext ctx,
-                                                     SampledWavelengths lambda) const
-    {
+    inline SampledSpectrum SpectrumTexture::Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
         auto eval = [&](auto ptr) { return ptr->Evaluate(ctx, lambda); };
         return Dispatch(eval);
     }
 
     // UniversalTextureEvaluator Definition
-    class UniversalTextureEvaluator
-    {
+    class UniversalTextureEvaluator {
     public:
         // UniversalTextureEvaluator Public Methods
         SPECTRA_CPU_GPU
-        bool CanEvaluate(std::initializer_list<FloatTexture>,
-                         std::initializer_list<SpectrumTexture>) const
-        {
+        bool CanEvaluate(std::initializer_list<FloatTexture>, std::initializer_list<SpectrumTexture>) const {
             return true;
         }
 
@@ -1250,37 +901,28 @@ namespace spectra
         Float operator()(FloatTexture tex, TextureEvalContext ctx);
 
         SPECTRA_CPU_GPU
-        SampledSpectrum operator()(SpectrumTexture tex, TextureEvalContext ctx,
-                                   SampledWavelengths lambda);
+        SampledSpectrum operator()(SpectrumTexture tex, TextureEvalContext ctx, SampledWavelengths lambda);
     };
 
     // BasicTextureEvaluator Definition
-    class BasicTextureEvaluator
-    {
+    class BasicTextureEvaluator {
     public:
         // BasicTextureEvaluator Public Methods
         SPECTRA_CPU_GPU
-        bool CanEvaluate(std::initializer_list<FloatTexture> ftex,
-                         std::initializer_list<SpectrumTexture> stex) const
-        {
+        bool CanEvaluate(std::initializer_list<FloatTexture> ftex, std::initializer_list<SpectrumTexture> stex) const {
             // Return _false_ if any _FloatTexture_s cannot be evaluated
             for (FloatTexture f : ftex)
-                if (f && !f.Is<FloatConstantTexture>() && !f.Is<FloatImageTexture>() &&
-                    !f.Is<GPUFloatPtexTexture>() && !f.Is<GPUFloatImageTexture>())
-                    return false;
+                if (f && !f.Is<FloatConstantTexture>() && !f.Is<FloatImageTexture>() && !f.Is<GPUFloatPtexTexture>() && !f.Is<GPUFloatImageTexture>()) return false;
 
             // Return _false_ if any _SpectrumTexture_s cannot be evaluated
             for (SpectrumTexture s : stex)
-                if (s && !s.Is<SpectrumConstantTexture>() && !s.Is<SpectrumImageTexture>() &&
-                    !s.Is<GPUSpectrumPtexTexture>() && !s.Is<GPUSpectrumImageTexture>())
-                    return false;
+                if (s && !s.Is<SpectrumConstantTexture>() && !s.Is<SpectrumImageTexture>() && !s.Is<GPUSpectrumPtexTexture>() && !s.Is<GPUSpectrumImageTexture>()) return false;
 
             return true;
         }
 
         SPECTRA_CPU_GPU
-        Float operator()(FloatTexture tex, TextureEvalContext ctx)
-        {
+        Float operator()(FloatTexture tex, TextureEvalContext ctx) {
             if (tex.Is<FloatConstantTexture>())
                 return tex.Cast<FloatConstantTexture>()->Evaluate(ctx);
             else if (tex.Is<FloatImageTexture>())
@@ -1289,18 +931,14 @@ namespace spectra
                 return tex.Cast<GPUFloatImageTexture>()->Evaluate(ctx);
             else if (tex.Is<GPUFloatPtexTexture>())
                 return tex.Cast<GPUFloatPtexTexture>()->Evaluate(ctx);
-            else
-            {
-                if (tex)
-                    SPECTRA_FATAL("BasicTextureEvaluator::operator() called with unsupported float texture.");
+            else {
+                if (tex) SPECTRA_FATAL("BasicTextureEvaluator::operator() called with unsupported float texture.");
                 return 0.f;
             }
         }
 
         SPECTRA_CPU_GPU
-        SampledSpectrum operator()(SpectrumTexture tex, TextureEvalContext ctx,
-                                   SampledWavelengths lambda)
-        {
+        SampledSpectrum operator()(SpectrumTexture tex, TextureEvalContext ctx, SampledWavelengths lambda) {
             if (tex.Is<SpectrumConstantTexture>())
                 return tex.Cast<SpectrumConstantTexture>()->Evaluate(ctx, lambda);
             else if (tex.Is<SpectrumImageTexture>())
@@ -1309,14 +947,12 @@ namespace spectra
                 return tex.Cast<GPUSpectrumImageTexture>()->Evaluate(ctx, lambda);
             else if (tex.Is<GPUSpectrumPtexTexture>())
                 return tex.Cast<GPUSpectrumPtexTexture>()->Evaluate(ctx, lambda);
-            else
-            {
-                if (tex)
-                    SPECTRA_FATAL("BasicTextureEvaluator::operator() called with unsupported spectrum texture.");
+            else {
+                if (tex) SPECTRA_FATAL("BasicTextureEvaluator::operator() called with unsupported spectrum texture.");
                 return SampledSpectrum(0.f);
             }
         }
     };
 } // namespace spectra
 
-#endif  // SPECTRA_PATHTRACER_CORE_TEXTURES_H
+#endif // SPECTRA_PATHTRACER_CORE_TEXTURES_H
