@@ -21,7 +21,7 @@
 namespace spectra::optix {
     class SpectraOptiXAggregate {
     public:
-        SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource, NamedTextures& textures, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const std::map<std::string, Medium>& media, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials);
+        SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource, NamedTextures& textures, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const std::map<std::string, Medium>& media, const std::map<std::string, Material>& materials);
         ~SpectraOptiXAggregate();
 
         Bounds3f Bounds() const {
@@ -86,13 +86,13 @@ namespace spectra::optix {
             CUdeviceptr buffer                       = 0;
         };
 
-        static BVH buildBVHForTriangles(const std::vector<scene::ShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
+        static BVH buildBVHForTriangles(const std::vector<scene::ShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
 
         static BilinearPatchMesh* diceCurveToBLP(const scene::ShapeSceneEntity& shape, int nDiceU, int nDiceV, Allocator alloc);
 
-        static BVH buildBVHForBLPs(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
+        static BVH buildBVHForBLPs(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
 
-        static BVH buildBVHForQuadrics(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
+        static BVH buildBVHForQuadrics(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
 
         int addHGRecords(const BVH& bvh);
 

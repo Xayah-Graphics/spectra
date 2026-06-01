@@ -1,6 +1,7 @@
 #include <charconv>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/gpu/memory.h>
@@ -108,9 +109,9 @@ int main(int argc, char* argv[]) {
 
         spectra::pathtracer::GpuRuntime runtime(options);
 
-        spectra::scene::BuiltScene built_scene = spectra::scene::BuildScene(*scene_name);
+        std::unique_ptr<spectra::scene::Scene> scene = spectra::scene::BuildScene(*scene_name);
 
-        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, *built_scene.scene);
+        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, *scene);
 
         spectra::Float seconds = pathtracer.Render();
 

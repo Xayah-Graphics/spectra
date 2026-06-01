@@ -223,38 +223,32 @@ namespace spectra::pathtracer {
         // Check the shapes and instance definitions...
         for (const auto& shape : scene.shapes)
             if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) haveMedia = true;
-        for (const auto& shape : scene.animatedShapes)
-            if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) haveMedia = true;
         for (const auto& instanceDefinition : scene.instanceDefinitions) {
-            for (const auto& shape : instanceDefinition.second->shapes)
-                if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) haveMedia = true;
-            for (const auto& shape : instanceDefinition.second->animatedShapes)
+            for (const auto& shape : instanceDefinition.second.shapes)
                 if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) haveMedia = true;
         }
 
         // Textures
         NamedTextures textures = scene.CreateTextures();
 
+        std::map<std::string, Material> materials;
+        scene.CreateMaterials(textures, &materials);
+
         pstd::vector<Light> allLights;
         std::map<int, pstd::vector<Light>*> shapeIndexToAreaLights;
 
         infiniteLights = alloc.new_object<pstd::vector<Light>>(alloc);
 
-        for (Light l : scene.CreateLights(textures, &shapeIndexToAreaLights)) {
+        for (Light l : scene.CreateLights(textures, materials, &shapeIndexToAreaLights)) {
             if (l.Is<UniformInfiniteLight>() || l.Is<ImageInfiniteLight>() || l.Is<PortalImageInfiniteLight>()) infiniteLights->push_back(l);
 
             allLights.push_back(l);
         }
 
-        std::map<std::string, Material> namedMaterials;
-        std::vector<Material> materials;
-        scene.CreateMaterials(textures, &namedMaterials, &materials);
-
         haveBasicEvalMaterial.fill(false);
         haveUniversalEvalMaterial.fill(false);
         haveSubsurface = false;
-        for (Material m : materials) updateMaterialNeeds(m, &haveBasicEvalMaterial, &haveUniversalEvalMaterial, &haveSubsurface, &haveMedia);
-        for (const auto& m : namedMaterials) updateMaterialNeeds(m.second, &haveBasicEvalMaterial, &haveUniversalEvalMaterial, &haveSubsurface, &haveMedia);
+        for (const auto& material : materials) updateMaterialNeeds(material.second, &haveBasicEvalMaterial, &haveUniversalEvalMaterial, &haveSubsurface, &haveMedia);
 
         // Retrieve these here so that the CPU isn't writing to managed memory
         // concurrently with the OptiX acceleration-structure construction work
@@ -266,7 +260,7 @@ namespace spectra::pathtracer {
 
         CUDATrackedMemoryResource* mr = dynamic_cast<CUDATrackedMemoryResource*>(memoryResource);
         SPECTRA_CHECK(mr);
-        aggregate = new optix::SpectraOptiXAggregate(scene, mr, textures, shapeIndexToAreaLights, media, namedMaterials, materials);
+        aggregate = new optix::SpectraOptiXAggregate(scene, mr, textures, shapeIndexToAreaLights, media, materials);
 
         // Preprocess the light sources
         for (Light light : allLights) light.Preprocess(aggregate->Bounds());

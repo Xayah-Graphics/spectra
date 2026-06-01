@@ -6,17 +6,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <spectra/pathtracer/integrator.h>
+#include <spectra/scene.h>
 #include <string>
 #include <string_view>
 
 namespace xayah::pathtracer {
     struct RenderPipeline;
 } // namespace xayah::pathtracer
-
-namespace spectra::scene {
-    struct SceneInfo;
-} // namespace spectra::scene
 
 namespace xayah {
     class SpectraPathtracer final : public SpectraPlugin {
@@ -105,7 +103,7 @@ namespace xayah {
             std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
-        const spectra::scene::SceneInfo* scene_info{};
+        std::optional<spectra::scene::SceneInfo> scene_info{};
         std::array<int, 2> scene_film_resolution{0, 0};
         spectra::Transform scene_camera_from_world{};
         int scene_sampler_sample_count{0};

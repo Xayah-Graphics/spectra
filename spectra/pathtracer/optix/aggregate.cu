@@ -151,15 +151,10 @@ namespace spectra::optix {
         return {traversableHandle, CUdeviceptr(accelBuffer)};
     }
 
-    static Material getMaterial(const scene::ShapeSceneEntity& shape, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials) {
-        if (!shape.materialName.empty()) {
-            auto iter = namedMaterials.find(shape.materialName);
-            if (iter == namedMaterials.end()) throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: material not defined", shape.materialName));
-            return iter->second;
-        } else {
-            SPECTRA_CHECK_NE(shape.materialIndex, -1);
-            return materials[shape.materialIndex];
-        }
+    static Material getMaterial(const scene::ShapeSceneEntity& shape, const std::map<std::string, Material>& materials) {
+        auto iter = materials.find(shape.materialName);
+        if (iter == materials.end()) throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: material not defined", shape.materialName));
+        return iter->second;
     }
 
     static FloatTexture getAlphaTexture(const scene::ShapeSceneEntity& shape, const std::map<std::string, FloatTexture>& floatTextures, Allocator alloc) {
@@ -230,9 +225,7 @@ namespace spectra::optix {
                     auto iter = floatTextures.find(displacementTexName);
                     if (iter == floatTextures.end()) throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: no such texture defined.", displacementTexName));
                     FloatTexture displacement = iter->second;
-
-
-                    plyMesh = plyMesh.Displace(
+                    plyMesh                   = plyMesh.Displace(
                         [&](Point3f v0, Point3f v1) {
                             v0 = (*shape.renderFromObject)(v0);
                             v1 = (*shape.renderFromObject)(v1);
@@ -277,7 +270,7 @@ namespace spectra::optix {
         return plyMeshes;
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<scene::ShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<scene::ShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
         // Count how many of the shapes are triangle meshes
         std::vector<size_t> meshIndexToShapeIndex;
         for (size_t i = 0; i < shapes.size(); ++i) {
@@ -322,7 +315,7 @@ namespace spectra::optix {
                 SPECTRA_CHECK(plyIter != plyMeshes.end());
                 const TriQuadMesh& plyMesh = plyIter->second;
 
-                if (!plyMesh.quadIndices.empty() && shape.lightIndex != -1) {
+                if (!plyMesh.quadIndices.empty() && shape.areaLight.has_value()) {
                     // This would be nice to fix, but it involves some
                     // plumbing and it's a rare case. The underlying issue
                     // is that when we create AreaLights for emissive
@@ -401,7 +394,7 @@ namespace spectra::optix {
                 input.triangleArray.indexBuffer = CUdeviceptr(indicesGPU);
 
                 FloatTexture alphaTexture     = getAlphaTexture(shape, floatTextures, alloc);
-                Material material             = getMaterial(shape, namedMaterials, materials);
+                Material material             = getMaterial(shape, materials);
                 triangleInputFlags[meshIndex] = getOptixGeometryFlags(true, alphaTexture);
                 input.triangleArray.flags     = &triangleInputFlags[meshIndex];
 
@@ -419,10 +412,9 @@ namespace spectra::optix {
                 hgRecord.triRec.material     = material;
                 hgRecord.triRec.alphaTexture = alphaTexture;
                 hgRecord.triRec.areaLights   = {};
-                if (shape.lightIndex != -1) {
+                if (shape.areaLight.has_value()) {
                     if (!material)
-                        spectra::diagnostics::PrintWarning(&shape.loc, "Ignoring area light specification for shape "
-                                                                       "with \"interface\" material.");
+                        throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
                     else {
                         // Note: this will hit if we try to have an instance as an area
                         // light.
@@ -657,7 +649,7 @@ namespace spectra::optix {
         return alloc.new_object<BilinearPatchMesh>(*shape.renderFromObject, shape.reverseOrientation, blpIndices, blpP, blpN, blpUV, std::vector<int>(), nullptr, alloc);
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
         // Count how many BLP meshes there are in shapes
         std::vector<size_t> meshIndexToShapeIndex;
         for (size_t i = 0; i < shapes.size(); ++i) {
@@ -735,7 +727,7 @@ namespace spectra::optix {
 
             size_t shapeIndex         = meshIndexToShapeIndex[meshIndex];
             const auto& shape         = shapes[shapeIndex];
-            Material material         = getMaterial(shape, namedMaterials, materials);
+            Material material         = getMaterial(shape, materials);
             FloatTexture alphaTexture = getAlphaTexture(shape, floatTextures, alloc);
 
             // After "alpha" has been consumed...
@@ -749,10 +741,9 @@ namespace spectra::optix {
             hgRecord.bilinearRec.material     = material;
             hgRecord.bilinearRec.alphaTexture = alphaTexture;
             hgRecord.bilinearRec.areaLights   = {};
-            if (shape.lightIndex != -1) {
+            if (shape.areaLight.has_value()) {
                 if (!material)
-                    spectra::diagnostics::PrintWarning(&shape.loc, "Ignoring area light specification for shape with "
-                                                                   "\"interface\" material.");
+                    throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
                 else {
                     auto iter = shapeIndexToAreaLights.find(shapeIndex);
                     // Note: this will hit if we try to have an instance as an area
@@ -787,7 +778,7 @@ namespace spectra::optix {
         return bvh;
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
         int nQuadrics = 0;
         for (size_t shapeIndex = 0; shapeIndex < shapes.size(); ++shapeIndex) {
             const auto& s = shapes[shapeIndex];
@@ -830,7 +821,7 @@ namespace spectra::optix {
             bvh.bounds = Union(bvh.bounds, shapeBounds);
 
             // Find alpha texture, if present.
-            Material material         = getMaterial(s, namedMaterials, materials);
+            Material material         = getMaterial(s, materials);
             FloatTexture alphaTexture = getAlphaTexture(s, floatTextures, alloc);
             flags[quadricIndex]       = getOptixGeometryFlags(false, alphaTexture);
 
@@ -843,10 +834,9 @@ namespace spectra::optix {
             hgRecord.quadricRec.material     = material;
             hgRecord.quadricRec.alphaTexture = alphaTexture;
             hgRecord.quadricRec.areaLight    = nullptr;
-            if (s.lightIndex != -1) {
+            if (s.areaLight.has_value()) {
                 if (!material)
-                    spectra::diagnostics::PrintWarning(&s.loc, "Ignoring area light specification for shape with "
-                                                               "\"interface\" material.");
+                    throw std::runtime_error(spectra::diagnostics::Format(&s.loc, "Area light shape \"%s\" cannot use an interface material.", s.name));
                 else {
                     auto iter = shapeIndexToAreaLights.find(shapeIndex);
                     // Note: this will hit if we try to have an instance as an area
@@ -1023,7 +1013,7 @@ namespace spectra::optix {
         return pg;
     }
 
-    SpectraOptiXAggregate::SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource, NamedTextures& textures, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const std::map<std::string, Medium>& media, const std::map<std::string, Material>& namedMaterials, const std::vector<Material>& materials) : memoryResource(memoryResource), cudaStream(nullptr) {
+    SpectraOptiXAggregate::SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource, NamedTextures& textures, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const std::map<std::string, Medium>& media, const std::map<std::string, Material>& materials) : memoryResource(memoryResource), cudaStream(nullptr) {
         CUcontext cudaContext;
         SPECTRA_CU_CHECK(cuCtxGetCurrent(&cudaContext));
         SPECTRA_CHECK(cudaContext != nullptr);
@@ -1187,19 +1177,19 @@ namespace spectra::optix {
             int sbtOffset;
         };
         AsyncJob<GAS*>* triJob = RunAsync([&]() {
-            BVH triangleBVH = buildBVHForTriangles(scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, namedMaterials, materials, media, shapeIndexToAreaLights, threadAllocators, threadCUDAStreams);
+            BVH triangleBVH = buildBVHForTriangles(scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, shapeIndexToAreaLights, threadAllocators, threadCUDAStreams);
             int sbtOffset   = addHGRecords(triangleBVH);
             return new GAS{std::move(triangleBVH), sbtOffset};
         });
 
         AsyncJob<GAS*>* blpJob = RunAsync([&]() {
-            BVH blpBVH            = buildBVHForBLPs(scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, namedMaterials, materials, media, shapeIndexToAreaLights, threadAllocators, threadCUDAStreams);
+            BVH blpBVH            = buildBVHForBLPs(scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, shapeIndexToAreaLights, threadAllocators, threadCUDAStreams);
             int bilinearSBTOffset = addHGRecords(blpBVH);
             return new GAS{std::move(blpBVH), bilinearSBTOffset};
         });
 
         AsyncJob<GAS*>* quadricJob = RunAsync([&]() {
-            BVH quadricBVH       = buildBVHForQuadrics(scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, namedMaterials, materials, media, shapeIndexToAreaLights, threadAllocators, threadCUDAStreams);
+            BVH quadricBVH       = buildBVHForQuadrics(scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, shapeIndexToAreaLights, threadAllocators, threadCUDAStreams);
             int quadricSBTOffset = addHGRecords(quadricBVH);
             return new GAS{std::move(quadricBVH), quadricSBTOffset};
         });
@@ -1217,24 +1207,22 @@ namespace spectra::optix {
             }
         };
 
-        std::vector<InternedString> allInstanceNames;
+        std::vector<std::string> allInstanceNames;
         for (const auto& def : scene.instanceDefinitions) allInstanceNames.push_back(def.first);
 
-        std::unordered_map<InternedString, Instance, InternedStringHash> instanceMap;
+        std::unordered_map<std::string, Instance> instanceMap;
         std::mutex instanceMapMutex;
         ParallelFor(0, scene.instanceDefinitions.size(), [&](int64_t i) {
-            InternedString name = allInstanceNames[i];
-            auto iter           = scene.instanceDefinitions.find(name);
+            std::string name = allInstanceNames[i];
+            auto iter        = scene.instanceDefinitions.find(name);
             SPECTRA_CHECK(iter != scene.instanceDefinitions.end());
             const auto& def = *iter;
 
-            if (!def.second->animatedShapes.empty()) spectra::diagnostics::PrintWarning("Ignoring %d animated shapes in instance \"%s\".", def.second->animatedShapes.size(), def.first);
-
             Instance inst;
 
-            std::map<int, TriQuadMesh> meshes = PreparePLYMeshes(def.second->shapes, textures.floatTextures);
+            std::map<int, TriQuadMesh> meshes = PreparePLYMeshes(def.second.shapes, textures.floatTextures);
 
-            BVH triangleBVH = buildBVHForTriangles(def.second->shapes, meshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, namedMaterials, materials, media, {}, threadAllocators, threadCUDAStreams);
+            BVH triangleBVH = buildBVHForTriangles(def.second.shapes, meshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, {}, threadAllocators, threadCUDAStreams);
             meshes.clear();
             if (triangleBVH.traversableHandle) {
                 inst.handles[0]    = triangleBVH.traversableHandle;
@@ -1242,14 +1230,14 @@ namespace spectra::optix {
                 inst.bounds        = triangleBVH.bounds;
             }
 
-            BVH blpBVH = buildBVHForBLPs(def.second->shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, namedMaterials, materials, media, {}, threadAllocators, threadCUDAStreams);
+            BVH blpBVH = buildBVHForBLPs(def.second.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, {}, threadAllocators, threadCUDAStreams);
             if (blpBVH.traversableHandle) {
                 inst.handles[1]    = blpBVH.traversableHandle;
                 inst.sbtOffsets[1] = addHGRecords(blpBVH);
                 inst.bounds        = Union(inst.bounds, blpBVH.bounds);
             }
 
-            BVH quadricBVH = buildBVHForQuadrics(def.second->shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, namedMaterials, materials, media, {}, threadAllocators, threadCUDAStreams);
+            BVH quadricBVH = buildBVHForQuadrics(def.second.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, {}, threadAllocators, threadCUDAStreams);
             if (quadricBVH.traversableHandle) {
                 inst.handles[2]    = quadricBVH.traversableHandle;
                 inst.sbtOffsets[2] = addHGRecords(quadricBVH);
@@ -1267,7 +1255,7 @@ namespace spectra::optix {
         // Get the appropriate instanceMap iterator for each instance use, just
         // once, and in parallel.  While we're at it, count the total number of
         // OptixInstances that will be added to iasInstances.
-        std::vector<std::unordered_map<InternedString, Instance, InternedStringHash>::const_iterator> instanceMapIters(scene.instances.size());
+        std::vector<std::unordered_map<std::string, Instance>::const_iterator> instanceMapIters(scene.instances.size());
         std::atomic<int> totalOptixInstances{0};
         std::vector<int> numValidHandles(scene.instances.size());
         ParallelFor(0, scene.instances.size(), [&](int64_t indexBegin, int64_t indexEnd) {
@@ -1332,24 +1320,19 @@ namespace spectra::optix {
                 auto iter                 = instanceMapIters[index];
                 if (iter == instanceMap.end()) throw std::runtime_error(spectra::diagnostics::Format(&sceneInstance.loc, "%s: object instance not defined.", sceneInstance.name));
 
-                if (sceneInstance.renderFromInstance == nullptr) {
-                    spectra::diagnostics::PrintWarning(&sceneInstance.loc, "%s: object instance has animated transformation. TODO", sceneInstance.name);
-                    continue;
-                }
-
                 const Instance& in = iter->second;
                 if (in.bounds.IsDegenerate())
                     // Empty instance. Nothing to do (and don't update bounds!)
                     continue;
 
-                localBounds = Union(localBounds, (*sceneInstance.renderFromInstance)(in.bounds));
+                localBounds = Union(localBounds, sceneInstance.renderFromInstance(in.bounds));
 
                 size_t iasOffset = instanceIASOffset[index];
                 for (int i = 0; i < 3; ++i) {
                     if (!in.handles[i]) continue;
 
                     OptixInstance optixInstance        = {};
-                    SquareMatrix<4> renderFromInstance = sceneInstance.renderFromInstance->GetMatrix();
+                    SquareMatrix<4> renderFromInstance = sceneInstance.renderFromInstance.GetMatrix();
                     for (int j = 0; j < 3; ++j)
                         for (int k = 0; k < 4; ++k) optixInstance.transform[4 * j + k] = renderFromInstance[j][k];
                     optixInstance.visibilityMask = 255;
@@ -1381,9 +1364,6 @@ namespace spectra::optix {
         if (rootAccel.buffer) accelBuffers.push_back(rootAccel.buffer);
 
         SPECTRA_CUDA_CHECK(cudaFree((void*) instanceDevicePtr));
-
-
-        if (!scene.animatedShapes.empty()) spectra::diagnostics::PrintWarning("Ignoring %d animated shapes", scene.animatedShapes.size());
 
         ///////////////////////////////////////////////////////////////////////////
         // Final SBT initialization
