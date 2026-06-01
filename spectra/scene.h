@@ -63,11 +63,6 @@ namespace spectra::scene {
     };
 
     struct InstanceDefinitionSceneEntity {
-        InstanceDefinitionSceneEntity() = default;
-
-        InstanceDefinitionSceneEntity(const std::string& name, FileLoc loc) : name(SceneEntity::internedStrings.Lookup(name)), loc(loc) {}
-
-
         InternedString name;
         FileLoc loc;
         std::vector<ShapeSceneEntity> shapes;
@@ -83,15 +78,6 @@ namespace spectra::scene {
     };
 
     struct InstanceSceneEntity {
-        InstanceSceneEntity() = default;
-
-        InstanceSceneEntity(const std::string& n, FileLoc loc, const AnimatedTransform& renderFromInstanceAnim) : name(SceneEntity::internedStrings.Lookup(n)), loc(loc), renderFromInstanceAnim(new AnimatedTransform(renderFromInstanceAnim)) {
-            SPECTRA_CHECK(this->renderFromInstanceAnim->IsAnimated());
-        }
-
-        InstanceSceneEntity(const std::string& n, FileLoc loc, const Transform* renderFromInstance) : name(SceneEntity::internedStrings.Lookup(n)), loc(loc), renderFromInstance(renderFromInstance) {}
-
-
         InternedString name;
         FileLoc loc;
         AnimatedTransform* renderFromInstanceAnim = nullptr;
@@ -505,8 +491,6 @@ namespace spectra::scene {
         std::vector<GraphicsState> pushedGraphicsStates;
         std::vector<std::pair<char, FileLoc>> pushStack; // 'a': attribute, 'o': object
         struct ActiveInstanceDefinition {
-            ActiveInstanceDefinition(std::string name, FileLoc loc) : entity(name, loc) {}
-
             std::mutex mutex;
             std::atomic<int> activeImports{1};
             InstanceDefinitionSceneEntity entity;

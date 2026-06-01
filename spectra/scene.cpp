@@ -1194,7 +1194,13 @@ namespace spectra::scene {
         }
         instanceNames.insert(name);
 
-        activeInstanceDefinition = new ActiveInstanceDefinition(name, loc);
+        activeInstanceDefinition = new ActiveInstanceDefinition{
+            .entity =
+                {
+                    .name = SceneEntity::internedStrings.Lookup(name),
+                    .loc  = loc,
+                },
+        };
     }
 
     void SceneBuilder::ObjectEnd(FileLoc loc) {
@@ -1245,13 +1251,23 @@ namespace spectra::scene {
             // xforms equal even if CTMIsAnimated() has returned true. Fall
             // through to create a regular non-animated instance in that case.
             if (animatedRenderFromInstance.IsAnimated()) {
-                instanceUses.push_back(InstanceSceneEntity(name, loc, animatedRenderFromInstance));
+                AnimatedTransform* renderFromInstanceAnim = new AnimatedTransform(animatedRenderFromInstance);
+                SPECTRA_CHECK(renderFromInstanceAnim->IsAnimated());
+                instanceUses.push_back({
+                    .name                   = SceneEntity::internedStrings.Lookup(name),
+                    .loc                    = loc,
+                    .renderFromInstanceAnim = renderFromInstanceAnim,
+                });
                 return;
             }
         }
 
         const spectra::Transform* renderFromInstance = transformCache.Lookup(RenderFromObject(0) * worldFromRender);
-        instanceUses.push_back(InstanceSceneEntity(name, loc, renderFromInstance));
+        instanceUses.push_back({
+            .name               = SceneEntity::internedStrings.Lookup(name),
+            .loc                = loc,
+            .renderFromInstance = renderFromInstance,
+        });
     }
 
     void SceneBuilder::EndOfFiles() {
@@ -1275,7 +1291,13 @@ namespace spectra::scene {
         importBuilder->filmResolutionOverride       = filmResolutionOverride;
         importBuilder->filmSeen                     = filmSeen;
         if (activeInstanceDefinition) {
-            importBuilder->activeInstanceDefinition = new ActiveInstanceDefinition(activeInstanceDefinition->entity.name, activeInstanceDefinition->entity.loc);
+            importBuilder->activeInstanceDefinition = new ActiveInstanceDefinition{
+                .entity =
+                    {
+                        .name = activeInstanceDefinition->entity.name,
+                        .loc  = activeInstanceDefinition->entity.loc,
+                    },
+            };
 
             // In case of nested imports, go up to the true root parent since
             // that's where we need to merge our shapes and that's where the
@@ -2308,7 +2330,12 @@ namespace spectra::scene {
     }
 
     void Scene::AddInstanceDefinition(InstanceDefinitionSceneEntity instance) {
-        InstanceDefinitionSceneEntity* def = new InstanceDefinitionSceneEntity(std::move(instance));
+        InstanceDefinitionSceneEntity* def = new InstanceDefinitionSceneEntity{
+            .name           = instance.name,
+            .loc            = instance.loc,
+            .shapes         = std::move(instance.shapes),
+            .animatedShapes = std::move(instance.animatedShapes),
+        };
 
         std::lock_guard<std::mutex> lock(instanceDefinitionMutex);
         instanceDefinitions[def->name] = def;
