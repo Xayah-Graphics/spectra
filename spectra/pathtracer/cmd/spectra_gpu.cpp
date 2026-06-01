@@ -1,13 +1,17 @@
+#include <charconv>
 #include <cstdio>
-#include <cstdlib>
 #include <exception>
-#include <memory>
+#include <optional>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/gpu/memory.h>
 #include <spectra/pathtracer/integrator.h>
 #include <spectra/pathtracer/util/float.h>
 #include <spectra/scene.h>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 #ifdef SPECTRA_IS_WINDOWS
@@ -20,138 +24,108 @@
 #endif
 
 namespace {
-    void usage(const std::string& message) {
-        if (!message.empty()) std::fprintf(stderr, "spectra_gpu: %s\n\n", message.c_str());
+    class UsageError : public std::runtime_error {
+    public:
+        explicit UsageError(std::string message) : std::runtime_error(std::move(message)) {}
+    };
+
+    void print_usage(std::string_view message) {
+        if (!message.empty()) std::fprintf(stderr, "spectra_gpu: %.*s\n\n", static_cast<int>(message.size()), message.data());
         std::fprintf(stderr, "usage: spectra_gpu <scene.pbrt> [--outfile <file.exr>] [--spp <n>] [--seed <n>] [--gpu-device <index>] [--quiet]\n");
     }
 
-    [[nodiscard]] std::string require_value(const std::vector<std::string>& arguments, std::size_t& index, const std::string& option) {
+    [[nodiscard]] const std::string& require_value(const std::vector<std::string>& arguments, std::size_t& index, std::string_view option) {
         ++index;
-        if (index >= arguments.size()) {
-            usage(option + " requires a value");
-            std::exit(1);
-        }
+        if (index >= arguments.size()) throw UsageError(std::string(option) + " requires a value");
         return arguments[index];
     }
 
-    [[nodiscard]] int parse_int(const std::string& text, const std::string& option) {
-        std::size_t consumed = 0;
-        int value            = 0;
-        try {
-            value = std::stoi(text, &consumed);
-        } catch (const std::exception&) {
-            usage(option + " requires an integer value");
-            std::exit(1);
-        }
-        if (consumed != text.size()) {
-            usage(option + " requires an integer value");
-            std::exit(1);
-        }
+    [[nodiscard]] int parse_int(std::string_view text, std::string_view option) {
+        int value                           = 0;
+        const char* begin                   = text.data();
+        const char* end                     = begin + text.size();
+        const std::from_chars_result result = std::from_chars(begin, end, value);
+        if (result.ec != std::errc{} || result.ptr != end) throw UsageError(std::string(option) + " requires an integer value");
         return value;
     }
 
-    [[nodiscard]] std::vector<std::string> command_line_arguments(char* argv[]) {
-        std::vector<std::string> arguments;
+    [[nodiscard]] std::vector<std::string> command_line_arguments(int argc, char* argv[]) {
 #ifdef SPECTRA_IS_WINDOWS
-        int argc      = 0;
-        LPWSTR* argvw = CommandLineToArgvW(GetCommandLineW(), &argc);
+        static_cast<void>(argc);
+        static_cast<void>(argv);
+        int windows_argc = 0;
+        LPWSTR* argvw    = CommandLineToArgvW(GetCommandLineW(), &windows_argc);
         CHECK(argvw != nullptr);
-        for (int index = 1; index < argc; ++index) arguments.push_back(spectra::UTF8FromWString(argvw[index]));
+        std::vector<std::string> arguments;
+        if (windows_argc > 1) arguments.reserve(static_cast<std::size_t>(windows_argc - 1));
+        for (int index = 1; index < windows_argc; ++index) arguments.push_back(spectra::UTF8FromWString(argvw[index]));
         CHECK(LocalFree(argvw) == nullptr);
 #else
-        ++argv;
-        while (*argv != nullptr) {
-            arguments.emplace_back(*argv);
-            ++argv;
-        }
+        std::vector<std::string> arguments;
+        if (argc > 1) arguments.reserve(static_cast<std::size_t>(argc - 1));
+        for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
 #endif
         return arguments;
     }
 } // namespace
 
-int run_spectra_gpu(int argc, char* argv[]) {
-    static_cast<void>(argc);
-
-    std::vector<std::string> arguments = command_line_arguments(argv);
-    if (arguments.empty()) {
-        usage("missing scene filename");
-        return 1;
-    }
-
-    spectra::SpectraOptions options;
-    options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
-
-    std::vector<std::string> filenames;
-
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-        const std::string& argument = arguments[index];
-        if (argument == "--outfile") {
-            options.imageFile = require_value(arguments, index, argument);
-        } else if (argument == "--spp") {
-            options.pixelSamples = parse_int(require_value(arguments, index, argument), argument);
-        } else if (argument == "--seed") {
-            options.seed = parse_int(require_value(arguments, index, argument), argument);
-        } else if (argument == "--gpu-device") {
-            options.gpuDevice = parse_int(require_value(arguments, index, argument), argument);
-        } else if (argument == "--quiet") {
-            options.quiet = true;
-        } else if (argument == "--help" || argument == "-h") {
-            usage("");
-            return 0;
-        } else if (!argument.empty() && argument[0] == '-') {
-            usage("unknown argument \"" + argument + "\"");
-            return 1;
-        } else {
-            filenames.push_back(argument);
-        }
-    }
-
-    if (filenames.empty()) {
-        usage("missing scene filename");
-        return 1;
-    }
-    if (filenames.size() != 1) {
-        usage("spectra_gpu accepts exactly one scene filename");
-        return 1;
-    }
-    if (options.pixelSamples && *options.pixelSamples <= 0) {
-        usage("--spp must be positive");
-        return 1;
-    }
-    if (options.gpuDevice && *options.gpuDevice < 0) {
-        usage("--gpu-device must be non-negative");
-        return 1;
-    }
-
-    spectra::pathtracer::GpuRuntime runtime(options);
-
-    spectra::scene::Scene scene;
-    spectra::scene::SceneBuilder builder(&scene);
-    spectra::scene::ParseFiles(&builder, filenames);
-
-    std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> pathtracer = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene);
-    struct AggregateGuard {
-        spectra::pathtracer::WavefrontPathtracer* pathtracer;
-
-        ~AggregateGuard() noexcept {
-            if (pathtracer != nullptr) pathtracer->ReleaseAggregate();
-        }
-    };
-    AggregateGuard aggregate_guard{pathtracer.get()};
-
-    spectra::Float seconds = pathtracer->Render();
-
-    spectra::ImageMetadata metadata;
-    pathtracer->camera.InitMetadata(&metadata);
-    metadata.renderTimeSeconds = seconds;
-    metadata.samplesPerPixel   = pathtracer->sampler.SamplesPerPixel();
-    pathtracer->film.WriteImage(metadata);
-    return 0;
-}
-
 int main(int argc, char* argv[]) {
     try {
-        return run_spectra_gpu(argc, argv);
+        const std::vector<std::string> arguments = command_line_arguments(argc, argv);
+        if (arguments.empty()) throw UsageError("missing scene filename");
+
+        spectra::SpectraOptions options;
+        options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
+
+        std::optional<std::string> scene_filename;
+
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+            const std::string& argument = arguments[index];
+            if (argument == "--outfile") {
+                options.imageFile = require_value(arguments, index, argument);
+            } else if (argument == "--spp") {
+                options.pixelSamples = parse_int(require_value(arguments, index, argument), argument);
+            } else if (argument == "--seed") {
+                options.seed = parse_int(require_value(arguments, index, argument), argument);
+            } else if (argument == "--gpu-device") {
+                options.gpuDevice = parse_int(require_value(arguments, index, argument), argument);
+            } else if (argument == "--quiet") {
+                options.quiet = true;
+            } else if (argument == "--help" || argument == "-h") {
+                print_usage({});
+                return 0;
+            } else if (!argument.empty() && argument[0] == '-') {
+                throw UsageError("unknown argument \"" + argument + "\"");
+            } else {
+                if (scene_filename.has_value()) throw UsageError("spectra_gpu accepts exactly one scene filename");
+                scene_filename = argument;
+            }
+        }
+
+        if (!scene_filename.has_value()) throw UsageError("missing scene filename");
+        if (options.pixelSamples && *options.pixelSamples <= 0) throw UsageError("--spp must be positive");
+        if (options.gpuDevice && *options.gpuDevice < 0) throw UsageError("--gpu-device must be non-negative");
+
+        spectra::pathtracer::GpuRuntime runtime(options);
+
+        spectra::scene::Scene scene;
+        spectra::scene::SceneBuilder builder(&scene);
+        const std::vector<std::string> filenames{*scene_filename};
+        spectra::scene::ParseFiles(&builder, filenames);
+
+        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, scene);
+
+        spectra::Float seconds = pathtracer.Render();
+
+        spectra::ImageMetadata metadata;
+        pathtracer.camera.InitMetadata(&metadata);
+        metadata.renderTimeSeconds = seconds;
+        metadata.samplesPerPixel   = pathtracer.sampler.SamplesPerPixel();
+        pathtracer.film.WriteImage(metadata);
+        return 0;
+    } catch (const UsageError& error) {
+        print_usage(error.what());
+        return 1;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

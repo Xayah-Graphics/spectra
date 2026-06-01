@@ -8,6 +8,7 @@
 #include <spectra/pathtracer/base/light.h>
 #include <spectra/pathtracer/base/lightsampler.h>
 #include <spectra/pathtracer/base/sampler.h>
+#include <spectra/pathtracer/core/compiler.h>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/gpu/util.h>
 #include <spectra/pathtracer/util/float.h>
@@ -45,6 +46,7 @@ namespace spectra::pathtracer {
     class WavefrontPathtracer {
     public:
         WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, scene::Scene& scene);
+        SPECTRA_CPU_GPU ~WavefrontPathtracer();
 
         Float Render();
         void RenderSample(Bounds2i pixelBounds, Transform cameraMotion, int sampleIndex);
@@ -91,7 +93,7 @@ namespace spectra::pathtracer {
 
         void PrefetchGPUAllocations();
         Bounds3f Bounds() const;
-        void ReleaseAggregate();
+        SPECTRA_CPU_GPU void ReleaseAggregate();
 
         bool initializeVisibleSurface;
         bool haveSubsurface;
@@ -119,7 +121,8 @@ namespace spectra::pathtracer {
 
         RayQueue* rayQueues[2];
 
-        optix::SpectraOptiXAggregate* aggregate = nullptr;
+        optix::SpectraOptiXAggregate* aggregate   = nullptr;
+        const WavefrontPathtracer* aggregateOwner = this;
 
         MediumSampleQueue* mediumSampleQueue   = nullptr;
         MediumScatterQueue* mediumScatterQueue = nullptr;

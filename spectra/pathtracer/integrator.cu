@@ -169,9 +169,16 @@ namespace spectra::pathtracer {
         return aggregate->Bounds();
     }
 
-    void WavefrontPathtracer::ReleaseAggregate() {
-        delete aggregate;
-        aggregate = nullptr;
+    SPECTRA_CPU_GPU WavefrontPathtracer::~WavefrontPathtracer() {
+        ReleaseAggregate();
+    }
+
+    SPECTRA_CPU_GPU void WavefrontPathtracer::ReleaseAggregate() {
+#if !defined(__CUDA_ARCH__)
+        if (aggregateOwner == this) delete aggregate;
+#endif
+        aggregate      = nullptr;
+        aggregateOwner = nullptr;
     }
 
     static void updateMaterialNeeds(Material m, pstd::array<bool, Material::NumTags()>* haveBasicEvalMaterial, pstd::array<bool, Material::NumTags()>* haveUniversalEvalMaterial, bool* haveSubsurface, bool* haveMedia) {
