@@ -238,7 +238,7 @@ endif()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
 
-add_executable(spectra_gpu_soac spectra/pathtracer/cmd/soac.cpp)
+add_executable(spectra_gpu_soac soac.cpp)
 target_compile_definitions(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 
@@ -262,7 +262,7 @@ set(SPECTRA_GPU_SOA_GENERATED
 )
 add_custom_target(spectra_gpu_soa_generated DEPENDS ${SPECTRA_GPU_SOA_GENERATED})
 
-add_executable(spectra_gpu_rgb2spec_opt spectra/pathtracer/cmd/rgb2spec_opt.cpp)
+add_executable(spectra_gpu_rgb2spec_opt rgb2spec_opt.cpp)
 target_compile_definitions(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_rgb2spec_opt PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 target_link_libraries(spectra_gpu_rgb2spec_opt PRIVATE Threads::Threads)
@@ -428,7 +428,7 @@ endif ()
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_gpu_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-add_executable(spectra_gpu_exe spectra/pathtracer/cmd/spectra_gpu.cpp)
+add_executable(spectra_gpu_exe spectra_gpu.cpp)
 add_executable(spectra::gpu ALIAS spectra_gpu_exe)
 target_link_libraries(spectra_gpu_exe PRIVATE spectra_gpu_lib Threads::Threads)
 set_target_properties(spectra_gpu_exe PROPERTIES OUTPUT_NAME spectra_gpu)
