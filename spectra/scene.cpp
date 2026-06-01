@@ -1317,7 +1317,9 @@ namespace spectra::scene
         film.parameters = ParameterDictionary({}, RGBColorSpace::sRGB);
 
         ParameterDictionary dict({}, RGBColorSpace::sRGB);
-        currentMaterialIndex = scene->AddMaterial(SceneEntity("diffuse", dict, {}));
+        currentMaterialIndex = scene->AddMaterial({
+            SceneEntity::internedStrings.Lookup("diffuse"), {}, dict
+        });
     }
 
     SceneBuilder::SceneBuilder(Scene* scene, Point2i filmResolutionOverride)
@@ -1384,8 +1386,11 @@ namespace spectra::scene
                               worldFromCamera[1], graphicsState.transformEndTime));
         renderFromWorld = cameraTransform.RenderFromWorld();
 
-        camera = CameraSceneEntity(name, std::move(dict), loc, cameraTransform,
-                                   graphicsState.currentOutsideMedium);
+        camera = {
+            {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)},
+            cameraTransform,
+            graphicsState.currentOutsideMedium
+        };
     }
 
     void SceneBuilder::AttributeBegin(FileLoc loc)
@@ -1469,7 +1474,7 @@ namespace spectra::scene
     {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
         VERIFY_OPTIONS("spectra::Sampler");
-        sampler = SceneEntity(name, std::move(dict), loc);
+        sampler = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::WorldBegin(FileLoc loc)
@@ -1503,7 +1508,12 @@ namespace spectra::scene
         // Create _ParameterDictionary_ for medium and call _AddMedium()_
         ParameterDictionary dict(std::move(params), graphicsState.mediumAttributes,
                                  graphicsState.colorSpace);
-        scene->AddMedium(MediumSceneEntity(name, std::move(dict), loc, RenderFromObject()));
+        scene->AddMedium({
+            {
+                {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)},
+                RenderFromObject()
+            }
+        });
     }
 
     void SceneBuilder::LightSource(const std::string& name, ParsedParameterVector params,
@@ -1512,8 +1522,13 @@ namespace spectra::scene
         VERIFY_WORLD("LightSource");
         ParameterDictionary dict(std::move(params), graphicsState.lightAttributes,
                                  graphicsState.colorSpace);
-        scene->AddLight(LightSceneEntity(name, std::move(dict), loc, RenderFromObject(),
-                                         graphicsState.currentOutsideMedium));
+        scene->AddLight({
+            {
+                {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)},
+                RenderFromObject()
+            },
+            graphicsState.currentOutsideMedium
+        });
     }
 
     void SceneBuilder::Shape(const std::string& name, ParsedParameterVector params,
@@ -1527,9 +1542,11 @@ namespace spectra::scene
         int areaLightIndex = -1;
         if (!graphicsState.areaLightName.empty())
         {
-            areaLightIndex = scene->AddAreaLight(SceneEntity(graphicsState.areaLightName,
-                                                             graphicsState.areaLightParams,
-                                                             graphicsState.areaLightLoc));
+            areaLightIndex = scene->AddAreaLight({
+                SceneEntity::internedStrings.Lookup(graphicsState.areaLightName),
+                graphicsState.areaLightLoc,
+                graphicsState.areaLightParams
+            });
             if (activeInstanceDefinition)
                 spectra::diagnostics::PrintWarning(&loc, "Area lights not supported with object instancing");
         }
@@ -1539,13 +1556,19 @@ namespace spectra::scene
             AnimatedTransform renderFromShape = RenderFromObject();
             const spectra::Transform* identity = transformCache.Lookup(spectra::Transform());
 
-            AnimatedShapeSceneEntity entity(
+            AnimatedShapeSceneEntity entity{
                 {
-                    name, std::move(dict), loc, renderFromShape, identity,
-                    graphicsState.reverseOrientation, graphicsState.currentMaterialIndex,
-                    graphicsState.currentMaterialName, areaLightIndex,
-                    graphicsState.currentInsideMedium, graphicsState.currentOutsideMedium
-                });
+                    {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)},
+                    renderFromShape
+                },
+                identity,
+                graphicsState.reverseOrientation,
+                graphicsState.currentMaterialIndex,
+                graphicsState.currentMaterialName,
+                areaLightIndex,
+                graphicsState.currentInsideMedium,
+                graphicsState.currentOutsideMedium
+            };
 
             if (activeInstanceDefinition)
                 activeInstanceDefinition->entity.animatedShapes.push_back(std::move(entity));
@@ -1559,13 +1582,17 @@ namespace spectra::scene
             const spectra::Transform* objectFromRender =
                 transformCache.Lookup(spectra::Inverse(*renderFromObject));
 
-            ShapeSceneEntity entity(
-                {
-                    name, std::move(dict), loc, renderFromObject, objectFromRender,
-                    graphicsState.reverseOrientation, graphicsState.currentMaterialIndex,
-                    graphicsState.currentMaterialName, areaLightIndex,
-                    graphicsState.currentInsideMedium, graphicsState.currentOutsideMedium
-                });
+            ShapeSceneEntity entity{
+                {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)},
+                renderFromObject,
+                objectFromRender,
+                graphicsState.reverseOrientation,
+                graphicsState.currentMaterialIndex,
+                graphicsState.currentMaterialName,
+                areaLightIndex,
+                graphicsState.currentInsideMedium,
+                graphicsState.currentOutsideMedium
+            };
             if (activeInstanceDefinition)
                 activeInstanceDefinition->entity.shapes.push_back(std::move(entity));
             else
@@ -2535,7 +2562,7 @@ namespace spectra::scene
     {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
         VERIFY_OPTIONS("PixelFilter");
-        filter = SceneEntity(name, std::move(dict), loc);
+        filter = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::Film(const std::string& type, ParsedParameterVector params,
@@ -2546,7 +2573,7 @@ namespace spectra::scene
         if (filmResolutionOverride.has_value())
             params = ApplyFilmResolutionOverride(std::move(params), *filmResolutionOverride, loc);
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
-        film = SceneEntity(type, std::move(dict), loc);
+        film = {SceneEntity::internedStrings.Lookup(type), loc, std::move(dict)};
     }
 
     void SceneBuilder::Accelerator(const std::string& name, ParsedParameterVector params,
@@ -2554,7 +2581,7 @@ namespace spectra::scene
     {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
         VERIFY_OPTIONS("Accelerator");
-        accelerator = SceneEntity(name, std::move(dict), loc);
+        accelerator = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::Integrator(const std::string& name, ParsedParameterVector params,
@@ -2563,7 +2590,7 @@ namespace spectra::scene
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
 
         VERIFY_OPTIONS("Integrator");
-        integrator = SceneEntity(name, std::move(dict), loc);
+        integrator = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::MediumInterface(const std::string& origInsideName,
@@ -2604,10 +2631,22 @@ namespace spectra::scene
 
         if (type == "float")
             scene->AddFloatTexture(
-                name, TextureSceneEntity(texname, std::move(dict), loc, RenderFromObject()));
+                name,
+                {
+                    {
+                        {SceneEntity::internedStrings.Lookup(texname), loc, std::move(dict)},
+                        RenderFromObject()
+                    }
+                });
         else
             scene->AddSpectrumTexture(
-                name, TextureSceneEntity(texname, std::move(dict), loc, RenderFromObject()));
+                name,
+                {
+                    {
+                        {SceneEntity::internedStrings.Lookup(texname), loc, std::move(dict)},
+                        RenderFromObject()
+                    }
+                });
     }
 
     void SceneBuilder::Material(const std::string& name, ParsedParameterVector params,
@@ -2619,7 +2658,9 @@ namespace spectra::scene
                                  graphicsState.colorSpace);
 
         graphicsState.currentMaterialIndex =
-            scene->AddMaterial(SceneEntity(name, std::move(dict), loc));
+            scene->AddMaterial({
+                SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)
+            });
         graphicsState.currentMaterialName.clear();
     }
 
@@ -2639,7 +2680,8 @@ namespace spectra::scene
         }
         namedMaterialNames.insert(name);
 
-        scene->AddNamedMaterial(name, SceneEntity("", std::move(dict), loc));
+        scene->AddNamedMaterial(
+            name, {SceneEntity::internedStrings.Lookup(""), loc, std::move(dict)});
     }
 
     void SceneBuilder::NamedMaterial(const std::string& origName, FileLoc loc)

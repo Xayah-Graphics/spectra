@@ -32,16 +32,6 @@ namespace spectra::scene
     // SceneEntity Definition
     struct SceneEntity
     {
-        // SceneEntity Public Methods
-        SceneEntity() = default;
-
-        SceneEntity(const std::string& name, ParameterDictionary parameters, FileLoc loc)
-            : name(internedStrings.Lookup(name)), loc(loc), parameters(parameters)
-        {
-        }
-
-
-        // SceneEntity Public Members
         InternedString name;
         FileLoc loc;
         ParameterDictionary parameters;
@@ -50,60 +40,18 @@ namespace spectra::scene
 
     struct TransformedSceneEntity : SceneEntity
     {
-        TransformedSceneEntity() = default;
-
-        TransformedSceneEntity(const std::string& name, ParameterDictionary parameters,
-                               FileLoc loc, const AnimatedTransform& renderFromObject)
-            : SceneEntity(name, parameters, loc), renderFromObject(renderFromObject)
-        {
-        }
-
-
         AnimatedTransform renderFromObject;
     };
 
     // CameraSceneEntity Definition
     struct CameraSceneEntity : SceneEntity
     {
-        // CameraSceneEntity Public Methods
-        CameraSceneEntity() = default;
-
-        CameraSceneEntity(const std::string& name, ParameterDictionary parameters,
-                          FileLoc loc, const CameraTransform& cameraTransform,
-                          const std::string& medium)
-            : SceneEntity(name, parameters, loc),
-              cameraTransform(cameraTransform),
-              medium(medium)
-        {
-        }
-
-
         CameraTransform cameraTransform;
         std::string medium;
     };
 
     struct ShapeSceneEntity : SceneEntity
     {
-        ShapeSceneEntity() = default;
-
-        ShapeSceneEntity(const std::string& name, ParameterDictionary parameters, FileLoc loc,
-                         const Transform* renderFromObject, const Transform* objectFromRender,
-                         bool reverseOrientation, int materialIndex,
-                         const std::string& materialName, int lightIndex,
-                         const std::string& insideMedium, const std::string& outsideMedium)
-            : SceneEntity(name, parameters, loc),
-              renderFromObject(renderFromObject),
-              objectFromRender(objectFromRender),
-              reverseOrientation(reverseOrientation),
-              materialIndex(materialIndex),
-              materialName(materialName),
-              lightIndex(lightIndex),
-              insideMedium(insideMedium),
-              outsideMedium(outsideMedium)
-        {
-        }
-
-
         const Transform *renderFromObject = nullptr, *objectFromRender = nullptr;
         bool reverseOrientation = false;
         int materialIndex; // one of these two...  std::variant?
@@ -114,26 +62,6 @@ namespace spectra::scene
 
     struct AnimatedShapeSceneEntity : TransformedSceneEntity
     {
-        AnimatedShapeSceneEntity() = default;
-
-        AnimatedShapeSceneEntity(const std::string& name, ParameterDictionary parameters,
-                                 FileLoc loc, const AnimatedTransform& renderFromObject,
-                                 const Transform* identity, bool reverseOrientation,
-                                 int materialIndex, const std::string& materialName,
-                                 int lightIndex, const std::string& insideMedium,
-                                 const std::string& outsideMedium)
-            : TransformedSceneEntity(name, parameters, loc, renderFromObject),
-              identity(identity),
-              reverseOrientation(reverseOrientation),
-              materialIndex(materialIndex),
-              materialName(materialName),
-              lightIndex(lightIndex),
-              insideMedium(insideMedium),
-              outsideMedium(outsideMedium)
-        {
-        }
-
-
         const Transform* identity = nullptr;
         bool reverseOrientation = false;
         int materialIndex; // one of these two...  std::variant?
@@ -160,40 +88,14 @@ namespace spectra::scene
 
     struct MediumSceneEntity : TransformedSceneEntity
     {
-        MediumSceneEntity() = default;
-
-        MediumSceneEntity(const std::string& name, ParameterDictionary parameters,
-                          FileLoc loc,
-                          const AnimatedTransform& renderFromObject)
-            : TransformedSceneEntity(name, parameters, loc, renderFromObject)
-        {
-        }
     };
 
     struct TextureSceneEntity : TransformedSceneEntity
     {
-        TextureSceneEntity() = default;
-
-        TextureSceneEntity(const std::string& name, ParameterDictionary parameters,
-                           FileLoc loc,
-                           const AnimatedTransform& renderFromObject)
-            : TransformedSceneEntity(name, parameters, loc, renderFromObject)
-        {
-        }
     };
 
     struct LightSceneEntity : TransformedSceneEntity
     {
-        LightSceneEntity() = default;
-
-        LightSceneEntity(const std::string& name, ParameterDictionary parameters, FileLoc loc,
-                         const AnimatedTransform& renderFromLight, const std::string& medium)
-            : TransformedSceneEntity(name, parameters, loc, renderFromLight),
-              medium(medium)
-        {
-        }
-
-
         std::string medium;
     };
 
@@ -417,8 +319,7 @@ namespace spectra::scene
         void Translate(Float dx, Float dy, Float dz, FileLoc loc);
         void Rotate(Float angle, Float ax, Float ay, Float az, FileLoc loc);
         void Scale(Float sx, Float sy, Float sz, FileLoc loc);
-        void LookAt(Float ex, Float ey, Float ez, Float lx, Float ly, Float lz, Float ux,
-                    Float uy, Float uz, FileLoc loc);
+        void LookAt(Float ex, Float ey, Float ez, Float lx, Float ly, Float lz, Float ux, Float uy, Float uz, FileLoc loc);
         void ConcatTransform(Float transform[16], FileLoc loc);
         void Transform(Float transform[16], FileLoc loc);
         void CoordinateSystem(const std::string&, FileLoc loc);
@@ -428,45 +329,29 @@ namespace spectra::scene
         void ActiveTransformStartTime(FileLoc loc);
         void TransformTimes(Float start, Float end, FileLoc loc);
         void ColorSpace(const std::string& n, FileLoc loc);
-        void PixelFilter(const std::string& name, ParsedParameterVector params,
-                         FileLoc loc);
-        void Film(const std::string& type, ParsedParameterVector params,
-                  FileLoc loc);
-        void Sampler(const std::string& name, ParsedParameterVector params,
-                     FileLoc loc);
-        void Accelerator(const std::string& name, ParsedParameterVector params,
-                         FileLoc loc);
-        void Integrator(const std::string& name, ParsedParameterVector params,
-                        FileLoc loc);
+        void PixelFilter(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Film(const std::string& type, ParsedParameterVector params, FileLoc loc);
+        void Sampler(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Accelerator(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Integrator(const std::string& name, ParsedParameterVector params, FileLoc loc);
         void Camera(const std::string&, ParsedParameterVector params, FileLoc loc);
-        void MakeNamedMedium(const std::string& name, ParsedParameterVector params,
-                             FileLoc loc);
-        void MediumInterface(const std::string& insideName, const std::string& outsideName,
-                             FileLoc loc);
+        void MakeNamedMedium(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void MediumInterface(const std::string& insideName, const std::string& outsideName, FileLoc loc);
         void WorldBegin(FileLoc loc);
         void AttributeBegin(FileLoc loc);
         void AttributeEnd(FileLoc loc);
-        void Attribute(const std::string& target, ParsedParameterVector params,
-                       FileLoc loc);
-        void Texture(const std::string& name, const std::string& type,
-                     const std::string& texname, ParsedParameterVector params,
-                     FileLoc loc);
-        void Material(const std::string& name, ParsedParameterVector params,
-                      FileLoc loc);
-        void MakeNamedMaterial(const std::string& name, ParsedParameterVector params,
-                               FileLoc loc);
+        void Attribute(const std::string& target, ParsedParameterVector params, FileLoc loc);
+        void Texture(const std::string& name, const std::string& type, const std::string& texname, ParsedParameterVector params, FileLoc loc);
+        void Material(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void MakeNamedMaterial(const std::string& name, ParsedParameterVector params, FileLoc loc);
         void NamedMaterial(const std::string& name, FileLoc loc);
-        void LightSource(const std::string& name, ParsedParameterVector params,
-                         FileLoc loc);
-        void AreaLightSource(const std::string& name, ParsedParameterVector params,
-                             FileLoc loc);
-        void Shape(const std::string& name, ParsedParameterVector params,
-                   FileLoc loc);
+        void LightSource(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void AreaLightSource(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Shape(const std::string& name, ParsedParameterVector params, FileLoc loc);
         void ReverseOrientation(FileLoc loc);
         void ObjectBegin(const std::string& name, FileLoc loc);
         void ObjectEnd(FileLoc loc);
         void ObjectInstance(const std::string& name, FileLoc loc);
-
         void EndOfFiles();
 
         bool IsImportAllowed() const;
@@ -484,8 +369,7 @@ namespace spectra::scene
         // Scene Public Methods
         Scene();
 
-        void SetOptions(SceneEntity filter, SceneEntity film, CameraSceneEntity camera,
-                        SceneEntity sampler, SceneEntity integrator, SceneEntity accelerator);
+        void SetOptions(SceneEntity filter, SceneEntity film, CameraSceneEntity camera, SceneEntity sampler, SceneEntity integrator, SceneEntity accelerator);
 
         void AddNamedMaterial(std::string name, SceneEntity material);
         int AddMaterial(SceneEntity material);
