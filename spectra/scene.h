@@ -1,20 +1,8 @@
 #ifndef SPECTRA_SCENE_H
 #define SPECTRA_SCENE_H
 
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/util/containers.h>
-#include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/pstd.h>
-#include <spectra/pathtracer/util/string.h>
-#include <spectra/pathtracer/util/transform.h>
-
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -23,35 +11,40 @@
 #include <optional>
 #include <ostream>
 #include <set>
+#include <spectra/pathtracer/core/cameras.h>
+#include <spectra/pathtracer/core/diagnostics.h>
+#include <spectra/pathtracer/core/paramdict.h>
+#include <spectra/pathtracer/util/containers.h>
+#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/util/memory.h>
+#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/string.h>
+#include <spectra/pathtracer/util/transform.h>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace spectra::scene
-{
+namespace spectra::scene {
     // SceneEntity Definition
-    struct SceneEntity
-    {
+    struct SceneEntity {
         InternedString name;
         FileLoc loc;
         ParameterDictionary parameters;
         static InternCache<std::string> internedStrings;
     };
 
-    struct TransformedSceneEntity : SceneEntity
-    {
+    struct TransformedSceneEntity : SceneEntity {
         AnimatedTransform renderFromObject;
     };
 
     // CameraSceneEntity Definition
-    struct CameraSceneEntity : SceneEntity
-    {
+    struct CameraSceneEntity : SceneEntity {
         CameraTransform cameraTransform;
         std::string medium;
     };
 
-    struct ShapeSceneEntity : SceneEntity
-    {
+    struct ShapeSceneEntity : SceneEntity {
         const Transform *renderFromObject = nullptr, *objectFromRender = nullptr;
         bool reverseOrientation = false;
         int materialIndex; // one of these two...  std::variant?
@@ -60,24 +53,19 @@ namespace spectra::scene
         std::string insideMedium, outsideMedium;
     };
 
-    struct AnimatedShapeSceneEntity : TransformedSceneEntity
-    {
+    struct AnimatedShapeSceneEntity : TransformedSceneEntity {
         const Transform* identity = nullptr;
-        bool reverseOrientation = false;
+        bool reverseOrientation   = false;
         int materialIndex; // one of these two...  std::variant?
         std::string materialName;
         int lightIndex = -1;
         std::string insideMedium, outsideMedium;
     };
 
-    struct InstanceDefinitionSceneEntity
-    {
+    struct InstanceDefinitionSceneEntity {
         InstanceDefinitionSceneEntity() = default;
 
-        InstanceDefinitionSceneEntity(const std::string& name, FileLoc loc)
-            : name(SceneEntity::internedStrings.Lookup(name)), loc(loc)
-        {
-        }
+        InstanceDefinitionSceneEntity(const std::string& name, FileLoc loc) : name(SceneEntity::internedStrings.Lookup(name)), loc(loc) {}
 
 
         InternedString name;
@@ -86,45 +74,28 @@ namespace spectra::scene
         std::vector<AnimatedShapeSceneEntity> animatedShapes;
     };
 
-    struct MediumSceneEntity : TransformedSceneEntity
-    {
-    };
+    struct MediumSceneEntity : TransformedSceneEntity {};
 
-    struct TextureSceneEntity : TransformedSceneEntity
-    {
-    };
+    struct TextureSceneEntity : TransformedSceneEntity {};
 
-    struct LightSceneEntity : TransformedSceneEntity
-    {
+    struct LightSceneEntity : TransformedSceneEntity {
         std::string medium;
     };
 
-    struct InstanceSceneEntity
-    {
+    struct InstanceSceneEntity {
         InstanceSceneEntity() = default;
 
-        InstanceSceneEntity(const std::string& n, FileLoc loc,
-                            const AnimatedTransform& renderFromInstanceAnim)
-            : name(SceneEntity::internedStrings.Lookup(n)),
-              loc(loc),
-              renderFromInstanceAnim(new AnimatedTransform(renderFromInstanceAnim))
-        {
+        InstanceSceneEntity(const std::string& n, FileLoc loc, const AnimatedTransform& renderFromInstanceAnim) : name(SceneEntity::internedStrings.Lookup(n)), loc(loc), renderFromInstanceAnim(new AnimatedTransform(renderFromInstanceAnim)) {
             SPECTRA_CHECK(this->renderFromInstanceAnim->IsAnimated());
         }
 
-        InstanceSceneEntity(const std::string& n, FileLoc loc,
-                            const Transform* renderFromInstance)
-            : name(SceneEntity::internedStrings.Lookup(n)),
-              loc(loc),
-              renderFromInstance(renderFromInstance)
-        {
-        }
+        InstanceSceneEntity(const std::string& n, FileLoc loc, const Transform* renderFromInstance) : name(SceneEntity::internedStrings.Lookup(n)), loc(loc), renderFromInstance(renderFromInstance) {}
 
 
         InternedString name;
         FileLoc loc;
         AnimatedTransform* renderFromInstanceAnim = nullptr;
-        const Transform* renderFromInstance = nullptr;
+        const Transform* renderFromInstance       = nullptr;
     };
 
 
@@ -132,28 +103,23 @@ namespace spectra::scene
     constexpr int MaxTransforms = 2;
 
     // TransformSet Definition
-    struct TransformSet
-    {
+    struct TransformSet {
         // TransformSet Public Methods
-        Transform& operator[](int i)
-        {
+        Transform& operator[](int i) {
             SPECTRA_CHECK_GE(i, 0);
             SPECTRA_CHECK_LT(i, MaxTransforms);
             return t[i];
         }
 
-        const Transform& operator[](int i) const
-        {
+        const Transform& operator[](int i) const {
             SPECTRA_CHECK_GE(i, 0);
             SPECTRA_CHECK_LT(i, MaxTransforms);
             return t[i];
         }
 
-        bool IsAnimated() const
-        {
+        bool IsAnimated() const {
             for (int i = 0; i < MaxTransforms - 1; ++i)
-                if (t[i] != t[i + 1])
-                    return true;
+                if (t[i] != t[i + 1]) return true;
             return false;
         }
 
@@ -161,23 +127,19 @@ namespace spectra::scene
         Transform t[MaxTransforms];
     };
 
-    inline TransformSet Inverse(const TransformSet& ts)
-    {
+    inline TransformSet Inverse(const TransformSet& ts) {
         TransformSet tInv;
-        for (int i = 0; i < MaxTransforms; ++i)
-            tInv[i] = spectra::Inverse(ts[i]);
+        for (int i = 0; i < MaxTransforms; ++i) tInv[i] = spectra::Inverse(ts[i]);
         return tInv;
     }
 
-    struct SceneDescriptionFileLocation
-    {
+    struct SceneDescriptionFileLocation {
         std::string filename{};
-        int line = 0;
+        int line   = 0;
         int column = 0;
     };
 
-    struct SceneDescriptionParameter
-    {
+    struct SceneDescriptionParameter {
         std::string type{};
         std::string name{};
         SceneDescriptionFileLocation location{};
@@ -188,15 +150,9 @@ namespace spectra::scene
         bool mayBeUnused = false;
     };
 
-    enum class SceneDescriptionTextureValueType
-    {
-        Unknown,
-        Float,
-        Spectrum
-    };
+    enum class SceneDescriptionTextureValueType { Unknown, Float, Spectrum };
 
-    struct SceneDescriptionRenderSetting
-    {
+    struct SceneDescriptionRenderSetting {
         bool present = false;
         std::string type{};
         std::string name{};
@@ -205,8 +161,7 @@ namespace spectra::scene
         std::vector<SceneDescriptionParameter> parameters{};
     };
 
-    struct SceneDescriptionTexture
-    {
+    struct SceneDescriptionTexture {
         std::string name{};
         SceneDescriptionTextureValueType valueType = SceneDescriptionTextureValueType::Unknown;
         std::string implementation{};
@@ -215,8 +170,7 @@ namespace spectra::scene
         std::vector<SceneDescriptionParameter> parameters{};
     };
 
-    struct SceneDescriptionMaterial
-    {
+    struct SceneDescriptionMaterial {
         std::string name{};
         std::string type{};
         bool named = false;
@@ -224,8 +178,7 @@ namespace spectra::scene
         std::vector<SceneDescriptionParameter> parameters{};
     };
 
-    struct SceneDescriptionMedium
-    {
+    struct SceneDescriptionMedium {
         std::string name{};
         std::string type{};
         SceneDescriptionFileLocation location{};
@@ -233,15 +186,13 @@ namespace spectra::scene
         std::vector<SceneDescriptionParameter> parameters{};
     };
 
-    struct SceneDescriptionMediumBinding
-    {
+    struct SceneDescriptionMediumBinding {
         std::string inside{};
         std::string outside{};
         SceneDescriptionFileLocation location{};
     };
 
-    struct SceneDescriptionLight
-    {
+    struct SceneDescriptionLight {
         std::string type{};
         bool area = false;
         std::string outsideMedium{};
@@ -250,8 +201,7 @@ namespace spectra::scene
         std::vector<SceneDescriptionParameter> parameters{};
     };
 
-    struct SceneDescriptionShape
-    {
+    struct SceneDescriptionShape {
         std::string type{};
         std::string materialName{};
         int materialIndex = -1;
@@ -260,29 +210,26 @@ namespace spectra::scene
         std::string objectDefinitionName{};
         std::string areaLightType{};
         bool reverseOrientation = false;
-        bool animatedTransform = false;
+        bool animatedTransform  = false;
         SceneDescriptionFileLocation location{};
         Transform transform{};
         std::vector<SceneDescriptionParameter> parameters{};
     };
 
-    struct SceneDescriptionObjectDefinition
-    {
+    struct SceneDescriptionObjectDefinition {
         std::string name{};
         SceneDescriptionFileLocation location{};
         std::vector<std::size_t> shapeIndices{};
     };
 
-    struct SceneDescriptionObjectInstance
-    {
+    struct SceneDescriptionObjectInstance {
         std::string name{};
         bool animatedTransform = false;
         SceneDescriptionFileLocation location{};
         Transform transform{};
     };
 
-    struct SceneDescription
-    {
+    struct SceneDescription {
         SceneDescriptionRenderSetting pixelFilter{};
         SceneDescriptionRenderSetting film{};
         SceneDescriptionRenderSetting sampler{};
@@ -303,16 +250,15 @@ namespace spectra::scene
 
     struct SceneDescriptionBuilderState;
 
-    class SceneDescriptionBuilder
-    {
+    class SceneDescriptionBuilder {
     public:
         explicit SceneDescriptionBuilder(SceneDescription* description);
         ~SceneDescriptionBuilder();
 
-        SceneDescriptionBuilder(const SceneDescriptionBuilder&) = delete;
+        SceneDescriptionBuilder(const SceneDescriptionBuilder&)            = delete;
         SceneDescriptionBuilder& operator=(const SceneDescriptionBuilder&) = delete;
-        SceneDescriptionBuilder(SceneDescriptionBuilder&&) = delete;
-        SceneDescriptionBuilder& operator=(SceneDescriptionBuilder&&) = delete;
+        SceneDescriptionBuilder(SceneDescriptionBuilder&&)                 = delete;
+        SceneDescriptionBuilder& operator=(SceneDescriptionBuilder&&)      = delete;
 
         void Option(const std::string& name, const std::string& value, FileLoc loc);
         void Identity(FileLoc loc);
@@ -363,8 +309,7 @@ namespace spectra::scene
     };
 
     // Scene Definition
-    class Scene
-    {
+    class Scene {
     public:
         // Scene Public Methods
         Scene();
@@ -386,13 +331,9 @@ namespace spectra::scene
         Camera GetCamera();
         Sampler GetSampler();
 
-        void CreateMaterials(const NamedTextures& sceneTextures,
-                             std::map<std::string, Material>* namedMaterials,
-                             std::vector<Material>* materials);
+        void CreateMaterials(const NamedTextures& sceneTextures, std::map<std::string, Material>* namedMaterials, std::vector<Material>* materials);
 
-        std::vector<Light> CreateLights(
-            const NamedTextures& textures,
-            std::map<int, pstd::vector<Light>*>* shapeIndexToAreaLights);
+        std::vector<Light> CreateLights(const NamedTextures& textures, std::map<int, pstd::vector<Light>*>* shapeIndexToAreaLights);
 
         std::map<std::string, Medium> CreateMedia();
 
@@ -451,8 +392,7 @@ namespace spectra::scene
     };
 
     // SceneBuilder Definition
-    class SceneBuilder
-    {
+    class SceneBuilder {
     public:
         // SceneBuilder Public Methods
         SceneBuilder(Scene* scene);
@@ -462,8 +402,7 @@ namespace spectra::scene
         void Translate(Float dx, Float dy, Float dz, FileLoc loc);
         void Rotate(Float angle, Float ax, Float ay, Float az, FileLoc loc);
         void Scale(Float sx, Float sy, Float sz, FileLoc loc);
-        void LookAt(Float ex, Float ey, Float ez, Float lx, Float ly, Float lz, Float ux,
-                    Float uy, Float uz, FileLoc loc);
+        void LookAt(Float ex, Float ey, Float ez, Float lx, Float ly, Float lz, Float ux, Float uy, Float uz, FileLoc loc);
         void ConcatTransform(Float transform[16], FileLoc loc);
         void Transform(Float transform[16], FileLoc loc);
         void CoordinateSystem(const std::string&, FileLoc loc);
@@ -473,40 +412,25 @@ namespace spectra::scene
         void ActiveTransformStartTime(FileLoc loc);
         void TransformTimes(Float start, Float end, FileLoc loc);
         void ColorSpace(const std::string& n, FileLoc loc);
-        void PixelFilter(const std::string& name, ParsedParameterVector params,
-                         FileLoc loc);
-        void Film(const std::string& type, ParsedParameterVector params,
-                  FileLoc loc);
-        void Sampler(const std::string& name, ParsedParameterVector params,
-                     FileLoc loc);
-        void Accelerator(const std::string& name, ParsedParameterVector params,
-                         FileLoc loc);
-        void Integrator(const std::string& name, ParsedParameterVector params,
-                        FileLoc loc);
+        void PixelFilter(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Film(const std::string& type, ParsedParameterVector params, FileLoc loc);
+        void Sampler(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Accelerator(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Integrator(const std::string& name, ParsedParameterVector params, FileLoc loc);
         void Camera(const std::string&, ParsedParameterVector params, FileLoc loc);
-        void MakeNamedMedium(const std::string& name, ParsedParameterVector params,
-                             FileLoc loc);
-        void MediumInterface(const std::string& insideName, const std::string& outsideName,
-                             FileLoc loc);
+        void MakeNamedMedium(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void MediumInterface(const std::string& insideName, const std::string& outsideName, FileLoc loc);
         void WorldBegin(FileLoc loc);
         void AttributeBegin(FileLoc loc);
         void AttributeEnd(FileLoc loc);
-        void Attribute(const std::string& target, ParsedParameterVector params,
-                       FileLoc loc);
-        void Texture(const std::string& name, const std::string& type,
-                     const std::string& texname, ParsedParameterVector params,
-                     FileLoc loc);
-        void Material(const std::string& name, ParsedParameterVector params,
-                      FileLoc loc);
-        void MakeNamedMaterial(const std::string& name, ParsedParameterVector params,
-                               FileLoc loc);
+        void Attribute(const std::string& target, ParsedParameterVector params, FileLoc loc);
+        void Texture(const std::string& name, const std::string& type, const std::string& texname, ParsedParameterVector params, FileLoc loc);
+        void Material(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void MakeNamedMaterial(const std::string& name, ParsedParameterVector params, FileLoc loc);
         void NamedMaterial(const std::string& name, FileLoc loc);
-        void LightSource(const std::string& name, ParsedParameterVector params,
-                         FileLoc loc);
-        void AreaLightSource(const std::string& name, ParsedParameterVector params,
-                             FileLoc loc);
-        void Shape(const std::string& name, ParsedParameterVector params,
-                   FileLoc loc);
+        void LightSource(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void AreaLightSource(const std::string& name, ParsedParameterVector params, FileLoc loc);
+        void Shape(const std::string& name, ParsedParameterVector params, FileLoc loc);
         void ReverseOrientation(FileLoc loc);
         void ObjectBegin(const std::string& name, FileLoc loc);
         void ObjectEnd(FileLoc loc);
@@ -521,17 +445,14 @@ namespace spectra::scene
 
     private:
         // SceneBuilder::GraphicsState Definition
-        struct GraphicsState
-        {
+        struct GraphicsState {
             // GraphicsState Public Methods
             GraphicsState();
 
             template <typename F>
-            void ForActiveTransforms(F func)
-            {
+            void ForActiveTransforms(F func) {
                 for (int i = 0; i < MaxTransforms; ++i)
-                    if (activeTransformBits & (1 << i))
-                        ctm[i] = func(ctm[i]);
+                    if (activeTransformBits & (1 << i)) ctm[i] = func(ctm[i]);
             }
 
             // GraphicsState Public Members
@@ -549,27 +470,24 @@ namespace spectra::scene
             ParsedParameterVector materialAttributes;
             ParsedParameterVector mediumAttributes;
             ParsedParameterVector textureAttributes;
-            bool reverseOrientation = false;
+            bool reverseOrientation         = false;
             const RGBColorSpace* colorSpace = RGBColorSpace::sRGB;
             TransformSet ctm;
             uint32_t activeTransformBits = AllTransformsBits;
             Float transformStartTime = 0, transformEndTime = 1;
         };
 
-        spectra::Transform RenderFromObject(int index) const
-        {
+        spectra::Transform RenderFromObject(int index) const {
             return spectra::Transform((renderFromWorld * graphicsState.ctm[index]).GetMatrix());
         }
 
-        AnimatedTransform RenderFromObject() const
-        {
-            return {
-                RenderFromObject(0), graphicsState.transformStartTime,
-                RenderFromObject(1), graphicsState.transformEndTime
-            };
+        AnimatedTransform RenderFromObject() const {
+            return {RenderFromObject(0), graphicsState.transformStartTime, RenderFromObject(1), graphicsState.transformEndTime};
         }
 
-        bool CTMIsAnimated() const { return graphicsState.ctm.IsAnimated(); }
+        bool CTMIsAnimated() const {
+            return graphicsState.ctm.IsAnimated();
+        }
 
         // SceneBuilder Private Members
         Scene* scene;
@@ -579,18 +497,15 @@ namespace spectra::scene
         BlockState currentBlock = BlockState::OptionsBlock;
         GraphicsState graphicsState;
         static constexpr int StartTransformBits = 1 << 0;
-        static constexpr int EndTransformBits = 1 << 1;
-        static constexpr int AllTransformsBits = (1 << MaxTransforms) - 1;
+        static constexpr int EndTransformBits   = 1 << 1;
+        static constexpr int AllTransformsBits  = (1 << MaxTransforms) - 1;
         std::map<std::string, TransformSet> namedCoordinateSystems;
         spectra::Transform renderFromWorld;
         InternCache<spectra::Transform> transformCache;
         std::vector<GraphicsState> pushedGraphicsStates;
         std::vector<std::pair<char, FileLoc>> pushStack; // 'a': attribute, 'o': object
-        struct ActiveInstanceDefinition
-        {
-            ActiveInstanceDefinition(std::string name, FileLoc loc) : entity(name, loc)
-            {
-            }
+        struct ActiveInstanceDefinition {
+            ActiveInstanceDefinition(std::string name, FileLoc loc) : entity(name, loc) {}
 
             std::mutex mutex;
             std::atomic<int> activeImports{1};
@@ -609,7 +524,7 @@ namespace spectra::scene
         std::set<std::string> namedMaterialNames, mediumNames;
         std::set<std::string> floatTextureNames, spectrumTextureNames, instanceNames;
         std::optional<Point2i> filmResolutionOverride{};
-        bool filmSeen = false;
+        bool filmSeen            = false;
         int currentMaterialIndex = 0, currentLightIndex = -1;
         SceneEntity sampler;
         SceneEntity film, integrator, filter, accelerator;
@@ -622,4 +537,4 @@ namespace spectra::scene
     void ParseString(SceneDescriptionBuilder* target, std::string str);
 } // namespace spectra::scene
 
-#endif  // SPECTRA_SCENE_H
+#endif // SPECTRA_SCENE_H
