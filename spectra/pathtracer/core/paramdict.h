@@ -13,6 +13,7 @@
 #include <spectra/pathtracer/util/spectrum.h>
 #include <spectra/pathtracer/util/vecmath.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace spectra {
@@ -26,7 +27,6 @@ namespace spectra {
         void AddInt(int i);
         void AddString(std::string_view str);
         void AddBool(bool v);
-
 
         // ParsedParameter Public Members
         std::string type, name;

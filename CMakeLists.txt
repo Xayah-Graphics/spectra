@@ -397,6 +397,7 @@ add_library(
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
         spectra/scene_builtin.cpp
         spectra/scene.cpp
+        spectra/pathtracer/wavefront_scene.cpp
         spectra/pathtracer/optix/aggregate.cu
         spectra/pathtracer/integrator.cu
 )

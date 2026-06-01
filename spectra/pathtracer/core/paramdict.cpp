@@ -11,6 +11,26 @@
 #include <utility>
 
 namespace spectra {
+    void ParsedParameter::AddFloat(Float v) {
+        SPECTRA_CHECK(ints.empty() && strings.empty() && bools.empty());
+        floats.push_back(v);
+    }
+
+    void ParsedParameter::AddInt(int i) {
+        SPECTRA_CHECK(floats.empty() && strings.empty() && bools.empty());
+        ints.push_back(i);
+    }
+
+    void ParsedParameter::AddString(std::string_view str) {
+        SPECTRA_CHECK(floats.empty() && ints.empty() && bools.empty());
+        strings.push_back({str.begin(), str.end()});
+    }
+
+    void ParsedParameter::AddBool(bool v) {
+        SPECTRA_CHECK(floats.empty() && ints.empty() && strings.empty());
+        bools.push_back(v);
+    }
+
     template <>
     struct ParameterTypeTraits<ParameterType::Boolean> {
         static constexpr char typeName[] = "bool";

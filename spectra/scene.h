@@ -3,20 +3,13 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
-#include <memory>
-#include <mutex>
 #include <optional>
-#include <set>
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/paramdict.h>
+#include <spectra/pathtracer/util/colorspace.h>
 #include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/parallel.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace spectra::scene {
@@ -25,10 +18,7 @@ namespace spectra::scene {
     struct SceneParameter {
         std::string type{};
         std::string name{};
-        std::vector<Float> floats{};
-        std::vector<int> integers{};
-        std::vector<std::string> strings{};
-        std::vector<std::uint8_t> booleans{};
+        std::variant<std::vector<Float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{};
         bool mayBeUnused{false};
     };
 
@@ -113,6 +103,20 @@ namespace spectra::scene {
         Transform worldFromInstance{};
     };
 
+    struct Scene {
+        std::string name{};
+        std::string title{};
+        std::string source{};
+        SceneRenderSettings renderSettings{};
+        std::vector<SceneMaterial> materials{};
+        std::vector<SceneTexture> textures{};
+        std::vector<SceneMedium> media{};
+        std::vector<SceneLight> lights{};
+        std::vector<SceneShape> shapes{};
+        std::vector<SceneObjectDefinition> objectDefinitions{};
+        std::vector<SceneObjectInstance> objectInstances{};
+    };
+
     struct SceneInfo {
         std::string name{};
         std::string title{};
@@ -132,140 +136,9 @@ namespace spectra::scene {
         float camera_fov_degrees{};
     };
 
-    struct SceneEntity {
-        std::string name{};
-        FileLoc loc{};
-        ParameterDictionary parameters{};
-    };
-
-    struct CameraSceneEntity : SceneEntity {
-        CameraTransform cameraTransform{};
-        std::string medium{};
-    };
-
-    struct TransformedSceneEntity : SceneEntity {
-        Transform renderFromObject{};
-    };
-
-    struct MediumSceneEntity : TransformedSceneEntity {};
-
-    struct TextureSceneEntity : TransformedSceneEntity {};
-
-    struct LightSceneEntity : TransformedSceneEntity {
-        std::string medium{};
-    };
-
-    struct ShapeSceneEntity : SceneEntity {
-        const Transform* renderFromObject = nullptr;
-        const Transform* objectFromRender = nullptr;
-        bool reverseOrientation{false};
-        std::string materialName{};
-        std::optional<SceneEntity> areaLight{};
-        std::string insideMedium{};
-        std::string outsideMedium{};
-    };
-
-    struct InstanceDefinitionSceneEntity {
-        std::string name{};
-        FileLoc loc{};
-        std::vector<ShapeSceneEntity> shapes{};
-    };
-
-    struct InstanceSceneEntity {
-        std::string name{};
-        FileLoc loc{};
-        Transform renderFromInstance{};
-    };
-
-    class Scene {
-    public:
-        explicit Scene(std::string name, std::string title, std::string source, std::optional<Point2i> filmResolutionOverride = {});
-
-        void SetRenderSettings(SceneRenderSettings settings);
-        void AddMaterial(SceneMaterial material);
-        void AddTexture(SceneTexture texture);
-        void AddMedium(SceneMedium medium);
-        void AddLight(SceneLight light);
-        void AddShape(SceneShape shape);
-        void AddObjectDefinition(SceneObjectDefinition definition);
-        void AddObjectInstance(SceneObjectInstance instance);
-
-        [[nodiscard]] SceneInfo Info() const;
-        [[nodiscard]] Camera GetCamera();
-        [[nodiscard]] Sampler GetSampler();
-
-        void CreateMaterials(const NamedTextures& sceneTextures, std::map<std::string, Material>* materials);
-        [[nodiscard]] std::vector<Light> CreateLights(const NamedTextures& textures, const std::map<std::string, Material>& materials, std::map<int, pstd::vector<Light>*>* shapeIndexToAreaLights);
-        [[nodiscard]] std::map<std::string, Medium> CreateMedia();
-        [[nodiscard]] NamedTextures CreateTextures();
-
-        SceneEntity integrator{};
-        SceneEntity accelerator{};
-        const RGBColorSpace* filmColorSpace{RGBColorSpace::sRGB};
-        std::vector<ShapeSceneEntity> shapes{};
-        std::vector<InstanceSceneEntity> instances{};
-        std::map<std::string, InstanceDefinitionSceneEntity> instanceDefinitions{};
-
-    private:
-        [[nodiscard]] FileLoc Location() const;
-        [[nodiscard]] ParameterDictionary MakeParameterDictionary(const SceneParameters& parameters) const;
-        [[nodiscard]] SceneEntity MakeEntity(const std::string& type, const SceneParameters& parameters) const;
-        [[nodiscard]] Transform RenderFromWorldTransform() const;
-        [[nodiscard]] Transform RenderFromObjectTransform(const Transform& worldFromObject) const;
-        [[nodiscard]] ShapeSceneEntity MakeShapeEntity(const SceneShape& shape) const;
-        [[nodiscard]] Medium GetMedium(const std::string& name, const FileLoc* loc);
-
-        void ApplyFilmResolutionOverride(SceneParameters* parameters) const;
-        void StartLoadingNormalMaps(const ParameterDictionary& parameters);
-        void RequireRenderSettings() const;
-        void RequireMaterial(const std::string& materialName) const;
-        void RequireUniqueName(const std::set<std::string>& names, std::string_view kind, const std::string& name) const;
-
-        std::string name{};
-        std::string title{};
-        std::string source{};
-        std::optional<Point2i> filmResolutionOverride{};
-        bool renderSettingsReady{false};
-        float cameraFovDegrees{};
-        std::string samplerName{};
-        CameraSceneEntity cameraEntity{};
-
-        AsyncJob<Sampler>* samplerJob = nullptr;
-        mutable ThreadLocal<Allocator> threadAllocators;
-        Camera camera;
-        Film film;
-        std::mutex cameraJobMutex;
-        AsyncJob<Camera>* cameraJob = nullptr;
-        std::mutex samplerJobMutex;
-        Sampler sampler;
-        std::mutex mediaMutex;
-        std::map<std::string, AsyncJob<Medium>*> mediumJobs;
-        std::map<std::string, Medium> mediaMap;
-        std::mutex materialMutex;
-        std::map<std::string, AsyncJob<Image*>*> normalMapJobs;
-        std::map<std::string, Image*> normalMaps;
-        std::vector<std::pair<std::string, SceneEntity>> materials;
-        std::mutex lightMutex;
-        std::vector<AsyncJob<Light>*> lightJobs;
-        std::mutex textureMutex;
-        std::vector<std::pair<std::string, TextureSceneEntity>> serialFloatTextures;
-        std::vector<std::pair<std::string, TextureSceneEntity>> serialSpectrumTextures;
-        std::vector<std::pair<std::string, TextureSceneEntity>> asyncSpectrumTextures;
-        std::set<std::string> loadingTextureFilenames;
-        std::map<std::string, AsyncJob<FloatTexture>*> floatTextureJobs;
-        std::map<std::string, AsyncJob<SpectrumTexture>*> spectrumTextureJobs;
-        std::set<std::string> materialNames;
-        std::set<std::string> mediumNames;
-        std::set<std::string> floatTextureNames;
-        std::set<std::string> spectrumTextureNames;
-        std::set<std::string> objectDefinitionNames;
-        std::size_t lightCount{};
-        std::size_t infiniteLightCount{};
-        std::size_t areaLightCount{};
-    };
-
+    [[nodiscard]] SceneInfo DescribeScene(const Scene& scene);
     [[nodiscard]] SceneInfo SceneInfoFor(std::string_view name);
-    [[nodiscard]] std::unique_ptr<Scene> BuildScene(std::string_view name, std::optional<Point2i> filmResolutionOverride = {});
+    [[nodiscard]] Scene BuildScene(std::string_view name);
 } // namespace spectra::scene
 
 #endif // SPECTRA_SCENE_H

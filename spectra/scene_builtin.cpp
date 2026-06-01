@@ -1,12 +1,11 @@
 #include <format>
 #include <initializer_list>
-#include <memory>
-#include <optional>
 #include <spectra/scene.h>
 #include <spectra/scene_builtin.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #ifndef SPECTRA_PROJECT_SCENE_ROOT
@@ -15,70 +14,6 @@
 
 namespace spectra::scene {
     namespace {
-        struct BuiltinSceneDefinition {
-            std::string name{};
-            std::string title{};
-            std::string source{};
-            SceneRenderSettings renderSettings{};
-            std::vector<SceneMaterial> materials{};
-            std::vector<SceneTexture> textures{};
-            std::vector<SceneMedium> media{};
-            std::vector<SceneLight> lights{};
-            std::vector<SceneShape> shapes{};
-            std::vector<SceneObjectDefinition> objectDefinitions{};
-            std::vector<SceneObjectInstance> objectInstances{};
-
-            [[nodiscard]] SceneInfo Info() const {
-                std::size_t definitionShapeCount     = 0;
-                std::size_t definitionAreaLightCount = 0;
-                for (const SceneObjectDefinition& definition : this->objectDefinitions) {
-                    definitionShapeCount += definition.shapes.size();
-                    for (const SceneShape& shape : definition.shapes)
-                        if (shape.areaLight.has_value()) ++definitionAreaLightCount;
-                }
-
-                std::size_t areaLightCount = definitionAreaLightCount;
-                for (const SceneShape& shape : this->shapes)
-                    if (shape.areaLight.has_value()) ++areaLightCount;
-
-                std::size_t infiniteLightCount = 0;
-                for (const SceneLight& light : this->lights)
-                    if (light.type == "infinite" || light.type == "portal") ++infiniteLightCount;
-
-                return SceneInfo{
-                    .name                    = this->name,
-                    .title                   = this->title,
-                    .camera                  = this->renderSettings.camera.type,
-                    .sampler                 = this->renderSettings.sampler.type,
-                    .integrator              = this->renderSettings.integrator.type,
-                    .accelerator             = this->renderSettings.accelerator.type,
-                    .shape_count             = this->shapes.size() + definitionShapeCount,
-                    .material_count          = this->materials.size(),
-                    .texture_count           = this->textures.size(),
-                    .medium_count            = this->media.size(),
-                    .light_count             = this->lights.size(),
-                    .area_light_count        = areaLightCount,
-                    .infinite_light_count    = infiniteLightCount,
-                    .object_definition_count = this->objectDefinitions.size(),
-                    .object_instance_count   = this->objectInstances.size(),
-                    .camera_fov_degrees      = this->renderSettings.camera.fovDegrees,
-                };
-            }
-
-            [[nodiscard]] std::unique_ptr<Scene> Build(std::optional<Point2i> filmResolutionOverride) const {
-                std::unique_ptr<Scene> scene = std::make_unique<Scene>(this->name, this->title, this->source, filmResolutionOverride);
-                scene->SetRenderSettings(this->renderSettings);
-                for (const SceneMaterial& material : this->materials) scene->AddMaterial(material);
-                for (const SceneTexture& texture : this->textures) scene->AddTexture(texture);
-                for (const SceneMedium& medium : this->media) scene->AddMedium(medium);
-                for (const SceneLight& light : this->lights) scene->AddLight(light);
-                for (const SceneShape& shape : this->shapes) scene->AddShape(shape);
-                for (const SceneObjectDefinition& definition : this->objectDefinitions) scene->AddObjectDefinition(definition);
-                for (const SceneObjectInstance& instance : this->objectInstances) scene->AddObjectInstance(instance);
-                return scene;
-            }
-        };
-
         [[nodiscard]] std::string SceneResource(std::string_view relativePath) {
             return std::format("{}/{}", SPECTRA_PROJECT_SCENE_ROOT, relativePath);
         }
@@ -93,25 +28,27 @@ namespace spectra::scene {
             return SceneParameter{
                 .type   = std::string{type},
                 .name   = std::string{name},
-                .floats = std::vector<Float>(values),
+                .values = std::vector<Float>(values),
             };
         }
 
         [[nodiscard]] SceneParameter IntegerParameter(std::string_view name, std::initializer_list<int> values) {
             return SceneParameter{
-                .type     = "integer",
-                .name     = std::string{name},
-                .integers = std::vector<int>(values),
+                .type   = "integer",
+                .name   = std::string{name},
+                .values = std::vector<int>(values),
             };
         }
 
         [[nodiscard]] SceneParameter StringParameter(std::string_view type, std::string_view name, std::initializer_list<std::string_view> values) {
             SceneParameter parameter{
-                .type = std::string{type},
-                .name = std::string{name},
+                .type   = std::string{type},
+                .name   = std::string{name},
+                .values = std::vector<std::string>{},
             };
-            parameter.strings.reserve(values.size());
-            for (std::string_view value : values) parameter.strings.emplace_back(value);
+            std::vector<std::string>& strings = std::get<std::vector<std::string>>(parameter.values);
+            strings.reserve(values.size());
+            for (std::string_view value : values) strings.emplace_back(value);
             return parameter;
         }
 
@@ -125,7 +62,7 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] BuiltinSceneDefinition BookScene() {
+        [[nodiscard]] Scene BookScene() {
             const std::string mesh00001     = SceneResource("pbrt-book/geometry/mesh_00001.ply");
             const std::string mesh00002     = SceneResource("pbrt-book/geometry/mesh_00002.ply");
             const std::string mesh00003     = SceneResource("pbrt-book/geometry/mesh_00003.ply");
@@ -137,7 +74,7 @@ namespace spectra::scene {
                 LookAt(Point3f(0.0f, 2.1088f, 13.574f), Point3f(0.0f, 2.1088f, 12.574f), Vector3f(0.0f, 1.0f, 0.0f)),
             });
 
-            BuiltinSceneDefinition scene{
+            Scene scene{
                 .name   = "default",
                 .title  = "PBRT Book",
                 .source = "spectra://scene/default",
@@ -282,12 +219,12 @@ namespace spectra::scene {
             return scene;
         }
 
-        [[nodiscard]] BuiltinSceneDefinition ExplosionScene() {
+        [[nodiscard]] Scene ExplosionScene() {
             const std::string skyTexture    = SceneResource("explosion/textures/sky.exr");
             const std::string fireVolume    = SceneResource("explosion/fire.nvdb");
             const Transform cameraFromWorld = LookAt(Point3f(0.0f, 120.0f, 20.0f), Point3f(-0.5f, 0.0f, 30.0f), Vector3f(0.0f, 0.0f, 1.0f));
 
-            BuiltinSceneDefinition scene{
+            Scene scene{
                 .name   = "explosion",
                 .title  = "Explosion",
                 .source = "spectra://scene/explosion",
@@ -386,18 +323,14 @@ namespace spectra::scene {
             return scene;
         }
 
-        [[nodiscard]] BuiltinSceneDefinition BuiltinScene(std::string_view name) {
+        [[nodiscard]] Scene BuiltinScene(std::string_view name) {
             if (name == "default") return BookScene();
             if (name == "explosion") return ExplosionScene();
             throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", name));
         }
     } // namespace
 
-    SceneInfo BuiltinSceneInfoFor(std::string_view name) {
-        return BuiltinScene(name).Info();
-    }
-
-    std::unique_ptr<Scene> BuildBuiltinScene(std::string_view name, std::optional<Point2i> filmResolutionOverride) {
-        return BuiltinScene(name).Build(filmResolutionOverride);
+    Scene BuildBuiltinScene(std::string_view name) {
+        return BuiltinScene(name);
     }
 } // namespace spectra::scene

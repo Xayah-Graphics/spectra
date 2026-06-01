@@ -21,7 +21,7 @@
 #include <spectra/pathtracer/util/pstd.h>
 #include <spectra/pathtracer/util/splines.h>
 #include <spectra/pathtracer/wavefront/intersect.h>
-#include <spectra/scene.h>
+#include <spectra/pathtracer/wavefront_scene.h>
 #include <spectra_optix_config.h>
 #include <unordered_map>
 #include <vector>
@@ -151,13 +151,13 @@ namespace spectra::optix {
         return {traversableHandle, CUdeviceptr(accelBuffer)};
     }
 
-    static Material getMaterial(const scene::ShapeSceneEntity& shape, const std::map<std::string, Material>& materials) {
+    static Material getMaterial(const pathtracer::WavefrontShapeSceneEntity& shape, const std::map<std::string, Material>& materials) {
         auto iter = materials.find(shape.materialName);
         if (iter == materials.end()) throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: material not defined", shape.materialName));
         return iter->second;
     }
 
-    static FloatTexture getAlphaTexture(const scene::ShapeSceneEntity& shape, const std::map<std::string, FloatTexture>& floatTextures, Allocator alloc) {
+    static FloatTexture getAlphaTexture(const pathtracer::WavefrontShapeSceneEntity& shape, const std::map<std::string, FloatTexture>& floatTextures, Allocator alloc) {
         FloatTexture alphaTexture;
 
         std::string alphaTexName = shape.parameters.GetTexture("alpha");
@@ -190,7 +190,7 @@ namespace spectra::optix {
             return OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
     }
 
-    static MediumInterface* getMediumInterface(const scene::ShapeSceneEntity& shape, const std::map<std::string, Medium>& media, Allocator alloc) {
+    static MediumInterface* getMediumInterface(const pathtracer::WavefrontShapeSceneEntity& shape, const std::map<std::string, Medium>& media, Allocator alloc) {
         if (shape.insideMedium.empty() && shape.outsideMedium.empty()) return nullptr;
 
         auto getMedium = [&](const std::string& name) -> Medium {
@@ -204,7 +204,7 @@ namespace spectra::optix {
         return alloc.new_object<MediumInterface>(getMedium(shape.insideMedium), getMedium(shape.outsideMedium));
     }
 
-    std::map<int, TriQuadMesh> SpectraOptiXAggregate::PreparePLYMeshes(const std::vector<scene::ShapeSceneEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures) {
+    std::map<int, TriQuadMesh> SpectraOptiXAggregate::PreparePLYMeshes(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures) {
         std::map<int, TriQuadMesh> plyMeshes;
         std::mutex mutex;
         ParallelFor(0, shapes.size(), [&](int64_t i) {
@@ -270,7 +270,7 @@ namespace spectra::optix {
         return plyMeshes;
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<scene::ShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
         // Count how many of the shapes are triangle meshes
         std::vector<size_t> meshIndexToShapeIndex;
         for (size_t i = 0; i < shapes.size(); ++i) {
@@ -448,7 +448,7 @@ namespace spectra::optix {
         return bvh;
     }
 
-    BilinearPatchMesh* SpectraOptiXAggregate::diceCurveToBLP(const scene::ShapeSceneEntity& shape, int nDiceU, int nDiceV, Allocator alloc) {
+    BilinearPatchMesh* SpectraOptiXAggregate::diceCurveToBLP(const pathtracer::WavefrontShapeSceneEntity& shape, int nDiceU, int nDiceV, Allocator alloc) {
         SPECTRA_CHECK_EQ(shape.name, "curve");
         const ParameterDictionary& parameters = shape.parameters;
         const FileLoc* loc                    = &shape.loc;
@@ -649,7 +649,7 @@ namespace spectra::optix {
         return alloc.new_object<BilinearPatchMesh>(*shape.renderFromObject, shape.reverseOrientation, blpIndices, blpP, blpN, blpUV, std::vector<int>(), nullptr, alloc);
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
         // Count how many BLP meshes there are in shapes
         std::vector<size_t> meshIndexToShapeIndex;
         for (size_t i = 0; i < shapes.size(); ++i) {
@@ -778,7 +778,7 @@ namespace spectra::optix {
         return bvh;
     }
 
-    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<scene::ShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams) {
         int nQuadrics = 0;
         for (size_t shapeIndex = 0; shapeIndex < shapes.size(); ++shapeIndex) {
             const auto& s = shapes[shapeIndex];
@@ -1013,7 +1013,12 @@ namespace spectra::optix {
         return pg;
     }
 
-    SpectraOptiXAggregate::SpectraOptiXAggregate(const scene::Scene& scene, CUDATrackedMemoryResource* memoryResource, NamedTextures& textures, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const std::map<std::string, Medium>& media, const std::map<std::string, Material>& materials) : memoryResource(memoryResource), cudaStream(nullptr) {
+    SpectraOptiXAggregate::SpectraOptiXAggregate(const pathtracer::WavefrontScene& scene, CUDATrackedMemoryResource* memoryResource) : memoryResource(memoryResource), cudaStream(nullptr) {
+        const NamedTextures& textures                                     = scene.textures;
+        const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights = scene.shapeIndexToAreaLights;
+        const std::map<std::string, Medium>& media                        = scene.media;
+        const std::map<std::string, Material>& materials                  = scene.materials;
+
         CUcontext cudaContext;
         SPECTRA_CU_CHECK(cuCtxGetCurrent(&cudaContext));
         SPECTRA_CHECK(cudaContext != nullptr);

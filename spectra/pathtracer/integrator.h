@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_INTEGRATOR_H
 #define SPECTRA_PATHTRACER_INTEGRATOR_H
 
+#include <optional>
 #include <spectra/pathtracer/base/bxdf.h>
 #include <spectra/pathtracer/base/camera.h>
 #include <spectra/pathtracer/base/film.h>
@@ -45,7 +46,7 @@ namespace spectra::pathtracer {
 
     class WavefrontPathtracer {
     public:
-        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, scene::Scene& scene);
+        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, std::optional<Point2i> filmResolutionOverride = {});
         SPECTRA_CPU_GPU ~WavefrontPathtracer();
 
         Float Render();

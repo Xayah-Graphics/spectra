@@ -6,6 +6,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <map>
+#include <memory>
 #include <spectra/pathtracer/base/bxdf.h>
 #include <spectra/pathtracer/base/medium.h>
 #include <spectra/pathtracer/core/bssrdf.h>
@@ -41,7 +42,7 @@
 #include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/util/taggedptr.h>
 #include <spectra/pathtracer/util/vecmath.h>
-#include <spectra/scene.h>
+#include <spectra/pathtracer/wavefront_scene.h>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -206,82 +207,58 @@ namespace spectra::pathtracer {
             (*haveUniversalEvalMaterial)[m.Tag()] = true;
     }
 
-    WavefrontPathtracer::WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, scene::Scene& scene) : memoryResource(memoryResource) {
+    WavefrontPathtracer::WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, std::optional<Point2i> filmResolutionOverride) : memoryResource(memoryResource) {
         ThreadLocal<Allocator> threadAllocators([memoryResource]() { return Allocator(memoryResource); });
 
         Allocator alloc = threadAllocators.Get();
 
-        // Allocate all the data structures that represent the scene...
-        std::map<std::string, Medium> media = scene.CreateMedia();
+        std::unique_ptr<WavefrontScene> wavefrontScene = CreateWavefrontScene(scene, memoryResource, filmResolutionOverride);
 
         // "haveMedia" is a bit of a misnomer in that determines both whether
         // queues are allocated for the medium sampling kernels, and they are
         // launched as well as whether the ray marching shadow ray kernel is
         // launched... Thus, it will be true if there actually are no media,
         // but some "interface" materials are present in the scene.
-        haveMedia = false;
-        // Check the shapes and instance definitions...
-        for (const auto& shape : scene.shapes)
-            if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) haveMedia = true;
-        for (const auto& instanceDefinition : scene.instanceDefinitions) {
-            for (const auto& shape : instanceDefinition.second.shapes)
-                if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) haveMedia = true;
-        }
-
-        // Textures
-        NamedTextures textures = scene.CreateTextures();
-
-        std::map<std::string, Material> materials;
-        scene.CreateMaterials(textures, &materials);
-
-        pstd::vector<Light> allLights;
-        std::map<int, pstd::vector<Light>*> shapeIndexToAreaLights;
-
-        infiniteLights = alloc.new_object<pstd::vector<Light>>(alloc);
-
-        for (Light l : scene.CreateLights(textures, materials, &shapeIndexToAreaLights)) {
-            if (l.Is<UniformInfiniteLight>() || l.Is<ImageInfiniteLight>() || l.Is<PortalImageInfiniteLight>()) infiniteLights->push_back(l);
-
-            allLights.push_back(l);
-        }
+        haveMedia = wavefrontScene->haveMedia;
 
         haveBasicEvalMaterial.fill(false);
         haveUniversalEvalMaterial.fill(false);
         haveSubsurface = false;
-        for (const auto& material : materials) updateMaterialNeeds(material.second, &haveBasicEvalMaterial, &haveUniversalEvalMaterial, &haveSubsurface, &haveMedia);
+        for (const auto& material : wavefrontScene->materials) updateMaterialNeeds(material.second, &haveBasicEvalMaterial, &haveUniversalEvalMaterial, &haveSubsurface, &haveMedia);
 
         // Retrieve these here so that the CPU isn't writing to managed memory
         // concurrently with the OptiX acceleration-structure construction work
         // that follows. (Verbotten on Windows.)
-        camera  = scene.GetCamera();
-        film    = camera.GetFilm();
-        filter  = film.GetFilter();
-        sampler = scene.GetSampler();
+        camera         = wavefrontScene->camera;
+        film           = wavefrontScene->film;
+        filter         = wavefrontScene->filter;
+        sampler        = wavefrontScene->sampler;
+        infiniteLights = wavefrontScene->infiniteLights;
 
         CUDATrackedMemoryResource* mr = dynamic_cast<CUDATrackedMemoryResource*>(memoryResource);
         SPECTRA_CHECK(mr);
-        aggregate = new optix::SpectraOptiXAggregate(scene, mr, textures, shapeIndexToAreaLights, media, materials);
+        aggregate = new optix::SpectraOptiXAggregate(*wavefrontScene, mr);
 
         // Preprocess the light sources
-        for (Light light : allLights) light.Preprocess(aggregate->Bounds());
+        for (Light light : wavefrontScene->allLights) light.Preprocess(aggregate->Bounds());
 
-        bool haveLights = !allLights.empty();
-        for (const auto& m : media) haveLights |= m.second.IsEmissive();
+        bool haveLights = !wavefrontScene->allLights.empty();
+        for (const auto& medium : wavefrontScene->media) haveLights |= medium.second.IsEmissive();
         if (!haveLights) throw std::runtime_error(spectra::diagnostics::Format("No light sources specified"));
 
-        std::string lightSamplerName = scene.integrator.parameters.GetOneString("lightsampler", "bvh");
-        if (allLights.size() == 1) lightSamplerName = "uniform";
-        lightSampler = LightSampler::Create(lightSamplerName, allLights, alloc);
+        std::string lightSamplerName = wavefrontScene->integrator.parameters.GetOneString("lightsampler", "bvh");
+        if (wavefrontScene->allLights.size() == 1) lightSamplerName = "uniform";
+        lightSampler = LightSampler::Create(lightSamplerName, wavefrontScene->allLights, alloc);
 
-        if (scene.integrator.name != "path" && scene.integrator.name != "volpath")
-            spectra::diagnostics::PrintWarning(&scene.integrator.loc,
+        if (wavefrontScene->integrator.name != "path" && wavefrontScene->integrator.name != "volpath")
+            spectra::diagnostics::PrintWarning(&wavefrontScene->integrator.loc,
                 "Ignoring specified integrator \"%s\": the Spectra pathtracer "
                 "always uses a \"volpath\" integrator.",
-                scene.integrator.name);
+                wavefrontScene->integrator.name);
 
         // Integrator parameters
-        regularize = scene.integrator.parameters.GetOneBool("regularize", false);
-        maxDepth   = scene.integrator.parameters.GetOneInt("maxdepth", 5);
+        regularize = wavefrontScene->integrator.parameters.GetOneBool("regularize", false);
+        maxDepth   = wavefrontScene->integrator.parameters.GetOneInt("maxdepth", 5);
 
         initializeVisibleSurface = film.UsesVisibleSurface();
         samplesPerPixel          = sampler.SamplesPerPixel();

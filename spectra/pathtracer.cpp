@@ -23,6 +23,7 @@
 #include <memory>
 #include <spectra/pathtracer/base/film.h>
 #include <spectra/pathtracer/base/sampler.h>
+#include <spectra/pathtracer/core/cameras.h>
 #include <spectra/pathtracer/core/options.h>
 #include <spectra/pathtracer/gpu/memory.h>
 #include <spectra/pathtracer/gpu/util.h>
@@ -165,7 +166,6 @@ namespace xayah::pathtracer {
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
 
-        std::unique_ptr<spectra::scene::Scene> scene{};
         std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
         spectra::Bounds2i pixel_bounds{};
         spectra::Vector2i resolution{};
@@ -389,7 +389,6 @@ namespace {
         }
         destroy_pathtracer_frame_resources_noexcept(pathtracer);
         pathtracer.integrator.reset();
-        pathtracer.scene.reset();
     }
 } // namespace
 
@@ -405,9 +404,9 @@ namespace xayah::pathtracer {
             pathtracer.physical_device = &physical_device;
             pathtracer.device          = &device;
             pathtracer.frame_count     = frame_count;
-            pathtracer.scene           = spectra::scene::BuildScene(scene_name, spectra::Point2i{resolution[0], resolution[1]});
 
-            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, *pathtracer.scene);
+            spectra::scene::Scene scene = spectra::scene::BuildScene(scene_name);
+            pathtracer.integrator       = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene, spectra::Point2i{resolution[0], resolution[1]});
             pathtracer.integrator->PrefetchGPUAllocations();
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
