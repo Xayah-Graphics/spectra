@@ -29,9 +29,6 @@
 #endif
 
 namespace spectra {
-    ///////////////////////////////////////////////////////////////////////////
-    // spectra::ParsedParameter
-
     void ParsedParameter::AddFloat(Float v) {
         SPECTRA_CHECK(ints.empty() && strings.empty() && bools.empty());
         floats.push_back(v);
@@ -66,29 +63,6 @@ namespace spectra::scene {
         return ret;
     }
 
-
-    SceneBuilder::GraphicsState::GraphicsState() {
-        currentMaterialIndex = 0;
-    }
-
-    // API State Macros
-#define VERIFY_OPTIONS(func)                                        \
-    if (currentBlock == BlockState::WorldBlock) {                   \
-        throw std::runtime_error(spectra::diagnostics::Format(&loc, \
-            "Options cannot be set inside world block; "            \
-            "\"%s\" is not allowed.",                               \
-            func));                                                 \
-        return;                                                     \
-    } else /* swallow trailing semicolon */
-#define VERIFY_WORLD(func)                                          \
-    if (currentBlock == BlockState::OptionsBlock) {                 \
-        throw std::runtime_error(spectra::diagnostics::Format(&loc, \
-            "Scene command must be inside world block; "            \
-            "\"%s\" is not allowed.",                               \
-            func));                                                 \
-        return;                                                     \
-    } else /* swallow trailing semicolon */
-
     [[nodiscard]] ParsedParameter* MakeIntegerParameter(std::string_view name, int value, const FileLoc& location) {
         ParsedParameter* parameter = new ParsedParameter(location);
         parameter->type            = "integer";
@@ -113,9 +87,7 @@ namespace spectra::scene {
         return parameters;
     }
 
-    // SceneBuilder Method Definitions
     SceneBuilder::SceneBuilder(Scene* scene) : scene(scene), transformCache(Allocator(&CUDATrackedMemoryResource::singleton)) {
-        // Set scene defaults
         camera.name      = SceneEntity::internedStrings.Lookup("perspective");
         sampler.name     = SceneEntity::internedStrings.Lookup("zsobol");
         filter.name      = SceneEntity::internedStrings.Lookup("gaussian");
@@ -126,7 +98,7 @@ namespace spectra::scene {
         film.parameters = ParameterDictionary({}, RGBColorSpace::sRGB);
 
         ParameterDictionary dict({}, RGBColorSpace::sRGB);
-        currentMaterialIndex = scene->AddMaterial({SceneEntity::internedStrings.Lookup("diffuse"), {}, dict});
+        graphicsState.currentMaterialIndex = scene->AddMaterial({SceneEntity::internedStrings.Lookup("diffuse"), {}, dict});
     }
 
     SceneBuilder::SceneBuilder(Scene* scene, Point2i filmResolutionOverride) : SceneBuilder(scene) {
@@ -134,8 +106,16 @@ namespace spectra::scene {
         this->filmResolutionOverride = filmResolutionOverride;
     }
 
+    void SceneBuilder::RequireOptions(std::string_view command, const FileLoc& loc) const {
+        if (currentPhase == ScenePhase::World) throw std::runtime_error(spectra::diagnostics::Format(&loc, "Options cannot be set inside world block; \"%s\" is not allowed.", std::string(command)));
+    }
+
+    void SceneBuilder::RequireWorld(std::string_view command, const FileLoc& loc) const {
+        if (currentPhase == ScenePhase::Options) throw std::runtime_error(spectra::diagnostics::Format(&loc, "Scene command must be inside world block; \"%s\" is not allowed.", std::string(command)));
+    }
+
     void SceneBuilder::ReverseOrientation(FileLoc loc) {
-        VERIFY_WORLD("ReverseOrientation");
+        RequireWorld("ReverseOrientation", loc);
         graphicsState.reverseOrientation = !graphicsState.reverseOrientation;
     }
 
@@ -170,7 +150,7 @@ namespace spectra::scene {
     void SceneBuilder::Camera(const std::string& name, ParsedParameterVector params, FileLoc loc) {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
 
-        VERIFY_OPTIONS("spectra::Camera");
+        RequireOptions("spectra::Camera", loc);
 
         TransformSet cameraFromWorld     = graphicsState.ctm;
         TransformSet worldFromCamera     = Inverse(graphicsState.ctm);
@@ -183,27 +163,22 @@ namespace spectra::scene {
     }
 
     void SceneBuilder::AttributeBegin(FileLoc loc) {
-        VERIFY_WORLD("AttributeBegin");
+        RequireWorld("AttributeBegin", loc);
         pushedGraphicsStates.push_back(graphicsState);
-        pushStack.push_back(std::make_pair('a', loc));
+        pushStack.push_back({ScopeKind::Attribute, loc});
     }
 
     void SceneBuilder::AttributeEnd(FileLoc loc) {
-        VERIFY_WORLD("AttributeEnd");
-        // Issue error on unmatched _AttributeEnd_
-        if (pushedGraphicsStates.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Unmatched AttributeEnd encountered. Ignoring it."));
-            return;
-        }
+        RequireWorld("AttributeEnd", loc);
+        if (pushedGraphicsStates.empty()) throw std::runtime_error(spectra::diagnostics::Format(&loc, "Unmatched AttributeEnd encountered. Ignoring it."));
 
-        // NOTE: must keep the following consistent with code in ObjectEnd
         graphicsState = std::move(pushedGraphicsStates.back());
         pushedGraphicsStates.pop_back();
 
-        if (pushStack.back().first == 'o')
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Mismatched nesting: open ObjectBegin from %s at AttributeEnd", std::format("{}:{}:{}", pushStack.back().second.filename, pushStack.back().second.line, pushStack.back().second.column)));
+        if (pushStack.back().kind == ScopeKind::Object)
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Mismatched nesting: open ObjectBegin from %s at AttributeEnd", std::format("{}:{}:{}", pushStack.back().loc.filename, pushStack.back().loc.line, pushStack.back().loc.column)));
         else
-            SPECTRA_CHECK_EQ(pushStack.back().first, 'a');
+            SPECTRA_CHECK(pushStack.back().kind == ScopeKind::Attribute);
         pushStack.pop_back();
     }
 
@@ -224,11 +199,8 @@ namespace spectra::scene {
                 "Unknown attribute target \"%s\". Must be \"shape\", \"light\", "
                 "\"material\", \"medium\", or \"texture\".",
                 target));
-            return;
         }
 
-        // Note that we hold on to the current color space and associate it
-        // with the parameters...
         for (ParsedParameter* p : attrib) {
             p->mayBeUnused = true;
             p->colorSpace  = graphicsState.colorSpace;
@@ -238,45 +210,40 @@ namespace spectra::scene {
 
     void SceneBuilder::Sampler(const std::string& name, ParsedParameterVector params, FileLoc loc) {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
-        VERIFY_OPTIONS("spectra::Sampler");
+        RequireOptions("spectra::Sampler", loc);
         sampler = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::WorldBegin(FileLoc loc) {
-        VERIFY_OPTIONS("WorldBegin");
+        RequireOptions("WorldBegin", loc);
         if (filmResolutionOverride.has_value() && !filmSeen) Film("rgb", ParsedParameterVector{}, loc);
-        // Reset graphics state for _WorldBegin_
-        currentBlock = BlockState::WorldBlock;
+        currentPhase = ScenePhase::World;
         for (int i = 0; i < MaxTransforms; ++i) graphicsState.ctm[i] = spectra::Transform();
         graphicsState.activeTransformBits = AllTransformsBits;
         namedCoordinateSystems["world"]   = graphicsState.ctm;
 
-        // Pass pre-_WorldBegin_ entities to _scene_
         scene->SetOptions(filter, film, camera, sampler, integrator, accelerator);
     }
 
     void SceneBuilder::MakeNamedMedium(const std::string& origName, ParsedParameterVector params, FileLoc loc) {
         std::string name = NormalizeUTF8(origName);
-        // Issue error if medium _name_ is multiply defined
         if (mediumNames.find(name) != mediumNames.end()) {
             throw std::runtime_error(spectra::diagnostics::Format(&loc, "Named medium \"%s\" redefined.", name));
-            return;
         }
         mediumNames.insert(name);
 
-        // Create _ParameterDictionary_ for medium and call _AddMedium()_
         ParameterDictionary dict(std::move(params), graphicsState.mediumAttributes, graphicsState.colorSpace);
         scene->AddMedium({{{SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)}, RenderFromObject()}});
     }
 
     void SceneBuilder::LightSource(const std::string& name, ParsedParameterVector params, FileLoc loc) {
-        VERIFY_WORLD("LightSource");
+        RequireWorld("LightSource", loc);
         ParameterDictionary dict(std::move(params), graphicsState.lightAttributes, graphicsState.colorSpace);
         scene->AddLight({{{SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)}, RenderFromObject()}, graphicsState.currentOutsideMedium});
     }
 
     void SceneBuilder::Shape(const std::string& name, ParsedParameterVector params, FileLoc loc) {
-        VERIFY_WORLD("spectra::Shape");
+        RequireWorld("spectra::Shape", loc);
 
         ParameterDictionary dict(std::move(params), graphicsState.shapeAttributes, graphicsState.colorSpace);
 
@@ -293,7 +260,7 @@ namespace spectra::scene {
             AnimatedShapeSceneEntity entity{{{SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)}, renderFromShape}, identity, graphicsState.reverseOrientation, graphicsState.currentMaterialIndex, graphicsState.currentMaterialName, areaLightIndex, graphicsState.currentInsideMedium, graphicsState.currentOutsideMedium};
 
             if (activeInstanceDefinition)
-                activeInstanceDefinition->entity.animatedShapes.push_back(std::move(entity));
+                activeInstanceDefinition->animatedShapes.push_back(std::move(entity));
             else
                 scene->AddAnimatedShape(std::move(entity));
         } else {
@@ -302,7 +269,7 @@ namespace spectra::scene {
 
             ShapeSceneEntity entity{{SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)}, renderFromObject, objectFromRender, graphicsState.reverseOrientation, graphicsState.currentMaterialIndex, graphicsState.currentMaterialName, areaLightIndex, graphicsState.currentInsideMedium, graphicsState.currentOutsideMedium};
             if (activeInstanceDefinition)
-                activeInstanceDefinition->entity.shapes.push_back(std::move(entity));
+                activeInstanceDefinition->shapes.push_back(std::move(entity));
             else
                 shapes.push_back(std::move(entity));
         }
@@ -311,69 +278,54 @@ namespace spectra::scene {
     void SceneBuilder::ObjectBegin(const std::string& origName, FileLoc loc) {
         std::string name = NormalizeUTF8(origName);
 
-        VERIFY_WORLD("ObjectBegin");
+        RequireWorld("ObjectBegin", loc);
         pushedGraphicsStates.push_back(graphicsState);
 
-        pushStack.push_back(std::make_pair('o', loc));
+        pushStack.push_back({ScopeKind::Object, loc});
 
         if (activeInstanceDefinition) {
             throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectBegin called inside of instance definition"));
-            return;
         }
 
         if (instanceNames.find(name) != instanceNames.end()) {
             throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: trying to redefine an object instance", name));
-            return;
         }
         instanceNames.insert(name);
 
-        activeInstanceDefinition = new ActiveInstanceDefinition{
-            .entity =
-                {
-                    .name = SceneEntity::internedStrings.Lookup(name),
-                    .loc  = loc,
-                },
+        activeInstanceDefinition = InstanceDefinitionSceneEntity{
+            .name = SceneEntity::internedStrings.Lookup(name),
+            .loc  = loc,
         };
     }
 
     void SceneBuilder::ObjectEnd(FileLoc loc) {
-        VERIFY_WORLD("ObjectEnd");
-        if (!activeInstanceDefinition) {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectEnd called outside of instance definition"));
-            return;
-        }
-        // NOTE: Must keep the following consistent with AttributeEnd
+        RequireWorld("ObjectEnd", loc);
+        if (!activeInstanceDefinition) throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectEnd called outside of instance definition"));
+
         graphicsState = std::move(pushedGraphicsStates.back());
         pushedGraphicsStates.pop_back();
 
-        if (pushStack.back().first == 'a')
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Mismatched nesting: open AttributeBegin from %s at ObjectEnd", std::format("{}:{}:{}", pushStack.back().second.filename, pushStack.back().second.line, pushStack.back().second.column)));
+        if (pushStack.back().kind == ScopeKind::Attribute)
+            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Mismatched nesting: open AttributeBegin from %s at ObjectEnd", std::format("{}:{}:{}", pushStack.back().loc.filename, pushStack.back().loc.line, pushStack.back().loc.column)));
         else
-            SPECTRA_CHECK_EQ(pushStack.back().first, 'o');
+            SPECTRA_CHECK(pushStack.back().kind == ScopeKind::Object);
         pushStack.pop_back();
 
-        scene->AddInstanceDefinition(std::move(activeInstanceDefinition->entity));
-        delete activeInstanceDefinition;
-        activeInstanceDefinition = nullptr;
+        scene->AddInstanceDefinition(std::move(*activeInstanceDefinition));
+        activeInstanceDefinition.reset();
     }
 
     void SceneBuilder::ObjectInstance(const std::string& origName, FileLoc loc) {
         std::string name = NormalizeUTF8(origName);
-        VERIFY_WORLD("ObjectInstance");
+        RequireWorld("ObjectInstance", loc);
 
-        if (activeInstanceDefinition) {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectInstance can't be called inside instance definition"));
-            return;
-        }
+        if (activeInstanceDefinition) throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectInstance can't be called inside instance definition"));
 
         spectra::Transform worldFromRender = spectra::Inverse(renderFromWorld);
 
         if (CTMIsAnimated()) {
             AnimatedTransform animatedRenderFromInstance(RenderFromObject(0) * worldFromRender, graphicsState.transformStartTime, RenderFromObject(1) * worldFromRender, graphicsState.transformEndTime);
 
-            // For very small changes, animatedRenderFromInstance may have both
-            // xforms equal even if CTMIsAnimated() has returned true. Fall
-            // through to create a regular non-animated instance in that case.
             if (animatedRenderFromInstance.IsAnimated()) {
                 AnimatedTransform* renderFromInstanceAnim = new AnimatedTransform(animatedRenderFromInstance);
                 SPECTRA_CHECK(renderFromInstanceAnim->IsAnimated());
@@ -395,9 +347,8 @@ namespace spectra::scene {
     }
 
     void SceneBuilder::Finish() {
-        if (currentBlock != BlockState::WorldBlock) throw std::runtime_error(spectra::diagnostics::Format("Scene finished before \"WorldBegin\"."));
+        if (currentPhase != ScenePhase::World) throw std::runtime_error(spectra::diagnostics::Format("Scene finished before \"WorldBegin\"."));
 
-        // Ensure there are no pushed graphics states
         while (!pushedGraphicsStates.empty()) {
             throw std::runtime_error(spectra::diagnostics::Format("Missing end to AttributeBegin"));
             pushedGraphicsStates.pop_back();
@@ -572,10 +523,6 @@ namespace spectra::scene {
 
     } // namespace
 
-    [[nodiscard]] pstd::span<const SceneInfo> Scenes() {
-        return pstd::span<const SceneInfo>{scenes.data(), scenes.size()};
-    }
-
     [[nodiscard]] const SceneInfo& SceneInfoFor(std::string_view name) {
         for (const SceneInfo& scene : scenes)
             if (scene.name == name) return scene;
@@ -672,19 +619,19 @@ namespace spectra::scene {
     }
 
     void SceneBuilder::TransformTimes(Float start, Float end, FileLoc loc) {
-        VERIFY_OPTIONS("TransformTimes");
+        RequireOptions("TransformTimes", loc);
         graphicsState.transformStartTime = start;
         graphicsState.transformEndTime   = end;
     }
 
     void SceneBuilder::PixelFilter(const std::string& name, ParsedParameterVector params, FileLoc loc) {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
-        VERIFY_OPTIONS("PixelFilter");
+        RequireOptions("PixelFilter", loc);
         filter = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::Film(const std::string& type, ParsedParameterVector params, FileLoc loc) {
-        VERIFY_OPTIONS("spectra::Film");
+        RequireOptions("spectra::Film", loc);
         filmSeen = true;
         if (filmResolutionOverride.has_value()) params = ApplyFilmResolutionOverride(std::move(params), *filmResolutionOverride, loc);
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
@@ -693,14 +640,14 @@ namespace spectra::scene {
 
     void SceneBuilder::Accelerator(const std::string& name, ParsedParameterVector params, FileLoc loc) {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
-        VERIFY_OPTIONS("Accelerator");
+        RequireOptions("Accelerator", loc);
         accelerator = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
     void SceneBuilder::Integrator(const std::string& name, ParsedParameterVector params, FileLoc loc) {
         ParameterDictionary dict(std::move(params), graphicsState.colorSpace);
 
-        VERIFY_OPTIONS("Integrator");
+        RequireOptions("Integrator", loc);
         integrator = {SceneEntity::internedStrings.Lookup(name), loc, std::move(dict)};
     }
 
@@ -714,20 +661,14 @@ namespace spectra::scene {
 
     void SceneBuilder::Texture(const std::string& origName, const std::string& type, const std::string& texname, ParsedParameterVector params, FileLoc loc) {
         std::string name = NormalizeUTF8(origName);
-        VERIFY_WORLD("Texture");
+        RequireWorld("Texture", loc);
 
         ParameterDictionary dict(std::move(params), graphicsState.textureAttributes, graphicsState.colorSpace);
 
-        if (type != "float" && type != "spectrum") {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: texture type unknown. Must be \"float\" or \"spectrum\".", type));
-            return;
-        }
+        if (type != "float" && type != "spectrum") throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: texture type unknown. Must be \"float\" or \"spectrum\".", type));
 
         std::set<std::string>& names = (type == "float") ? floatTextureNames : spectrumTextureNames;
-        if (names.find(name) != names.end()) {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "Redefining texture \"%s\".", name));
-            return;
-        }
+        if (names.find(name) != names.end()) throw std::runtime_error(spectra::diagnostics::Format(&loc, "Redefining texture \"%s\".", name));
         names.insert(name);
 
         if (type == "float")
@@ -737,7 +678,7 @@ namespace spectra::scene {
     }
 
     void SceneBuilder::Material(const std::string& name, ParsedParameterVector params, FileLoc loc) {
-        VERIFY_WORLD("spectra::Material");
+        RequireWorld("spectra::Material", loc);
 
         ParameterDictionary dict(std::move(params), graphicsState.materialAttributes, graphicsState.colorSpace);
 
@@ -747,14 +688,11 @@ namespace spectra::scene {
 
     void SceneBuilder::MakeNamedMaterial(const std::string& origName, ParsedParameterVector params, FileLoc loc) {
         std::string name = NormalizeUTF8(origName);
-        VERIFY_WORLD("MakeNamedMaterial");
+        RequireWorld("MakeNamedMaterial", loc);
 
         ParameterDictionary dict(std::move(params), graphicsState.materialAttributes, graphicsState.colorSpace);
 
-        if (namedMaterialNames.find(name) != namedMaterialNames.end()) {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: named material redefined.", name));
-            return;
-        }
+        if (namedMaterialNames.find(name) != namedMaterialNames.end()) throw std::runtime_error(spectra::diagnostics::Format(&loc, "%s: named material redefined.", name));
         namedMaterialNames.insert(name);
 
         scene->AddNamedMaterial(name, {SceneEntity::internedStrings.Lookup(""), loc, std::move(dict)});
@@ -762,33 +700,26 @@ namespace spectra::scene {
 
     void SceneBuilder::NamedMaterial(const std::string& origName, FileLoc loc) {
         std::string name = NormalizeUTF8(origName);
-        VERIFY_WORLD("NamedMaterial");
+        RequireWorld("NamedMaterial", loc);
         graphicsState.currentMaterialName  = name;
         graphicsState.currentMaterialIndex = -1;
     }
 
     void SceneBuilder::AreaLightSource(const std::string& name, ParsedParameterVector params, FileLoc loc) {
-        VERIFY_WORLD("AreaLightSource");
+        RequireWorld("AreaLightSource", loc);
         graphicsState.areaLightName   = name;
         graphicsState.areaLightParams = ParameterDictionary(std::move(params), graphicsState.lightAttributes, graphicsState.colorSpace);
         graphicsState.areaLightLoc    = loc;
     }
 
-    // Scene Method Definitions
     void Scene::SetOptions(SceneEntity filter, SceneEntity film, CameraSceneEntity camera, SceneEntity sampler, SceneEntity integ, SceneEntity accel) {
-        // Store information for specified integrator and accelerator
         filmColorSpace = film.parameters.ColorSpace();
         integrator     = integ;
         accelerator    = accel;
 
-        // Immediately create filter and film
         Allocator alloc = threadAllocators.Get();
         Filter filt     = Filter::Create(filter.name, filter.parameters, &filter.loc, alloc);
 
-        // It's a little ugly to poke into the camera's parameters here, but we
-        // have this circular dependency that spectra::Camera::Create() expects a
-        // spectra::Film, yet now the film needs to know the exposure time from
-        // the camera....
         Float exposureTime = camera.parameters.GetOneFloat("shutterclose", 1.f) - camera.parameters.GetOneFloat("shutteropen", 0.f);
         if (exposureTime <= 0)
             throw std::runtime_error(spectra::diagnostics::Format(&camera.loc, "The specified camera shutter times imply that the shutter "
@@ -796,14 +727,12 @@ namespace spectra::scene {
 
         this->film = Film::Create(film.name, film.parameters, exposureTime, camera.cameraTransform, filt, &film.loc, alloc);
 
-        // Enqueue asynchronous job to create sampler
         samplerJob = RunAsync([sampler, this]() {
             Allocator alloc = threadAllocators.Get();
             Point2i res     = this->film.FullResolution();
             return Sampler::Create(sampler.name, sampler.parameters, res, &sampler.loc, alloc);
         });
 
-        // Enqueue asynchronous job to create camera
         cameraJob = RunAsync([camera, this]() {
             Allocator alloc     = threadAllocators.Get();
             Medium cameraMedium = GetMedium(camera.medium, &camera.loc);
@@ -834,10 +763,8 @@ namespace spectra::scene {
     }
 
     void Scene::AddMedium(MediumSceneEntity medium) {
-        // Define _create_ lambda function for _Medium_ creation
         auto create = [medium, this]() {
             std::string type = medium.parameters.GetOneString("type", "");
-            // Check for missing medium ``type'' or animated medium transform
             if (type.empty()) throw std::runtime_error(spectra::diagnostics::Format(&medium.loc, "No parameter \"string type\" found for medium."));
             if (medium.renderFromObject.IsAnimated())
                 spectra::diagnostics::PrintWarning(&medium.loc, "Animated transformation provided for medium. Only the "
@@ -877,7 +804,6 @@ namespace spectra::scene {
     std::map<std::string, Medium> Scene::CreateMedia() {
         mediaMutex.lock();
         if (!mediumJobs.empty()) {
-            // Consume results for asynchronously-created _Medium_ objects
             for (auto& m : mediumJobs) {
                 while (mediaMap.find(m.first) == mediaMap.end()) {
                     pstd::optional<Medium> med = m.second->TryGetResult(&mediaMutex);
@@ -913,10 +839,7 @@ namespace spectra::scene {
         std::string filename = ResolveFilename(parameters.GetOneString("normalmap", ""));
         if (filename.empty()) return;
 
-        // Overload materialMutex, which we already hold, for the futures...
-        if (normalMapJobs.find(filename) != normalMapJobs.end())
-            // It's already in flight.
-            return;
+        if (normalMapJobs.find(filename) != normalMapJobs.end()) return;
 
         auto create = [=, this](std::string filename) {
             Allocator alloc          = threadAllocators.Get();
@@ -944,16 +867,8 @@ namespace spectra::scene {
         }
 
         std::string filename = ResolveFilename(texture.parameters.GetOneString("filename", ""));
-        if (filename.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "\"string filename\" not provided for image texture."));
-            ++nMissingTextures;
-            return;
-        }
-        if (!FileExists(filename)) {
-            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "%s: file not found.", filename));
-            ++nMissingTextures;
-            return;
-        }
+        if (filename.empty()) throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "\"string filename\" not provided for image texture."));
+        if (!FileExists(filename)) throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "%s: file not found.", filename));
 
         if (loadingTextureFilenames.find(filename) != loadingTextureFilenames.end()) {
             serialFloatTextures.push_back(std::make_pair(std::move(name), std::move(texture)));
@@ -965,8 +880,6 @@ namespace spectra::scene {
             Allocator alloc = threadAllocators.Get();
 
             Transform renderFromTexture = texture.renderFromObject.startTransform;
-            // Pass nullptr for the textures, since they shouldn't be accessed
-            // anyway.
             TextureParameterDictionary texDict(&texture.parameters, nullptr);
             return FloatTexture::Create(texture.name, renderFromTexture, texDict, &texture.loc, alloc);
         };
@@ -982,16 +895,8 @@ namespace spectra::scene {
         }
 
         std::string filename = ResolveFilename(texture.parameters.GetOneString("filename", ""));
-        if (filename.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "\"string filename\" not provided for image texture."));
-            ++nMissingTextures;
-            return;
-        }
-        if (!FileExists(filename)) {
-            throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "%s: file not found.", filename));
-            ++nMissingTextures;
-            return;
-        }
+        if (filename.empty()) throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "\"string filename\" not provided for image texture."));
+        if (!FileExists(filename)) throw std::runtime_error(spectra::diagnostics::Format(&texture.loc, "%s: file not found.", filename));
 
         if (loadingTextureFilenames.find(filename) != loadingTextureFilenames.end()) {
             serialSpectrumTextures.push_back(std::make_pair(std::move(name), std::move(texture)));
@@ -1005,10 +910,7 @@ namespace spectra::scene {
             Allocator alloc = threadAllocators.Get();
 
             Transform renderFromTexture = texture.renderFromObject.startTransform;
-            // nullptr for the textures, as with float textures.
             TextureParameterDictionary texDict(&texture.parameters, nullptr);
-            // Only create spectra::SpectrumType::Albedo for now; will get the other two
-            // types in CreateTextures().
             return SpectrumTexture::Create(texture.name, renderFromTexture, texDict, SpectrumType::Albedo, &texture.loc, alloc);
         };
         spectrumTextureJobs[name] = RunAsync(create, texture);
@@ -1065,7 +967,6 @@ namespace spectra::scene {
         }
         normalMapJobs.clear();
 
-        // Named materials
         for (const auto& nm : namedMaterials) {
             const std::string& name = nm.first;
             const SceneEntity& mtl  = nm.second;
@@ -1073,13 +974,11 @@ namespace spectra::scene {
 
             if (namedMaterialsOut->find(name) != namedMaterialsOut->end()) {
                 throw std::runtime_error(spectra::diagnostics::Format(&mtl.loc, "%s: trying to redefine named material.", name));
-                continue;
             }
 
             std::string type = mtl.parameters.GetOneString("type", "");
             if (type.empty()) {
                 throw std::runtime_error(spectra::diagnostics::Format(&mtl.loc, "%s: \"string type\" not provided in named material's parameters.", name));
-                continue;
             }
 
             std::string fn   = ResolveFilename(nm.second.parameters.GetOneString("normalmap", ""));
@@ -1094,7 +993,6 @@ namespace spectra::scene {
             (*namedMaterialsOut)[name] = m;
         }
 
-        // Regular materials
         materialsOut->reserve(materials.size());
         for (const auto& mtl : materials) {
             Allocator alloc  = threadAllocators.Get();
@@ -1114,12 +1012,6 @@ namespace spectra::scene {
     NamedTextures Scene::CreateTextures() {
         NamedTextures textures;
 
-        if (nMissingTextures > 0) throw std::runtime_error(spectra::diagnostics::Format("%d missing textures", nMissingTextures));
-
-        // Consume futures
-        // The lock shouldn't be necessary since only the main thread should be
-        // active when CreateTextures() is called, but valgrind doesn't know
-        // that...
         textureMutex.lock();
         for (auto& tex : floatTextureJobs) textures.floatTextures[tex.first] = tex.second->GetResult();
         floatTextureJobs.clear();
@@ -1128,14 +1020,10 @@ namespace spectra::scene {
         textureMutex.unlock();
 
         Allocator alloc = threadAllocators.Get();
-        // Create the other SpectrumTypes for the spectrum textures.
         for (const auto& tex : asyncSpectrumTextures) {
             Transform renderFromTexture = tex.second.renderFromObject.startTransform;
-            // These are all image textures, so nullptr is fine for the
-            // textures, as earlier.
             TextureParameterDictionary texDict(&tex.second.parameters, nullptr);
 
-            // These should be fast since they should hit the texture cache
             SpectrumTexture unboundedTex = SpectrumTexture::Create(tex.second.name, renderFromTexture, texDict, SpectrumType::Unbounded, &tex.second.loc, alloc);
             SpectrumTexture illumTex     = SpectrumTexture::Create(tex.second.name, renderFromTexture, texDict, SpectrumType::Illuminant, &tex.second.loc, alloc);
 
@@ -1143,7 +1031,6 @@ namespace spectra::scene {
             textures.illuminantSpectrumTextures[tex.first] = illumTex;
         }
 
-        // And do the rest serially
         for (auto& tex : serialFloatTextures) {
             Allocator alloc = threadAllocators.Get();
 
@@ -1189,9 +1076,7 @@ namespace spectra::scene {
             std::string alphaTexName = parameters.GetTexture("alpha");
             if (!alphaTexName.empty()) {
                 if (auto iter = textures.floatTextures.find(alphaTexName); iter != textures.floatTextures.end()) {
-                    if (!BasicTextureEvaluator().CanEvaluate({iter->second}, {}))
-                        // A warning will be issued elsewhere...
-                        return nullptr;
+                    if (!BasicTextureEvaluator().CanEvaluate({iter->second}, {})) return nullptr;
                     return iter->second;
                 } else
                     throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: couldn't find float texture for \"alpha\" parameter.", alphaTexName));
@@ -1202,7 +1087,6 @@ namespace spectra::scene {
         };
 
         std::vector<Light> lights;
-        // Area Lights
         for (size_t i = 0; i < shapes.size(); ++i) {
             const auto& sh = shapes[i];
 

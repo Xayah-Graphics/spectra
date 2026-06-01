@@ -25,7 +25,6 @@
 #include <vector>
 
 namespace spectra::scene {
-    // SceneEntity Definition
     struct SceneEntity {
         InternedString name;
         FileLoc loc;
@@ -37,7 +36,6 @@ namespace spectra::scene {
         AnimatedTransform renderFromObject;
     };
 
-    // CameraSceneEntity Definition
     struct CameraSceneEntity : SceneEntity {
         CameraTransform cameraTransform;
         std::string medium;
@@ -46,7 +44,7 @@ namespace spectra::scene {
     struct ShapeSceneEntity : SceneEntity {
         const Transform *renderFromObject = nullptr, *objectFromRender = nullptr;
         bool reverseOrientation = false;
-        int materialIndex; // one of these two...  std::variant?
+        int materialIndex;
         std::string materialName;
         int lightIndex = -1;
         std::string insideMedium, outsideMedium;
@@ -55,7 +53,7 @@ namespace spectra::scene {
     struct AnimatedShapeSceneEntity : TransformedSceneEntity {
         const Transform* identity = nullptr;
         bool reverseOrientation   = false;
-        int materialIndex; // one of these two...  std::variant?
+        int materialIndex;
         std::string materialName;
         int lightIndex = -1;
         std::string insideMedium, outsideMedium;
@@ -84,12 +82,9 @@ namespace spectra::scene {
     };
 
 
-    // MaxTransforms Definition
     constexpr int MaxTransforms = 2;
 
-    // TransformSet Definition
     struct TransformSet {
-        // TransformSet Public Methods
         Transform& operator[](int i) {
             SPECTRA_CHECK_GE(i, 0);
             SPECTRA_CHECK_LT(i, MaxTransforms);
@@ -137,10 +132,8 @@ namespace spectra::scene {
         float camera_fov_degrees{};
     };
 
-    // Scene Definition
     class Scene {
     public:
-        // Scene Public Methods
         Scene();
 
         void SetOptions(SceneEntity filter, SceneEntity film, CameraSceneEntity camera, SceneEntity sampler, SceneEntity integrator, SceneEntity accelerator);
@@ -168,7 +161,6 @@ namespace spectra::scene {
 
         NamedTextures CreateTextures();
 
-        // Scene Public Members
         SceneEntity integrator, accelerator;
         const RGBColorSpace* filmColorSpace;
         std::vector<ShapeSceneEntity> shapes;
@@ -177,12 +169,10 @@ namespace spectra::scene {
         std::map<InternedString, InstanceDefinitionSceneEntity*> instanceDefinitions;
 
     private:
-        // Scene Private Methods
         Medium GetMedium(const std::string& name, const FileLoc* loc);
 
         void startLoadingNormalMaps(const ParameterDictionary& parameters);
 
-        // Scene Private Members
         AsyncJob<Sampler>* samplerJob = nullptr;
         mutable ThreadLocal<Allocator> threadAllocators;
         Camera camera;
@@ -214,16 +204,13 @@ namespace spectra::scene {
         std::set<std::string> loadingTextureFilenames;
         std::map<std::string, AsyncJob<FloatTexture>*> floatTextureJobs;
         std::map<std::string, AsyncJob<SpectrumTexture>*> spectrumTextureJobs;
-        int nMissingTextures = 0;
 
         std::mutex shapeMutex, animatedShapeMutex;
         std::mutex instanceDefinitionMutex, instanceUseMutex;
     };
 
-    // SceneBuilder Definition
     class SceneBuilder {
     public:
-        // SceneBuilder Public Methods
         SceneBuilder(Scene* scene);
         SceneBuilder(Scene* scene, Point2i filmResolutionOverride);
         void Option(const std::string& name, const std::string& value, FileLoc loc);
@@ -268,18 +255,13 @@ namespace spectra::scene {
         void Finish();
 
     private:
-        // SceneBuilder::GraphicsState Definition
         struct GraphicsState {
-            // GraphicsState Public Methods
-            GraphicsState();
-
             template <typename F>
             void ForActiveTransforms(F func) {
                 for (int i = 0; i < MaxTransforms; ++i)
                     if (activeTransformBits & (1 << i)) ctm[i] = func(ctm[i]);
             }
 
-            // GraphicsState Public Members
             std::string currentInsideMedium, currentOutsideMedium;
 
             int currentMaterialIndex = 0;
@@ -313,12 +295,20 @@ namespace spectra::scene {
             return graphicsState.ctm.IsAnimated();
         }
 
-        // SceneBuilder Private Members
+        void RequireOptions(std::string_view command, const FileLoc& loc) const;
+        void RequireWorld(std::string_view command, const FileLoc& loc) const;
+
+        enum class ScenePhase { Options, World };
+        enum class ScopeKind { Attribute, Object };
+
+        struct Scope {
+            ScopeKind kind;
+            FileLoc loc;
+        };
+
         Scene* scene;
 
-        enum class BlockState { OptionsBlock, WorldBlock };
-
-        BlockState currentBlock = BlockState::OptionsBlock;
+        ScenePhase currentPhase = ScenePhase::Options;
         GraphicsState graphicsState;
         static constexpr int StartTransformBits = 1 << 0;
         static constexpr int EndTransformBits   = 1 << 1;
@@ -327,23 +317,16 @@ namespace spectra::scene {
         spectra::Transform renderFromWorld;
         InternCache<spectra::Transform> transformCache;
         std::vector<GraphicsState> pushedGraphicsStates;
-        std::vector<std::pair<char, FileLoc>> pushStack; // 'a': attribute, 'o': object
-        struct ActiveInstanceDefinition {
-            InstanceDefinitionSceneEntity entity;
-        };
+        std::vector<Scope> pushStack;
+        std::optional<InstanceDefinitionSceneEntity> activeInstanceDefinition{};
 
-        ActiveInstanceDefinition* activeInstanceDefinition = nullptr;
-
-        // Buffer these both to avoid mutex contention and so that they are
-        // consistently ordered across runs.
         std::vector<ShapeSceneEntity> shapes;
         std::vector<InstanceSceneEntity> instanceUses;
 
         std::set<std::string> namedMaterialNames, mediumNames;
         std::set<std::string> floatTextureNames, spectrumTextureNames, instanceNames;
         std::optional<Point2i> filmResolutionOverride{};
-        bool filmSeen            = false;
-        int currentMaterialIndex = 0, currentLightIndex = -1;
+        bool filmSeen = false;
         SceneEntity sampler;
         SceneEntity film, integrator, filter, accelerator;
         CameraSceneEntity camera;
@@ -354,7 +337,6 @@ namespace spectra::scene {
         std::unique_ptr<SceneBuilder> builder{};
     };
 
-    [[nodiscard]] pstd::span<const SceneInfo> Scenes();
     [[nodiscard]] const SceneInfo& SceneInfoFor(std::string_view name);
     [[nodiscard]] BuiltScene BuildScene(std::string_view name, std::optional<Point2i> filmResolutionOverride = {});
 } // namespace spectra::scene

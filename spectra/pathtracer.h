@@ -12,8 +12,11 @@
 
 namespace xayah::pathtracer {
     struct RenderPipeline;
-    struct SceneState;
 } // namespace xayah::pathtracer
+
+namespace spectra::scene {
+    struct SceneInfo;
+} // namespace spectra::scene
 
 namespace xayah {
     class SpectraPathtracer final : public SpectraPlugin {
@@ -35,13 +38,6 @@ namespace xayah {
         void record_frame(const vk::raii::CommandBuffer& command_buffer) override;
 
     private:
-        struct HostContext {
-            const vk::raii::PhysicalDevice* physical_device{};
-            const vk::raii::Device* device{};
-            std::uint32_t frame_count{};
-            vk::Extent2D swapchain_extent{};
-        };
-
         struct PathtracerStatus {
             bool uses_external_completion{false};
             std::string state{};
@@ -62,10 +58,10 @@ namespace xayah {
         };
 
         void register_panels(Spectra& spectra);
-        void attach(HostContext host);
         void detach_noexcept() noexcept;
-        void update_host(HostContext host);
+        void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         [[nodiscard]] std::string window_detail() const;
+        [[nodiscard]] const spectra::scene::SceneInfo& active_scene_info() const;
 
         void draw_viewport_window();
         void draw_camera_window();
@@ -94,7 +90,10 @@ namespace xayah {
         [[nodiscard]] bool process_camera_input();
 
         std::string scene_name{};
-        HostContext host{};
+        const vk::raii::PhysicalDevice* physical_device{};
+        const vk::raii::Device* device{};
+        std::uint32_t frame_count{};
+        vk::Extent2D swapchain_extent{};
         bool attached{false};
 
         struct {
@@ -106,7 +105,10 @@ namespace xayah {
             std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
-        std::unique_ptr<xayah::pathtracer::SceneState> scene_state{};
+        const spectra::scene::SceneInfo* scene_info{};
+        std::array<int, 2> scene_film_resolution{0, 0};
+        spectra::Transform scene_camera_from_world{};
+        int scene_sampler_sample_count{0};
         std::unique_ptr<xayah::pathtracer::RenderPipeline> render_pipeline{};
         std::unique_ptr<spectra::pathtracer::GpuRuntime> gpu_runtime{};
 
