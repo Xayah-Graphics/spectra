@@ -1,12 +1,32 @@
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/colorspace.h>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
 
 namespace spectra {
-    SPECTRA_CONST RGBColorSpace* RGBColorSpace_sRGB;
-    SPECTRA_CONST RGBColorSpace* RGBColorSpace_DCI_P3;
-    SPECTRA_CONST RGBColorSpace* RGBColorSpace_Rec2020;
-    SPECTRA_CONST RGBColorSpace* RGBColorSpace_ACES2065_1;
+#if defined(__CUDA_ARCH__)
+    __device__ const
+#else
+    const
+#endif
+        RGBColorSpace* RGBColorSpace_sRGB;
+#if defined(__CUDA_ARCH__)
+    __device__ const
+#else
+    const
+#endif
+        RGBColorSpace* RGBColorSpace_DCI_P3;
+#if defined(__CUDA_ARCH__)
+    __device__ const
+#else
+    const
+#endif
+        RGBColorSpace* RGBColorSpace_Rec2020;
+#if defined(__CUDA_ARCH__)
+    __device__ const
+#else
+    const
+#endif
+        RGBColorSpace* RGBColorSpace_ACES2065_1;
 
     // RGBColorSpace Method Definitions
     RGBColorSpace::RGBColorSpace(Point2f r, Point2f g, Point2f b, Spectrum illuminant, const RGBToSpectrumTable* rgbToSpec, Allocator alloc) : r(r), g(g), b(b), illuminant(illuminant, alloc), rgbToSpectrumTable(rgbToSpec) {

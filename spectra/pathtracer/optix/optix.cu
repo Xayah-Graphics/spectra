@@ -1,15 +1,15 @@
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/materials.h>
-#include <spectra/pathtracer/core/media.h>
-#include <spectra/pathtracer/core/shapes.h>
-#include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/optix/aggregate.h>
-#include <spectra/pathtracer/optix/optix.h>
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/rng.h>
-#include <spectra/pathtracer/util/transform.h>
-#include <spectra/pathtracer/util/vecmath.h>
-#include <spectra/pathtracer/wavefront/intersect.h>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/materials.cuh>
+#include <spectra/pathtracer/core/media.cuh>
+#include <spectra/pathtracer/core/shapes.cuh>
+#include <spectra/pathtracer/core/textures.cuh>
+#include <spectra/pathtracer/optix/aggregate.cuh>
+#include <spectra/pathtracer/optix/optix.cuh>
+#include <spectra/pathtracer/util/float.cuh>
+#include <spectra/pathtracer/util/rng.cuh>
+#include <spectra/pathtracer/util/transform.cuh>
+#include <spectra/pathtracer/util/vecmath.cuh>
+#include <spectra/pathtracer/wavefront/intersect.cuh>
 
 // Make shader support functions visible to OptiX-IR, which is compiled as a
 // separate device module from spectra_gpu_lib.

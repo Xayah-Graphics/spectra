@@ -1,29 +1,29 @@
 #include <algorithm>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/shapes.h>
-#include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/image.h>
-#include <spectra/pathtracer/util/loopsubdiv.h>
-#include <spectra/pathtracer/util/lowdiscrepancy.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/sampling.h>
-#include <spectra/pathtracer/util/splines.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/shapes.cuh>
+#include <spectra/pathtracer/core/textures.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/float.cuh>
+#include <spectra/pathtracer/util/image.cuh>
+#include <spectra/pathtracer/util/loopsubdiv.cuh>
+#include <spectra/pathtracer/util/lowdiscrepancy.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/sampling.cuh>
+#include <spectra/pathtracer/util/splines.cuh>
 
 namespace spectra {
     // Sphere Method Definitions
-    SPECTRA_CPU_GPU Bounds3f Sphere::Bounds() const {
+    __host__ __device__ Bounds3f Sphere::Bounds() const {
         return (*renderFromObject)(Bounds3f(Point3f(-radius, -radius, zMin), Point3f(radius, radius, zMax)));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeSample> Sphere::Sample(Point2f u) const {
+    __host__ __device__ pstd::optional<ShapeSample> Sphere::Sample(Point2f u) const {
         Point3f pObj = Point3f(0, 0, 0) + radius * SampleUniformSphere(u);
         // Reproject _pObj_ to sphere surface and compute _pObjError_
         pObj *= radius / Distance(pObj, Point3f(0, 0, 0));
@@ -53,11 +53,11 @@ namespace spectra {
     }
 
     // Disk Method Definitions
-    SPECTRA_CPU_GPU Bounds3f Disk::Bounds() const {
+    __host__ __device__ Bounds3f Disk::Bounds() const {
         return (*renderFromObject)(Bounds3f(Point3f(-radius, -radius, height), Point3f(radius, radius, height)));
     }
 
-    SPECTRA_CPU_GPU DirectionCone Disk::NormalBounds() const {
+    __host__ __device__ DirectionCone Disk::NormalBounds() const {
         Normal3f n = (*renderFromObject)(Normal3f(0, 0, 1));
         if (reverseOrientation) n = -n;
         return DirectionCone(Vector3f(n));
@@ -73,7 +73,7 @@ namespace spectra {
     }
 
     // Cylinder Method Definitions
-    SPECTRA_CPU_GPU Bounds3f Cylinder::Bounds() const {
+    __host__ __device__ Bounds3f Cylinder::Bounds() const {
         return (*renderFromObject)(Bounds3f({-radius, -radius, zMin}, {radius, radius, zMax}));
     }
 
@@ -88,7 +88,7 @@ namespace spectra {
 
 
     pstd::vector<const TriangleMesh*>* Triangle::allMeshes;
-    SPECTRA_GPU pstd::vector<const TriangleMesh*>* allTriangleMeshesGPU;
+    __device__ pstd::vector<const TriangleMesh*>* allTriangleMeshesGPU;
 
     void Triangle::Init(Allocator alloc) {
         allMeshes = alloc.new_object<pstd::vector<const TriangleMesh*>>(alloc);
@@ -96,7 +96,7 @@ namespace spectra {
     }
 
     // Triangle Functions
-    SPECTRA_CPU_GPU pstd::optional<TriangleIntersection> IntersectTriangle(const Ray& ray, Float tMax, Point3f p0, Point3f p1, Point3f p2) {
+    __host__ __device__ pstd::optional<TriangleIntersection> IntersectTriangle(const Ray& ray, Float tMax, Point3f p0, Point3f p1, Point3f p2) {
         // Return no intersection if triangle is degenerate
         if (LengthSquared(Cross(p2 - p0, p1 - p0)) == 0) return {};
 
@@ -208,7 +208,7 @@ namespace spectra {
         return tris;
     }
 
-    SPECTRA_CPU_GPU Bounds3f Triangle::Bounds() const {
+    __host__ __device__ Bounds3f Triangle::Bounds() const {
         // Get triangle vertices in _p0_, _p1_, and _p2_
         const TriangleMesh* mesh = GetMesh();
         const int* v             = &mesh->vertexIndices[3 * triIndex];
@@ -217,7 +217,7 @@ namespace spectra {
         return Union(Bounds3f(p0, p1), p2);
     }
 
-    SPECTRA_CPU_GPU DirectionCone Triangle::NormalBounds() const {
+    __host__ __device__ DirectionCone Triangle::NormalBounds() const {
         // Get triangle vertices in _p0_, _p1_, and _p2_
         const TriangleMesh* mesh = GetMesh();
         const int* v             = &mesh->vertexIndices[3 * triIndex];
@@ -234,7 +234,7 @@ namespace spectra {
         return DirectionCone(Vector3f(n));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeIntersection> Triangle::Intersect(const Ray& ray, Float tMax) const {
+    __host__ __device__ pstd::optional<ShapeIntersection> Triangle::Intersect(const Ray& ray, Float tMax) const {
         // Get triangle vertices in _p0_, _p1_, and _p2_
         const TriangleMesh* mesh = GetMesh();
         const int* v             = &mesh->vertexIndices[3 * triIndex];
@@ -246,7 +246,7 @@ namespace spectra {
         return ShapeIntersection{intr, triIsect->t};
     }
 
-    SPECTRA_CPU_GPU bool Triangle::IntersectP(const Ray& ray, Float tMax) const {
+    __host__ __device__ bool Triangle::IntersectP(const Ray& ray, Float tMax) const {
         // Get triangle vertices in _p0_, _p1_, and _p2_
         const TriangleMesh* mesh = GetMesh();
         const int* v             = &mesh->vertexIndices[3 * triIndex];
@@ -322,15 +322,6 @@ namespace spectra {
         return alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, std::move(vi), std::move(P), std::move(S), std::move(N), std::move(uvs), std::move(faceIndices), alloc);
     }
 
-    std::string ToString(CurveType type) {
-        switch (type) {
-        case CurveType::Flat: return "Flat";
-        case CurveType::Cylinder: return "Cylinder";
-        case CurveType::Ribbon: return "Ribbon";
-        default: SPECTRA_FATAL("Unhandled case"); return "";
-        }
-    }
-
     // CurveCommon Method Definitions
     CurveCommon::CurveCommon(pstd::span<const Point3f> c, Float width0, Float width1, CurveType type, pstd::span<const Normal3f> norm, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation) : type(type), renderFromObject(renderFromObject), objectFromRender(objectFromRender), reverseOrientation(reverseOrientation), transformSwapsHandedness(renderFromObject->SwapsHandedness()) {
         width[0] = width0;
@@ -363,7 +354,7 @@ namespace spectra {
     }
 
     // Curve Method Definitions
-    SPECTRA_CPU_GPU Bounds3f Curve::Bounds() const {
+    __host__ __device__ Bounds3f Curve::Bounds() const {
         pstd::span<const Point3f> cpSpan(common->cpObj);
         Bounds3f objBounds = BoundCubicBezier(cpSpan, uMin, uMax);
         // Expand _objBounds_ by maximum curve width over $u$ range
@@ -373,7 +364,7 @@ namespace spectra {
         return (*common->renderFromObject)(objBounds);
     }
 
-    SPECTRA_CPU_GPU Float Curve::Area() const {
+    __host__ __device__ Float Curve::Area() const {
         pstd::array<Point3f, 4> cpObj = CubicBezierControlPoints(pstd::MakeConstSpan(common->cpObj), uMin, uMax);
         Float width0                  = Lerp(uMin, common->width[0], common->width[1]);
         Float width1                  = Lerp(uMax, common->width[0], common->width[1]);
@@ -539,22 +530,22 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeSample> Curve::Sample(Point2f u) const {
+    __host__ __device__ pstd::optional<ShapeSample> Curve::Sample(Point2f u) const {
         SPECTRA_FATAL("Curve::Sample not implemented.");
         return {};
     }
 
-    SPECTRA_CPU_GPU Float Curve::PDF(const Interaction&) const {
+    __host__ __device__ Float Curve::PDF(const Interaction&) const {
         SPECTRA_FATAL("Curve::PDF not implemented.");
         return {};
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeSample> Curve::Sample(const ShapeSampleContext& ctx, Point2f u) const {
+    __host__ __device__ pstd::optional<ShapeSample> Curve::Sample(const ShapeSampleContext& ctx, Point2f u) const {
         SPECTRA_FATAL("Curve::Sample not implemented.");
         return {};
     }
 
-    SPECTRA_CPU_GPU Float Curve::PDF(const ShapeSampleContext& ctx, Vector3f wi) const {
+    __host__ __device__ Float Curve::PDF(const ShapeSampleContext& ctx, Vector3f wi) const {
         SPECTRA_FATAL("Curve::PDF not implemented.");
         return {};
     }
@@ -787,7 +778,7 @@ namespace spectra {
     }
 
     pstd::vector<const BilinearPatchMesh*>* BilinearPatch::allMeshes;
-    SPECTRA_GPU pstd::vector<const BilinearPatchMesh*>* allBilinearMeshesGPU;
+    __device__ pstd::vector<const BilinearPatchMesh*>* allBilinearMeshesGPU;
 
     void BilinearPatch::Init(Allocator alloc) {
         allMeshes = alloc.new_object<pstd::vector<const BilinearPatchMesh*>>(alloc);
@@ -823,7 +814,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU Bounds3f BilinearPatch::Bounds() const {
+    __host__ __device__ Bounds3f BilinearPatch::Bounds() const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -833,7 +824,7 @@ namespace spectra {
         return Union(Bounds3f(p00, p01), Bounds3f(p10, p11));
     }
 
-    SPECTRA_CPU_GPU DirectionCone BilinearPatch::NormalBounds() const {
+    __host__ __device__ DirectionCone BilinearPatch::NormalBounds() const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -880,7 +871,7 @@ namespace spectra {
         return DirectionCone(n, Clamp(cosTheta, -1, 1));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeIntersection> BilinearPatch::Intersect(const Ray& ray, Float tMax) const {
+    __host__ __device__ pstd::optional<ShapeIntersection> BilinearPatch::Intersect(const Ray& ray, Float tMax) const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -893,7 +884,7 @@ namespace spectra {
         return ShapeIntersection{intr, blpIsect->t};
     }
 
-    SPECTRA_CPU_GPU bool BilinearPatch::IntersectP(const Ray& ray, Float tMax) const {
+    __host__ __device__ bool BilinearPatch::IntersectP(const Ray& ray, Float tMax) const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -903,7 +894,7 @@ namespace spectra {
         return IntersectBilinearPatch(ray, tMax, p00, p10, p01, p11).has_value();
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeSample> BilinearPatch::Sample(Point2f u) const {
+    __host__ __device__ pstd::optional<ShapeSample> BilinearPatch::Sample(Point2f u) const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -959,7 +950,7 @@ namespace spectra {
         return ShapeSample{Interaction(Point3fi(p, pError), n, st), pdf / Length(Cross(dpdu, dpdv))};
     }
 
-    SPECTRA_CPU_GPU Float BilinearPatch::PDF(const Interaction& intr) const {
+    __host__ __device__ Float BilinearPatch::PDF(const Interaction& intr) const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -995,7 +986,7 @@ namespace spectra {
         return pdf / Length(Cross(dpdu, dpdv));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ShapeSample> BilinearPatch::Sample(const ShapeSampleContext& ctx, Point2f u) const {
+    __host__ __device__ pstd::optional<ShapeSample> BilinearPatch::Sample(const ShapeSampleContext& ctx, Point2f u) const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -1061,7 +1052,7 @@ namespace spectra {
         return ShapeSample{Interaction(p, n, ctx.time, st), pdf};
     }
 
-    SPECTRA_CPU_GPU Float BilinearPatch::PDF(const ShapeSampleContext& ctx, Vector3f wi) const {
+    __host__ __device__ Float BilinearPatch::PDF(const ShapeSampleContext& ctx, Vector3f wi) const {
         const BilinearPatchMesh* mesh = GetMesh();
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];

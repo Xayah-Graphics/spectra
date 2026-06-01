@@ -1,16 +1,16 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/pstd.h>
-#include <spectra/pathtracer/util/sampling.h>
-#include <spectra/pathtracer/util/scattering.h>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/float.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/pstd.cuh>
+#include <spectra/pathtracer/util/sampling.cuh>
+#include <spectra/pathtracer/util/scattering.cuh>
 
 namespace spectra {
     // Sampling Function Definitions
-    SPECTRA_CPU_GPU pstd::array<Float, 3> SampleSphericalTriangle(const pstd::array<Point3f, 3>& v, Point3f p, Point2f u, Float* pdf) {
+    __host__ __device__ pstd::array<Float, 3> SampleSphericalTriangle(const pstd::array<Point3f, 3>& v, Point3f p, Point2f u, Float* pdf) {
         if (pdf) *pdf = 0;
         // Compute vectors _a_, _b_, and _c_ to spherical triangle vertices
         Vector3f a(v[0] - p), b(v[1] - p), c(v[2] - p);
@@ -88,7 +88,7 @@ namespace spectra {
     }
 
     // Via Jim Arvo's SphTri.C
-    SPECTRA_CPU_GPU Point2f InvertSphericalTriangleSample(const pstd::array<Point3f, 3>& v, Point3f p, Vector3f w) {
+    __host__ __device__ Point2f InvertSphericalTriangleSample(const pstd::array<Point3f, 3>& v, Point3f p, Vector3f w) {
         // Compute vectors _a_, _b_, and _c_ to spherical triangle vertices
         Vector3f a(v[0] - p), b(v[1] - p), c(v[2] - p);
         CHECK_GT(LengthSquared(a), 0);
@@ -137,7 +137,7 @@ namespace spectra {
         return Point2f(Clamp(u0, 0, 1), Clamp(u1, 0, 1));
     }
 
-    SPECTRA_CPU_GPU Point3f SampleSphericalRectangle(Point3f pRef, Point3f s, Vector3f ex, Vector3f ey, Point2f u, Float* pdf) {
+    __host__ __device__ Point3f SampleSphericalRectangle(Point3f pRef, Point3f s, Vector3f ex, Vector3f ey, Point2f u, Float* pdf) {
         // Compute local reference frame and transform rectangle coordinates
         Float exl = Length(ex), eyl = Length(ey);
         Frame R         = Frame::FromXY(ex / exl, ey / eyl);
@@ -192,7 +192,7 @@ namespace spectra {
         return pRef + R.FromLocal(Vector3f(xu, yv, z0));
     }
 
-    SPECTRA_CPU_GPU Point2f InvertSphericalRectangleSample(Point3f pRef, Point3f s, Vector3f ex, Vector3f ey, Point3f pRect) {
+    __host__ __device__ Point2f InvertSphericalRectangleSample(Point3f pRef, Point3f s, Vector3f ex, Vector3f ey, Point3f pRect) {
         // SphQuadInit()
         // local reference system 'R'
         Float exl = Length(ex), eyl = Length(ey);
@@ -302,7 +302,7 @@ namespace spectra {
         return u;
     }
 
-    SPECTRA_CPU_GPU Vector3f SampleHenyeyGreenstein(Vector3f wo, Float g, Point2f u, Float* pdf) {
+    __host__ __device__ Vector3f SampleHenyeyGreenstein(Vector3f wo, Float g, Point2f u, Float* pdf) {
         // When g \approx -1 and u[0] \approx 0 or with g \approx 1 and u[0]
         // \approx 1, the computation of cosTheta below is unstable and can
         // give, leading to NaNs. For now we limit g to the range where it is
@@ -337,7 +337,7 @@ namespace spectra {
         return p;
     }
 
-    SPECTRA_CPU_GPU Float SampleCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, pstd::span<const Float> F, Float u, Float* fval, Float* pdf) {
+    __host__ __device__ Float SampleCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, pstd::span<const Float> F, Float u, Float* fval, Float* pdf) {
         CHECK_EQ(nodes.size(), f.size());
         CHECK_EQ(f.size(), F.size());
         // Map _u_ to a spline interval by inverting _F_
@@ -370,7 +370,7 @@ namespace spectra {
         return x0 + width * t;
     }
 
-    SPECTRA_CPU_GPU Float SampleCatmullRom2D(pstd::span<const Float> nodes1, pstd::span<const Float> nodes2, pstd::span<const Float> values, pstd::span<const Float> cdf, Float alpha, Float u, Float* fval, Float* pdf) {
+    __host__ __device__ Float SampleCatmullRom2D(pstd::span<const Float> nodes1, pstd::span<const Float> nodes2, pstd::span<const Float> values, pstd::span<const Float> cdf, Float alpha, Float u, Float* fval, Float* pdf) {
         // Determine offset and coefficients for the _alpha_ parameter
         int offset;
         Float weights[4];
@@ -478,7 +478,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU int AliasTable::Sample(Float u, Float* pmf, Float* uRemapped) const {
+    __host__ __device__ int AliasTable::Sample(Float u, Float* pmf, Float* uRemapped) const {
         // Compute alias table _offset_ and remapped random sample _up_
         int offset = std::min<int>(u * bins.size(), bins.size() - 1);
         Float up   = std::min<Float>(u * bins.size() - offset, OneMinusEpsilon);

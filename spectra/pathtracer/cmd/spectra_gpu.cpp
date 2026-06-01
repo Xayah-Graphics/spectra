@@ -1,11 +1,12 @@
 #include <charconv>
 #include <cstdio>
+#include <cuda_runtime_api.h>
 #include <exception>
 #include <optional>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/gpu/memory.h>
-#include <spectra/pathtracer/integrator.h>
-#include <spectra/pathtracer/util/float.h>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/gpu/memory.cuh>
+#include <spectra/pathtracer/integrator.cuh>
+#include <spectra/pathtracer/util/float.cuh>
 #include <spectra/scene.h>
 #include <stdexcept>
 #include <string>
@@ -19,8 +20,8 @@
 #include <Windows.h>
 #include <shellapi.h>
 // clang-format on
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/string.h>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/string.cuh>
 #endif
 
 namespace {

@@ -7,21 +7,21 @@
 #include <optix_stubs.h>
 #include <optix_stack_size.h>
 // clang-format on
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/lights.h>
-#include <spectra/pathtracer/core/materials.h>
-#include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/optix/aggregate.h>
-#include <spectra/pathtracer/optix/optix.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/loopsubdiv.h>
-#include <spectra/pathtracer/util/mesh.h>
-#include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/pstd.h>
-#include <spectra/pathtracer/util/splines.h>
-#include <spectra/pathtracer/wavefront/intersect.h>
-#include <spectra/pathtracer/wavefront_scene.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/lights.cuh>
+#include <spectra/pathtracer/core/materials.cuh>
+#include <spectra/pathtracer/core/textures.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/optix/aggregate.cuh>
+#include <spectra/pathtracer/optix/optix.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/loopsubdiv.cuh>
+#include <spectra/pathtracer/util/mesh.cuh>
+#include <spectra/pathtracer/util/parallel.cuh>
+#include <spectra/pathtracer/util/pstd.cuh>
+#include <spectra/pathtracer/util/splines.cuh>
+#include <spectra/pathtracer/wavefront/intersect.cuh>
+#include <spectra/pathtracer/wavefront_scene.cuh>
 #include <spectra_optix_config.h>
 #include <unordered_map>
 #include <vector>
@@ -244,7 +244,7 @@ namespace spectra::optix {
                             std::memcpy(n, nCPU, nVertices * sizeof(Normal3f));
                             std::memcpy(uv, uvCPU, nVertices * sizeof(Point2f));
 
-                            GPUParallelFor("Evaluate Displacement", nVertices, [=] SPECTRA_GPU(int i) {
+                            GPUParallelFor("Evaluate Displacement", nVertices, [=] __device__(int i) {
                                 TextureEvalContext ctx;
                                 ctx.p   = p[i];
                                 ctx.uv  = uv[i];

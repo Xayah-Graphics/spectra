@@ -1,4 +1,4 @@
-#include <spectra/pathtracer/util/scattering.h>
+#include <spectra/pathtracer/util/scattering.cuh>
 
 namespace spectra {
     // BSSRDF Utility Functions

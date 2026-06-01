@@ -1,35 +1,35 @@
 #include <cstdio>
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/filters.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/samplers.h>
-#include <spectra/pathtracer/util/string.h>
+#include <spectra/pathtracer/core/cameras.cuh>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/filters.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/samplers.cuh>
+#include <spectra/pathtracer/util/string.cuh>
 #include <string>
 
 namespace spectra {
-    SPECTRA_CPU_GPU void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension) {
+    __host__ __device__ void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension) {
         auto start = [&](auto ptr) { return ptr->StartPixelSample(p, sampleIndex, dimension); };
         return Dispatch(start);
     }
 
-    SPECTRA_CPU_GPU int Sampler::SamplesPerPixel() const {
+    __host__ __device__ int Sampler::SamplesPerPixel() const {
         auto spp = [&](auto ptr) { return ptr->SamplesPerPixel(); };
         return Dispatch(spp);
     }
 
-    SPECTRA_CPU_GPU Float Sampler::Get1D() {
+    __host__ __device__ Float Sampler::Get1D() {
         auto get = [&](auto ptr) { return ptr->Get1D(); };
         return Dispatch(get);
     }
 
-    SPECTRA_CPU_GPU Point2f Sampler::Get2D() {
+    __host__ __device__ Point2f Sampler::Get2D() {
         auto get = [&](auto ptr) { return ptr->Get2D(); };
         return Dispatch(get);
     }
 
-    SPECTRA_CPU_GPU Point2f Sampler::GetPixel2D() {
+    __host__ __device__ Point2f Sampler::GetPixel2D() {
         auto get = [&](auto ptr) { return ptr->GetPixel2D(); };
         return Dispatch(get);
     }
@@ -249,17 +249,17 @@ namespace spectra {
     }
 
     // MLTSampler Method Definitions
-    SPECTRA_CPU_GPU Float MLTSampler::Get1D() {
+    __host__ __device__ Float MLTSampler::Get1D() {
         int index = GetNextIndex();
         EnsureReady(index);
         return X[index].value;
     }
 
-    SPECTRA_CPU_GPU Point2f MLTSampler::Get2D() {
+    __host__ __device__ Point2f MLTSampler::Get2D() {
         return {Get1D(), Get1D()};
     }
 
-    SPECTRA_CPU_GPU Point2f MLTSampler::GetPixel2D() {
+    __host__ __device__ Point2f MLTSampler::GetPixel2D() {
         return Get2D();
     }
 
@@ -268,16 +268,16 @@ namespace spectra {
         return {};
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::StartIteration() {
+    __host__ __device__ void MLTSampler::StartIteration() {
         currentIteration++;
         largeStep = rng.Uniform<Float>() < largeStepProbability;
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::Accept() {
+    __host__ __device__ void MLTSampler::Accept() {
         if (largeStep) lastLargeStepIteration = currentIteration;
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::EnsureReady(int index) {
+    __host__ __device__ void MLTSampler::EnsureReady(int index) {
 #if defined(__CUDA_ARCH__)
         SPECTRA_FATAL("MLTSampler not supported on GPU--needs vector resize...");
         return;
@@ -309,13 +309,13 @@ namespace spectra {
 #endif
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::Reject() {
+    __host__ __device__ void MLTSampler::Reject() {
         for (auto& X_i : X)
             if (X_i.lastModificationIteration == currentIteration) X_i.Restore();
         --currentIteration;
     }
 
-    SPECTRA_CPU_GPU void MLTSampler::StartStream(int index) {
+    __host__ __device__ void MLTSampler::StartStream(int index) {
         DCHECK_LT(index, streamCount);
         streamIndex = index;
         sampleIndex = 0;

@@ -105,7 +105,6 @@ if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/textures/sky.exr")
 endif ()
 set(SPECTRA_GPU_DEFINITIONS
         PTEX_STATIC
-        "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>"
         "$<$<CONFIG:Debug>:SPECTRA_DEBUG_BUILD>"
 )
 if (SPECTRA_FLOAT_AS_DOUBLE)
@@ -203,7 +202,6 @@ set(SPECTRA_GPU_INCLUDE_DIRS
         ${STB_INCLUDE}
         ${QOI_INCLUDE}
         ${ZLIB_INCLUDE_DIRS}
-        ${LIBDEFLATE_INCLUDE_DIRS}
         ${PTEX_INCLUDE}
         ${DOUBLE_CONVERSION_INCLUDE}
         ${NANOVDB_INCLUDE}
@@ -245,22 +243,22 @@ target_compile_definitions(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_DEFINITIONS})
 target_include_directories(spectra_gpu_soac PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
 
 add_custom_command(
-        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.cuh
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
-        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/core/spectra.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
+        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/core/spectra.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.cuh
         DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/core/spectra.soa
         VERBATIM
 )
 add_custom_command(
-        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+        OUTPUT ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.cuh
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_GPU_GENERATED_DIR}
-        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/wavefront/workitems.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+        COMMAND spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/wavefront/workitems.soa > ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.cuh
         DEPENDS spectra_gpu_soac ${CMAKE_CURRENT_SOURCE_DIR}/spectra/pathtracer/wavefront/workitems.soa
         VERBATIM
 )
 set(SPECTRA_GPU_SOA_GENERATED
-        ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.h
-        ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.h
+        ${SPECTRA_GPU_GENERATED_DIR}/spectra_soa.cuh
+        ${SPECTRA_GPU_GENERATED_DIR}/spectra_wavefront_workitems_soa.cuh
 )
 add_custom_target(spectra_gpu_soa_generated DEPENDS ${SPECTRA_GPU_SOA_GENERATED})
 
@@ -314,29 +312,29 @@ set(SPECTRA_GPU_CORE_SOURCE
         spectra/pathtracer/core/lights.cu
         spectra/pathtracer/core/lightsamplers.cu
         spectra/pathtracer/core/materials.cu
-        spectra/pathtracer/core/media.cpp
+        spectra/pathtracer/core/media_host.cu
         spectra/pathtracer/core/media.cu
         spectra/pathtracer/core/options.cu
-        spectra/pathtracer/core/paramdict.cpp
+        spectra/pathtracer/core/paramdict.cu
         spectra/pathtracer/core/samplers.cu
         spectra/pathtracer/core/shapes.cu
         spectra/pathtracer/core/textures.cu
 )
 set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/bluenoise.cu
-        spectra/pathtracer/util/buffercache.cpp
+        spectra/pathtracer/util/buffercache.cu
         spectra/pathtracer/util/color.cu
         spectra/pathtracer/util/colorspace.cu
-        spectra/pathtracer/util/file.cpp
-        spectra/pathtracer/util/image.cpp
-        spectra/pathtracer/util/loopsubdiv.cpp
+        spectra/pathtracer/util/file.cu
+        spectra/pathtracer/util/image.cu
+        spectra/pathtracer/util/loopsubdiv.cu
         spectra/pathtracer/util/lowdiscrepancy.cu
         spectra/pathtracer/util/math.cu
-        spectra/pathtracer/util/memory.cpp
+        spectra/pathtracer/util/memory.cu
         spectra/pathtracer/util/mesh.cu
-        spectra/pathtracer/util/mipmap.cpp
+        spectra/pathtracer/util/mipmap.cu
         spectra/pathtracer/util/noise.cu
-        spectra/pathtracer/util/parallel.cpp
+        spectra/pathtracer/util/parallel.cu
         spectra/pathtracer/util/pmj02tables.cu
         spectra/pathtracer/util/primes.cu
         spectra/pathtracer/util/pstd.cu
@@ -344,8 +342,8 @@ set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/scattering.cu
         spectra/pathtracer/util/sobolmatrices.cu
         spectra/pathtracer/util/spectrum.cu
-        spectra/pathtracer/util/stbimage.cpp
-        spectra/pathtracer/util/string.cpp
+        spectra/pathtracer/util/stbimage.cu
+        spectra/pathtracer/util/string.cu
         spectra/pathtracer/util/transform.cu
         spectra/pathtracer/util/vecmath.cu
 )
@@ -418,7 +416,6 @@ target_link_libraries(
         OpenEXR::OpenEXR
         Ptex_static
         ZLIB::ZLIB
-        deflate::deflate
         utf8proc
         CUDA::cudart
         CUDA::cuda_driver
@@ -449,7 +446,6 @@ target_sources(
         PRIVATE
         spectra/pathtracer.h
         spectra/pathtracer.cpp
-        spectra/pathtracer/integrator.h
         spectra/spectra.h
         spectra/spectra.cpp
 

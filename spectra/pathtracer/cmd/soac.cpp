@@ -334,11 +334,11 @@ int main(int argc, char* argv[]) {
         // operator[] madness...
         printf("    struct GetSetIndirector {\n");
         if (!soa.templateType.empty()) {
-            printf("        SPECTRA_CPU_GPU\n");
+            printf("        __host__ __device__\n");
             printf("        operator %s<%s>() const {\n", soa.type.c_str(), soa.templateType.c_str());
             printf("            %s<%s> r;\n", soa.type.c_str(), soa.templateType.c_str());
         } else {
-            printf("        SPECTRA_CPU_GPU\n");
+            printf("        __host__ __device__\n");
             printf("        operator %s() const {\n", soa.type.c_str());
             printf("            %s r;\n", soa.type.c_str());
         }
@@ -354,7 +354,7 @@ int main(int argc, char* argv[]) {
         printf("            return r;\n");
         printf("        }\n");
 
-        printf("        SPECTRA_CPU_GPU\n");
+        printf("        __host__ __device__\n");
         if (!soa.templateType.empty())
             printf("        void operator=(const %s<%s> &a) {\n", soa.type.c_str(), soa.templateType.c_str());
         else
@@ -373,12 +373,12 @@ int main(int argc, char* argv[]) {
         printf("        int i;\n");
         printf("    };\n\n");
 
-        printf("    SPECTRA_CPU_GPU\n");
+        printf("    __host__ __device__\n");
         printf("    GetSetIndirector operator[](int i) {\n");
         printf("        DCHECK_LT(i, nAlloc);\n");
         printf("        return GetSetIndirector{this, i};\n");
         printf("    }\n");
-        printf("    SPECTRA_CPU_GPU\n");
+        printf("    __host__ __device__\n");
         if (!soa.templateType.empty()) {
             printf("    %s<%s> operator[](int i) const {\n", soa.type.c_str(), soa.templateType.c_str());
             printf("        DCHECK_LT(i, nAlloc);\n");

@@ -1,36 +1,36 @@
 #include <atomic>
 #include <cstdint>
 #include <numeric>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/lights.h>
-#include <spectra/pathtracer/core/lightsamplers.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/hash.h>
-#include <spectra/pathtracer/util/lowdiscrepancy.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/sampling.h>
-#include <spectra/pathtracer/util/spectrum.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/lights.cuh>
+#include <spectra/pathtracer/core/lightsamplers.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/hash.cuh>
+#include <spectra/pathtracer/util/lowdiscrepancy.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/sampling.cuh>
+#include <spectra/pathtracer/util/spectrum.cuh>
 #include <vector>
 
 namespace spectra {
-    SPECTRA_CPU_GPU pstd::optional<SampledLight> LightSampler::Sample(const LightSampleContext& ctx, Float u) const {
+    __host__ __device__ pstd::optional<SampledLight> LightSampler::Sample(const LightSampleContext& ctx, Float u) const {
         auto s = [&](auto ptr) { return ptr->Sample(ctx, u); };
         return Dispatch(s);
     }
 
-    SPECTRA_CPU_GPU Float LightSampler::PMF(const LightSampleContext& ctx, Light light) const {
+    __host__ __device__ Float LightSampler::PMF(const LightSampleContext& ctx, Light light) const {
         auto pdf = [&](auto ptr) { return ptr->PMF(ctx, light); };
         return Dispatch(pdf);
     }
 
-    SPECTRA_CPU_GPU pstd::optional<SampledLight> LightSampler::Sample(Float u) const {
+    __host__ __device__ pstd::optional<SampledLight> LightSampler::Sample(Float u) const {
         auto sample = [&](auto ptr) { return ptr->Sample(u); };
         return Dispatch(sample);
     }
 
-    SPECTRA_CPU_GPU Float LightSampler::PMF(Light light) const {
+    __host__ __device__ Float LightSampler::PMF(Light light) const {
         auto pdf = [&](auto ptr) { return ptr->PMF(light); };
         return Dispatch(pdf);
     }
@@ -198,7 +198,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU pstd::optional<SampledLight> ExhaustiveLightSampler::Sample(const LightSampleContext& ctx, Float u) const {
+    __host__ __device__ pstd::optional<SampledLight> ExhaustiveLightSampler::Sample(const LightSampleContext& ctx, Float u) const {
         Float pInfinite = Float(infiniteLights.size()) / Float(infiniteLights.size() + (!lightBounds.empty() ? 1 : 0));
 
         // Note: shared with BVH light sampler...
@@ -222,7 +222,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU Float ExhaustiveLightSampler::PMF(const LightSampleContext& ctx, Light light) const {
+    __host__ __device__ Float ExhaustiveLightSampler::PMF(const LightSampleContext& ctx, Light light) const {
         if (!lightToBoundedIndex.HasKey(light)) return 1.f / (infiniteLights.size() + (!lightBounds.empty() ? 1 : 0));
 
         Float importanceSum   = 0;

@@ -1,13 +1,13 @@
 #include <cmath>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/vecmath.h>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/vecmath.cuh>
 #include <vector>
 
 namespace spectra {
     // General case
     template <int N>
-    SPECTRA_CPU_GPU pstd::optional<SquareMatrix<N>> Inverse(const SquareMatrix<N>& m) {
+    __host__ __device__ pstd::optional<SquareMatrix<N>> Inverse(const SquareMatrix<N>& m) {
         int indxc[N], indxr[N];
         int ipiv[N] = {0};
         Float minv[N][N];
@@ -64,8 +64,8 @@ namespace spectra {
     }
 
     template class SquareMatrix<2>;
-    template SPECTRA_CPU_GPU pstd::optional<SquareMatrix<2>> Inverse(const SquareMatrix<2>&);
-    template SPECTRA_CPU_GPU SquareMatrix<2> operator*(const SquareMatrix<2>& m1, const SquareMatrix<2>& m2);
+    template __host__ __device__ pstd::optional<SquareMatrix<2>> Inverse(const SquareMatrix<2>&);
+    template __host__ __device__ SquareMatrix<2> operator*(const SquareMatrix<2>& m1, const SquareMatrix<2>& m2);
 
     template class SquareMatrix<3>;
     template class SquareMatrix<4>;
@@ -104,7 +104,7 @@ namespace spectra {
 
 
     // Spline Interpolation Function Definitions
-    SPECTRA_CPU_GPU bool CatmullRomWeights(pstd::span<const Float> nodes, Float x, int* offset, pstd::span<Float> weights) {
+    __host__ __device__ bool CatmullRomWeights(pstd::span<const Float> nodes, Float x, int* offset, pstd::span<Float> weights) {
         CHECK_GE(weights.size(), 4);
         // Return _false_ if _x_ is out of bounds
         if (!(x >= nodes.front() && x <= nodes.back())) return false;
@@ -148,7 +148,7 @@ namespace spectra {
         return true;
     }
 
-    SPECTRA_CPU_GPU Float CatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, Float x) {
+    __host__ __device__ Float CatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, Float x) {
         CHECK_EQ(nodes.size(), f.size());
         if (!(x >= nodes.front() && x <= nodes.back())) return 0;
         int idx  = FindInterval(nodes.size(), [&](int i) { return nodes[i] <= x; });
@@ -170,7 +170,7 @@ namespace spectra {
         return (2 * t3 - 3 * t2 + 1) * f0 + (-2 * t3 + 3 * t2) * f1 + (t3 - 2 * t2 + t) * d0 + (t3 - t2) * d1;
     }
 
-    SPECTRA_CPU_GPU Float InvertCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, Float u) {
+    __host__ __device__ Float InvertCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, Float u) {
         // Stop when _u_ is out of bounds
         if (!(u > f.front()))
             return nodes.front();
@@ -206,7 +206,7 @@ namespace spectra {
         return x0 + t * width;
     }
 
-    SPECTRA_CPU_GPU Float IntegrateCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, pstd::span<Float> cdf) {
+    __host__ __device__ Float IntegrateCatmullRom(pstd::span<const Float> nodes, pstd::span<const Float> f, pstd::span<Float> cdf) {
         CHECK_EQ(nodes.size(), f.size());
         Float sum = 0;
         cdf[0]    = 0;
@@ -229,7 +229,7 @@ namespace spectra {
 
     // Square--Sphere Mapping Function Definitions
     // Via source code from Clarberg: Fast Equal-Area Mapping of the (Hemi)Sphere using SIMD
-    SPECTRA_CPU_GPU Vector3f EqualAreaSquareToSphere(Point2f p) {
+    __host__ __device__ Vector3f EqualAreaSquareToSphere(Point2f p) {
         CHECK(p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1);
         // Transform _p_ to $[-1,1]^2$ and compute absolute values
         Float u = 2 * p.x - 1, v = 2 * p.y - 1;
@@ -253,7 +253,7 @@ namespace spectra {
     }
 
     // Via source code from Clarberg: Fast Equal-Area Mapping of the (Hemi)Sphere using SIMD
-    SPECTRA_CPU_GPU Point2f EqualAreaSphereToSquare(Vector3f d) {
+    __host__ __device__ Point2f EqualAreaSphereToSquare(Vector3f d) {
         DCHECK(LengthSquared(d) > .999 && LengthSquared(d) < 1.001);
         Float x = std::abs(d.x), y = std::abs(d.y), z = std::abs(d.z);
 
@@ -298,7 +298,7 @@ namespace spectra {
         return Point2f(0.5f * (u + 1), 0.5f * (v + 1));
     }
 
-    SPECTRA_CPU_GPU Point2f WrapEqualAreaSquare(Point2f uv) {
+    __host__ __device__ Point2f WrapEqualAreaSquare(Point2f uv) {
         if (uv[0] < 0) {
             uv[0] = -uv[0]; // mirror across u = 0
             uv[1] = 1 - uv[1]; // mirror across v = 0.5

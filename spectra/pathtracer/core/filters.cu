@@ -1,24 +1,24 @@
-#include <spectra/pathtracer/core/filters.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/util/rng.h>
+#include <spectra/pathtracer/core/filters.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/util/rng.cuh>
 
 namespace spectra {
-    SPECTRA_CPU_GPU Float Filter::Evaluate(Point2f p) const {
+    __host__ __device__ Float Filter::Evaluate(Point2f p) const {
         auto eval = [&](auto ptr) { return ptr->Evaluate(p); };
         return Dispatch(eval);
     }
 
-    SPECTRA_CPU_GPU FilterSample Filter::Sample(Point2f u) const {
+    __host__ __device__ FilterSample Filter::Sample(Point2f u) const {
         auto sample = [&](auto ptr) { return ptr->Sample(u); };
         return Dispatch(sample);
     }
 
-    SPECTRA_CPU_GPU Vector2f Filter::Radius() const {
+    __host__ __device__ Vector2f Filter::Radius() const {
         auto radius = [&](auto ptr) { return ptr->Radius(); };
         return Dispatch(radius);
     }
 
-    SPECTRA_CPU_GPU Float Filter::Integral() const {
+    __host__ __device__ Float Filter::Integral() const {
         auto integral = [&](auto ptr) { return ptr->Integral(); };
         return Dispatch(integral);
     }
@@ -54,7 +54,7 @@ namespace spectra {
     }
 
     // Sinc Filter Method Definitions
-    SPECTRA_CPU_GPU Float LanczosSincFilter::Integral() const {
+    __host__ __device__ Float LanczosSincFilter::Integral() const {
         Float sum       = 0;
         int sqrtSamples = 64;
         int nSamples    = sqrtSamples * sqrtSamples;

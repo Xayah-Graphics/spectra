@@ -5,87 +5,87 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <spectra/pathtracer/core/bsdf.h>
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/film.h>
-#include <spectra/pathtracer/core/filters.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/util/bluenoise.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/color.h>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/image.h>
-#include <spectra/pathtracer/util/lowdiscrepancy.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/spectrum.h>
-#include <spectra/pathtracer/util/transform.h>
+#include <spectra/pathtracer/core/bsdf.cuh>
+#include <spectra/pathtracer/core/cameras.cuh>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/film.cuh>
+#include <spectra/pathtracer/core/filters.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/util/bluenoise.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/color.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/image.cuh>
+#include <spectra/pathtracer/util/lowdiscrepancy.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/parallel.cuh>
+#include <spectra/pathtracer/util/spectrum.cuh>
+#include <spectra/pathtracer/util/transform.cuh>
 
 namespace spectra {
-    SPECTRA_CPU_GPU SampledWavelengths Film::SampleWavelengths(Float u) const {
+    __host__ __device__ SampledWavelengths Film::SampleWavelengths(Float u) const {
         auto sample = [&](auto ptr) { return ptr->SampleWavelengths(u); };
         return Dispatch(sample);
     }
 
-    SPECTRA_CPU_GPU Bounds2f Film::SampleBounds() const {
+    __host__ __device__ Bounds2f Film::SampleBounds() const {
         auto sb = [&](auto ptr) { return ptr->SampleBounds(); };
         return Dispatch(sb);
     }
 
-    SPECTRA_CPU_GPU Bounds2i Film::PixelBounds() const {
+    __host__ __device__ Bounds2i Film::PixelBounds() const {
         auto pb = [&](auto ptr) { return ptr->PixelBounds(); };
         return Dispatch(pb);
     }
 
-    SPECTRA_CPU_GPU Point2i Film::FullResolution() const {
+    __host__ __device__ Point2i Film::FullResolution() const {
         auto fr = [&](auto ptr) { return ptr->FullResolution(); };
         return Dispatch(fr);
     }
 
-    SPECTRA_CPU_GPU Float Film::Diagonal() const {
+    __host__ __device__ Float Film::Diagonal() const {
         auto diag = [&](auto ptr) { return ptr->Diagonal(); };
         return Dispatch(diag);
     }
 
-    SPECTRA_CPU_GPU Filter Film::GetFilter() const {
+    __host__ __device__ Filter Film::GetFilter() const {
         auto filter = [&](auto ptr) { return ptr->GetFilter(); };
         return Dispatch(filter);
     }
 
-    SPECTRA_CPU_GPU bool Film::UsesVisibleSurface() const {
+    __host__ __device__ bool Film::UsesVisibleSurface() const {
         auto uses = [&](auto ptr) { return ptr->UsesVisibleSurface(); };
         return Dispatch(uses);
     }
 
-    SPECTRA_CPU_GPU RGB Film::GetPixelRGB(Point2i p, Float splatScale) const {
+    __host__ __device__ RGB Film::GetPixelRGB(Point2i p, Float splatScale) const {
         auto get = [&](auto ptr) { return ptr->GetPixelRGB(p, splatScale); };
         return Dispatch(get);
     }
 
-    SPECTRA_CPU_GPU RGB Film::ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
+    __host__ __device__ RGB Film::ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
         auto out = [&](auto ptr) { return ptr->ToOutputRGB(L, lambda); };
         return Dispatch(out);
     }
 
-    SPECTRA_CPU_GPU void Film::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
+    __host__ __device__ void Film::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
         auto add = [&](auto ptr) { return ptr->AddSample(pFilm, L, lambda, visibleSurface, weight); };
         return Dispatch(add);
     }
 
-    SPECTRA_CPU_GPU const PixelSensor* Film::GetPixelSensor() const {
+    __host__ __device__ const PixelSensor* Film::GetPixelSensor() const {
         auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
         return Dispatch(filter);
     }
 
-    SPECTRA_CPU_GPU void Film::ResetPixel(Point2i p) {
+    __host__ __device__ void Film::ResetPixel(Point2i p) {
         auto rp = [&](auto ptr) { ptr->ResetPixel(p); };
         return Dispatch(rp);
     }
 
-    SPECTRA_CPU_GPU void Film::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda) {
+    __host__ __device__ void Film::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda) {
         auto splat = [&](auto ptr) { return ptr->AddSplat(p, v, lambda); };
         return Dispatch(splat);
     }
@@ -194,14 +194,14 @@ namespace spectra {
     }
 
     // FilmBase Method Definitions
-    SPECTRA_CPU_GPU Bounds2f FilmBase::SampleBounds() const {
+    __host__ __device__ Bounds2f FilmBase::SampleBounds() const {
         Vector2f radius = filter.Radius();
         return Bounds2f(pixelBounds.pMin - radius + Vector2f(0.5f, 0.5f), pixelBounds.pMax + radius - Vector2f(0.5f, 0.5f));
     }
 
 
     // VisibleSurface Method Definitions
-    SPECTRA_CPU_GPU VisibleSurface::VisibleSurface(const SurfaceInteraction& si, SampledSpectrum albedo, const SampledWavelengths& lambda) : albedo(albedo) {
+    __host__ __device__ VisibleSurface::VisibleSurface(const SurfaceInteraction& si, SampledSpectrum albedo, const SampledWavelengths& lambda) : albedo(albedo) {
         set = true;
         // Initialize geometric _VisibleSurface_ members
         p           = si.p();
@@ -293,7 +293,7 @@ namespace spectra {
         outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
     }
 
-    SPECTRA_CPU_GPU void RGBFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths& lambda) {
+    __host__ __device__ void RGBFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths& lambda) {
         CHECK(!L.HasNaNs());
         // Convert sample radiance to _PixelSensor_ RGB
         RGB rgb = sensor->ToSensorRGB(L, lambda);
@@ -364,7 +364,7 @@ namespace spectra {
     }
 
     // GBufferFilm Method Definitions
-    SPECTRA_CPU_GPU void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
+    __host__ __device__ void GBufferFilm::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
         RGB rgb = sensor->ToSensorRGB(L, lambda);
         Float m = MaxComponentValue(rgb);
         if (m > maxComponentValue) rgb *= maxComponentValue / m;
@@ -405,7 +405,7 @@ namespace spectra {
         outputRGBFromSensorRGB = colorSpace->RGBFromXYZ * sensor->XYZFromSensorRGB;
     }
 
-    SPECTRA_CPU_GPU void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda) {
+    __host__ __device__ void GBufferFilm::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda) {
         // NOTE: same code as RGBFilm::AddSplat()...
         CHECK(!v.HasNaNs());
         RGB rgb = sensor->ToSensorRGB(v, lambda);
@@ -559,7 +559,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU RGB SpectralFilm::GetPixelRGB(Point2i p, Float splatScale) const {
+    __host__ __device__ RGB SpectralFilm::GetPixelRGB(Point2i p, Float splatScale) const {
         // Note: this is effectively the same as RGBFilm::GetPixelRGB
 
         const Pixel& pixel = pixels[p];
@@ -577,7 +577,7 @@ namespace spectra {
         return rgb;
     }
 
-    SPECTRA_CPU_GPU void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths& lambda) {
+    __host__ __device__ void SpectralFilm::AddSplat(Point2f p, SampledSpectrum L, const SampledWavelengths& lambda) {
         // This, too, is similar to RGBFilm::AddSplat(), with additions for
         // spectra.
 
@@ -705,7 +705,7 @@ namespace spectra {
             throw std::runtime_error(spectra::diagnostics::Format("Unfortunately pbrt must be recompiled to render wavelengths "
                                                                   "beyond the [%f,%f] range ([%f,%f] was specified). Please "
                                                                   "update Lambda_min and/or Lambda_max as necessary in "
-                                                                  "spectra/pathtracer/pbrt/util/spectrum.h and recompile.",
+                                                                  "spectra/pathtracer/pbrt/util/spectrum.cuh and recompile.",
                 Lambda_min, Lambda_max, lambdaMin, lambdaMax));
 
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);

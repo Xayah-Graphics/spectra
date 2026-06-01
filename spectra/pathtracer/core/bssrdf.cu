@@ -1,14 +1,14 @@
 #include <cmath>
-#include <spectra/pathtracer/core/bssrdf.h>
-#include <spectra/pathtracer/core/media.h>
-#include <spectra/pathtracer/core/shapes.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/sampling.h>
+#include <spectra/pathtracer/core/bssrdf.cuh>
+#include <spectra/pathtracer/core/media.cuh>
+#include <spectra/pathtracer/core/shapes.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/parallel.cuh>
+#include <spectra/pathtracer/util/sampling.cuh>
 
 namespace spectra {
-    SPECTRA_CPU_GPU pstd::optional<BSSRDFProbeSegment> BSSRDF::SampleSp(Float u1, Point2f u2) const {
+    __host__ __device__ pstd::optional<BSSRDFProbeSegment> BSSRDF::SampleSp(Float u1, Point2f u2) const {
         auto sample = [&](auto ptr) { return ptr->SampleSp(u1, u2); };
         return Dispatch(sample);
     }

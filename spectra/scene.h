@@ -1,12 +1,10 @@
 #ifndef SPECTRA_SCENE_H
 #define SPECTRA_SCENE_H
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/transform.h>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -14,16 +12,56 @@
 
 namespace spectra::scene {
     enum class TextureKind { Float, Spectrum };
+    enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
+
+    struct Transform {
+        std::array<float, 16> matrix{
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+        };
+        std::array<float, 16> inverse{
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            1.0f,
+        };
+    };
 
     struct SceneParameter {
         std::string type{};
         std::string name{};
-        std::variant<std::vector<Float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{};
+        std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{};
         bool mayBeUnused{false};
     };
 
     struct SceneParameters {
-        const RGBColorSpace* colorSpace{RGBColorSpace::sRGB};
+        ColorSpace colorSpace{ColorSpace::sRGB};
         std::vector<SceneParameter> values{};
     };
 

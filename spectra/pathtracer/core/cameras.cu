@@ -1,40 +1,40 @@
 #include <algorithm>
-#include <spectra/pathtracer/base/medium.h>
-#include <spectra/pathtracer/core/bsdf.h>
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/film.h>
-#include <spectra/pathtracer/core/filters.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/image.h>
-#include <spectra/pathtracer/util/lowdiscrepancy.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/parallel.h>
+#include <spectra/pathtracer/base/medium.cuh>
+#include <spectra/pathtracer/core/bsdf.cuh>
+#include <spectra/pathtracer/core/cameras.cuh>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/film.cuh>
+#include <spectra/pathtracer/core/filters.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/image.cuh>
+#include <spectra/pathtracer/util/lowdiscrepancy.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/parallel.cuh>
 
 namespace spectra {
-    SPECTRA_CPU_GPU pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         auto generate = [&](auto ptr) { return ptr->GenerateRay(sample, lambda); };
         return Dispatch(generate);
     }
 
-    SPECTRA_CPU_GPU Film Camera::GetFilm() const {
+    __host__ __device__ Film Camera::GetFilm() const {
         auto getfilm = [&](auto ptr) { return ptr->GetFilm(); };
         return Dispatch(getfilm);
     }
 
-    SPECTRA_CPU_GPU Float Camera::SampleTime(Float u) const {
+    __host__ __device__ Float Camera::SampleTime(Float u) const {
         auto sample = [&](auto ptr) { return ptr->SampleTime(u); };
         return Dispatch(sample);
     }
 
-    SPECTRA_CPU_GPU const CameraTransform& Camera::GetCameraTransform() const {
+    __host__ __device__ const CameraTransform& Camera::GetCameraTransform() const {
         auto gtc = [&](auto ptr) -> const CameraTransform& { return ptr->GetCameraTransform(); };
         return Dispatch(gtc);
     }
 
-    SPECTRA_CPU_GPU void Camera::Approximate_dp_dxy(Point3f p, Normal3f n, Float time, int samplesPerPixel, Vector3f* dpdx, Vector3f* dpdy) const {
+    __host__ __device__ void Camera::Approximate_dp_dxy(Point3f p, Normal3f n, Float time, int samplesPerPixel, Vector3f* dpdx, Vector3f* dpdy) const {
         if constexpr (AllInheritFrom<CameraBase>(Types())) {
             return ((const CameraBase*) ptr())->Approximate_dp_dxy(p, n, time, samplesPerPixel, dpdx, dpdy);
         } else {
@@ -77,22 +77,22 @@ namespace spectra {
 
 
     // Camera Method Definitions
-    SPECTRA_CPU_GPU pstd::optional<CameraRayDifferential> Camera::GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRayDifferential> Camera::GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const {
         auto gen = [&](auto ptr) { return ptr->GenerateRayDifferential(sample, lambda); };
         return Dispatch(gen);
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum Camera::We(const Ray& ray, SampledWavelengths& lambda, Point2f* pRaster2) const {
+    __host__ __device__ SampledSpectrum Camera::We(const Ray& ray, SampledWavelengths& lambda, Point2f* pRaster2) const {
         auto we = [&](auto ptr) { return ptr->We(ray, lambda, pRaster2); };
         return Dispatch(we);
     }
 
-    SPECTRA_CPU_GPU void Camera::PDF_We(const Ray& ray, Float* pdfPos, Float* pdfDir) const {
+    __host__ __device__ void Camera::PDF_We(const Ray& ray, Float* pdfPos, Float* pdfDir) const {
         auto pdf = [&](auto ptr) { return ptr->PDF_We(ray, pdfPos, pdfDir); };
         return Dispatch(pdf);
     }
 
-    SPECTRA_CPU_GPU pstd::optional<CameraWiSample> Camera::SampleWi(const Interaction& ref, Point2f u, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraWiSample> Camera::SampleWi(const Interaction& ref, Point2f u, SampledWavelengths& lambda) const {
         auto sample = [&](auto ptr) { return ptr->SampleWi(ref, u, lambda); };
         return Dispatch(sample);
     }
@@ -113,7 +113,7 @@ namespace spectra {
                                                "the system may crash as a result of this.");
     }
 
-    SPECTRA_CPU_GPU pstd::optional<CameraRayDifferential> CameraBase::GenerateRayDifferential(Camera camera, CameraSample sample, SampledWavelengths& lambda) {
+    __host__ __device__ pstd::optional<CameraRayDifferential> CameraBase::GenerateRayDifferential(Camera camera, CameraSample sample, SampledWavelengths& lambda) {
         // Generate regular camera ray _cr_ for ray differential
         pstd::optional<CameraRay> cr = camera.GenerateRay(sample, lambda);
         if (!cr) return {};
@@ -232,7 +232,7 @@ namespace spectra {
     }
 
     // OrthographicCamera Method Definitions
-    SPECTRA_CPU_GPU pstd::optional<CameraRay> OrthographicCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRay> OrthographicCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         // Compute raster and camera sample positions
         Point3f pFilm   = Point3f(sample.pFilm.x, sample.pFilm.y, 0);
         Point3f pCamera = cameraFromRaster(pFilm);
@@ -255,7 +255,7 @@ namespace spectra {
         return CameraRay{RenderFromCamera(ray)};
     }
 
-    SPECTRA_CPU_GPU pstd::optional<CameraRayDifferential> OrthographicCamera::GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRayDifferential> OrthographicCamera::GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const {
         // Compute main orthographic viewing ray
         // Compute raster and camera sample positions
         Point3f pFilm   = Point3f(sample.pFilm.x, sample.pFilm.y, 0);
@@ -334,7 +334,7 @@ namespace spectra {
     }
 
     // PerspectiveCamera Method Definitions
-    SPECTRA_CPU_GPU pstd::optional<CameraRay> PerspectiveCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRay> PerspectiveCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         // Compute raster and camera sample positions
         Point3f pFilm   = Point3f(sample.pFilm.x, sample.pFilm.y, 0);
         Point3f pCamera = cameraFromRaster(pFilm);
@@ -357,7 +357,7 @@ namespace spectra {
         return CameraRay{RenderFromCamera(ray)};
     }
 
-    SPECTRA_CPU_GPU pstd::optional<CameraRayDifferential> PerspectiveCamera::GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRayDifferential> PerspectiveCamera::GenerateRayDifferential(CameraSample sample, SampledWavelengths& lambda) const {
         // Compute raster and camera sample positions
         Point3f pFilm   = Point3f(sample.pFilm.x, sample.pFilm.y, 0);
         Point3f pCamera = cameraFromRaster(pFilm);
@@ -440,7 +440,7 @@ namespace spectra {
         return alloc.new_object<PerspectiveCamera>(cameraBaseParameters, fov, screen, lensradius, focaldistance);
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum PerspectiveCamera::We(const Ray& ray, SampledWavelengths& lambda, Point2f* pRasterOut) const {
+    __host__ __device__ SampledSpectrum PerspectiveCamera::We(const Ray& ray, SampledWavelengths& lambda, Point2f* pRasterOut) const {
         // Check if ray is forward-facing with respect to the camera
         Float cosTheta = Dot(ray.d, RenderFromCamera(Vector3f(0, 0, 1), ray.time));
         if (cosTheta <= cosTotalWidth) return SampledSpectrum(0.);
@@ -464,7 +464,7 @@ namespace spectra {
         return SampledSpectrum(1 / (A * lensArea * Pow<4>(cosTheta)));
     }
 
-    SPECTRA_CPU_GPU void PerspectiveCamera::PDF_We(const Ray& ray, Float* pdfPos, Float* pdfDir) const {
+    __host__ __device__ void PerspectiveCamera::PDF_We(const Ray& ray, Float* pdfPos, Float* pdfDir) const {
         // Return zero PDF values if ray direction is not front-facing
         Float cosTheta = Dot(ray.d, RenderFromCamera(Vector3f(0, 0, 1), ray.time));
         if (cosTheta <= cosTotalWidth) {
@@ -490,7 +490,7 @@ namespace spectra {
         *pdfDir        = 1 / (A * Pow<3>(cosTheta));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<CameraWiSample> PerspectiveCamera::SampleWi(const Interaction& ref, Point2f u, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraWiSample> PerspectiveCamera::SampleWi(const Interaction& ref, Point2f u, SampledWavelengths& lambda) const {
         // Uniformly sample a lens interaction _lensIntr_
         Point2f pLens       = lensRadius * SampleUniformDiskConcentric(u);
         Point3f pLensRender = RenderFromCamera(Point3f(pLens.x, pLens.y, 0), ref.time);
@@ -514,7 +514,7 @@ namespace spectra {
     }
 
     // SphericalCamera Method Definitions
-    SPECTRA_CPU_GPU pstd::optional<CameraRay> SphericalCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRay> SphericalCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         // Compute spherical camera ray direction
         Point2f uv(sample.pFilm.x / film.FullResolution().x, sample.pFilm.y / film.FullResolution().y);
         Vector3f dir;
@@ -628,7 +628,7 @@ namespace spectra {
         FindMinimumDifferentials(this);
     }
 
-    SPECTRA_CPU_GPU Float RealisticCamera::TraceLensesFromFilm(const Ray& rCamera, Ray* rOut) const {
+    __host__ __device__ Float RealisticCamera::TraceLensesFromFilm(const Ray& rCamera, Ray* rOut) const {
         Float elementZ = 0, weight = 1;
         // Transform _rCamera_ from camera to lens system space
         Ray rLens(Point3f(rCamera.o.x, rCamera.o.y, -rCamera.o.z), Vector3f(rCamera.d.x, rCamera.d.y, -rCamera.d.z), rCamera.time);
@@ -753,7 +753,7 @@ namespace spectra {
         return pupilBounds;
     }
 
-    SPECTRA_CPU_GPU pstd::optional<ExitPupilSample> RealisticCamera::SampleExitPupil(Point2f pFilm, Point2f uLens) const {
+    __host__ __device__ pstd::optional<ExitPupilSample> RealisticCamera::SampleExitPupil(Point2f pFilm, Point2f uLens) const {
         // Find exit pupil bound for sample distance from film center
         Float rFilm          = std::sqrt(Sqr(pFilm.x) + Sqr(pFilm.y));
         int rIndex           = rFilm / (film.Diagonal() / 2) * exitPupilBounds.size();
@@ -772,7 +772,7 @@ namespace spectra {
         return ExitPupilSample{pPupil, pdf};
     }
 
-    SPECTRA_CPU_GPU pstd::optional<CameraRay> RealisticCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
+    __host__ __device__ pstd::optional<CameraRay> RealisticCamera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
         // Find point on film, _pFilm_, corresponding to _sample.pFilm_
         Point2f s(sample.pFilm.x / film.FullResolution().x, sample.pFilm.y / film.FullResolution().y);
         Point2f pFilm2 = physicalExtent.Lerp(s);
@@ -800,7 +800,7 @@ namespace spectra {
     }
 
 
-    SPECTRA_CPU_GPU Float RealisticCamera::TraceLensesFromScene(const Ray& rCamera, Ray* rOut) const {
+    __host__ __device__ Float RealisticCamera::TraceLensesFromScene(const Ray& rCamera, Ray* rOut) const {
         Float elementZ = -LensFrontZ();
         // Transform _rCamera_ from camera to lens system space
         const Transform LensFromCamera = Scale(1, 1, -1);

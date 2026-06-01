@@ -1,16 +1,16 @@
 #include <Ptexture.h>
 #include <algorithm>
 #include <mutex>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/color.h>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/splines.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/textures.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/util/color.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/float.cuh>
+#include <spectra/pathtracer/util/splines.cuh>
 
 // Windows strikes again.
 #ifdef RGB

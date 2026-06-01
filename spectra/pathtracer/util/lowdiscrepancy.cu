@@ -1,6 +1,6 @@
-#include <spectra/pathtracer/util/lowdiscrepancy.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/primes.h>
+#include <spectra/pathtracer/util/lowdiscrepancy.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/primes.cuh>
 
 namespace spectra {
     // Low Discrepancy Function Definitions

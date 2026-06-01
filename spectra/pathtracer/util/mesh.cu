@@ -1,9 +1,9 @@
 #include <rply/rply.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/util/buffercache.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/mesh.h>
-#include <spectra/pathtracer/util/transform.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/util/buffercache.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/mesh.cuh>
+#include <spectra/pathtracer/util/transform.cuh>
 
 namespace spectra {
     // TriangleMesh Method Definitions

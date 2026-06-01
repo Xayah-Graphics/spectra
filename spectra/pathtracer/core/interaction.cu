@@ -1,19 +1,19 @@
 #include <cmath>
-#include <spectra/pathtracer/base/camera.h>
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/lights.h>
-#include <spectra/pathtracer/core/materials.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/samplers.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/rng.h>
+#include <spectra/pathtracer/base/camera.cuh>
+#include <spectra/pathtracer/core/cameras.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/lights.cuh>
+#include <spectra/pathtracer/core/materials.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/samplers.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/rng.cuh>
 
 namespace spectra {
     // SurfaceInteraction Method Definitions
-    SPECTRA_CPU_GPU void SurfaceInteraction::ComputeDifferentials(const RayDifferential& ray, Camera camera, int samplesPerPixel) {
+    __host__ __device__ void SurfaceInteraction::ComputeDifferentials(const RayDifferential& ray, Camera camera, int samplesPerPixel) {
         if (GetOptions().disableTextureFiltering) {
             dudx = dudy = dvdx = dvdy = 0;
             dpdx = dpdy = Vector3f(0, 0, 0);
@@ -60,7 +60,7 @@ namespace spectra {
         dvdy = IsFinite(dvdy) ? Clamp(dvdy, -1e8f, 1e8f) : 0.f;
     }
 
-    SPECTRA_CPU_GPU void SurfaceInteraction::SkipIntersection(RayDifferential* ray, Float t) const {
+    __host__ __device__ void SurfaceInteraction::SkipIntersection(RayDifferential* ray, Float t) const {
         *((Ray*) ray) = SpawnRay(ray->d);
         if (ray->hasDifferentials) {
             ray->rxOrigin = ray->rxOrigin + t * ray->rxDirection;
@@ -68,7 +68,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU RayDifferential SurfaceInteraction::SpawnRay(const RayDifferential& rayi, const BSDF& bsdf, Vector3f wi, int flags, Float eta) const {
+    __host__ __device__ RayDifferential SurfaceInteraction::SpawnRay(const RayDifferential& rayi, const BSDF& bsdf, Vector3f wi, int flags, Float eta) const {
         RayDifferential rd(SpawnRay(wi));
         if (rayi.hasDifferentials) {
             // Compute ray differentials for specular reflection or transmission
@@ -163,7 +163,7 @@ namespace spectra {
         return material.GetBSSRDF(UniversalTextureEvaluator(), *this, lambda, scratchBuffer);
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum SurfaceInteraction::Le(Vector3f w, const SampledWavelengths& lambda) const {
+    __host__ __device__ SampledSpectrum SurfaceInteraction::Le(Vector3f w, const SampledWavelengths& lambda) const {
         return areaLight ? areaLight.L(p(), n, uv, w, lambda) : SampledSpectrum(0.f);
     }
 } // namespace spectra

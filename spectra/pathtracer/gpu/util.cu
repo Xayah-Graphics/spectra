@@ -1,8 +1,8 @@
 #include <cstdio>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/util/check.cuh>
 #include <string>
 
 #ifdef NVTX
@@ -63,7 +63,7 @@ namespace spectra {
 
         int device = Options->gpuDevice ? *Options->gpuDevice : 0;
 #ifdef NVTX
-        nvtxNameCuDevice(device, "SPECTRA_GPU");
+        nvtxNameCuDevice(device, "__device__");
 #endif
         CUDA_CHECK(cudaSetDevice(device));
 

@@ -1,0 +1,64 @@
+#ifndef SPECTRA_PATHTRACER_BASE_MATERIAL_H
+#define SPECTRA_PATHTRACER_BASE_MATERIAL_H
+
+#include <map>
+#include <spectra/pathtracer/base/bssrdf.cuh>
+#include <spectra/pathtracer/base/texture.cuh>
+#include <spectra/pathtracer/util/float.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/taggedptr.cuh>
+#include <string>
+
+namespace spectra {
+    class BSDF;
+    class Image;
+    class SampledWavelengths;
+    class TextureParameterDictionary;
+    struct FileLoc;
+
+    struct MaterialEvalContext;
+
+    // Material Declarations
+    class CoatedDiffuseMaterial;
+    class CoatedConductorMaterial;
+    class ConductorMaterial;
+    class DielectricMaterial;
+    class DiffuseMaterial;
+    class DiffuseTransmissionMaterial;
+    class HairMaterial;
+    class MeasuredMaterial;
+    class SubsurfaceMaterial;
+    class ThinDielectricMaterial;
+    class MixMaterial;
+
+    // Material Definition
+    class Material : public TaggedPointer< // Material Types
+                         CoatedDiffuseMaterial, CoatedConductorMaterial, ConductorMaterial, DielectricMaterial, DiffuseMaterial, DiffuseTransmissionMaterial, HairMaterial, MeasuredMaterial, SubsurfaceMaterial, ThinDielectricMaterial, MixMaterial
+
+                         > {
+    public:
+        // Material Interface
+        using TaggedPointer::TaggedPointer;
+
+        static Material Create(const std::string& name, const TextureParameterDictionary& parameters, Image* normalMap,
+            /*const */ std::map<std::string, Material>& namedMaterials, const FileLoc* loc, Allocator alloc);
+
+
+        template <typename TextureEvaluator>
+        inline BSDF GetBSDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, ScratchBuffer& buf) const;
+
+        template <typename TextureEvaluator>
+        inline BSSRDF GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, ScratchBuffer& buf) const;
+
+        template <typename TextureEvaluator>
+        __host__ __device__ inline bool CanEvaluateTextures(TextureEvaluator texEval) const;
+
+        __host__ __device__ inline const Image* GetNormalMap() const;
+
+        __host__ __device__ inline FloatTexture GetDisplacement() const;
+
+        __host__ __device__ inline bool HasSubsurfaceScattering() const;
+    };
+} // namespace spectra
+
+#endif // SPECTRA_PATHTRACER_BASE_MATERIAL_H

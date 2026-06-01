@@ -1,8 +1,8 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <spectra/pathtracer/gpu/memory.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/check.h>
+#include <spectra/pathtracer/gpu/memory.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/util/check.cuh>
 
 namespace spectra {
     void* CUDAMemoryResource::do_allocate(size_t size, size_t alignment) {

@@ -1,6 +1,6 @@
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/pstd.h>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/pstd.cuh>
 
 namespace pstd {
     namespace pmr {

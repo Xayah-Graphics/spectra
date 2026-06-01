@@ -1,73 +1,50 @@
-#include <spectra/pathtracer/core/bssrdf.h>
-#include <spectra/pathtracer/core/bxdfs.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/media.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/color.h>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/float.h>
-#include <spectra/pathtracer/util/hash.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/sampling.h>
+#include <spectra/pathtracer/core/bssrdf.cuh>
+#include <spectra/pathtracer/core/bxdfs.cuh>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/media.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/color.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/float.cuh>
+#include <spectra/pathtracer/util/hash.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/sampling.cuh>
 #include <unordered_map>
 
 namespace spectra {
-    SPECTRA_CPU_GPU SampledSpectrum BxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+    __host__ __device__ SampledSpectrum BxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         auto f = [&](auto ptr) -> SampledSpectrum { return ptr->f(wo, wi, mode); };
         return Dispatch(f);
     }
 
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> BxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ pstd::optional<BSDFSample> BxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         auto sample_f = [&](auto ptr) -> pstd::optional<BSDFSample> { return ptr->Sample_f(wo, uc, u, mode, sampleFlags); };
         return Dispatch(sample_f);
     }
 
-    SPECTRA_CPU_GPU Float BxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ Float BxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         auto pdf = [&](auto ptr) { return ptr->PDF(wo, wi, mode, sampleFlags); };
         return Dispatch(pdf);
     }
 
-    SPECTRA_CPU_GPU BxDFFlags BxDF::Flags() const {
+    __host__ __device__ BxDFFlags BxDF::Flags() const {
         auto flags = [&](auto ptr) { return ptr->Flags(); };
         return Dispatch(flags);
     }
 
-    SPECTRA_CPU_GPU void BxDF::Regularize() {
+    __host__ __device__ void BxDF::Regularize() {
         auto regularize = [&](auto ptr) { ptr->Regularize(); };
         return Dispatch(regularize);
-    }
-
-    std::string ToString(BxDFReflTransFlags flags) {
-        if (flags == BxDFReflTransFlags::Unset) return "Unset";
-        std::string s;
-        if (flags & BxDFReflTransFlags::Reflection) s += "Reflection,";
-        if (flags & BxDFReflTransFlags::Transmission) s += "Transmission,";
-        return s;
-    }
-
-    std::string ToString(BxDFFlags flags) {
-        if (flags == Unset) return "Unset";
-        std::string s;
-        if (flags & Reflection) s += "Reflection,";
-        if (flags & Transmission) s += "Transmission,";
-        if (flags & Diffuse) s += "Diffuse,";
-        if (flags & Glossy) s += "Glossy,";
-        if (flags & Specular) s += "Specular,";
-        return s;
-    }
-
-    std::string ToString(TransportMode mode) {
-        return mode == TransportMode::Radiance ? "Radiance" : "Importance";
     }
 
     // BxDF Method Definitions
 
     // DielectricBxDF Method Definitions
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> DielectricBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ pstd::optional<BSDFSample> DielectricBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         if (eta == 1 || mfDistrib.EffectivelySmooth()) {
             // Sample perfect specular dielectric BSDF
             Float R = FrDielectric(CosTheta(wo), eta), T = 1 - R;
@@ -142,7 +119,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+    __host__ __device__ SampledSpectrum DielectricBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         if (eta == 1 || mfDistrib.EffectivelySmooth()) return SampledSpectrum(0.f);
         // Evaluate rough dielectric BSDF
         // Compute generalized half vector _wm_
@@ -173,7 +150,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ Float DielectricBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         if (eta == 1 || mfDistrib.EffectivelySmooth()) return 0;
         // Evaluate sampling PDF of rough dielectric BSDF
         // Compute generalized half vector _wm_
@@ -215,7 +192,7 @@ namespace spectra {
 
 
     // HairBxDF Method Definitions
-    SPECTRA_CPU_GPU HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum& sigma_a, Float beta_m, Float beta_n, Float alpha) : h(h), eta(eta), sigma_a(sigma_a), beta_m(beta_m), beta_n(beta_n) {
+    __host__ __device__ HairBxDF::HairBxDF(Float h, Float eta, const SampledSpectrum& sigma_a, Float beta_m, Float beta_n, Float alpha) : h(h), eta(eta), sigma_a(sigma_a), beta_m(beta_m), beta_n(beta_n) {
         CHECK(h >= -1 && h <= 1);
         CHECK(beta_m >= 0 && beta_m <= 1);
         CHECK(beta_n >= 0 && beta_n <= 1);
@@ -240,7 +217,7 @@ namespace spectra {
         }
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+    __host__ __device__ SampledSpectrum HairBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         // Compute hair coordinate system terms related to _wo_
         Float sinTheta_o = wo.x;
         Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
@@ -302,7 +279,7 @@ namespace spectra {
         return fsum;
     }
 
-    SPECTRA_CPU_GPU pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ApPDF(Float cosTheta_o) const {
+    __host__ __device__ pstd::array<Float, HairBxDF::pMax + 1> HairBxDF::ApPDF(Float cosTheta_o) const {
         // Initialize array of $A_p$ values for _cosTheta_o_
         Float sinTheta_o = SafeSqrt(1 - Sqr(cosTheta_o));
         // Compute $\cos\,\thetat$ for refracted ray
@@ -329,7 +306,7 @@ namespace spectra {
         return apPDF;
     }
 
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ pstd::optional<BSDFSample> HairBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         // Compute hair coordinate system terms related to _wo_
         Float sinTheta_o = wo.x;
         Float cosTheta_o = SafeSqrt(1 - Sqr(sinTheta_o));
@@ -419,7 +396,7 @@ namespace spectra {
         return BSDFSample(f(wo, wi, mode), wi, pdf, Flags());
     }
 
-    SPECTRA_CPU_GPU Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ Float HairBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         // TODO? flags...
 
         // Compute hair coordinate system terms related to _wo_
@@ -472,7 +449,7 @@ namespace spectra {
         return pdf;
     }
 
-    SPECTRA_CPU_GPU RGBUnboundedSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp) {
+    __host__ __device__ RGBUnboundedSpectrum HairBxDF::SigmaAFromConcentration(Float ce, Float cp) {
         RGB eumelaninSigma_a(0.419f, 0.697f, 1.37f);
         RGB pheomelaninSigma_a(0.187f, 0.4f, 1.05f);
         RGB sigma_a = ce * eumelaninSigma_a + cp * pheomelaninSigma_a;
@@ -483,7 +460,7 @@ namespace spectra {
 #endif
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum& c, Float beta_n, const SampledWavelengths& lambda) {
+    __host__ __device__ SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum& c, Float beta_n, const SampledWavelengths& lambda) {
         SampledSpectrum sigma_a;
         for (int i = 0; i < NSpectrumSamples; ++i) sigma_a[i] = Sqr(std::log(c[i]) / (5.969f - 0.215f * beta_n + 2.532f * Sqr(beta_n) - 10.73f * Pow<3>(beta_n) + 5.574f * Pow<4>(beta_n) + 0.245f * Pow<5>(beta_n)));
         return sigma_a;
@@ -759,7 +736,7 @@ namespace spectra {
     }
 
     // MeasuredBxDF Method Definitions
-    SPECTRA_CPU_GPU SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
+    __host__ __device__ SampledSpectrum MeasuredBxDF::f(Vector3f wo, Vector3f wi, TransportMode mode) const {
         // Check for valid reflection configurations
         if (!SameHemisphere(wo, wi)) return SampledSpectrum(0);
         if (wo.z < 0) {
@@ -790,7 +767,7 @@ namespace spectra {
         return fr * brdf->ndf.Evaluate(u_wm) / (4 * brdf->sigma.Evaluate(u_wo) * CosTheta(wi));
     }
 
-    SPECTRA_CPU_GPU pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ pstd::optional<BSDFSample> MeasuredBxDF::Sample_f(Vector3f wo, Float uc, Point2f u, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         // Check flags and detect interactions in lower hemisphere
         if (!(sampleFlags & BxDFReflTransFlags::Reflection)) return {};
         bool flipWi = false;
@@ -834,7 +811,7 @@ namespace spectra {
         return BSDFSample(fr, wi, pdf * lum_pdf, GlossyReflection);
     }
 
-    SPECTRA_CPU_GPU Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
+    __host__ __device__ Float MeasuredBxDF::PDF(Vector3f wo, Vector3f wi, TransportMode mode, BxDFReflTransFlags sampleFlags) const {
         if (!(sampleFlags & BxDFReflTransFlags::Reflection)) return 0;
         if (!SameHemisphere(wo, wi)) return 0;
         if (wo.z < 0) {
@@ -866,7 +843,7 @@ namespace spectra {
 
 
     // BxDF Method Definitions
-    SPECTRA_CPU_GPU SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc, pstd::span<const Point2f> u2) const {
+    __host__ __device__ SampledSpectrum BxDF::rho(Vector3f wo, pstd::span<const Float> uc, pstd::span<const Point2f> u2) const {
         if (wo.z == 0) return {};
         SampledSpectrum r(0.);
         DCHECK_EQ(uc.size(), u2.size());

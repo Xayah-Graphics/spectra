@@ -1,32 +1,33 @@
 #include <cstddef>
 #include <cstdint>
+#include <cuda_runtime_api.h>
 #include <format>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <set>
-#include <spectra/pathtracer/base/material.h>
-#include <spectra/pathtracer/base/shape.h>
-#include <spectra/pathtracer/core/cameras.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/film.h>
-#include <spectra/pathtracer/core/filters.h>
-#include <spectra/pathtracer/core/lights.h>
-#include <spectra/pathtracer/core/materials.h>
-#include <spectra/pathtracer/core/media.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/samplers.h>
-#include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/util/color.h>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/image.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/mesh.h>
-#include <spectra/pathtracer/util/parallel.h>
-#include <spectra/pathtracer/util/spectrum.h>
-#include <spectra/pathtracer/util/transform.h>
-#include <spectra/pathtracer/wavefront_scene.h>
+#include <spectra/pathtracer/base/material.cuh>
+#include <spectra/pathtracer/base/shape.cuh>
+#include <spectra/pathtracer/core/cameras.cuh>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/film.cuh>
+#include <spectra/pathtracer/core/filters.cuh>
+#include <spectra/pathtracer/core/lights.cuh>
+#include <spectra/pathtracer/core/materials.cuh>
+#include <spectra/pathtracer/core/media.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/samplers.cuh>
+#include <spectra/pathtracer/core/textures.cuh>
+#include <spectra/pathtracer/util/color.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/image.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/mesh.cuh>
+#include <spectra/pathtracer/util/parallel.cuh>
+#include <spectra/pathtracer/util/spectrum.cuh>
+#include <spectra/pathtracer/util/transform.cuh>
+#include <spectra/pathtracer/wavefront_scene.cuh>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -36,9 +37,44 @@
 
 namespace spectra::pathtracer {
     namespace {
+        [[nodiscard]] SquareMatrix<4> ToPathtracerMatrix(const std::array<float, 16>& matrix) {
+            return SquareMatrix<4>{
+                matrix[0],
+                matrix[1],
+                matrix[2],
+                matrix[3],
+                matrix[4],
+                matrix[5],
+                matrix[6],
+                matrix[7],
+                matrix[8],
+                matrix[9],
+                matrix[10],
+                matrix[11],
+                matrix[12],
+                matrix[13],
+                matrix[14],
+                matrix[15],
+            };
+        }
+
+        [[nodiscard]] Transform ToPathtracerTransform(const scene::Transform& transform) {
+            return Transform(ToPathtracerMatrix(transform.matrix), ToPathtracerMatrix(transform.inverse));
+        }
+
+        [[nodiscard]] const RGBColorSpace* ToPathtracerColorSpace(scene::ColorSpace colorSpace) {
+            switch (colorSpace) {
+            case scene::ColorSpace::sRGB: return RGBColorSpace::sRGB;
+            case scene::ColorSpace::DCI_P3: return RGBColorSpace::DCI_P3;
+            case scene::ColorSpace::Rec2020: return RGBColorSpace::Rec2020;
+            case scene::ColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1;
+            }
+            throw std::runtime_error("Unknown Spectra scene color space.");
+        }
+
         void AppendParameterValues(ParsedParameter* parsedParameter, const scene::SceneParameter& parameter) {
-            if (const std::vector<Float>* values = std::get_if<std::vector<Float>>(&parameter.values)) {
-                for (Float value : *values) parsedParameter->AddFloat(value);
+            if (const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values)) {
+                for (float value : *values) parsedParameter->AddFloat(value);
                 return;
             }
             if (const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values)) {
@@ -94,7 +130,7 @@ namespace spectra::pathtracer {
 
         private:
             [[nodiscard]] ParameterDictionary MakeParameterDictionary(const scene::SceneParameters& parameters) const {
-                if (parameters.colorSpace == nullptr) throw std::runtime_error(std::format("{} scene parameters must specify a color space.", this->source.source));
+                const RGBColorSpace* colorSpace = ToPathtracerColorSpace(parameters.colorSpace);
 
                 ParsedParameterVector parsedParameters{};
                 for (const scene::SceneParameter& parameter : parameters.values) {
@@ -104,12 +140,12 @@ namespace spectra::pathtracer {
                     parsedParameter->type            = parameter.type;
                     parsedParameter->name            = parameter.name;
                     parsedParameter->mayBeUnused     = parameter.mayBeUnused;
-                    parsedParameter->colorSpace      = parameters.colorSpace;
+                    parsedParameter->colorSpace      = colorSpace;
                     AppendParameterValues(parsedParameter, parameter);
                     parsedParameters.push_back(parsedParameter);
                 }
 
-                return ParameterDictionary(std::move(parsedParameters), parameters.colorSpace);
+                return ParameterDictionary(std::move(parsedParameters), colorSpace);
             }
 
             [[nodiscard]] WavefrontSceneEntity MakeEntity(const std::string& type, const scene::SceneParameters& parameters) const {
@@ -164,8 +200,8 @@ namespace spectra::pathtracer {
                 return this->cameraEntity.cameraTransform.RenderFromWorld();
             }
 
-            [[nodiscard]] Transform RenderFromObjectTransform(const Transform& worldFromObject) const {
-                return this->RenderFromWorldTransform() * worldFromObject;
+            [[nodiscard]] Transform RenderFromObjectTransform(const scene::Transform& worldFromObject) const {
+                return this->RenderFromWorldTransform() * ToPathtracerTransform(worldFromObject);
             }
 
             [[nodiscard]] WavefrontShapeSceneEntity MakeShapeEntity(const scene::SceneShape& shape) const {
@@ -203,7 +239,8 @@ namespace spectra::pathtracer {
                 this->compiled.integrator                              = this->MakeEntity(settings.integrator.type, settings.integrator.parameters);
                 this->compiled.accelerator                             = this->MakeEntity(settings.accelerator.type, settings.accelerator.parameters);
                 static_cast<WavefrontSceneEntity&>(this->cameraEntity) = this->MakeEntity(settings.camera.type, settings.camera.parameters);
-                this->cameraEntity.cameraTransform                     = CameraTransform(AnimatedTransform(settings.camera.worldFromCamera, 0.0f, settings.camera.worldFromCamera, 1.0f));
+                const Transform worldFromCamera                        = ToPathtracerTransform(settings.camera.worldFromCamera);
+                this->cameraEntity.cameraTransform                     = CameraTransform(AnimatedTransform(worldFromCamera, 0.0f, worldFromCamera, 1.0f));
                 this->cameraEntity.medium                              = settings.camera.medium;
 
                 this->compiled.filmColorSpace = filmEntity.parameters.ColorSpace();

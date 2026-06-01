@@ -1,15 +1,15 @@
 #include <algorithm>
 #include <cmath>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/transform.h>
-#include <spectra/pathtracer/util/vecmath.h>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/transform.cuh>
+#include <spectra/pathtracer/util/vecmath.cuh>
 #include <type_traits>
 
 namespace spectra {
     // Quaternion Method Definitions
 
     // DirectionCone Function Definitions
-    SPECTRA_CPU_GPU DirectionCone Union(const DirectionCone& a, const DirectionCone& b) {
+    __host__ __device__ DirectionCone Union(const DirectionCone& a, const DirectionCone& b) {
         // Handle the cases where one or both cones are empty
         if (a.IsEmpty()) return b;
         if (b.IsEmpty()) return a;

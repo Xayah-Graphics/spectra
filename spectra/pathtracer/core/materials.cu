@@ -1,23 +1,23 @@
 #include <cmath>
 #include <numeric>
-#include <spectra/pathtracer/core/bsdf.h>
-#include <spectra/pathtracer/core/bssrdf.h>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/core/materials.h>
-#include <spectra/pathtracer/core/media.h>
-#include <spectra/pathtracer/core/paramdict.h>
-#include <spectra/pathtracer/core/textures.h>
-#include <spectra/pathtracer/util/color.h>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/memory.h>
-#include <spectra/pathtracer/util/spectrum.h>
+#include <spectra/pathtracer/core/bsdf.cuh>
+#include <spectra/pathtracer/core/bssrdf.cuh>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/materials.cuh>
+#include <spectra/pathtracer/core/media.cuh>
+#include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/textures.cuh>
+#include <spectra/pathtracer/util/color.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/memory.cuh>
+#include <spectra/pathtracer/util/spectrum.cuh>
 #include <string>
 
 namespace spectra {
-    SPECTRA_CPU_GPU void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx, Vector3f* dpdu, Vector3f* dpdv) {
+    __host__ __device__ void NormalMap(const Image& normalMap, const NormalBumpEvalContext& ctx, Vector3f* dpdu, Vector3f* dpdv) {
         WrapMode2D wrap(WrapMode::Repeat);
         Point2f uv(ctx.uv[0], 1 - ctx.uv[1]);
         Vector3f ns(2 * normalMap.BilerpChannel(uv, 0, wrap) - 1, 2 * normalMap.BilerpChannel(uv, 1, wrap) - 1, 2 * normalMap.BilerpChannel(uv, 2, wrap) - 1);
@@ -165,7 +165,7 @@ namespace spectra {
 
     // CoatedDiffuseMaterial Method Definitions
     template <typename TextureEvaluator>
-    SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
+    __host__ __device__ CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
         // Initialize diffuse component of plastic material
         SampledSpectrum r = Clamp(texEval(reflectance, ctx, lambda), 0, 1);
 
@@ -191,8 +191,8 @@ namespace spectra {
     }
 
     // Explicit template instantiation
-    template SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(BasicTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
-    template SPECTRA_CPU_GPU CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(UniversalTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
+    template __host__ __device__ CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(BasicTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
+    template __host__ __device__ CoatedDiffuseBxDF CoatedDiffuseMaterial::GetBxDF(UniversalTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
 
 
     CoatedDiffuseMaterial* CoatedDiffuseMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
@@ -227,7 +227,7 @@ namespace spectra {
     }
 
     template <typename TextureEvaluator>
-    SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
+    __host__ __device__ CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(TextureEvaluator texEval, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const {
         Float iurough = texEval(interfaceURoughness, ctx);
         Float ivrough = texEval(interfaceVRoughness, ctx);
         if (remapRoughness) {
@@ -269,8 +269,8 @@ namespace spectra {
         return CoatedConductorBxDF(DielectricBxDF(ieta, interfaceDistrib), ConductorBxDF(conductorDistrib, ce, ck), thick, a, gg, maxDepth, nSamples);
     }
 
-    template SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(BasicTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
-    template SPECTRA_CPU_GPU CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(UniversalTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
+    template __host__ __device__ CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(BasicTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
+    template __host__ __device__ CoatedConductorBxDF CoatedConductorMaterial::GetBxDF(UniversalTextureEvaluator, const MaterialEvalContext& ctx, SampledWavelengths& lambda) const;
 
 
     CoatedConductorMaterial* CoatedConductorMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {

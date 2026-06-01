@@ -5,15 +5,15 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/options.h>
-#include <spectra/pathtracer/gpu/util.h>
-#include <spectra/pathtracer/util/color.h>
-#include <spectra/pathtracer/util/colorspace.h>
-#include <spectra/pathtracer/util/file.h>
-#include <spectra/pathtracer/util/rng.h>
-#include <spectra/pathtracer/util/sampling.h>
-#include <spectra/pathtracer/util/spectrum.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/util/color.cuh>
+#include <spectra/pathtracer/util/colorspace.cuh>
+#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/rng.cuh>
+#include <spectra/pathtracer/util/sampling.cuh>
+#include <spectra/pathtracer/util/spectrum.cuh>
 
 // I don't know how this is happening (somehow via wingdi.h?), but not cool,
 // Windows, not cool...
@@ -23,23 +23,23 @@
 
 namespace spectra {
     // Spectrum Function Definitions
-    SPECTRA_CPU_GPU Float InnerProduct(Spectrum f, Spectrum g) {
+    __host__ __device__ Float InnerProduct(Spectrum f, Spectrum g) {
         Float integral = 0;
         for (Float lambda = Lambda_min; lambda <= Lambda_max; ++lambda) integral += f(lambda) * g(lambda);
         return integral;
     }
 
-    SPECTRA_CPU_GPU Float Spectrum::operator()(Float lambda) const {
+    __host__ __device__ Float Spectrum::operator()(Float lambda) const {
         auto op = [&](auto ptr) { return (*ptr)(lambda); };
         return Dispatch(op);
     }
 
-    SPECTRA_CPU_GPU SampledSpectrum Spectrum::Sample(const SampledWavelengths& lambda) const {
+    __host__ __device__ SampledSpectrum Spectrum::Sample(const SampledWavelengths& lambda) const {
         auto samp = [&](auto ptr) { return ptr->Sample(lambda); };
         return Dispatch(samp);
     }
 
-    SPECTRA_CPU_GPU Float Spectrum::MaxValue() const {
+    __host__ __device__ Float Spectrum::MaxValue() const {
         auto max = [&](auto ptr) { return ptr->MaxValue(); };
         return Dispatch(max);
     }
@@ -61,7 +61,7 @@ namespace spectra {
 
 
     // Spectrum Method Definitions
-    SPECTRA_CPU_GPU Float PiecewiseLinearSpectrum::operator()(Float lambda) const {
+    __host__ __device__ Float PiecewiseLinearSpectrum::operator()(Float lambda) const {
         // Handle _PiecewiseLinearSpectrum_ corner cases
         if (lambdas.empty() || lambda < lambdas.front() || lambda > lambdas.back()) return 0;
 
@@ -72,7 +72,7 @@ namespace spectra {
         return Lerp(t, values[o], values[o + 1]);
     }
 
-    SPECTRA_CPU_GPU Float PiecewiseLinearSpectrum::MaxValue() const {
+    __host__ __device__ Float PiecewiseLinearSpectrum::MaxValue() const {
         if (values.empty()) return 0;
         return *std::max_element(values.begin(), values.end());
     }
@@ -139,12 +139,12 @@ namespace spectra {
     }
 
 
-    SPECTRA_CPU_GPU SampledSpectrum ConstantSpectrum::Sample(const SampledWavelengths&) const {
+    __host__ __device__ SampledSpectrum ConstantSpectrum::Sample(const SampledWavelengths&) const {
         return SampledSpectrum(c);
     }
 
 
-    SPECTRA_CPU_GPU XYZ SampledSpectrum::ToXYZ(const SampledWavelengths& lambda) const {
+    __host__ __device__ XYZ SampledSpectrum::ToXYZ(const SampledWavelengths& lambda) const {
         // Sample the $X$, $Y$, and $Z$ matching curves at _lambda_
         SampledSpectrum X = Spectra::X().Sample(lambda);
         SampledSpectrum Y = Spectra::Y().Sample(lambda);
@@ -155,30 +155,30 @@ namespace spectra {
         return XYZ(SafeDiv(X * *this, pdf).Average(), SafeDiv(Y * *this, pdf).Average(), SafeDiv(Z * *this, pdf).Average()) / CIE_Y_integral;
     }
 
-    SPECTRA_CPU_GPU Float SampledSpectrum::y(const SampledWavelengths& lambda) const {
+    __host__ __device__ Float SampledSpectrum::y(const SampledWavelengths& lambda) const {
         SampledSpectrum Ys  = Spectra::Y().Sample(lambda);
         SampledSpectrum pdf = lambda.PDF();
         return SafeDiv(Ys * *this, pdf).Average() / CIE_Y_integral;
     }
 
-    SPECTRA_CPU_GPU RGB SampledSpectrum::ToRGB(const SampledWavelengths& lambda, const RGBColorSpace& cs) const {
+    __host__ __device__ RGB SampledSpectrum::ToRGB(const SampledWavelengths& lambda, const RGBColorSpace& cs) const {
         XYZ xyz = ToXYZ(lambda);
         return cs.ToRGB(xyz);
     }
 
-    SPECTRA_CPU_GPU RGBAlbedoSpectrum::RGBAlbedoSpectrum(const RGBColorSpace& cs, RGB rgb) {
+    __host__ __device__ RGBAlbedoSpectrum::RGBAlbedoSpectrum(const RGBColorSpace& cs, RGB rgb) {
         DCHECK_LE(MaxComponentValue(rgb), 1);
         DCHECK_GE(MinComponentValue(rgb), 0);
         rsp = cs.ToRGBCoeffs(rgb);
     }
 
-    SPECTRA_CPU_GPU RGBUnboundedSpectrum::RGBUnboundedSpectrum(const RGBColorSpace& cs, RGB rgb) {
+    __host__ __device__ RGBUnboundedSpectrum::RGBUnboundedSpectrum(const RGBColorSpace& cs, RGB rgb) {
         Float m = MaxComponentValue(rgb);
         scale   = 2 * m;
         rsp     = cs.ToRGBCoeffs(scale ? rgb / scale : RGB(0, 0, 0));
     }
 
-    SPECTRA_CPU_GPU RGBIlluminantSpectrum::RGBIlluminantSpectrum(const RGBColorSpace& cs, RGB rgb) : illuminant(&cs.illuminant) {
+    __host__ __device__ RGBIlluminantSpectrum::RGBIlluminantSpectrum(const RGBColorSpace& cs, RGB rgb) : illuminant(&cs.illuminant) {
         Float m = MaxComponentValue(rgb);
         scale   = 2 * m;
         rsp     = cs.ToRGBCoeffs(scale ? rgb / scale : RGB(0, 0, 0));
@@ -4801,7 +4801,7 @@ namespace spectra {
     } // namespace Spectra
 
     namespace Spectra {
-        SPECTRA_GPU DenselySampledSpectrum *xGPU, *yGPU, *zGPU;
+        __device__ DenselySampledSpectrum *xGPU, *yGPU, *zGPU;
         DenselySampledSpectrum *x, *y, *z;
 
         namespace {

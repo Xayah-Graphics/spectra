@@ -2,16 +2,16 @@
 #include <cmath>
 #include <iterator>
 #include <memory>
-#include <spectra/pathtracer/core/diagnostics.h>
-#include <spectra/pathtracer/core/interaction.h>
-#include <spectra/pathtracer/util/check.h>
-#include <spectra/pathtracer/util/math.h>
-#include <spectra/pathtracer/util/transform.h>
+#include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/util/check.cuh>
+#include <spectra/pathtracer/util/math.cuh>
+#include <spectra/pathtracer/util/transform.cuh>
 
 namespace spectra {
     // Transform Function Definitions
     // clang-format off
-SPECTRA_CPU_GPU Transform Translate(Vector3f delta) {
+__host__ __device__ Transform Translate(Vector3f delta) {
     SquareMatrix<4> m(1, 0, 0, delta.x,
                       0, 1, 0, delta.y,
                       0, 0, 1, delta.z,
@@ -25,7 +25,7 @@ SPECTRA_CPU_GPU Transform Translate(Vector3f delta) {
     // clang-format on
 
     // clang-format off
-SPECTRA_CPU_GPU Transform Scale(Float x, Float y, Float z) {
+__host__ __device__ Transform Scale(Float x, Float y, Float z) {
     SquareMatrix<4> m(x, 0, 0, 0,
                       0, y, 0, 0,
                       0, 0, z, 0,
@@ -39,7 +39,7 @@ SPECTRA_CPU_GPU Transform Scale(Float x, Float y, Float z) {
     // clang-format on
 
     // clang-format off
-SPECTRA_CPU_GPU Transform RotateX(Float theta) {
+__host__ __device__ Transform RotateX(Float theta) {
     Float sinTheta = std::sin(Radians(theta));
     Float cosTheta = std::cos(Radians(theta));
     SquareMatrix<4> m(1,        0,         0, 0,
@@ -51,7 +51,7 @@ SPECTRA_CPU_GPU Transform RotateX(Float theta) {
     // clang-format on
 
     // clang-format off
-SPECTRA_CPU_GPU Transform RotateY(Float theta) {
+__host__ __device__ Transform RotateY(Float theta) {
     Float sinTheta = std::sin(Radians(theta));
     Float cosTheta = std::cos(Radians(theta));
     SquareMatrix<4> m( cosTheta, 0, sinTheta, 0,
@@ -60,7 +60,7 @@ SPECTRA_CPU_GPU Transform RotateY(Float theta) {
                               0, 0,        0, 1);
     return Transform(m, Transpose(m));
 }
-SPECTRA_CPU_GPU Transform RotateZ(Float theta) {
+__host__ __device__ Transform RotateZ(Float theta) {
     Float sinTheta = std::sin(Radians(theta));
     Float cosTheta = std::cos(Radians(theta));
     SquareMatrix<4> m(cosTheta, -sinTheta, 0, 0,
@@ -71,7 +71,7 @@ SPECTRA_CPU_GPU Transform RotateZ(Float theta) {
 }
     // clang-format on
 
-    SPECTRA_CPU_GPU Transform LookAt(Point3f pos, Point3f look, Vector3f up) {
+    __host__ __device__ Transform LookAt(Point3f pos, Point3f look, Vector3f up) {
         SquareMatrix<4> worldFromCamera;
         // Initialize fourth column of viewing matrix
         worldFromCamera[0][3] = pos.x;
@@ -105,11 +105,11 @@ SPECTRA_CPU_GPU Transform RotateZ(Float theta) {
         return Transform(cameraFromWorld, worldFromCamera);
     }
 
-    SPECTRA_CPU_GPU Transform Orthographic(Float zNear, Float zFar) {
+    __host__ __device__ Transform Orthographic(Float zNear, Float zFar) {
         return Scale(1, 1, 1 / (zFar - zNear)) * Translate(Vector3f(0, 0, -zNear));
     }
 
-    SPECTRA_CPU_GPU Transform Perspective(Float fov, Float n, Float f) {
+    __host__ __device__ Transform Perspective(Float fov, Float n, Float f) {
         // Perform projective divide for perspective projection
         // clang-format off
 SquareMatrix<4> persp(1, 0,           0,              0,
@@ -124,17 +124,17 @@ SquareMatrix<4> persp(1, 0,           0,              0,
     }
 
     // Transform Method Definitions
-    SPECTRA_CPU_GPU Bounds3f Transform::operator()(const Bounds3f& b) const {
+    __host__ __device__ Bounds3f Transform::operator()(const Bounds3f& b) const {
         Bounds3f bt;
         for (int i = 0; i < 8; ++i) bt = Union(bt, (*this)(b.Corner(i)));
         return bt;
     }
 
-    SPECTRA_CPU_GPU Transform Transform::operator*(const Transform& t2) const {
+    __host__ __device__ Transform Transform::operator*(const Transform& t2) const {
         return Transform(m * t2.m, t2.mInv * mInv);
     }
 
-    SPECTRA_CPU_GPU bool Transform::SwapsHandedness() const {
+    __host__ __device__ bool Transform::SwapsHandedness() const {
         // clang-format off
     SquareMatrix<3> s(m[0][0], m[0][1], m[0][2],
                       m[1][0], m[1][1], m[1][2],
@@ -143,7 +143,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return Determinant(s) < 0;
     }
 
-    SPECTRA_CPU_GPU Transform::operator Quaternion() const {
+    __host__ __device__ Transform::operator Quaternion() const {
         Float trace = m[0][0] + m[1][1] + m[2][2];
         Quaternion quat;
         if (trace > 0.f) {
@@ -212,7 +212,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         *S = InvertOrExit(*R) * M;
     }
 
-    SPECTRA_CPU_GPU SurfaceInteraction Transform::operator()(const SurfaceInteraction& si) const {
+    __host__ __device__ SurfaceInteraction Transform::operator()(const SurfaceInteraction& si) const {
         SurfaceInteraction ret;
         const Transform& t = *this;
         ret.pi             = t(si.pi);
@@ -246,7 +246,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return ret;
     }
 
-    SPECTRA_CPU_GPU Point3fi Transform::ApplyInverse(const Point3fi& p) const {
+    __host__ __device__ Point3fi Transform::ApplyInverse(const Point3fi& p) const {
         Float x = Float(p.x), y = Float(p.y), z = Float(p.z);
         // Compute transformed coordinates from point _pt_
         Float xp = (mInv[0][0] * x + mInv[0][1] * y) + (mInv[0][2] * z + mInv[0][3]);
@@ -273,7 +273,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
             return Point3fi(Point3f(xp, yp, zp), pOutError) / wp;
     }
 
-    SPECTRA_CPU_GPU Interaction Transform::operator()(const Interaction& in) const {
+    __host__ __device__ Interaction Transform::operator()(const Interaction& in) const {
         Interaction ret;
         ret.pi = (*this)(in.pi);
         ret.n  = (*this)(in.n);
@@ -286,7 +286,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return ret;
     }
 
-    SPECTRA_CPU_GPU Interaction Transform::ApplyInverse(const Interaction& in) const {
+    __host__ __device__ Interaction Transform::ApplyInverse(const Interaction& in) const {
         Interaction ret;
         Transform t = Inverse(*this);
         ret.pi      = t(in.pi);
@@ -300,7 +300,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return ret;
     }
 
-    SPECTRA_CPU_GPU SurfaceInteraction Transform::ApplyInverse(const SurfaceInteraction& si) const {
+    __host__ __device__ SurfaceInteraction Transform::ApplyInverse(const SurfaceInteraction& si) const {
         SurfaceInteraction ret;
         ret.pi = (*this)(si.pi);
 
@@ -441,7 +441,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         }
     }
 
-    SPECTRA_CPU_GPU Ray AnimatedTransform::operator()(const Ray& r, Float* tMax) const {
+    __host__ __device__ Ray AnimatedTransform::operator()(const Ray& r, Float* tMax) const {
         if (!actuallyAnimated || r.time <= startTime)
             return startTransform(r, tMax);
         else if (r.time >= endTime)
@@ -452,7 +452,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         }
     }
 
-    SPECTRA_CPU_GPU Ray AnimatedTransform::ApplyInverse(const Ray& r, Float* tMax) const {
+    __host__ __device__ Ray AnimatedTransform::ApplyInverse(const Ray& r, Float* tMax) const {
         if (!actuallyAnimated || r.time <= startTime)
             return startTransform.ApplyInverse(r, tMax);
         else if (r.time >= endTime)
@@ -463,7 +463,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         }
     }
 
-    SPECTRA_CPU_GPU RayDifferential AnimatedTransform::operator()(const RayDifferential& r, Float* tMax) const {
+    __host__ __device__ RayDifferential AnimatedTransform::operator()(const RayDifferential& r, Float* tMax) const {
         if (!actuallyAnimated || r.time <= startTime)
             return startTransform(r, tMax);
         else if (r.time >= endTime)
@@ -474,7 +474,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         }
     }
 
-    SPECTRA_CPU_GPU Point3f AnimatedTransform::operator()(Point3f p, Float time) const {
+    __host__ __device__ Point3f AnimatedTransform::operator()(Point3f p, Float time) const {
         if (!actuallyAnimated || time <= startTime)
             return startTransform(p);
         else if (time >= endTime)
@@ -483,7 +483,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return t(p);
     }
 
-    SPECTRA_CPU_GPU Vector3f AnimatedTransform::operator()(Vector3f v, Float time) const {
+    __host__ __device__ Vector3f AnimatedTransform::operator()(Vector3f v, Float time) const {
         if (!actuallyAnimated || time <= startTime)
             return startTransform(v);
         else if (time >= endTime)
@@ -492,7 +492,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return t(v);
     }
 
-    SPECTRA_CPU_GPU Normal3f AnimatedTransform::operator()(Normal3f n, Float time) const {
+    __host__ __device__ Normal3f AnimatedTransform::operator()(Normal3f n, Float time) const {
         if (!actuallyAnimated || time <= startTime)
             return startTransform(n);
         else if (time >= endTime)
@@ -501,32 +501,32 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return t(n);
     }
 
-    SPECTRA_CPU_GPU Interaction AnimatedTransform::operator()(const Interaction& it) const {
+    __host__ __device__ Interaction AnimatedTransform::operator()(const Interaction& it) const {
         if (!actuallyAnimated) return startTransform(it);
         Transform t = Interpolate(it.time);
         return t(it);
     }
 
-    SPECTRA_CPU_GPU Interaction AnimatedTransform::ApplyInverse(const Interaction& it) const {
+    __host__ __device__ Interaction AnimatedTransform::ApplyInverse(const Interaction& it) const {
         if (!actuallyAnimated) return startTransform.ApplyInverse(it);
         Transform t = Interpolate(it.time);
         return t.ApplyInverse(it);
     }
 
-    SPECTRA_CPU_GPU SurfaceInteraction AnimatedTransform::operator()(const SurfaceInteraction& it) const {
+    __host__ __device__ SurfaceInteraction AnimatedTransform::operator()(const SurfaceInteraction& it) const {
         if (!actuallyAnimated) return startTransform(it);
         Transform t = Interpolate(it.time);
         return t(it);
     }
 
-    SPECTRA_CPU_GPU SurfaceInteraction AnimatedTransform::ApplyInverse(const SurfaceInteraction& it) const {
+    __host__ __device__ SurfaceInteraction AnimatedTransform::ApplyInverse(const SurfaceInteraction& it) const {
         if (!actuallyAnimated) return startTransform.ApplyInverse(it);
         Transform t = Interpolate(it.time);
         return t.ApplyInverse(it);
     }
 
 
-    SPECTRA_CPU_GPU Transform AnimatedTransform::Interpolate(Float time) const {
+    __host__ __device__ Transform AnimatedTransform::Interpolate(Float time) const {
         // Handle boundary conditions for matrix interpolation
         if (!actuallyAnimated || time <= startTime) return startTransform;
         if (time >= endTime) return endTransform;
@@ -545,7 +545,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return Translate(trans) * Transform(rotate) * Transform(scale);
     }
 
-    SPECTRA_CPU_GPU Bounds3f AnimatedTransform::MotionBounds(const Bounds3f& b) const {
+    __host__ __device__ Bounds3f AnimatedTransform::MotionBounds(const Bounds3f& b) const {
         // Handle easy cases for _Bounds3f_ motion bounds
         if (!actuallyAnimated) return startTransform(b);
         if (!hasRotation) return Union(startTransform(b), endTransform(b));
@@ -556,7 +556,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return bounds;
     }
 
-    SPECTRA_CPU_GPU Bounds3f AnimatedTransform::BoundPointMotion(Point3f p) const {
+    __host__ __device__ Bounds3f AnimatedTransform::BoundPointMotion(Point3f p) const {
         if (!actuallyAnimated) return Bounds3f(startTransform(p));
         Bounds3f bounds(startTransform(p), endTransform(p));
         Float cosTheta = Dot(R[0], R[1]);
@@ -577,7 +577,7 @@ SquareMatrix<4> persp(1, 0,           0,              0,
         return bounds;
     }
 
-    SPECTRA_CPU_GPU void AnimatedTransform::FindZeros(Float c1, Float c2, Float c3, Float c4, Float c5, Float theta, Interval tInterval, pstd::span<Float> zeros, int* nZeros, int depth) {
+    __host__ __device__ void AnimatedTransform::FindZeros(Float c1, Float c2, Float c3, Float c4, Float c5, Float theta, Interval tInterval, pstd::span<Float> zeros, int* nZeros, int depth) {
         // Evaluate motion derivative in interval form, return if no zeros
         Interval dadt = Interval(c1) + (Interval(c2) + Interval(c3) * tInterval) * Cos(Interval(2 * theta) * tInterval) + (Interval(c4) + Interval(c5) * tInterval) * Sin(Interval(2 * theta) * tInterval);
         if (dadt.LowerBound() > 0 || dadt.UpperBound() < 0 || dadt.LowerBound() == dadt.UpperBound()) return;
