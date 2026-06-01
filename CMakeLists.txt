@@ -94,6 +94,15 @@ set(SPECTRA_PROJECT_SCENE_ROOT "${PROJECT_SOURCE_DIR}/scene")
 if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/pbrt-book/book.pbrt")
     message(FATAL_ERROR "Default Spectra book scene is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/pbrt-book/book.pbrt")
 endif ()
+if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/explosion.pbrt")
+    message(FATAL_ERROR "Default Spectra explosion scene is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/explosion/explosion.pbrt")
+endif ()
+if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/fire.nvdb")
+    message(FATAL_ERROR "Default Spectra explosion volume is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/explosion/fire.nvdb")
+endif ()
+if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/textures/sky.exr")
+    message(FATAL_ERROR "Default Spectra explosion sky texture is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/explosion/textures/sky.exr")
+endif ()
 set(SPECTRA_GPU_DEFINITIONS
         PTEX_STATIC
         "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>"
@@ -386,6 +395,7 @@ add_library(
         ${SPECTRA_GPU_DEVICE_SOURCE}
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
+        spectra/scene_builtin.cpp
         spectra/scene.cpp
         spectra/pathtracer/optix/aggregate.cu
         spectra/pathtracer/integrator.cu
