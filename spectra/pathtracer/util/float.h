@@ -56,7 +56,7 @@ namespace spectra {
 
     // Floating-point Inline Functions
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsNaN(T v) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsNaN(T v) {
 #if defined(__CUDA_ARCH__)
         return isnan(v);
 #else
@@ -65,12 +65,12 @@ namespace spectra {
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, bool> IsNaN(T v) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, bool> IsNaN(T v) {
         return false;
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsInf(T v) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsInf(T v) {
 #if defined(__CUDA_ARCH__)
         return isinf(v);
 #else
@@ -79,12 +79,12 @@ namespace spectra {
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, bool> IsInf(T v) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, bool> IsInf(T v) {
         return false;
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsFinite(T v) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_floating_point_v<T>, bool> IsFinite(T v) {
 #if defined(__CUDA_ARCH__)
         return isfinite(v);
 #else
@@ -93,7 +93,7 @@ namespace spectra {
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, bool> IsFinite(T v) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, bool> IsFinite(T v) {
         return true;
     }
 

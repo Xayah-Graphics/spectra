@@ -46,7 +46,7 @@ namespace spectra {
         SPECTRA_CPU_GPU T Uniform();
 
         template <typename T>
-        SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> Uniform(T b) {
+        SPECTRA_CPU_GPU std::enable_if_t<std::is_integral_v<T>, T> Uniform(T b) {
             T threshold = (~b + 1u) % b;
             while (true) {
                 T r = Uniform<T>();
@@ -66,7 +66,7 @@ namespace spectra {
 
     // RNG Inline Method Definitions
     template <typename T>
-    SPECTRA_CPU_GPU inline T RNG::Uniform() {
+    SPECTRA_CPU_GPU T RNG::Uniform() {
         return T::unimplemented;
     }
 

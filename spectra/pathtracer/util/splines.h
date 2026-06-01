@@ -9,14 +9,14 @@
 namespace spectra {
     // Bezier Inline Functions
     template <typename P>
-    SPECTRA_CPU_GPU inline P BlossomCubicBezier(pstd::span<const P> p, Float u0, Float u1, Float u2) {
+    SPECTRA_CPU_GPU P BlossomCubicBezier(pstd::span<const P> p, Float u0, Float u1, Float u2) {
         P a[3] = {Lerp(u0, p[0], p[1]), Lerp(u0, p[1], p[2]), Lerp(u0, p[2], p[3])};
         P b[2] = {Lerp(u1, a[0], a[1]), Lerp(u1, a[1], a[2])};
         return Lerp(u2, b[0], b[1]);
     }
 
     template <typename P>
-    SPECTRA_CPU_GPU inline P EvaluateCubicBezier(pstd::span<const P> cp, Float u) {
+    SPECTRA_CPU_GPU P EvaluateCubicBezier(pstd::span<const P> cp, Float u) {
         return BlossomCubicBezier(cp, u, u, u);
     }
 

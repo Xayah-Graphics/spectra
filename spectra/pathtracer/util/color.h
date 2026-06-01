@@ -191,7 +191,7 @@ namespace spectra {
 
     // RGB Inline Functions
     template <typename U, typename V>
-    SPECTRA_CPU_GPU inline RGB Clamp(RGB rgb, U min, V max) {
+    SPECTRA_CPU_GPU RGB Clamp(RGB rgb, U min, V max) {
         return RGB(spectra::Clamp(rgb.r, min, max), spectra::Clamp(rgb.g, min, max), spectra::Clamp(rgb.b, min, max));
     }
 
@@ -361,7 +361,7 @@ namespace spectra {
     }
 
     template <typename U, typename V>
-    SPECTRA_CPU_GPU inline XYZ Clamp(const XYZ& xyz, U min, V max) {
+    SPECTRA_CPU_GPU XYZ Clamp(const XYZ& xyz, U min, V max) {
         return XYZ(spectra::Clamp(xyz.X, min, max), spectra::Clamp(xyz.Y, min, max), spectra::Clamp(xyz.Z, min, max));
     }
 

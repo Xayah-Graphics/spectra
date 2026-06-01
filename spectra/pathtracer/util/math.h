@@ -212,7 +212,7 @@ namespace spectra {
     }
 
     template <typename T>
-    inline SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> FMA(T a, T b, T c) {
+    SPECTRA_CPU_GPU typename std::enable_if_t<std::is_integral_v<T>, T> FMA(T a, T b, T c) {
         return a * b + c;
     }
 
@@ -246,7 +246,7 @@ namespace spectra {
 #endif
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T Mod(T a, T b) {
+    SPECTRA_CPU_GPU T Mod(T a, T b) {
         T result = a - (a / b) * b;
         return (T) ((result < 0) ? result + b : result);
     }
@@ -436,7 +436,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline int Log4Int(T v) {
+    SPECTRA_CPU_GPU int Log4Int(T v) {
         return Log2Int(v) / 2;
     }
 
@@ -495,7 +495,7 @@ namespace spectra {
     SPECTRA_CPU_GPU inline Float LogI0(Float x);
 
     template <typename Predicate>
-    SPECTRA_CPU_GPU inline size_t FindInterval(size_t sz, const Predicate& pred) {
+    SPECTRA_CPU_GPU size_t FindInterval(size_t sz, const Predicate& pred) {
         using ssize_t = std::make_signed_t<size_t>;
         ssize_t size = (ssize_t) sz - 2, first = 1;
         while (size > 0) {
@@ -514,7 +514,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool IsPowerOf4(T v) {
+    SPECTRA_CPU_GPU bool IsPowerOf4(T v) {
         return v == 1 << (2 * Log4Int(v));
     }
 
@@ -541,7 +541,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T RoundUpPow4(T v) {
+    SPECTRA_CPU_GPU T RoundUpPow4(T v) {
         return IsPowerOf4(v) ? v : (1 << (2 * (1 + Log4Int(v))));
     }
 
@@ -556,7 +556,7 @@ namespace spectra {
     }
 
     template <typename Ta, typename Tb, typename Tc, typename Td>
-    SPECTRA_CPU_GPU inline auto DifferenceOfProducts(Ta a, Tb b, Tc c, Td d) {
+    SPECTRA_CPU_GPU auto DifferenceOfProducts(Ta a, Tb b, Tc c, Td d) {
         auto cd                   = c * d;
         auto differenceOfProducts = FMA(a, b, -cd);
         auto error                = FMA(-c, d, cd);
@@ -564,7 +564,7 @@ namespace spectra {
     }
 
     template <typename Ta, typename Tb, typename Tc, typename Td>
-    SPECTRA_CPU_GPU inline auto SumOfProducts(Ta a, Tb b, Tc c, Td d) {
+    SPECTRA_CPU_GPU auto SumOfProducts(Ta a, Tb b, Tc c, Td d) {
         auto cd            = c * d;
         auto sumOfProducts = FMA(a, b, cd);
         auto error         = FMA(c, d, -cd);
@@ -574,7 +574,7 @@ namespace spectra {
     namespace internal {
         // InnerProduct Helper Functions
         template <typename Float>
-        SPECTRA_CPU_GPU inline CompensatedFloat InnerProduct(Float a, Float b) {
+        SPECTRA_CPU_GPU CompensatedFloat InnerProduct(Float a, Float b) {
             return TwoProd(a, b);
         }
 
@@ -584,7 +584,7 @@ namespace spectra {
         // Accurate summation, dot product and polynomial evaluation in complex
         // floating point arithmetic, Graillat and Menissier-Morain.
         template <typename Float, typename... T>
-        SPECTRA_CPU_GPU inline CompensatedFloat InnerProduct(Float a, Float b, T... terms) {
+        SPECTRA_CPU_GPU CompensatedFloat InnerProduct(Float a, Float b, T... terms) {
             CompensatedFloat ab  = TwoProd(a, b);
             CompensatedFloat tp  = InnerProduct(terms...);
             CompensatedFloat sum = TwoSum(ab.v, tp.v);
@@ -593,7 +593,7 @@ namespace spectra {
     } // namespace internal
 
     template <typename... T>
-    SPECTRA_CPU_GPU inline std::enable_if_t<std::conjunction_v<std::is_arithmetic<T>...>, Float> InnerProduct(T... terms) {
+    SPECTRA_CPU_GPU std::enable_if_t<std::conjunction_v<std::is_arithmetic<T>...>, Float> InnerProduct(T... terms) {
         CompensatedFloat ip = internal::InnerProduct(terms...);
         return Float(ip);
     }
@@ -641,7 +641,7 @@ namespace spectra {
     }
 
     template <typename Func>
-    SPECTRA_CPU_GPU inline Float NewtonBisection(Float x0, Float x1, Func f, Float xEps = 1e-6f, Float fEps = 1e-6f) {
+    SPECTRA_CPU_GPU Float NewtonBisection(Float x0, Float x1, Func f, Float xEps = 1e-6f, Float fEps = 1e-6f) {
         // Check function endpoints for roots
         DCHECK_LT(x0, x1);
         Float fx0 = f(x0).first, fx1 = f(x1).first;
@@ -1200,7 +1200,7 @@ namespace spectra {
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline Interval SumSquares(Interval i, Args... args) {
+    SPECTRA_CPU_GPU Interval SumSquares(Interval i, Args... args) {
         Interval ss = FMA(i, i, SumSquares(args...));
         return Interval(std::max<Float>(0, ss.LowerBound()), ss.UpperBound());
     }
@@ -1352,7 +1352,7 @@ namespace spectra {
 
     // SquareMatrix Inline Methods
     template <int N>
-    SPECTRA_CPU_GPU inline bool SquareMatrix<N>::IsIdentity() const {
+    SPECTRA_CPU_GPU bool SquareMatrix<N>::IsIdentity() const {
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j) {
                 if (i == j) {
@@ -1365,12 +1365,12 @@ namespace spectra {
 
     // SquareMatrix Inline Functions
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(Float s, const SquareMatrix<N>& m) {
+    SPECTRA_CPU_GPU SquareMatrix<N> operator*(Float s, const SquareMatrix<N>& m) {
         return m * s;
     }
 
     template <typename Tresult, int N, typename T>
-    SPECTRA_CPU_GPU inline Tresult Mul(const SquareMatrix<N>& m, const T& v) {
+    SPECTRA_CPU_GPU Tresult Mul(const SquareMatrix<N>& m, const T& v) {
         Tresult result;
         for (int i = 0; i < N; ++i) {
             result[i] = 0;
@@ -1391,7 +1391,7 @@ namespace spectra {
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> Transpose(const SquareMatrix<N>& m);
+    SPECTRA_CPU_GPU SquareMatrix<N> Transpose(const SquareMatrix<N>& m);
     template <int N>
     SPECTRA_CPU_GPU pstd::optional<SquareMatrix<N>> Inverse(const SquareMatrix<N>&);
 
@@ -1403,7 +1403,7 @@ namespace spectra {
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> Transpose(const SquareMatrix<N>& m) {
+    SPECTRA_CPU_GPU SquareMatrix<N> Transpose(const SquareMatrix<N>& m) {
         SquareMatrix<N> r;
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j) r[i][j] = m[j][i];
@@ -1432,7 +1432,7 @@ namespace spectra {
     }
 
     template <int N, typename T>
-    SPECTRA_CPU_GPU inline T operator*(const SquareMatrix<N>& m, const T& v) {
+    SPECTRA_CPU_GPU T operator*(const SquareMatrix<N>& m, const T& v) {
         return Mul<T>(m, v);
     }
 
@@ -1453,7 +1453,7 @@ namespace spectra {
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N> operator*(const SquareMatrix<N>& m1, const SquareMatrix<N>& m2) {
+    SPECTRA_CPU_GPU SquareMatrix<N> operator*(const SquareMatrix<N>& m1, const SquareMatrix<N>& m2) {
         SquareMatrix<N> r;
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j) {
@@ -1464,7 +1464,7 @@ namespace spectra {
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline SquareMatrix<N>::SquareMatrix(pstd::span<const Float> t) {
+    SPECTRA_CPU_GPU SquareMatrix<N>::SquareMatrix(pstd::span<const Float> t) {
         CHECK_EQ(N * N, t.size());
         for (int i = 0; i < N * N; ++i) m[i / N][i % N] = t[i];
     }
@@ -1504,7 +1504,7 @@ namespace spectra {
     }
 
     template <int N>
-    SPECTRA_CPU_GPU inline Float Determinant(const SquareMatrix<N>& m) {
+    SPECTRA_CPU_GPU Float Determinant(const SquareMatrix<N>& m) {
         SquareMatrix<N - 1> sub;
         Float det = 0;
         // Inefficient, but we don't currently use N>4 anyway..

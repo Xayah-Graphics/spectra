@@ -61,27 +61,27 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline uint64_t HashBuffer(const T* ptr, size_t nElements, uint64_t seed = 0) {
+    SPECTRA_CPU_GPU uint64_t HashBuffer(const T* ptr, size_t nElements, uint64_t seed = 0) {
         return MurmurHash64A((const unsigned char*) ptr, nElements * sizeof(T), seed);
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline uint64_t Hash(Args... args);
+    SPECTRA_CPU_GPU uint64_t Hash(Args... args);
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf, Args...);
+    SPECTRA_CPU_GPU void hashRecursiveCopy(char* buf, Args...);
 
     template <>
     SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf) {}
 
     template <typename T, typename... Args>
-    SPECTRA_CPU_GPU inline void hashRecursiveCopy(char* buf, T v, Args... args) {
+    SPECTRA_CPU_GPU void hashRecursiveCopy(char* buf, T v, Args... args) {
         memcpy(buf, &v, sizeof(T));
         hashRecursiveCopy(buf + sizeof(T), args...);
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline uint64_t Hash(Args... args) {
+    SPECTRA_CPU_GPU uint64_t Hash(Args... args) {
         // C++, you never cease to amaze: https://stackoverflow.com/a/57246704
         constexpr size_t sz = (sizeof(Args) + ... + 0);
         constexpr size_t n  = (sz + 7) / 8;
@@ -91,7 +91,7 @@ namespace spectra {
     }
 
     template <typename... Args>
-    SPECTRA_CPU_GPU inline Float HashFloat(Args... args) {
+    SPECTRA_CPU_GPU Float HashFloat(Args... args) {
         return uint32_t(Hash(args...)) * 0x1p-32f;
     }
 } // namespace spectra

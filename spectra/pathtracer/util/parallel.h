@@ -54,7 +54,7 @@ namespace spectra {
 
     // ThreadLocal Inline Methods
     template <typename T>
-    inline T& ThreadLocal<T>::Get() {
+    T& ThreadLocal<T>::Get() {
         std::thread::id tid = std::this_thread::get_id();
         while (true) {
             std::unique_lock<std::shared_mutex> lock(mutex);
@@ -95,7 +95,7 @@ namespace spectra {
 
     template <typename T>
     template <typename F>
-    inline void ThreadLocal<T>::ForAll(F&& func) {
+    void ThreadLocal<T>::ForAll(F&& func) {
         mutex.lock();
         for (auto& entry : hashTable) {
             if (entry) func(entry->value);
@@ -396,10 +396,10 @@ namespace spectra {
 
     // Asynchronous Task Launch Function Definitions
     template <typename F, typename... Args>
-    inline auto RunAsync(F func, Args&&... args) {
+    auto RunAsync(F func, Args&&... args) {
         // Create _AsyncJob_ for _func_ and _args_
         auto fvoid       = std::bind(func, std::forward<Args>(args)...);
-        using R          = typename std::invoke_result_t<F, Args...>;
+        using R          = std::invoke_result_t<F, Args...>;
         AsyncJob<R>* job = new AsyncJob<R>(std::move(fvoid));
 
         // Enqueue _job_ or run it immediately

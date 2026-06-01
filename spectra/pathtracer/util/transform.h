@@ -26,9 +26,9 @@ namespace spectra {
         SPECTRA_CPU_GPU
         inline RayDifferential ApplyInverse(const RayDifferential& r, Float* tMax = nullptr) const;
         template <typename T>
-        SPECTRA_CPU_GPU inline Vector3<T> ApplyInverse(Vector3<T> v) const;
+        SPECTRA_CPU_GPU Vector3<T> ApplyInverse(Vector3<T> v) const;
         template <typename T>
-        SPECTRA_CPU_GPU inline Normal3<T> ApplyInverse(Normal3<T>) const;
+        SPECTRA_CPU_GPU Normal3<T> ApplyInverse(Normal3<T>) const;
 
 
         Transform() = default;
@@ -86,7 +86,7 @@ namespace spectra {
         SPECTRA_CPU_GPU Point3<T> operator()(Point3<T> p) const;
 
         template <typename T>
-        SPECTRA_CPU_GPU inline Point3<T> ApplyInverse(Point3<T> p) const;
+        SPECTRA_CPU_GPU Point3<T> ApplyInverse(Point3<T> p) const;
 
         template <typename T>
         SPECTRA_CPU_GPU Vector3<T> operator()(Vector3<T> v) const;
@@ -273,7 +273,7 @@ namespace spectra {
 
     // Transform Inline Methods
     template <typename T>
-    SPECTRA_CPU_GPU inline Point3<T> Transform::operator()(Point3<T> p) const {
+    SPECTRA_CPU_GPU Point3<T> Transform::operator()(Point3<T> p) const {
         T xp = m[0][0] * p.x + m[0][1] * p.y + m[0][2] * p.z + m[0][3];
         T yp = m[1][0] * p.x + m[1][1] * p.y + m[1][2] * p.z + m[1][3];
         T zp = m[2][0] * p.x + m[2][1] * p.y + m[2][2] * p.z + m[2][3];
@@ -285,12 +285,12 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Transform::operator()(Vector3<T> v) const {
+    SPECTRA_CPU_GPU Vector3<T> Transform::operator()(Vector3<T> v) const {
         return Vector3<T>(m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z, m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z, m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Normal3<T> Transform::operator()(Normal3<T> n) const {
+    SPECTRA_CPU_GPU Normal3<T> Transform::operator()(Normal3<T> n) const {
         T x = n.x, y = n.y, z = n.z;
         return Normal3<T>(mInv[0][0] * x + mInv[1][0] * y + mInv[2][0] * z, mInv[0][1] * x + mInv[1][1] * y + mInv[2][1] * z, mInv[0][2] * x + mInv[1][2] * y + mInv[2][2] * z);
     }
@@ -341,7 +341,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Point3<T> Transform::ApplyInverse(Point3<T> p) const {
+    SPECTRA_CPU_GPU Point3<T> Transform::ApplyInverse(Point3<T> p) const {
         T x = p.x, y = p.y, z = p.z;
         T xp = (mInv[0][0] * x + mInv[0][1] * y) + (mInv[0][2] * z + mInv[0][3]);
         T yp = (mInv[1][0] * x + mInv[1][1] * y) + (mInv[1][2] * z + mInv[1][3]);
@@ -355,13 +355,13 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Transform::ApplyInverse(Vector3<T> v) const {
+    SPECTRA_CPU_GPU Vector3<T> Transform::ApplyInverse(Vector3<T> v) const {
         T x = v.x, y = v.y, z = v.z;
         return Vector3<T>(mInv[0][0] * x + mInv[0][1] * y + mInv[0][2] * z, mInv[1][0] * x + mInv[1][1] * y + mInv[1][2] * z, mInv[2][0] * x + mInv[2][1] * y + mInv[2][2] * z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Normal3<T> Transform::ApplyInverse(Normal3<T> n) const {
+    SPECTRA_CPU_GPU Normal3<T> Transform::ApplyInverse(Normal3<T> n) const {
         T x = n.x, y = n.y, z = n.z;
         return Normal3<T>(m[0][0] * x + m[1][0] * y + m[2][0] * z, m[0][1] * x + m[1][1] * y + m[2][1] * z, m[0][2] * x + m[1][2] * y + m[2][2] * z);
     }

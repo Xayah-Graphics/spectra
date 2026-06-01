@@ -170,86 +170,86 @@ namespace spectra {
 
     // Tuple2 Inline Functions
     template <template <class> class C, typename T, typename U>
-    SPECTRA_CPU_GPU inline auto operator*(U s, Tuple2<C, T> t) -> C<decltype(T{} * U{})> {
+    SPECTRA_CPU_GPU auto operator*(U s, Tuple2<C, T> t) -> C<decltype(T{} * U{})> {
         DCHECK(!t.HasNaN());
         return t * s;
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Abs(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU C<T> Abs(Tuple2<C, T> t) {
         // "argument-dependent lookup..." (here and elsewhere)
         using std::abs;
         return {abs(t.x), abs(t.y)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Ceil(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU C<T> Ceil(Tuple2<C, T> t) {
         using pstd::ceil;
         return {ceil(t.x), ceil(t.y)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Floor(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU C<T> Floor(Tuple2<C, T> t) {
         using pstd::floor;
         return {floor(t.x), floor(t.y)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline auto Lerp(Float t, Tuple2<C, T> t0, Tuple2<C, T> t1) {
+    SPECTRA_CPU_GPU auto Lerp(Float t, Tuple2<C, T> t0, Tuple2<C, T> t1) {
         return (1 - t) * t0 + t * t1;
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> FMA(Float a, Tuple2<C, T> b, Tuple2<C, T> c) {
+    SPECTRA_CPU_GPU C<T> FMA(Float a, Tuple2<C, T> b, Tuple2<C, T> c) {
         return {FMA(a, b.x, c.x), FMA(a, b.y, c.y)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> FMA(Tuple2<C, T> a, Float b, Tuple2<C, T> c) {
+    SPECTRA_CPU_GPU C<T> FMA(Tuple2<C, T> a, Float b, Tuple2<C, T> c) {
         return FMA(b, a, c);
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Min(Tuple2<C, T> t0, Tuple2<C, T> t1) {
+    SPECTRA_CPU_GPU C<T> Min(Tuple2<C, T> t0, Tuple2<C, T> t1) {
         using std::min;
         return {min(t0.x, t1.x), min(t0.y, t1.y)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline T MinComponentValue(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU T MinComponentValue(Tuple2<C, T> t) {
         using std::min;
         return min({t.x, t.y});
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline int MinComponentIndex(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU int MinComponentIndex(Tuple2<C, T> t) {
         return (t.x < t.y) ? 0 : 1;
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Max(Tuple2<C, T> t0, Tuple2<C, T> t1) {
+    SPECTRA_CPU_GPU C<T> Max(Tuple2<C, T> t0, Tuple2<C, T> t1) {
         using std::max;
         return {max(t0.x, t1.x), max(t0.y, t1.y)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline T MaxComponentValue(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU T MaxComponentValue(Tuple2<C, T> t) {
         using std::max;
         return max({t.x, t.y});
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline int MaxComponentIndex(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU int MaxComponentIndex(Tuple2<C, T> t) {
         return (t.x > t.y) ? 0 : 1;
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Permute(Tuple2<C, T> t, pstd::array<int, 2> p) {
+    SPECTRA_CPU_GPU C<T> Permute(Tuple2<C, T> t, pstd::array<int, 2> p) {
         return {t[p[0]], t[p[1]]};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline T HProd(Tuple2<C, T> t) {
+    SPECTRA_CPU_GPU T HProd(Tuple2<C, T> t) {
         return t.x * t.y;
     }
 
@@ -388,84 +388,84 @@ namespace spectra {
 
     // Tuple3 Inline Functions
     template <template <class> class C, typename T, typename U>
-    SPECTRA_CPU_GPU inline auto operator*(U s, Tuple3<C, T> t) -> C<decltype(T{} * U{})> {
+    SPECTRA_CPU_GPU auto operator*(U s, Tuple3<C, T> t) -> C<decltype(T{} * U{})> {
         return t * s;
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Abs(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU C<T> Abs(Tuple3<C, T> t) {
         using std::abs;
         return {abs(t.x), abs(t.y), abs(t.z)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Ceil(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU C<T> Ceil(Tuple3<C, T> t) {
         using pstd::ceil;
         return {ceil(t.x), ceil(t.y), ceil(t.z)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Floor(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU C<T> Floor(Tuple3<C, T> t) {
         using pstd::floor;
         return {floor(t.x), floor(t.y), floor(t.z)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline auto Lerp(Float t, Tuple3<C, T> t0, Tuple3<C, T> t1) {
+    SPECTRA_CPU_GPU auto Lerp(Float t, Tuple3<C, T> t0, Tuple3<C, T> t1) {
         return (1 - t) * t0 + t * t1;
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> FMA(Float a, Tuple3<C, T> b, Tuple3<C, T> c) {
+    SPECTRA_CPU_GPU C<T> FMA(Float a, Tuple3<C, T> b, Tuple3<C, T> c) {
         return {FMA(a, b.x, c.x), FMA(a, b.y, c.y), FMA(a, b.z, c.z)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> FMA(Tuple3<C, T> a, Float b, Tuple3<C, T> c) {
+    SPECTRA_CPU_GPU C<T> FMA(Tuple3<C, T> a, Float b, Tuple3<C, T> c) {
         return FMA(b, a, c);
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Min(Tuple3<C, T> t1, Tuple3<C, T> t2) {
+    SPECTRA_CPU_GPU C<T> Min(Tuple3<C, T> t1, Tuple3<C, T> t2) {
         using std::min;
         return {min(t1.x, t2.x), min(t1.y, t2.y), min(t1.z, t2.z)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline T MinComponentValue(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU T MinComponentValue(Tuple3<C, T> t) {
         using std::min;
         return min({t.x, t.y, t.z});
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline int MinComponentIndex(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU int MinComponentIndex(Tuple3<C, T> t) {
         return (t.x < t.y) ? ((t.x < t.z) ? 0 : 2) : ((t.y < t.z) ? 1 : 2);
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Max(Tuple3<C, T> t1, Tuple3<C, T> t2) {
+    SPECTRA_CPU_GPU C<T> Max(Tuple3<C, T> t1, Tuple3<C, T> t2) {
         using std::max;
         return {max(t1.x, t2.x), max(t1.y, t2.y), max(t1.z, t2.z)};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline T MaxComponentValue(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU T MaxComponentValue(Tuple3<C, T> t) {
         using std::max;
         return max({t.x, t.y, t.z});
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline int MaxComponentIndex(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU int MaxComponentIndex(Tuple3<C, T> t) {
         return (t.x > t.y) ? ((t.x > t.z) ? 0 : 2) : ((t.y > t.z) ? 1 : 2);
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline C<T> Permute(Tuple3<C, T> t, pstd::array<int, 3> p) {
+    SPECTRA_CPU_GPU C<T> Permute(Tuple3<C, T> t, pstd::array<int, 3> p) {
         return {t[p[0]], t[p[1]], t[p[2]]};
     }
 
     template <template <class> class C, typename T>
-    SPECTRA_CPU_GPU inline T HProd(Tuple3<C, T> t) {
+    SPECTRA_CPU_GPU T HProd(Tuple3<C, T> t) {
         return t.x * t.y * t.z;
     }
 
@@ -927,40 +927,40 @@ namespace spectra {
     SPECTRA_CPU_GPU Vector2<T>::Vector2(Point2<U> p) : Tuple2<spectra::Vector2, T>(T(p.x), T(p.y)) {}
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Dot(Vector2<T> v1, Vector2<T> v2) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Dot(Vector2<T> v1, Vector2<T> v2) -> TupleLength<T>::type {
         DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return SumOfProducts(v1.x, v2.x, v1.y, v2.y);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto AbsDot(Vector2<T> v1, Vector2<T> v2) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto AbsDot(Vector2<T> v1, Vector2<T> v2) -> TupleLength<T>::type {
         DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return std::abs(Dot(v1, v2));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto LengthSquared(Vector2<T> v) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto LengthSquared(Vector2<T> v) -> TupleLength<T>::type {
         return Sqr(v.x) + Sqr(v.y);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Length(Vector2<T> v) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Length(Vector2<T> v) -> TupleLength<T>::type {
         using std::sqrt;
         return sqrt(LengthSquared(v));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Normalize(Vector2<T> v) {
+    SPECTRA_CPU_GPU auto Normalize(Vector2<T> v) {
         return v / Length(v);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Distance(Point2<T> p1, Point2<T> p2) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Distance(Point2<T> p1, Point2<T> p2) -> TupleLength<T>::type {
         return Length(p1 - p2);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto DistanceSquared(Point2<T> p1, Point2<T> p2) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto DistanceSquared(Point2<T> p1, Point2<T> p2) -> TupleLength<T>::type {
         return LengthSquared(p1 - p2);
     }
 
@@ -970,35 +970,35 @@ namespace spectra {
     SPECTRA_CPU_GPU Vector3<T>::Vector3(Point3<U> p) : Tuple3<spectra::Vector3, T>(T(p.x), T(p.y), T(p.z)) {}
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Cross(Vector3<T> v1, Normal3<T> v2) {
+    SPECTRA_CPU_GPU Vector3<T> Cross(Vector3<T> v1, Normal3<T> v2) {
         DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return {DifferenceOfProducts(v1.y, v2.z, v1.z, v2.y), DifferenceOfProducts(v1.z, v2.x, v1.x, v2.z), DifferenceOfProducts(v1.x, v2.y, v1.y, v2.x)};
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Cross(Normal3<T> v1, Vector3<T> v2) {
+    SPECTRA_CPU_GPU Vector3<T> Cross(Normal3<T> v1, Vector3<T> v2) {
         DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return {DifferenceOfProducts(v1.y, v2.z, v1.z, v2.y), DifferenceOfProducts(v1.z, v2.x, v1.x, v2.z), DifferenceOfProducts(v1.x, v2.y, v1.y, v2.x)};
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T LengthSquared(Vector3<T> v) {
+    SPECTRA_CPU_GPU T LengthSquared(Vector3<T> v) {
         return Sqr(v.x) + Sqr(v.y) + Sqr(v.z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Length(Vector3<T> v) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Length(Vector3<T> v) -> TupleLength<T>::type {
         using std::sqrt;
         return sqrt(LengthSquared(v));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Normalize(Vector3<T> v) {
+    SPECTRA_CPU_GPU auto Normalize(Vector3<T> v) {
         return v / Length(v);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T Dot(Vector3<T> v, Vector3<T> w) {
+    SPECTRA_CPU_GPU T Dot(Vector3<T> v, Vector3<T> w) {
         DCHECK(!v.HasNaN() && !w.HasNaN());
         return v.x * w.x + v.y * w.y + v.z * w.z;
     }
@@ -1006,7 +1006,7 @@ namespace spectra {
     // Equivalent to std::acos(Dot(a, b)), but more numerically stable.
     // via http://www.plunk.org/~hatch/rightway.html
     template <typename T>
-    SPECTRA_CPU_GPU inline Float AngleBetween(Vector3<T> v1, Vector3<T> v2) {
+    SPECTRA_CPU_GPU Float AngleBetween(Vector3<T> v1, Vector3<T> v2) {
         if (Dot(v1, v2) < 0)
             return Pi - 2 * SafeASin(Length(v1 + v2) / 2);
         else
@@ -1014,13 +1014,13 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline T AbsDot(Vector3<T> v1, Vector3<T> v2) {
+    SPECTRA_CPU_GPU T AbsDot(Vector3<T> v1, Vector3<T> v2) {
         DCHECK(!v1.HasNaN() && !v2.HasNaN());
         return std::abs(Dot(v1, v2));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Float AngleBetween(Normal3<T> a, Normal3<T> b) {
+    SPECTRA_CPU_GPU Float AngleBetween(Normal3<T> a, Normal3<T> b) {
         if (Dot(a, b) < 0)
             return Pi - 2 * SafeASin(Length(a + b) / 2);
         else
@@ -1028,18 +1028,18 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> GramSchmidt(Vector3<T> v, Vector3<T> w) {
+    SPECTRA_CPU_GPU Vector3<T> GramSchmidt(Vector3<T> v, Vector3<T> w) {
         return v - Dot(v, w) * w;
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> Cross(Vector3<T> v, Vector3<T> w) {
+    SPECTRA_CPU_GPU Vector3<T> Cross(Vector3<T> v, Vector3<T> w) {
         DCHECK(!v.HasNaN() && !w.HasNaN());
         return {DifferenceOfProducts(v.y, w.z, v.z, w.y), DifferenceOfProducts(v.z, w.x, v.x, w.z), DifferenceOfProducts(v.x, w.y, v.y, w.x)};
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline void CoordinateSystem(Vector3<T> v1, Vector3<T>* v2, Vector3<T>* v3) {
+    SPECTRA_CPU_GPU void CoordinateSystem(Vector3<T> v1, Vector3<T>* v2, Vector3<T>* v3) {
         Float sign = pstd::copysign(Float(1), v1.z);
         Float a    = -1 / (sign + v1.z);
         Float b    = v1.x * v1.y * a;
@@ -1048,7 +1048,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline void CoordinateSystem(Normal3<T> v1, Vector3<T>* v2, Vector3<T>* v3) {
+    SPECTRA_CPU_GPU void CoordinateSystem(Normal3<T> v1, Vector3<T>* v2, Vector3<T>* v3) {
         Float sign = pstd::copysign(Float(1), v1.z);
         Float a    = -1 / (sign + v1.z);
         Float b    = v1.x * v1.y * a;
@@ -1062,87 +1062,87 @@ namespace spectra {
 
     // Point3 Inline Functions
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Distance(Point3<T> p1, Point3<T> p2) {
+    SPECTRA_CPU_GPU auto Distance(Point3<T> p1, Point3<T> p2) {
         return Length(p1 - p2);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto DistanceSquared(Point3<T> p1, Point3<T> p2) {
+    SPECTRA_CPU_GPU auto DistanceSquared(Point3<T> p1, Point3<T> p2) {
         return LengthSquared(p1 - p2);
     }
 
     // Normal3 Inline Functions
     template <typename T>
-    SPECTRA_CPU_GPU inline auto LengthSquared(Normal3<T> n) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto LengthSquared(Normal3<T> n) -> TupleLength<T>::type {
         return Sqr(n.x) + Sqr(n.y) + Sqr(n.z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Length(Normal3<T> n) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Length(Normal3<T> n) -> TupleLength<T>::type {
         using std::sqrt;
         return sqrt(LengthSquared(n));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Normalize(Normal3<T> n) {
+    SPECTRA_CPU_GPU auto Normalize(Normal3<T> n) {
         return n / Length(n);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Dot(Normal3<T> n, Vector3<T> v) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Dot(Normal3<T> n, Vector3<T> v) -> TupleLength<T>::type {
         DCHECK(!n.HasNaN() && !v.HasNaN());
         return FMA(n.x, v.x, SumOfProducts(n.y, v.y, n.z, v.z));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Dot(Vector3<T> v, Normal3<T> n) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Dot(Vector3<T> v, Normal3<T> n) -> TupleLength<T>::type {
         DCHECK(!v.HasNaN() && !n.HasNaN());
         return FMA(n.x, v.x, SumOfProducts(n.y, v.y, n.z, v.z));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto Dot(Normal3<T> n1, Normal3<T> n2) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto Dot(Normal3<T> n1, Normal3<T> n2) -> TupleLength<T>::type {
         DCHECK(!n1.HasNaN() && !n2.HasNaN());
         return FMA(n1.x, n2.x, SumOfProducts(n1.y, n2.y, n1.z, n2.z));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto AbsDot(Normal3<T> n, Vector3<T> v) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto AbsDot(Normal3<T> n, Vector3<T> v) -> TupleLength<T>::type {
         DCHECK(!n.HasNaN() && !v.HasNaN());
         return std::abs(Dot(n, v));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto AbsDot(Vector3<T> v, Normal3<T> n) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto AbsDot(Vector3<T> v, Normal3<T> n) -> TupleLength<T>::type {
         using std::abs;
         DCHECK(!v.HasNaN() && !n.HasNaN());
         return abs(Dot(v, n));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline auto AbsDot(Normal3<T> n1, Normal3<T> n2) -> typename TupleLength<T>::type {
+    SPECTRA_CPU_GPU auto AbsDot(Normal3<T> n1, Normal3<T> n2) -> TupleLength<T>::type {
         using std::abs;
         DCHECK(!n1.HasNaN() && !n2.HasNaN());
         return abs(Dot(n1, n2));
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Normal3<T> FaceForward(Normal3<T> n, Vector3<T> v) {
+    SPECTRA_CPU_GPU Normal3<T> FaceForward(Normal3<T> n, Vector3<T> v) {
         return (Dot(n, v) < 0.f) ? -n : n;
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Normal3<T> FaceForward(Normal3<T> n, Normal3<T> n2) {
+    SPECTRA_CPU_GPU Normal3<T> FaceForward(Normal3<T> n, Normal3<T> n2) {
         return (Dot(n, n2) < 0.f) ? -n : n;
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> FaceForward(Vector3<T> v, Vector3<T> v2) {
+    SPECTRA_CPU_GPU Vector3<T> FaceForward(Vector3<T> v, Vector3<T> v2) {
         return (Dot(v, v2) < 0.f) ? -v : v;
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Vector3<T> FaceForward(Vector3<T> v, Normal3<T> n2) {
+    SPECTRA_CPU_GPU Vector3<T> FaceForward(Vector3<T> v, Normal3<T> n2) {
         return (Dot(v, n2) < 0.f) ? -v : v;
     }
 
@@ -1474,7 +1474,7 @@ namespace spectra {
 
     // Bounds2 Inline Functions
     template <typename T>
-    SPECTRA_CPU_GPU inline Bounds2<T> Union(const Bounds2<T>& b1, const Bounds2<T>& b2) {
+    SPECTRA_CPU_GPU Bounds2<T> Union(const Bounds2<T>& b1, const Bounds2<T>& b2) {
         // Be careful to not run the two-point Bounds constructor.
         Bounds2<T> ret;
         ret.pMin = Min(b1.pMin, b2.pMin);
@@ -1483,7 +1483,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Bounds2<T> Intersect(const Bounds2<T>& b1, const Bounds2<T>& b2) {
+    SPECTRA_CPU_GPU Bounds2<T> Intersect(const Bounds2<T>& b1, const Bounds2<T>& b2) {
         // Be careful to not run the two-point Bounds constructor.
         Bounds2<T> b;
         b.pMin = Max(b1.pMin, b2.pMin);
@@ -1492,29 +1492,29 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Overlaps(const Bounds2<T>& ba, const Bounds2<T>& bb) {
+    SPECTRA_CPU_GPU bool Overlaps(const Bounds2<T>& ba, const Bounds2<T>& bb) {
         bool x = (ba.pMax.x >= bb.pMin.x) && (ba.pMin.x <= bb.pMax.x);
         bool y = (ba.pMax.y >= bb.pMin.y) && (ba.pMin.y <= bb.pMax.y);
         return (x && y);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Inside(Point2<T> pt, const Bounds2<T>& b) {
+    SPECTRA_CPU_GPU bool Inside(Point2<T> pt, const Bounds2<T>& b) {
         return (pt.x >= b.pMin.x && pt.x <= b.pMax.x && pt.y >= b.pMin.y && pt.y <= b.pMax.y);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Inside(const Bounds2<T>& ba, const Bounds2<T>& bb) {
+    SPECTRA_CPU_GPU bool Inside(const Bounds2<T>& ba, const Bounds2<T>& bb) {
         return (ba.pMin.x >= bb.pMin.x && ba.pMax.x <= bb.pMax.x && ba.pMin.y >= bb.pMin.y && ba.pMax.y <= bb.pMax.y);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool InsideExclusive(Point2<T> pt, const Bounds2<T>& b) {
+    SPECTRA_CPU_GPU bool InsideExclusive(Point2<T> pt, const Bounds2<T>& b) {
         return (pt.x >= b.pMin.x && pt.x < b.pMax.x && pt.y >= b.pMin.y && pt.y < b.pMax.y);
     }
 
     template <typename T, typename U>
-    SPECTRA_CPU_GPU inline Bounds2<T> Expand(const Bounds2<T>& b, U delta) {
+    SPECTRA_CPU_GPU Bounds2<T> Expand(const Bounds2<T>& b, U delta) {
         Bounds2<T> ret;
         ret.pMin = b.pMin - Vector2<T>(delta, delta);
         ret.pMax = b.pMax + Vector2<T>(delta, delta);
@@ -1523,7 +1523,7 @@ namespace spectra {
 
     // Bounds3 Inline Functions
     template <typename T>
-    SPECTRA_CPU_GPU inline Bounds3<T> Union(const Bounds3<T>& b, Point3<T> p) {
+    SPECTRA_CPU_GPU Bounds3<T> Union(const Bounds3<T>& b, Point3<T> p) {
         Bounds3<T> ret;
         ret.pMin = Min(b.pMin, p);
         ret.pMax = Max(b.pMax, p);
@@ -1531,7 +1531,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Bounds3<T> Union(const Bounds3<T>& b1, const Bounds3<T>& b2) {
+    SPECTRA_CPU_GPU Bounds3<T> Union(const Bounds3<T>& b1, const Bounds3<T>& b2) {
         Bounds3<T> ret;
         ret.pMin = Min(b1.pMin, b2.pMin);
         ret.pMax = Max(b1.pMax, b2.pMax);
@@ -1539,7 +1539,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Bounds3<T> Intersect(const Bounds3<T>& b1, const Bounds3<T>& b2) {
+    SPECTRA_CPU_GPU Bounds3<T> Intersect(const Bounds3<T>& b1, const Bounds3<T>& b2) {
         Bounds3<T> b;
         b.pMin = Max(b1.pMin, b2.pMin);
         b.pMax = Min(b1.pMax, b2.pMax);
@@ -1547,7 +1547,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Overlaps(const Bounds3<T>& b1, const Bounds3<T>& b2) {
+    SPECTRA_CPU_GPU bool Overlaps(const Bounds3<T>& b1, const Bounds3<T>& b2) {
         bool x = (b1.pMax.x >= b2.pMin.x) && (b1.pMin.x <= b2.pMax.x);
         bool y = (b1.pMax.y >= b2.pMin.y) && (b1.pMin.y <= b2.pMax.y);
         bool z = (b1.pMax.z >= b2.pMin.z) && (b1.pMin.z <= b2.pMax.z);
@@ -1555,17 +1555,17 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Inside(Point3<T> p, const Bounds3<T>& b) {
+    SPECTRA_CPU_GPU bool Inside(Point3<T> p, const Bounds3<T>& b) {
         return (p.x >= b.pMin.x && p.x <= b.pMax.x && p.y >= b.pMin.y && p.y <= b.pMax.y && p.z >= b.pMin.z && p.z <= b.pMax.z);
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool InsideExclusive(Point3<T> p, const Bounds3<T>& b) {
+    SPECTRA_CPU_GPU bool InsideExclusive(Point3<T> p, const Bounds3<T>& b) {
         return (p.x >= b.pMin.x && p.x < b.pMax.x && p.y >= b.pMin.y && p.y < b.pMax.y && p.z >= b.pMin.z && p.z < b.pMax.z);
     }
 
     template <typename T, typename U>
-    SPECTRA_CPU_GPU inline auto DistanceSquared(Point3<T> p, const Bounds3<U>& b) {
+    SPECTRA_CPU_GPU auto DistanceSquared(Point3<T> p, const Bounds3<U>& b) {
         using TDist = decltype(T{} - U{});
         TDist dx    = std::max<TDist>({0, b.pMin.x - p.x, p.x - b.pMax.x});
         TDist dy    = std::max<TDist>({0, b.pMin.y - p.y, p.y - b.pMax.y});
@@ -1574,14 +1574,14 @@ namespace spectra {
     }
 
     template <typename T, typename U>
-    SPECTRA_CPU_GPU inline auto Distance(Point3<T> p, const Bounds3<U>& b) {
+    SPECTRA_CPU_GPU auto Distance(Point3<T> p, const Bounds3<U>& b) {
         auto dist2  = DistanceSquared(p, b);
-        using TDist = typename TupleLength<decltype(dist2)>::type;
+        using TDist = TupleLength<decltype(dist2)>::type;
         return std::sqrt(TDist(dist2));
     }
 
     template <typename T, typename U>
-    SPECTRA_CPU_GPU inline Bounds3<T> Expand(const Bounds3<T>& b, U delta) {
+    SPECTRA_CPU_GPU Bounds3<T> Expand(const Bounds3<T>& b, U delta) {
         Bounds3<T> ret;
         ret.pMin = b.pMin - Vector3<T>(delta, delta, delta);
         ret.pMax = b.pMax + Vector3<T>(delta, delta, delta);
@@ -1589,7 +1589,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Bounds3<T>::IntersectP(Point3f o, Vector3f d, Float tMax, Float* hitt0, Float* hitt1) const {
+    SPECTRA_CPU_GPU bool Bounds3<T>::IntersectP(Point3f o, Vector3f d, Float tMax, Float* hitt0, Float* hitt1) const {
         Float t0 = 0, t1 = tMax;
         for (int i = 0; i < 3; ++i) {
             // Update interval for _i_th bounding box slab
@@ -1611,7 +1611,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline bool Bounds3<T>::IntersectP(Point3f o, Vector3f d, Float raytMax, Vector3f invDir, const int dirIsNeg[3]) const {
+    SPECTRA_CPU_GPU bool Bounds3<T>::IntersectP(Point3f o, Vector3f d, Float raytMax, Vector3f invDir, const int dirIsNeg[3]) const {
         const Bounds3f& bounds = *this;
         // Check for ray intersection against $x$ and $y$ slabs
         Float tMin  = (bounds[dirIsNeg[0]].x - o.x) * invDir.x;
@@ -1657,7 +1657,7 @@ namespace spectra {
     }
 
     template <typename T>
-    SPECTRA_CPU_GPU inline Bounds2<T> Union(const Bounds2<T>& b, Point2<T> p) {
+    SPECTRA_CPU_GPU Bounds2<T> Union(const Bounds2<T>& b, Point2<T> p) {
         // Be careful to not run the two-point Bounds constructor.
         Bounds2<T> ret;
         ret.pMin = Min(b.pMin, p);

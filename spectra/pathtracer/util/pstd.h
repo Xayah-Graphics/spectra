@@ -70,12 +70,12 @@ namespace pstd {
     }
 
     template <int&... ExplicitArgumentBarrier, typename T>
-    SPECTRA_CPU_GPU inline span<T> MakeSpan(T* begin, T* end) noexcept {
+    SPECTRA_CPU_GPU span<T> MakeSpan(T* begin, T* end) noexcept {
         return span<T>(begin, static_cast<size_t>(end - begin));
     }
 
     template <int&... ExplicitArgumentBarrier, typename T>
-    inline span<T> MakeSpan(std::vector<T>& v) noexcept {
+    span<T> MakeSpan(std::vector<T>& v) noexcept {
         return span<T>(v.data(), static_cast<size_t>(v.size()));
     }
 
@@ -95,12 +95,12 @@ namespace pstd {
     }
 
     template <int&... ExplicitArgumentBarrier, typename T>
-    SPECTRA_CPU_GPU inline span<const T> MakeConstSpan(T* begin, T* end) noexcept {
+    SPECTRA_CPU_GPU span<const T> MakeConstSpan(T* begin, T* end) noexcept {
         return span<const T>(begin, static_cast<size_t>(end - begin));
     }
 
     template <int&... ExplicitArgumentBarrier, typename T>
-    inline span<const T> MakeConstSpan(const std::vector<T>& v) noexcept {
+    span<const T> MakeConstSpan(const std::vector<T>& v) noexcept {
         return span<const T>(v.data(), static_cast<size_t>(v.size()));
     }
 

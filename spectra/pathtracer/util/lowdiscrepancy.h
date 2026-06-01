@@ -153,7 +153,7 @@ namespace spectra {
     }
 
     template <typename R>
-    SPECTRA_CPU_GPU inline Float SobolSample(int64_t a, int dimension, R randomizer) {
+    SPECTRA_CPU_GPU Float SobolSample(int64_t a, int dimension, R randomizer) {
         DCHECK_LT(dimension, NSobolDimensions);
         DCHECK(a >= 0 && a < (1ull << SobolMatrixSize));
         // Compute initial Sobol\+$'$ sample _v_ using generator matrices

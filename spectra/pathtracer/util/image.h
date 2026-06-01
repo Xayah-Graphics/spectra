@@ -395,7 +395,7 @@ namespace spectra {
     }
 
     template <typename F>
-    inline Array2D<Float> Image::GetSamplingDistribution(F dxdA, const Bounds2f& domain, Allocator alloc) {
+    Array2D<Float> Image::GetSamplingDistribution(F dxdA, const Bounds2f& domain, Allocator alloc) {
         Array2D<Float> dist(resolution[0], resolution[1], alloc);
         ParallelFor(0, resolution[1], [&](int64_t y0, int64_t y1) {
             for (int y = y0; y < y1; ++y) {

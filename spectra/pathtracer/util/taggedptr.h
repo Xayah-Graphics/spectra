@@ -92,12 +92,12 @@ namespace spectra {
 
         template <typename F, typename... Ts>
         struct ReturnType {
-            using type = typename SameType<typename std::invoke_result_t<F, Ts*>...>::type;
+            using type = SameType<std::invoke_result_t<F, Ts*>...>::type;
         };
 
         template <typename F, typename... Ts>
         struct ReturnTypeConst {
-            using type = typename SameType<typename std::invoke_result_t<F, const Ts*>...>::type;
+            using type = SameType<std::invoke_result_t<F, const Ts*>...>::type;
         };
     } // namespace detail
 
@@ -134,7 +134,7 @@ namespace spectra {
 
         template <typename T>
         SPECTRA_CPU_GPU static constexpr unsigned int TypeIndex() {
-            using Tp = typename std::remove_cv_t<T>;
+            using Tp = std::remove_cv_t<T>;
             if constexpr (std::is_same_v<Tp, std::nullptr_t>)
                 return 0;
             else
@@ -221,28 +221,28 @@ namespace spectra {
         template <typename F>
         SPECTRA_CPU_GPU decltype(auto) Dispatch(F&& func) {
             DCHECK(ptr());
-            using R = typename detail::ReturnType<F, Ts...>::type;
+            using R = detail::ReturnType<F, Ts...>::type;
             return detail::Dispatch<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         SPECTRA_CPU_GPU decltype(auto) Dispatch(F&& func) const {
             DCHECK(ptr());
-            using R = typename detail::ReturnTypeConst<F, Ts...>::type;
+            using R = detail::ReturnTypeConst<F, Ts...>::type;
             return detail::Dispatch<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         decltype(auto) DispatchCPU(F&& func) {
             DCHECK(ptr());
-            using R = typename detail::ReturnType<F, Ts...>::type;
+            using R = detail::ReturnType<F, Ts...>::type;
             return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 
         template <typename F>
         decltype(auto) DispatchCPU(F&& func) const {
             DCHECK(ptr());
-            using R = typename detail::ReturnTypeConst<F, Ts...>::type;
+            using R = detail::ReturnTypeConst<F, Ts...>::type;
             return detail::DispatchHost<F, R, Ts...>(std::forward<F>(func), ptr(), Tag() - 1);
         }
 

@@ -621,7 +621,7 @@ namespace spectra {
     }
 
     template <typename U, typename V>
-    SPECTRA_CPU_GPU inline SampledSpectrum Clamp(const SampledSpectrum& s, U low, V high) {
+    SPECTRA_CPU_GPU SampledSpectrum Clamp(const SampledSpectrum& s, U low, V high) {
         SampledSpectrum ret;
         for (int i = 0; i < NSpectrumSamples; ++i) ret[i] = spectra::Clamp(s[i], low, high);
         DCHECK(!ret.HasNaNs());

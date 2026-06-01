@@ -71,7 +71,7 @@ namespace spectra {
 
     template <int index, typename T, typename... Ts>
     struct RemoveFirstN<index, TypePack<T, Ts...>> {
-        using type = typename RemoveFirstN<index - 1, TypePack<Ts...>>::type;
+        using type = RemoveFirstN<index - 1, TypePack<Ts...>>::type;
     };
 
     template <typename T, typename... Ts>
@@ -97,7 +97,7 @@ namespace spectra {
 
     template <int index, typename T, typename... Ts>
     struct TakeFirstN<index, TypePack<T, Ts...>> {
-        using type = typename Prepend<T, typename TakeFirstN<index - 1, TypePack<Ts...>>::type>::type;
+        using type = Prepend<T, typename TakeFirstN<index - 1, TypePack<Ts...>>::type>::type;
     };
 
     template <typename T, typename... Ts>
@@ -115,7 +115,7 @@ namespace spectra {
 
     template <template <typename> class M, typename T, typename... Ts>
     struct MapType<M, TypePack<T, Ts...>> {
-        using type = typename Prepend<M<T>, typename MapType<M, TypePack<Ts...>>::type>::type;
+        using type = Prepend<M<T>, typename MapType<M, TypePack<Ts...>>::type>::type;
     };
 
     template <typename Base, typename... Ts>
@@ -166,7 +166,7 @@ namespace spectra {
             std::fill(begin(), end(), def);
         }
 
-        template <typename InputIt, typename = typename std::enable_if_t<!std::is_integral_v<InputIt> && std::is_base_of<std::input_iterator_tag, typename std::iterator_traits<InputIt>::iterator_category>::value>>
+        template <typename InputIt, typename = std::enable_if_t<!std::is_integral_v<InputIt> && std::is_base_of<std::input_iterator_tag, typename std::iterator_traits<InputIt>::iterator_category>::value>>
         Array2D(InputIt first, InputIt last, int nx, int ny, allocator_type allocator = {}) : Array2D({{0, 0}, {nx, ny}}, allocator) {
             std::copy(first, last, begin());
         }
@@ -741,7 +741,7 @@ namespace spectra {
     template <typename T>
     class SampledGrid {
     public:
-        using const_iterator = typename pstd::vector<T>::const_iterator;
+        using const_iterator = pstd::vector<T>::const_iterator;
         // SampledGrid Public Methods
         SampledGrid() = default;
 
