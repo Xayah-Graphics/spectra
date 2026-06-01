@@ -16,7 +16,6 @@
 #include <cstdint>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
-#include <filesystem>
 #include <format>
 #include <imgui.h>
 #include <limits>
@@ -81,34 +80,36 @@ namespace {
 
 namespace xayah::pathtracer {
     struct SceneState {
-        std::filesystem::path scene_path{};
+        std::string scene_name{};
+        const spectra::scene::SceneInfo* scene_info{};
         std::array<int, 2> film_resolution{0, 0};
         spectra::Transform camera_from_world{};
         int sampler_sample_count{0};
-        spectra::scene::SceneDescription description{};
 
-        void load(const std::filesystem::path& path);
+        void load(std::string_view name);
+        [[nodiscard]] const spectra::scene::SceneInfo& info() const;
         void set_runtime_metadata(const std::array<int, 2>& resolution, int samples_per_pixel, const spectra::Transform& camera_transform);
         void unload_noexcept() noexcept;
     };
 
     struct RenderPipeline;
 
-    void SceneState::load(const std::filesystem::path& path) {
-        if (!this->scene_path.empty()) throw std::runtime_error("Spectra scene is already loaded");
-        if (path.empty()) throw std::runtime_error("Spectra scene path is empty");
-        if (!std::filesystem::exists(path)) throw std::runtime_error(std::string{"Spectra scene does not exist: "} + path.string());
+    void SceneState::load(std::string_view name) {
+        if (!this->scene_name.empty()) throw std::runtime_error("Spectra scene is already loaded");
+        if (name.empty()) throw std::runtime_error("Spectra scene name is empty");
 
         try {
-            this->scene_path = path;
-            spectra::scene::SceneDescriptionBuilder builder{&this->description};
-            const std::string filename = this->scene_path.string();
-            std::vector<std::string> filenames{filename};
-            spectra::scene::ParseFiles(&builder, filenames);
+            this->scene_info = &spectra::scene::SceneInfoFor(name);
+            this->scene_name.assign(this->scene_info->name);
         } catch (...) {
             this->unload_noexcept();
             throw;
         }
+    }
+
+    const spectra::scene::SceneInfo& SceneState::info() const {
+        if (this->scene_info == nullptr) throw std::runtime_error("Spectra scene metadata is not loaded");
+        return *this->scene_info;
     }
 
     void SceneState::set_runtime_metadata(const std::array<int, 2>& resolution, const int samples_per_pixel, const spectra::Transform& camera_transform) {
@@ -120,11 +121,11 @@ namespace xayah::pathtracer {
     }
 
     void SceneState::unload_noexcept() noexcept {
-        this->scene_path.clear();
+        this->scene_name.clear();
+        this->scene_info           = nullptr;
         this->film_resolution      = {0, 0};
         this->camera_from_world    = spectra::Transform{};
         this->sampler_sample_count = 0;
-        this->description.Clear();
     }
 } // namespace xayah::pathtracer
 
@@ -215,8 +216,7 @@ namespace xayah::pathtracer {
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
 
-        std::unique_ptr<spectra::scene::Scene> scene{};
-        std::unique_ptr<spectra::scene::SceneBuilder> builder{};
+        spectra::scene::BuiltScene built_scene{};
         std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
         spectra::Bounds2i pixel_bounds{};
         spectra::Vector2i resolution{};
@@ -440,8 +440,8 @@ namespace {
         }
         destroy_pathtracer_frame_resources_noexcept(pathtracer);
         pathtracer.integrator.reset();
-        pathtracer.builder.reset();
-        pathtracer.scene.reset();
+        pathtracer.built_scene.builder.reset();
+        pathtracer.built_scene.scene.reset();
     }
 } // namespace
 
@@ -449,8 +449,7 @@ namespace xayah::pathtracer {
     RenderPipeline::RenderPipeline(const SceneState& scene_state, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         try {
             RenderPipeline& pathtracer = *this;
-            if (scene_state.scene_path.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
-            if (!std::filesystem::exists(scene_state.scene_path)) throw std::runtime_error(std::string{"Spectra pathtracer scene does not exist: "} + scene_state.scene_path.string());
+            if (scene_state.scene_name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
             if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
             if (frame_count == 0) throw std::runtime_error("Spectra pathtracer requires at least one frame in flight");
             if (spectra::Options == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer before Spectra pathtracer runtime is initialized");
@@ -458,12 +457,9 @@ namespace xayah::pathtracer {
             pathtracer.physical_device = &physical_device;
             pathtracer.device          = &device;
             pathtracer.frame_count     = frame_count;
-            pathtracer.scene           = std::make_unique<spectra::scene::Scene>();
-            pathtracer.builder         = std::make_unique<spectra::scene::SceneBuilder>(pathtracer.scene.get(), spectra::Point2i{resolution[0], resolution[1]});
-            std::vector<std::string> filenames{scene_state.scene_path.string()};
-            spectra::scene::ParseFiles(pathtracer.builder.get(), filenames);
+            pathtracer.built_scene     = spectra::scene::BuildScene(scene_state.scene_name, spectra::Point2i{resolution[0], resolution[1]});
 
-            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, *pathtracer.scene);
+            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, *pathtracer.built_scene.scene);
             pathtracer.integrator->PrefetchGPUAllocations();
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
@@ -806,15 +802,10 @@ namespace xayah::pathtracer {
     };
 
     [[nodiscard]] float interactive_camera_fov_degrees(const SceneState& scene) {
-        if (!scene.description.camera.present) throw std::runtime_error("Interactive Spectra pathtracer camera controls require an explicit perspective camera");
-        if (scene.description.camera.name != "perspective") throw std::runtime_error(std::format("Interactive Spectra pathtracer camera controls require a perspective camera, not \"{}\"", scene.description.camera.name));
-        constexpr float pathtracer_perspective_default_fov = 90.0f;
-        for (const spectra::scene::SceneDescriptionParameter& parameter : scene.description.camera.parameters) {
-            if (parameter.name != "fov") continue;
-            if (parameter.floats.size() != 1) throw std::runtime_error("Spectra pathtracer perspective camera fov must have exactly one float value");
-            return parameter.floats.front();
-        }
-        return pathtracer_perspective_default_fov;
+        const spectra::scene::SceneInfo& info = scene.info();
+        if (info.camera != "perspective") throw std::runtime_error(std::format("Interactive Spectra pathtracer camera controls require a perspective camera, not \"{}\"", info.camera));
+        if (!(info.camera_fov_degrees > 0.0f && info.camera_fov_degrees < 180.0f)) throw std::runtime_error("Spectra scene camera fov must be inside (0, 180)");
+        return info.camera_fov_degrees;
     }
 
     [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds) {
@@ -917,9 +908,7 @@ namespace xayah::pathtracer {
     }
 
     [[nodiscard]] std::string scene_title_text(const SceneState& scene) {
-        const std::string title = scene.scene_path.filename().string();
-        if (!title.empty()) return title;
-        return scene.scene_path.string();
+        return std::string(scene.info().title);
     }
 } // namespace xayah::pathtracer
 
@@ -954,9 +943,9 @@ namespace xayah {
         return this->sum / static_cast<float>(this->count);
     }
 
-    SpectraPathtracer::SpectraPathtracer(std::filesystem::path scene_path) {
-        if (scene_path.empty()) throw std::runtime_error("Spectra pathtracer plugin requires a scene path");
-        this->scene_path = std::move(scene_path);
+    SpectraPathtracer::SpectraPathtracer(std::string scene_name) {
+        if (scene_name.empty()) throw std::runtime_error("Spectra pathtracer plugin requires a scene name");
+        this->scene_name = std::move(scene_name);
     }
 
     SpectraPathtracer::~SpectraPathtracer() noexcept = default;
@@ -973,7 +962,7 @@ namespace xayah {
             this->gpu_runtime                                           = std::make_unique<spectra::pathtracer::GpuRuntime>(xayah::pathtracer::interactive_runtime_options());
             std::unique_ptr<xayah::pathtracer::SceneState> loaded_scene = std::make_unique<xayah::pathtracer::SceneState>();
             try {
-                loaded_scene->load(this->scene_path);
+                loaded_scene->load(this->scene_name);
                 this->scene_state = std::move(loaded_scene);
             } catch (...) {
                 loaded_scene->unload_noexcept();
@@ -1366,27 +1355,6 @@ namespace {
         draw_statistics_row(label, value.c_str());
     }
 
-    [[nodiscard]] std::string scene_file_location_text(const spectra::scene::SceneDescriptionFileLocation& location);
-
-    [[nodiscard]] std::string optional_scene_text(const std::string& value) {
-        if (value.empty()) return "None";
-        return value;
-    }
-
-    [[nodiscard]] std::string spectra_parameter_count_text(const std::vector<spectra::scene::SceneDescriptionParameter>& parameters) {
-        if (parameters.empty()) return "None";
-        if (parameters.size() == 1u) return "1 parameter";
-        return std::format("{} parameters", parameters.size());
-    }
-
-    [[nodiscard]] std::string scene_render_setting_text(const spectra::scene::SceneDescriptionRenderSetting& setting) {
-        if (!setting.present) return "Not specified";
-        if (!setting.type.empty() && !setting.name.empty()) return std::format("{} {}", setting.type, setting.name);
-        if (!setting.type.empty()) return setting.type;
-        if (!setting.name.empty()) return setting.name;
-        return "Present";
-    }
-
     [[nodiscard]] std::string resolution_text(const std::array<int, 2>& resolution) {
         if (resolution[0] <= 0 || resolution[1] <= 0) return "Pending";
         return std::format("{} x {}", resolution[0], resolution[1]);
@@ -1395,39 +1363,6 @@ namespace {
     [[nodiscard]] std::string positive_int_text(const int value) {
         if (value <= 0) return "Pending";
         return std::format("{}", value);
-    }
-
-    [[nodiscard]] const char* scene_texture_value_type_label(const spectra::scene::SceneDescriptionTextureValueType value_type) {
-        switch (value_type) {
-        case spectra::scene::SceneDescriptionTextureValueType::Unknown: return "Unknown";
-        case spectra::scene::SceneDescriptionTextureValueType::Float: return "Float";
-        case spectra::scene::SceneDescriptionTextureValueType::Spectrum: return "Spectrum";
-        }
-        throw std::runtime_error("Unknown Spectra scene texture value type");
-    }
-
-    void draw_scene_render_setting_row(const char* label, const spectra::scene::SceneDescriptionRenderSetting& setting) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(label);
-        ImGui::TableSetColumnIndex(1);
-        const std::string setting_text = scene_render_setting_text(setting);
-        if (setting.present)
-            ImGui::TextWrapped("%s", setting_text.c_str());
-        else
-            ImGui::TextDisabled("%s", setting_text.c_str());
-        ImGui::TableSetColumnIndex(2);
-        if (setting.present)
-            ImGui::TextWrapped("%s", scene_file_location_text(setting.location).c_str());
-        else
-            ImGui::TextDisabled("None");
-        ImGui::TableSetColumnIndex(3);
-        ImGui::TextUnformatted(spectra_parameter_count_text(setting.parameters).c_str());
-    }
-
-    [[nodiscard]] std::string scene_file_location_text(const spectra::scene::SceneDescriptionFileLocation& location) {
-        if (location.filename.empty()) return "<unknown>";
-        return std::format("{}:{}:{}", location.filename, location.line, location.column);
     }
 } // namespace
 
@@ -1506,263 +1441,46 @@ namespace xayah {
             return;
         }
 
-        constexpr ImGuiTableFlags summary_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
-        ImGui::SeparatorText("Asset Info");
-        if (ImGui::BeginTable("SpectraSceneSummary", 2, summary_table_flags)) {
+        const spectra::scene::SceneInfo& scene = this->scene_state->info();
+        constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+
+        ImGui::SeparatorText("Scene");
+        if (ImGui::BeginTable("SpectraSceneSummary", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Scene", xayah::pathtracer::scene_title_text(*this->scene_state));
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Path");
-            ImGui::TableSetColumnIndex(1);
-            const std::string scene_path = this->scene_state->scene_path.string();
-            ImGui::TextWrapped("%s", scene_path.c_str());
+            draw_statistics_row("Name", std::string(scene.name));
+            draw_statistics_row("Title", std::string(scene.title));
             draw_statistics_row("Film Resolution", resolution_text(this->scene_state->film_resolution));
             draw_statistics_row("Sampler SPP", positive_int_text(this->scene_state->sampler_sample_count));
-            draw_statistics_row("Shapes", std::format("{}", this->scene_state->description.shapes.size()));
-            draw_statistics_row("Materials", std::format("{}", this->scene_state->description.materials.size()));
-            draw_statistics_row("Textures", std::format("{}", this->scene_state->description.textures.size()));
-            draw_statistics_row("Media", std::format("{}", this->scene_state->description.mediums.size()));
-            draw_statistics_row("Medium Bindings", std::format("{}", this->scene_state->description.mediumBindings.size()));
-            draw_statistics_row("Lights", std::format("{}", this->scene_state->description.lights.size()));
-            draw_statistics_row("Object Definitions", std::format("{}", this->scene_state->description.objectDefinitions.size()));
-            draw_statistics_row("Object Instances", std::format("{}", this->scene_state->description.objectInstances.size()));
             ImGui::EndTable();
         }
 
-        if (!ImGui::BeginTabBar("SpectraSceneBrowserTabs")) return;
-
-        constexpr ImGuiTableFlags render_settings_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable;
-        constexpr ImGuiTableFlags detail_table_flags          = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable;
-
-        if (ImGui::BeginTabItem("Render Settings")) {
-            if (ImGui::BeginTable("SpectraSceneRenderSettings", 4, render_settings_table_flags)) {
-                ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableHeadersRow();
-                draw_scene_render_setting_row("Pixel Filter", this->scene_state->description.pixelFilter);
-                draw_scene_render_setting_row("Film", this->scene_state->description.film);
-                draw_scene_render_setting_row("Sampler", this->scene_state->description.sampler);
-                draw_scene_render_setting_row("Accelerator", this->scene_state->description.accelerator);
-                draw_scene_render_setting_row("Integrator", this->scene_state->description.integrator);
-                draw_scene_render_setting_row("Camera", this->scene_state->description.camera);
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
+        ImGui::SeparatorText("Pipeline");
+        if (ImGui::BeginTable("SpectraScenePipeline", 2, table_flags)) {
+            ImGui::TableSetupColumn("Stage", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Implementation", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Camera", std::string(scene.camera));
+            draw_statistics_row("Sampler", std::string(scene.sampler));
+            draw_statistics_row("Integrator", std::string(scene.integrator));
+            draw_statistics_row("Accelerator", std::string(scene.accelerator));
+            ImGui::EndTable();
         }
 
-        if (ImGui::BeginTabItem("Shapes")) {
-            if (this->scene_state->description.shapes.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer shapes recorded");
-            } else if (ImGui::BeginTable("SpectraSceneShapes", 7, detail_table_flags)) {
-                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableSetupColumn("Material", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Media", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Object", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Area Light", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionShape& shape : this->scene_state->description.shapes) {
-                    const std::string material_text = !shape.materialName.empty() ? shape.materialName : shape.materialIndex >= 0 ? std::format("#{}", shape.materialIndex) : "None";
-                    const std::string media_text    = shape.insideMedium.empty() && shape.outsideMedium.empty() ? "None" : std::format("{} / {}", optional_scene_text(shape.insideMedium), optional_scene_text(shape.outsideMedium));
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", shape.type.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextWrapped("%s", material_text.c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", media_text.c_str());
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::TextWrapped("%s", optional_scene_text(shape.objectDefinitionName).c_str());
-                    ImGui::TableSetColumnIndex(4);
-                    ImGui::TextWrapped("%s", optional_scene_text(shape.areaLightType).c_str());
-                    ImGui::TableSetColumnIndex(5);
-                    ImGui::TextWrapped("%s", scene_file_location_text(shape.location).c_str());
-                    ImGui::TableSetColumnIndex(6);
-                    ImGui::TextUnformatted(spectra_parameter_count_text(shape.parameters).c_str());
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
+        ImGui::SeparatorText("Resources");
+        if (ImGui::BeginTable("SpectraSceneResources", 2, table_flags)) {
+            ImGui::TableSetupColumn("Resource", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthStretch);
+            draw_statistics_row("Shapes", std::format("{}", scene.shape_count));
+            draw_statistics_row("Materials", std::format("{}", scene.material_count));
+            draw_statistics_row("Textures", std::format("{}", scene.texture_count));
+            draw_statistics_row("Media", std::format("{}", scene.medium_count));
+            draw_statistics_row("Lights", std::format("{}", scene.light_count));
+            draw_statistics_row("Area Lights", std::format("{}", scene.area_light_count));
+            draw_statistics_row("Infinite Lights", std::format("{}", scene.infinite_light_count));
+            draw_statistics_row("Object Definitions", std::format("{}", scene.object_definition_count));
+            draw_statistics_row("Object Instances", std::format("{}", scene.object_instance_count));
+            ImGui::EndTable();
         }
-
-        if (ImGui::BeginTabItem("Materials")) {
-            if (this->scene_state->description.materials.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer materials recorded");
-            } else if (ImGui::BeginTable("SpectraSceneMaterials", 5, detail_table_flags)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionMaterial& material : this->scene_state->description.materials) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", optional_scene_text(material.name).c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextWrapped("%s", optional_scene_text(material.type).c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextUnformatted(material.named ? "Named" : "Inline");
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::TextWrapped("%s", scene_file_location_text(material.location).c_str());
-                    ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(spectra_parameter_count_text(material.parameters).c_str());
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Textures")) {
-            if (this->scene_state->description.textures.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer textures recorded");
-            } else if (ImGui::BeginTable("SpectraSceneTextures", 5, detail_table_flags)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Value Type", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-                ImGui::TableSetupColumn("Implementation", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionTexture& texture : this->scene_state->description.textures) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", optional_scene_text(texture.name).c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(scene_texture_value_type_label(texture.valueType));
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", optional_scene_text(texture.implementation).c_str());
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::TextWrapped("%s", scene_file_location_text(texture.location).c_str());
-                    ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(spectra_parameter_count_text(texture.parameters).c_str());
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Media")) {
-            if (this->scene_state->description.mediums.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer media recorded");
-            } else if (ImGui::BeginTable("SpectraSceneMedia", 4, detail_table_flags)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionMedium& medium : this->scene_state->description.mediums) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", optional_scene_text(medium.name).c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextWrapped("%s", optional_scene_text(medium.type).c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", scene_file_location_text(medium.location).c_str());
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::TextUnformatted(spectra_parameter_count_text(medium.parameters).c_str());
-                }
-                ImGui::EndTable();
-            }
-
-            ImGui::SeparatorText("Medium Interfaces");
-            if (this->scene_state->description.mediumBindings.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer medium interfaces recorded");
-            } else if (ImGui::BeginTable("SpectraSceneMediumInterfaces", 3, detail_table_flags)) {
-                ImGui::TableSetupColumn("Inside", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Outside", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionMediumBinding& binding : this->scene_state->description.mediumBindings) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", optional_scene_text(binding.inside).c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextWrapped("%s", optional_scene_text(binding.outside).c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", scene_file_location_text(binding.location).c_str());
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Lights")) {
-            if (this->scene_state->description.lights.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer lights recorded");
-            } else if (ImGui::BeginTable("SpectraSceneLights", 5, detail_table_flags)) {
-                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-                ImGui::TableSetupColumn("Outside Medium", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionLight& light : this->scene_state->description.lights) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", light.type.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(light.area ? "Area" : "Light");
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", optional_scene_text(light.outsideMedium).c_str());
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::TextWrapped("%s", scene_file_location_text(light.location).c_str());
-                    ImGui::TableSetColumnIndex(4);
-                    ImGui::TextUnformatted(spectra_parameter_count_text(light.parameters).c_str());
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
-        }
-
-        if (ImGui::BeginTabItem("Objects")) {
-            ImGui::SeparatorText("Definitions");
-            if (this->scene_state->description.objectDefinitions.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer object definitions recorded");
-            } else if (ImGui::BeginTable("SpectraSceneObjectDefinitions", 3, detail_table_flags)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Shapes", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionObjectDefinition& object_definition : this->scene_state->description.objectDefinitions) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", object_definition.name.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%zu", object_definition.shapeIndices.size());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", scene_file_location_text(object_definition.location).c_str());
-                }
-                ImGui::EndTable();
-            }
-
-            ImGui::SeparatorText("Instances");
-            if (this->scene_state->description.objectInstances.empty()) {
-                ImGui::TextDisabled("No Spectra pathtracer object instances recorded");
-            } else if (ImGui::BeginTable("SpectraSceneObjectInstances", 3, detail_table_flags)) {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Animated", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-                ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-                for (const spectra::scene::SceneDescriptionObjectInstance& object_instance : this->scene_state->description.objectInstances) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextWrapped("%s", object_instance.name.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(object_instance.animatedTransform ? "Yes" : "No");
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextWrapped("%s", scene_file_location_text(object_instance.location).c_str());
-                }
-                ImGui::EndTable();
-            }
-            ImGui::EndTabItem();
-        }
-
-        ImGui::EndTabBar();
     }
 
     void SpectraPathtracer::draw_settings_window() {
@@ -1819,6 +1537,7 @@ namespace xayah {
             return;
         }
 
+        const spectra::scene::SceneInfo& scene   = this->scene_state->info();
         constexpr ImGuiTableFlags table_flags    = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
         const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
@@ -1836,13 +1555,9 @@ namespace xayah {
         if (ImGui::BeginTable("SpectraInspectorScene", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Scene", xayah::pathtracer::scene_title_text(*this->scene_state));
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Path");
-            ImGui::TableSetColumnIndex(1);
-            const std::string scene_path = this->scene_state->scene_path.string();
-            ImGui::TextWrapped("%s", scene_path.c_str());
+            draw_statistics_row("Scene", std::string(scene.title));
+            draw_statistics_row("Name", std::string(scene.name));
+            draw_statistics_row("Camera", std::string(scene.camera));
             draw_statistics_row("Film Resolution", resolution_text(this->scene_state->film_resolution));
             draw_statistics_row("Sampler SPP", positive_int_text(this->scene_state->sampler_sample_count));
             draw_statistics_row("Viewport", viewport_resolution);
@@ -1854,13 +1569,13 @@ namespace xayah {
         if (ImGui::BeginTable("SpectraInspectorResources", 2, table_flags)) {
             ImGui::TableSetupColumn("Resource", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Shapes", std::format("{}", this->scene_state->description.shapes.size()));
-            draw_statistics_row("Materials", std::format("{}", this->scene_state->description.materials.size()));
-            draw_statistics_row("Textures", std::format("{}", this->scene_state->description.textures.size()));
-            draw_statistics_row("Media", std::format("{}", this->scene_state->description.mediums.size()));
-            draw_statistics_row("Lights", std::format("{}", this->scene_state->description.lights.size()));
-            draw_statistics_row("Object Definitions", std::format("{}", this->scene_state->description.objectDefinitions.size()));
-            draw_statistics_row("Object Instances", std::format("{}", this->scene_state->description.objectInstances.size()));
+            draw_statistics_row("Shapes", std::format("{}", scene.shape_count));
+            draw_statistics_row("Materials", std::format("{}", scene.material_count));
+            draw_statistics_row("Textures", std::format("{}", scene.texture_count));
+            draw_statistics_row("Media", std::format("{}", scene.medium_count));
+            draw_statistics_row("Lights", std::format("{}", scene.light_count));
+            draw_statistics_row("Object Definitions", std::format("{}", scene.object_definition_count));
+            draw_statistics_row("Object Instances", std::format("{}", scene.object_instance_count));
             ImGui::EndTable();
         }
 
@@ -1883,93 +1598,16 @@ namespace xayah {
             return;
         }
 
-        std::size_t area_light_count     = 0;
-        std::size_t infinite_light_count = 0;
-        for (const spectra::scene::SceneDescriptionLight& light : this->scene_state->description.lights) {
-            if (light.area) ++area_light_count;
-            if (light.type == "infinite") ++infinite_light_count;
-        }
-
-        constexpr ImGuiTableFlags summary_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        const spectra::scene::SceneInfo& scene = this->scene_state->info();
+        constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         ImGui::SeparatorText("Summary");
-        if (ImGui::BeginTable("SpectraEnvironmentSummary", 2, summary_table_flags)) {
+        if (ImGui::BeginTable("SpectraEnvironmentSummary", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Lights", std::format("{}", this->scene_state->description.lights.size()));
-            draw_statistics_row("Area Lights", std::format("{}", area_light_count));
-            draw_statistics_row("Infinite Lights", std::format("{}", infinite_light_count));
-            draw_statistics_row("Media", std::format("{}", this->scene_state->description.mediums.size()));
-            draw_statistics_row("Medium Bindings", std::format("{}", this->scene_state->description.mediumBindings.size()));
-            ImGui::EndTable();
-        }
-
-        constexpr ImGuiTableFlags detail_table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable;
-        ImGui::SeparatorText("Lights");
-        if (this->scene_state->description.lights.empty()) {
-            ImGui::TextDisabled("No Spectra pathtracer lights recorded");
-        } else if (ImGui::BeginTable("SpectraEnvironmentLights", 5, detail_table_flags)) {
-            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn("Outside Medium", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-            ImGui::TableHeadersRow();
-            for (const spectra::scene::SceneDescriptionLight& light : this->scene_state->description.lights) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextWrapped("%s", light.type.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(light.area ? "Area" : "Light");
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextWrapped("%s", optional_scene_text(light.outsideMedium).c_str());
-                ImGui::TableSetColumnIndex(3);
-                ImGui::TextWrapped("%s", scene_file_location_text(light.location).c_str());
-                ImGui::TableSetColumnIndex(4);
-                ImGui::TextUnformatted(spectra_parameter_count_text(light.parameters).c_str());
-            }
-            ImGui::EndTable();
-        }
-
-        ImGui::SeparatorText("Media");
-        if (this->scene_state->description.mediums.empty()) {
-            ImGui::TextDisabled("No Spectra pathtracer media recorded");
-        } else if (ImGui::BeginTable("SpectraEnvironmentMedia", 4, detail_table_flags)) {
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Parameters", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-            ImGui::TableHeadersRow();
-            for (const spectra::scene::SceneDescriptionMedium& medium : this->scene_state->description.mediums) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextWrapped("%s", optional_scene_text(medium.name).c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextWrapped("%s", optional_scene_text(medium.type).c_str());
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextWrapped("%s", scene_file_location_text(medium.location).c_str());
-                ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(spectra_parameter_count_text(medium.parameters).c_str());
-            }
-            ImGui::EndTable();
-        }
-
-        ImGui::SeparatorText("Medium Interfaces");
-        if (this->scene_state->description.mediumBindings.empty()) {
-            ImGui::TextDisabled("No Spectra pathtracer medium interfaces recorded");
-        } else if (ImGui::BeginTable("SpectraEnvironmentMediumInterfaces", 3, detail_table_flags)) {
-            ImGui::TableSetupColumn("Inside", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Outside", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableHeadersRow();
-            for (const spectra::scene::SceneDescriptionMediumBinding& binding : this->scene_state->description.mediumBindings) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextWrapped("%s", optional_scene_text(binding.inside).c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextWrapped("%s", optional_scene_text(binding.outside).c_str());
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextWrapped("%s", scene_file_location_text(binding.location).c_str());
-            }
+            draw_statistics_row("Lights", std::format("{}", scene.light_count));
+            draw_statistics_row("Area Lights", std::format("{}", scene.area_light_count));
+            draw_statistics_row("Infinite Lights", std::format("{}", scene.infinite_light_count));
+            draw_statistics_row("Media", std::format("{}", scene.medium_count));
             ImGui::EndTable();
         }
     }

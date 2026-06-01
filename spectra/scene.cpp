@@ -1,11 +1,9 @@
-#include <atomic>
+#include <array>
 #include <cctype>
-#include <cerrno>
-#include <cstdint>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <double-conversion/string-to-double.h>
+#include <format>
+#include <initializer_list>
+#include <mutex>
 #include <spectra/pathtracer/base/material.h>
 #include <spectra/pathtracer/base/shape.h>
 #include <spectra/pathtracer/core/options.h>
@@ -21,19 +19,14 @@
 #include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <spectra/scene.h>
-#ifdef SPECTRA_HAVE_MMAP
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#elif defined(SPECTRA_IS_WINDOWS)
-#include <windows.h>
-#endif
-#include <format>
-#include <functional>
-#include <limits>
-#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
+
+#ifndef SPECTRA_PROJECT_SCENE_ROOT
+#error "SPECTRA_PROJECT_SCENE_ROOT must point to the project-local scene directory."
+#endif
 
 namespace spectra {
     ///////////////////////////////////////////////////////////////////////////
@@ -63,866 +56,6 @@ namespace spectra {
 } // namespace spectra
 
 namespace spectra::scene {
-    [[nodiscard]] static std::string SystemErrorString() {
-#ifdef SPECTRA_IS_WINDOWS
-        int error  = GetLastError();
-        char* text = nullptr;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPSTR>(&text), 0, nullptr);
-        std::string message = text != nullptr ? text : "Unknown Windows system error";
-        if (text != nullptr) LocalFree(text);
-#else
-        int error           = errno;
-        std::string message = strerror(error);
-#endif
-        message += " (";
-        message += std::to_string(error);
-        message += ")";
-        return message;
-    }
-
-    struct Token {
-        Token() = default;
-
-        Token(std::string_view token, FileLoc loc) : token(token), loc(loc) {}
-
-
-        std::string_view token;
-        FileLoc loc;
-    };
-
-    class Tokenizer {
-    public:
-        Tokenizer(std::string str, std::string filename, std::function<void(const char*, const FileLoc*)> errorCallback);
-#if defined(SPECTRA_HAVE_MMAP) || defined(SPECTRA_IS_WINDOWS)
-        Tokenizer(void* ptr, size_t len, std::string filename, std::function<void(const char*, const FileLoc*)> errorCallback);
-#endif
-        ~Tokenizer();
-
-        static std::unique_ptr<Tokenizer> CreateFromFile(const std::string& filename, std::function<void(const char*, const FileLoc*)> errorCallback);
-        static std::unique_ptr<Tokenizer> CreateFromString(std::string str, std::function<void(const char*, const FileLoc*)> errorCallback);
-
-        pstd::optional<Token> Next();
-
-        FileLoc loc;
-
-    private:
-        void CheckUTF(const void* ptr, int len) const;
-
-        int getChar() {
-            if (pos == end) return EOF;
-            int ch = *pos++;
-            if (ch == '\n') {
-                ++loc.line;
-                loc.column = 0;
-            } else
-                ++loc.column;
-            return ch;
-        }
-
-        void ungetChar() {
-            --pos;
-            if (*pos == '\n') --loc.line;
-        }
-
-        std::function<void(const char*, const FileLoc*)> errorCallback;
-
-#if defined(SPECTRA_HAVE_MMAP) || defined(SPECTRA_IS_WINDOWS)
-        void* unmapPtr     = nullptr;
-        size_t unmapLength = 0;
-#endif
-
-        std::string contents;
-        const char* pos = nullptr;
-        const char* end = nullptr;
-        std::string sEscaped;
-    };
-
-    static std::string toString(std::string_view s) {
-        return std::string(s.data(), s.size());
-    }
-
-
-    // Tokenizer Implementation
-    static char decodeEscaped(int ch, const FileLoc& loc) {
-        switch (ch) {
-        case EOF: throw std::runtime_error(spectra::diagnostics::Format(&loc, "premature EOF after character escape '\\'"));
-        case 'b': return '\b';
-        case 'f': return '\f';
-        case 'n': return '\n';
-        case 'r': return '\r';
-        case 't': return '\t';
-        case '\\': return '\\';
-        case '\'': return '\'';
-        case '\"': return '\"';
-        default: throw std::runtime_error(spectra::diagnostics::Format(&loc, "unexpected escaped character \"%c\"", ch));
-        }
-        return 0; // NOTREACHED
-    }
-
-    static double_conversion::StringToDoubleConverter floatParser(double_conversion::StringToDoubleConverter::ALLOW_HEX, 0. /* empty string value */, 0. /* junk string value */, nullptr /* infinity symbol */, nullptr /* NaN symbol */);
-
-    std::unique_ptr<Tokenizer> Tokenizer::CreateFromFile(const std::string& filename, std::function<void(const char*, const FileLoc*)> errorCallback) {
-        if (filename == "-") {
-            // Handle stdin by slurping everything into a string.
-            std::string str;
-            int ch;
-            while ((ch = getchar()) != EOF) str.push_back((char) ch);
-            return std::make_unique<Tokenizer>(std::move(str), "<stdin>", std::move(errorCallback));
-        }
-
-        if (HasExtension(filename, ".gz")) {
-            std::string str = ReadDecompressedFileContents(filename);
-            return std::make_unique<Tokenizer>(std::move(str), filename, std::move(errorCallback));
-        }
-
-#ifdef SPECTRA_HAVE_MMAP
-        int fd = open(filename.c_str(), O_RDONLY);
-        if (fd == -1) {
-            std::string message = std::format("{}: {}", filename, SystemErrorString());
-            errorCallback(message.c_str(), nullptr);
-            return nullptr;
-        }
-
-        struct stat stat;
-        if (fstat(fd, &stat) != 0) {
-            std::string message = std::format("{}: {}", filename, SystemErrorString());
-            errorCallback(message.c_str(), nullptr);
-            return nullptr;
-        }
-
-        size_t len = stat.st_size;
-        if (len < 16 * 1024 * 1024) {
-            close(fd);
-
-            std::string str = spectra::ReadFileContents(filename);
-            return std::make_unique<Tokenizer>(std::move(str), filename, std::move(errorCallback));
-        }
-
-        void* ptr = mmap(nullptr, len, PROT_READ, MAP_PRIVATE | MAP_NORESERVE, fd, 0);
-        if (ptr == MAP_FAILED) {
-            std::string message = std::format("{}: {}", filename, SystemErrorString());
-            errorCallback(message.c_str(), nullptr);
-        }
-
-        if (close(fd) != 0) {
-            std::string message = std::format("{}: {}", filename, SystemErrorString());
-            errorCallback(message.c_str(), nullptr);
-            return nullptr;
-        }
-
-        return std::make_unique<Tokenizer>(ptr, len, filename, std::move(errorCallback));
-#elif defined(SPECTRA_IS_WINDOWS)
-        auto errorReportLambda = [&errorCallback, &filename]() -> std::unique_ptr<Tokenizer> {
-            LPSTR messageBuffer = nullptr;
-            FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuffer, 0, NULL);
-
-            std::string message = std::format("{}: {}", filename, messageBuffer);
-            errorCallback(message.c_str(), nullptr);
-
-            LocalFree(messageBuffer);
-            return nullptr;
-        };
-
-        HANDLE fileHandle = CreateFileW(WStringFromUTF8(filename).c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-        if (fileHandle == INVALID_HANDLE_VALUE) return errorReportLambda();
-
-        size_t len = GetFileSize(fileHandle, 0);
-
-        HANDLE mapping = CreateFileMapping(fileHandle, 0, PAGE_READONLY, 0, 0, 0);
-        CloseHandle(fileHandle);
-        if (mapping == 0) return errorReportLambda();
-
-        LPVOID ptr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-        CloseHandle(mapping);
-        if (!ptr) return errorReportLambda();
-
-        return std::make_unique<Tokenizer>(ptr, len, filename, std::move(errorCallback));
-#else
-        std::string str = spectra::ReadFileContents(filename);
-        return std::make_unique<Tokenizer>(std::move(str), filename, std::move(errorCallback));
-#endif
-    }
-
-    std::unique_ptr<Tokenizer> Tokenizer::CreateFromString(std::string str, std::function<void(const char*, const FileLoc*)> errorCallback) {
-        return std::make_unique<Tokenizer>(std::move(str), "<stdin>", std::move(errorCallback));
-    }
-
-    Tokenizer::Tokenizer(std::string str, std::string filename, std::function<void(const char*, const FileLoc*)> errorCallback) : errorCallback(std::move(errorCallback)), contents(std::move(str)) {
-        loc = FileLoc(*new std::string(filename));
-        pos = contents.data();
-        end = pos + contents.size();
-        CheckUTF(contents.data(), contents.size());
-    }
-
-#if defined(SPECTRA_HAVE_MMAP) || defined(SPECTRA_IS_WINDOWS)
-    Tokenizer::Tokenizer(void* ptr, size_t len, std::string filename, std::function<void(const char*, const FileLoc*)> errorCallback) : errorCallback(std::move(errorCallback)), unmapPtr(ptr), unmapLength(len) {
-        // This is disgusting and leaks memory, but it ensures that the
-        // filename in FileLocs returned by the Tokenizer remain valid even
-        // after it has been destroyed.
-        loc = FileLoc(*new std::string(filename));
-        pos = (const char*) ptr;
-        end = pos + len;
-        CheckUTF(ptr, len);
-    }
-#endif
-
-    Tokenizer::~Tokenizer() {
-#ifdef SPECTRA_HAVE_MMAP
-        if (unmapPtr && unmapLength > 0)
-            if (munmap(unmapPtr, unmapLength) != 0) {
-                std::string message = std::format("munmap: {}", SystemErrorString());
-                errorCallback(message.c_str(), nullptr);
-            }
-#elif defined(SPECTRA_IS_WINDOWS)
-        if (unmapPtr && UnmapViewOfFile(unmapPtr) == 0) {
-            std::string message = std::format("UnmapViewOfFile: {}", SystemErrorString());
-            errorCallback(message.c_str(), nullptr);
-        }
-#endif
-    }
-
-    void Tokenizer::CheckUTF(const void* ptr, int len) const {
-        const unsigned char* c = (const unsigned char*) ptr;
-        // https://en.wikipedia.org/wiki/Byte_order_mark
-        if (len >= 2 && ((c[0] == 0xfe && c[1] == 0xff) || (c[0] == 0xff && c[1] == 0xfe)))
-            errorCallback("File is encoded with UTF-16, which is not currently "
-                          "supported by pbrt (https://github.com/mmp/pbrt-v4/issues/136).",
-                &loc);
-    }
-
-    pstd::optional<Token> Tokenizer::Next() {
-        while (true) {
-            const char* tokenStart = pos;
-            FileLoc startLoc       = loc;
-
-            int ch = getChar();
-            if (ch == EOF)
-                return {};
-            else if (ch == ' ' || ch == '\n' || ch == '\t' || ch == '\r') {
-                // nothing
-            } else if (ch == '"') {
-                // scan to closing quote
-                bool haveEscaped = false;
-                while ((ch = getChar()) != '"') {
-                    if (ch == EOF) {
-                        errorCallback("premature EOF", &startLoc);
-                        return {};
-                    } else if (ch == '\n') {
-                        errorCallback("unterminated string", &startLoc);
-                        return {};
-                    } else if (ch == '\\') {
-                        haveEscaped = true;
-                        // Grab the next character
-                        if ((ch = getChar()) == EOF) {
-                            errorCallback("premature EOF", &startLoc);
-                            return {};
-                        }
-                    }
-                }
-
-                if (!haveEscaped)
-                    return Token({tokenStart, size_t(pos - tokenStart)}, startLoc);
-                else {
-                    sEscaped.clear();
-                    for (const char* p = tokenStart; p < pos; ++p) {
-                        if (*p != '\\')
-                            sEscaped.push_back(*p);
-                        else {
-                            ++p;
-                            SPECTRA_CHECK_LT(p, pos);
-                            sEscaped.push_back(decodeEscaped(*p, startLoc));
-                        }
-                    }
-                    return Token({sEscaped.data(), sEscaped.size()}, startLoc);
-                }
-            } else if (ch == '[' || ch == ']') {
-                return Token({tokenStart, size_t(1)}, startLoc);
-            } else if (ch == '#') {
-                // comment: scan to EOL (or EOF)
-                while ((ch = getChar()) != EOF) {
-                    if (ch == '\n' || ch == '\r') {
-                        ungetChar();
-                        break;
-                    }
-                }
-
-                return Token({tokenStart, size_t(pos - tokenStart)}, startLoc);
-            } else {
-                // Regular statement or numeric token; scan until we hit a
-                // space, opening quote, or bracket.
-                while ((ch = getChar()) != EOF) {
-                    if (ch == ' ' || ch == '\n' || ch == '\t' || ch == '\r' || ch == '"' || ch == '[' || ch == ']') {
-                        ungetChar();
-                        break;
-                    }
-                }
-                return Token({tokenStart, size_t(pos - tokenStart)}, startLoc);
-            }
-        }
-    }
-
-    static int parseInt(const Token& t) {
-        bool negate = t.token[0] == '-';
-
-        int index = 0;
-        if (t.token[0] == '+' || t.token[0] == '-') ++index;
-
-        int64_t value = 0;
-        while (index < t.token.size()) {
-            if (!(t.token[index] >= '0' && t.token[index] <= '9')) throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "\"%c\": expected a number", t.token[index]));
-            value = 10 * value + (t.token[index] - '0');
-            ++index;
-
-            if (value > std::numeric_limits<int>::max())
-                throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "Numeric value too large to represent as a 32-bit integer."));
-            else if (value < std::numeric_limits<int>::lowest())
-                spectra::diagnostics::PrintWarning(&t.loc, "Numeric value %lld too low to represent as a 32-bit integer.", static_cast<long long>(value));
-        }
-
-        return negate ? -value : value;
-    }
-
-    static double parseFloat(const Token& t) {
-        // Fast path for a single digit
-        if (t.token.size() == 1) {
-            if (!(t.token[0] >= '0' && t.token[0] <= '9')) throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "\"%c\": expected a number", t.token[0]));
-            return t.token[0] - '0';
-        }
-
-        // strto[idf]() need a NUL-terminated buffer.
-        std::string token(t.token);
-        char* bufp = token.data();
-
-        // Can we just use strtol?
-        auto isInteger = [](std::string_view str) {
-            for (char ch : str)
-                if (!(ch >= '0' && ch <= '9')) return false;
-            return true;
-        };
-
-        int length = 0;
-        double val;
-        if (isInteger(t.token)) {
-            char* endptr;
-            val    = double(strtol(bufp, &endptr, 10));
-            length = endptr - bufp;
-        } else if (sizeof(Float) == sizeof(float))
-            val = floatParser.StringToFloat(bufp, t.token.size(), &length);
-        else
-            val = floatParser.StringToDouble(bufp, t.token.size(), &length);
-
-        if (length == 0) throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "%s: expected a number", toString(t.token)));
-
-        return val;
-    }
-
-    inline bool isQuotedString(std::string_view str) {
-        return str.size() >= 2 && str[0] == '"' && str.back() == '"';
-    }
-
-    static std::string_view dequoteString(const Token& t) {
-        if (!isQuotedString(t.token)) throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "\"%s\": expected quoted string", toString(t.token)));
-
-        std::string_view str = t.token;
-        str.remove_prefix(1);
-        str.remove_suffix(1);
-        return str;
-    }
-
-    constexpr int TokenOptional = 0;
-    constexpr int TokenRequired = 1;
-
-    template <typename Next, typename Unget>
-    static ParsedParameterVector parseParameters(Next nextToken, Unget ungetToken, const std::function<void(const Token& token, const char*)>& errorCallback) {
-        ParsedParameterVector parameterVector;
-
-        while (true) {
-            pstd::optional<Token> t = nextToken(TokenOptional);
-            if (!t.has_value()) return parameterVector;
-
-            if (!isQuotedString(t->token)) {
-                ungetToken(*t);
-                return parameterVector;
-            }
-
-            ParsedParameter* param = new ParsedParameter(t->loc);
-
-            std::string_view decl = dequoteString(*t);
-
-            auto skipSpace = [&decl](std::string_view::const_iterator iter) {
-                while (iter != decl.end() && (*iter == ' ' || *iter == '\t')) ++iter;
-                return iter;
-            };
-            // Skip to the next whitespace character (or the end of the string).
-            auto skipToSpace = [&decl](std::string_view::const_iterator iter) {
-                while (iter != decl.end() && *iter != ' ' && *iter != '\t') ++iter;
-                return iter;
-            };
-
-            auto typeBegin = skipSpace(decl.begin());
-            if (typeBegin == decl.end()) throw std::runtime_error(spectra::diagnostics::Format(&t->loc, "Parameter \"%s\" doesn't have a type declaration?!", std::string(decl.begin(), decl.end())));
-
-            // Find end of type declaration
-            auto typeEnd = skipToSpace(typeBegin);
-            param->type.assign(typeBegin, typeEnd);
-
-            auto nameBegin = skipSpace(typeEnd);
-            if (nameBegin == decl.end()) throw std::runtime_error(spectra::diagnostics::Format(&t->loc, "Unable to find parameter name from \"%s\"", std::string(decl.begin(), decl.end())));
-
-            auto nameEnd = skipToSpace(nameBegin);
-            param->name.assign(nameBegin, nameEnd);
-
-            enum ValType { Unknown, String, Bool, FloatValue, Int } valType = Unknown;
-
-            if (param->type == "integer") valType = Int;
-
-            auto addVal = [&](const Token& t) {
-                if (isQuotedString(t.token)) {
-                    switch (valType) {
-                    case Unknown: valType = String; break;
-                    case String: break;
-                    case FloatValue: errorCallback(t, "expected floating-point value");
-                    case Int: errorCallback(t, "expected integer value");
-                    case Bool: errorCallback(t, "expected Boolean value");
-                    }
-
-                    param->AddString(dequoteString(t));
-                } else if (t.token[0] == 't' && t.token == "true") {
-                    switch (valType) {
-                    case Unknown: valType = Bool; break;
-                    case String: errorCallback(t, "expected string value");
-                    case FloatValue: errorCallback(t, "expected floating-point value");
-                    case Int: errorCallback(t, "expected integer value");
-                    case Bool: break;
-                    }
-
-                    param->AddBool(true);
-                } else if (t.token[0] == 'f' && t.token == "false") {
-                    switch (valType) {
-                    case Unknown: valType = Bool; break;
-                    case String: errorCallback(t, "expected string value");
-                    case FloatValue: errorCallback(t, "expected floating-point value");
-                    case Int: errorCallback(t, "expected integer value");
-                    case Bool: break;
-                    }
-
-                    param->AddBool(false);
-                } else {
-                    switch (valType) {
-                    case Unknown: valType = FloatValue; break;
-                    case String: errorCallback(t, "expected string value");
-                    case FloatValue: break;
-                    case Int: break;
-                    case Bool: errorCallback(t, "expected Boolean value");
-                    }
-
-                    if (valType == Int)
-                        param->AddInt(parseInt(t));
-                    else
-                        param->AddFloat(parseFloat(t));
-                }
-            };
-
-            Token val = *nextToken(TokenRequired);
-
-            if (val.token == "[") {
-                while (true) {
-                    val = *nextToken(TokenRequired);
-                    if (val.token == "]") break;
-                    addVal(val);
-                }
-            } else {
-                addVal(val);
-            }
-
-            parameterVector.push_back(param);
-        }
-
-        return parameterVector;
-    }
-
-    template <typename Target>
-    void parse(Target* target, std::unique_ptr<Tokenizer> t) {
-        static std::atomic<bool> warnedTransformBeginEndDeprecated{false};
-
-        std::vector<std::pair<AsyncJob<int>*, std::unique_ptr<Target>>> imports;
-
-        std::vector<std::unique_ptr<Tokenizer>> fileStack;
-        fileStack.push_back(std::move(t));
-
-        pstd::optional<Token> ungetToken;
-
-        auto parseError = [&](const char* msg, const FileLoc* loc) { throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg)); };
-
-        // nextToken is a little helper function that handles the file stack,
-        // returning the next token from the current file until reaching EOF,
-        // at which point it switches to the next file (if any).
-        std::function<pstd::optional<Token>(int)> nextToken;
-        nextToken = [&](int flags) -> pstd::optional<Token> {
-            if (ungetToken.has_value()) return std::exchange(ungetToken, {});
-
-            if (fileStack.empty()) {
-                if ((flags & TokenRequired) != 0) {
-                    throw std::runtime_error(spectra::diagnostics::Format("premature end of file"));
-                }
-                return {};
-            }
-
-            pstd::optional<Token> tok = fileStack.back()->Next();
-
-            if (!tok) {
-                // We've reached EOF in the current file. Anything more to parse?
-                fileStack.pop_back();
-                return nextToken(flags);
-            } else if (tok->token[0] == '#') {
-                // Swallow comments.
-                return nextToken(flags);
-            } else
-                // Regular token; success.
-                return tok;
-        };
-
-        auto unget = [&](Token t) {
-            SPECTRA_CHECK(!ungetToken.has_value());
-            ungetToken = t;
-        };
-
-        // Helper function for pbrt API entrypoints that take a single string
-        // parameter and a ParameterVector (e.g. pbrtShape()).
-        auto basicParamListEntrypoint = [&](void (Target::*apiFunc)(const std::string&, ParsedParameterVector, FileLoc), FileLoc loc) {
-            Token t                               = *nextToken(TokenRequired);
-            std::string_view dequoted             = dequoteString(t);
-            std::string n                         = toString(dequoted);
-            ParsedParameterVector parameterVector = parseParameters(nextToken, unget, [&](const Token& t, const char* msg) {
-                std::string token = toString(t.token);
-                std::string str   = std::format("{}: {}", token, msg);
-                parseError(str.c_str(), &t.loc);
-            });
-            (target->*apiFunc)(n, std::move(parameterVector), loc);
-        };
-
-        auto syntaxError = [&](const Token& t) { throw std::runtime_error(spectra::diagnostics::Format(&t.loc, "Unknown directive: %s", toString(t.token))); };
-
-        pstd::optional<Token> tok;
-
-        while (true) {
-            tok = nextToken(TokenOptional);
-            if (!tok.has_value()) break;
-
-            switch (tok->token[0]) {
-            case 'A':
-                if (tok->token == "AttributeBegin")
-                    target->AttributeBegin(tok->loc);
-                else if (tok->token == "AttributeEnd")
-                    target->AttributeEnd(tok->loc);
-                else if (tok->token == "Attribute")
-                    basicParamListEntrypoint(&Target::Attribute, tok->loc);
-                else if (tok->token == "ActiveTransform") {
-                    Token a = *nextToken(TokenRequired);
-                    if (a.token == "All")
-                        target->ActiveTransformAll(tok->loc);
-                    else if (a.token == "EndTime")
-                        target->ActiveTransformEndTime(tok->loc);
-                    else if (a.token == "StartTime")
-                        target->ActiveTransformStartTime(tok->loc);
-                    else
-                        syntaxError(*tok);
-                } else if (tok->token == "AreaLightSource")
-                    basicParamListEntrypoint(&Target::AreaLightSource, tok->loc);
-                else if (tok->token == "Accelerator")
-                    basicParamListEntrypoint(&Target::Accelerator, tok->loc);
-                else
-                    syntaxError(*tok);
-                break;
-
-            case 'C':
-                if (tok->token == "ConcatTransform") {
-                    if (nextToken(TokenRequired)->token != "[") syntaxError(*tok);
-                    Float m[16];
-                    for (int i = 0; i < 16; ++i) m[i] = parseFloat(*nextToken(TokenRequired));
-                    if (nextToken(TokenRequired)->token != "]") syntaxError(*tok);
-                    target->ConcatTransform(m, tok->loc);
-                } else if (tok->token == "CoordinateSystem") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    target->CoordinateSystem(toString(n), tok->loc);
-                } else if (tok->token == "CoordSysTransform") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    target->CoordSysTransform(toString(n), tok->loc);
-                } else if (tok->token == "ColorSpace") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    target->ColorSpace(toString(n), tok->loc);
-                } else if (tok->token == "Camera")
-                    basicParamListEntrypoint(&Target::Camera, tok->loc);
-                else
-                    syntaxError(*tok);
-                break;
-
-            case 'F':
-                if (tok->token == "Film")
-                    basicParamListEntrypoint(&Target::Film, tok->loc);
-                else
-                    syntaxError(*tok);
-                break;
-
-            case 'I':
-                if (tok->token == "Integrator")
-                    basicParamListEntrypoint(&Target::Integrator, tok->loc);
-                else if (tok->token == "Include") {
-                    Token filenameToken             = *nextToken(TokenRequired);
-                    std::string filename            = toString(dequoteString(filenameToken));
-                    filename                        = ResolveFilename(filename);
-                    std::unique_ptr<Tokenizer> tinc = Tokenizer::CreateFromFile(filename, parseError);
-                    if (tinc) {
-                        fileStack.push_back(std::move(tinc));
-                    }
-                } else if (tok->token == "Import") {
-                    Token filenameToken  = *nextToken(TokenRequired);
-                    std::string filename = toString(dequoteString(filenameToken));
-                    if (!target->IsImportAllowed())
-                        throw std::runtime_error(spectra::diagnostics::Format(&tok->loc, "Import statement only allowed inside world "
-                                                                                         "definition block."));
-
-                    filename                              = ResolveFilename(filename);
-                    std::unique_ptr<Target> importBuilder = target->CopyForImport();
-                    Target* importTarget                  = importBuilder.get();
-
-                    if (RunningThreads() == 1) {
-                        std::unique_ptr<Tokenizer> timport = Tokenizer::CreateFromFile(filename, parseError);
-                        if (timport) parse(importTarget, std::move(timport));
-                        target->MergeImported(std::move(importBuilder));
-                    } else {
-                        auto job = [=](std::string filename) {
-                            std::unique_ptr<Tokenizer> timport = Tokenizer::CreateFromFile(filename, parseError);
-                            if (timport) parse(importTarget, std::move(timport));
-                            return 0;
-                        };
-                        AsyncJob<int>* jobFinished = spectra::RunAsync(job, filename);
-                        imports.push_back(std::make_pair(jobFinished, std::move(importBuilder)));
-                    }
-                } else if (tok->token == "Identity")
-                    target->Identity(tok->loc);
-                else
-                    syntaxError(*tok);
-                break;
-
-            case 'L':
-                if (tok->token == "LightSource")
-                    basicParamListEntrypoint(&Target::LightSource, tok->loc);
-                else if (tok->token == "LookAt") {
-                    Float v[9];
-                    for (int i = 0; i < 9; ++i) v[i] = parseFloat(*nextToken(TokenRequired));
-                    target->LookAt(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'M':
-                if (tok->token == "MakeNamedMaterial")
-                    basicParamListEntrypoint(&Target::MakeNamedMaterial, tok->loc);
-                else if (tok->token == "MakeNamedMedium")
-                    basicParamListEntrypoint(&Target::MakeNamedMedium, tok->loc);
-                else if (tok->token == "Material")
-                    basicParamListEntrypoint(&Target::Material, tok->loc);
-                else if (tok->token == "MediumInterface") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    std::string names[2];
-                    names[0] = toString(n);
-
-                    // Check for optional second parameter
-                    pstd::optional<Token> second = nextToken(TokenOptional);
-                    if (second.has_value()) {
-                        if (isQuotedString(second->token))
-                            names[1] = toString(dequoteString(*second));
-                        else {
-                            unget(*second);
-                            names[1] = names[0];
-                        }
-                    } else
-                        names[1] = names[0];
-
-                    target->MediumInterface(names[0], names[1], tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'N':
-                if (tok->token == "NamedMaterial") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    target->NamedMaterial(toString(n), tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'O':
-                if (tok->token == "ObjectBegin") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    target->ObjectBegin(toString(n), tok->loc);
-                } else if (tok->token == "ObjectEnd")
-                    target->ObjectEnd(tok->loc);
-                else if (tok->token == "ObjectInstance") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    target->ObjectInstance(toString(n), tok->loc);
-                } else if (tok->token == "Option") {
-                    std::string name  = toString(dequoteString(*nextToken(TokenRequired)));
-                    std::string value = toString(nextToken(TokenRequired)->token);
-                    target->Option(name, value, tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'P':
-                if (tok->token == "PixelFilter")
-                    basicParamListEntrypoint(&Target::PixelFilter, tok->loc);
-                else
-                    syntaxError(*tok);
-                break;
-
-            case 'R':
-                if (tok->token == "ReverseOrientation")
-                    target->ReverseOrientation(tok->loc);
-                else if (tok->token == "Rotate") {
-                    Float v[4];
-                    for (int i = 0; i < 4; ++i) v[i] = parseFloat(*nextToken(TokenRequired));
-                    target->Rotate(v[0], v[1], v[2], v[3], tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'S':
-                if (tok->token == "Shape")
-                    basicParamListEntrypoint(&Target::Shape, tok->loc);
-                else if (tok->token == "Sampler")
-                    basicParamListEntrypoint(&Target::Sampler, tok->loc);
-                else if (tok->token == "Scale") {
-                    Float v[3];
-                    for (int i = 0; i < 3; ++i) v[i] = parseFloat(*nextToken(TokenRequired));
-                    target->Scale(v[0], v[1], v[2], tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'T':
-                if (tok->token == "TransformBegin") {
-                    if (!warnedTransformBeginEndDeprecated) {
-                        spectra::diagnostics::PrintWarning(&tok->loc, "TransformBegin/End are deprecated and should "
-                                                                      "be replaced with AttributeBegin/End");
-                        warnedTransformBeginEndDeprecated = true;
-                    }
-                    target->AttributeBegin(tok->loc);
-                } else if (tok->token == "TransformEnd") {
-                    target->AttributeEnd(tok->loc);
-                } else if (tok->token == "Transform") {
-                    if (nextToken(TokenRequired)->token != "[") syntaxError(*tok);
-                    Float m[16];
-                    for (int i = 0; i < 16; ++i) m[i] = parseFloat(*nextToken(TokenRequired));
-                    if (nextToken(TokenRequired)->token != "]") syntaxError(*tok);
-                    target->Transform(m, tok->loc);
-                } else if (tok->token == "Translate") {
-                    Float v[3];
-                    for (int i = 0; i < 3; ++i) v[i] = parseFloat(*nextToken(TokenRequired));
-                    target->Translate(v[0], v[1], v[2], tok->loc);
-                } else if (tok->token == "TransformTimes") {
-                    Float v[2];
-                    for (int i = 0; i < 2; ++i) v[i] = parseFloat(*nextToken(TokenRequired));
-                    target->TransformTimes(v[0], v[1], tok->loc);
-                } else if (tok->token == "Texture") {
-                    std::string_view n = dequoteString(*nextToken(TokenRequired));
-                    std::string name   = toString(n);
-                    n                  = dequoteString(*nextToken(TokenRequired));
-                    std::string type   = toString(n);
-
-                    Token t                      = *nextToken(TokenRequired);
-                    std::string_view dequoted    = dequoteString(t);
-                    std::string texName          = toString(dequoted);
-                    ParsedParameterVector params = parseParameters(nextToken, unget, [&](const Token& t, const char* msg) {
-                        std::string token = toString(t.token);
-                        std::string str   = std::format("{}: {}", token, msg);
-                        parseError(str.c_str(), &t.loc);
-                    });
-
-                    target->Texture(name, type, texName, std::move(params), tok->loc);
-                } else
-                    syntaxError(*tok);
-                break;
-
-            case 'W':
-                if (tok->token == "WorldBegin")
-                    target->WorldBegin(tok->loc);
-                else
-                    syntaxError(*tok);
-                break;
-
-            default: syntaxError(*tok);
-            }
-        }
-
-        for (auto& import : imports) {
-            import.first->Wait();
-
-            target->MergeImported(std::move(import.second));
-        }
-    }
-
-    void ParseFiles(SceneBuilder* target, pstd::span<const std::string> filenames) {
-        auto tokError = [](const char* msg, const FileLoc* loc) { throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg)); };
-
-        // Process scene description
-        if (filenames.empty()) {
-            // Parse scene from standard input
-            std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromFile("-", tokError);
-            if (t) parse(target, std::move(t));
-        } else {
-            // Parse scene from input files
-            for (const std::string& fn : filenames) {
-                if (fn != "-") SetSearchDirectory(fn);
-
-                std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromFile(fn, tokError);
-                if (t) parse(target, std::move(t));
-            }
-        }
-
-        target->EndOfFiles();
-    }
-
-    void ParseString(SceneBuilder* target, std::string str) {
-        auto tokError                = [](const char* msg, const FileLoc* loc) { throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg)); };
-        std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromString(std::move(str), tokError);
-        if (!t) return;
-        parse(target, std::move(t));
-
-        target->EndOfFiles();
-    }
-
-    void ParseFiles(SceneDescriptionBuilder* target, pstd::span<const std::string> filenames) {
-        auto tokError = [](const char* msg, const FileLoc* loc) { throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg)); };
-
-        if (filenames.empty()) {
-            std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromFile("-", tokError);
-            if (t) parse(target, std::move(t));
-        } else {
-            for (const std::string& fn : filenames) {
-                if (fn != "-") SetSearchDirectory(fn);
-
-                std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromFile(fn, tokError);
-                if (t) parse(target, std::move(t));
-            }
-        }
-
-        target->EndOfFiles();
-    }
-
-    void ParseString(SceneDescriptionBuilder* target, std::string str) {
-        auto tokError                = [](const char* msg, const FileLoc* loc) { throw std::runtime_error(spectra::diagnostics::Format(loc, "%s", msg)); };
-        std::unique_ptr<Tokenizer> t = Tokenizer::CreateFromString(std::move(str), tokError);
-        if (!t) return;
-        parse(target, std::move(t));
-
-        target->EndOfFiles();
-    }
-} // namespace spectra::scene
-
-
-namespace spectra::scene {
     InternCache<std::string> SceneEntity::internedStrings(Allocator{});
 
     static std::string NormalizeSceneOptionName(const std::string& str) {
@@ -950,7 +83,7 @@ namespace spectra::scene {
 #define VERIFY_WORLD(func)                                          \
     if (currentBlock == BlockState::OptionsBlock) {                 \
         throw std::runtime_error(spectra::diagnostics::Format(&loc, \
-            "Scene description must be inside world block; "        \
+            "Scene command must be inside world block; "            \
             "\"%s\" is not allowed.",                               \
             func));                                                 \
         return;                                                     \
@@ -1209,11 +342,6 @@ namespace spectra::scene {
             throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectEnd called outside of instance definition"));
             return;
         }
-        if (activeInstanceDefinition->parent) {
-            throw std::runtime_error(spectra::diagnostics::Format(&loc, "ObjectEnd called inside Import for instance definition"));
-            return;
-        }
-
         // NOTE: Must keep the following consistent with AttributeEnd
         graphicsState = std::move(pushedGraphicsStates.back());
         pushedGraphicsStates.pop_back();
@@ -1224,12 +352,8 @@ namespace spectra::scene {
             SPECTRA_CHECK_EQ(pushStack.back().first, 'o');
         pushStack.pop_back();
 
-        // Otherwise it will be taken care of in MergeImported()
-        if (--activeInstanceDefinition->activeImports == 0) {
-            scene->AddInstanceDefinition(std::move(activeInstanceDefinition->entity));
-            delete activeInstanceDefinition;
-        }
-
+        scene->AddInstanceDefinition(std::move(activeInstanceDefinition->entity));
+        delete activeInstanceDefinition;
         activeInstanceDefinition = nullptr;
     }
 
@@ -1270,8 +394,8 @@ namespace spectra::scene {
         });
     }
 
-    void SceneBuilder::EndOfFiles() {
-        if (currentBlock != BlockState::WorldBlock) throw std::runtime_error(spectra::diagnostics::Format("End of files before \"WorldBegin\"."));
+    void SceneBuilder::Finish() {
+        if (currentBlock != BlockState::WorldBlock) throw std::runtime_error(spectra::diagnostics::Format("Scene finished before \"WorldBegin\"."));
 
         // Ensure there are no pushed graphics states
         while (!pushedGraphicsStates.empty()) {
@@ -1283,603 +407,190 @@ namespace spectra::scene {
         if (!instanceUses.empty()) scene->AddInstanceUses(instanceUses);
     }
 
-    std::unique_ptr<SceneBuilder> SceneBuilder::CopyForImport() {
-        std::unique_ptr<SceneBuilder> importBuilder = std::make_unique<SceneBuilder>(scene);
-        importBuilder->renderFromWorld              = renderFromWorld;
-        importBuilder->graphicsState                = graphicsState;
-        importBuilder->currentBlock                 = currentBlock;
-        importBuilder->filmResolutionOverride       = filmResolutionOverride;
-        importBuilder->filmSeen                     = filmSeen;
-        if (activeInstanceDefinition) {
-            importBuilder->activeInstanceDefinition = new ActiveInstanceDefinition{
-                .entity =
-                    {
-                        .name = activeInstanceDefinition->entity.name,
-                        .loc  = activeInstanceDefinition->entity.loc,
-                    },
-            };
+    namespace {
+        static constexpr std::array<SceneInfo, 1> scenes{{
+            {
+                .name                    = "default",
+                .title                   = "PBRT Book",
+                .camera                  = "perspective",
+                .sampler                 = "halton",
+                .integrator              = "volpath",
+                .accelerator             = "bvh",
+                .shape_count             = 5,
+                .material_count          = 3,
+                .texture_count           = 5,
+                .medium_count            = 0,
+                .light_count             = 0,
+                .area_light_count        = 2,
+                .infinite_light_count    = 0,
+                .object_definition_count = 0,
+                .object_instance_count   = 0,
+                .camera_fov_degrees      = 26.5f,
+            },
+        }};
 
-            // In case of nested imports, go up to the true root parent since
-            // that's where we need to merge our shapes and that's where the
-            // refcount is.
-            ActiveInstanceDefinition* parent = activeInstanceDefinition;
-            while (parent->parent) parent = parent->parent;
-            importBuilder->activeInstanceDefinition->parent = parent;
-            ++parent->activeImports;
-        }
-        return importBuilder;
-    }
-
-    bool SceneBuilder::IsImportAllowed() const {
-        return currentBlock == BlockState::WorldBlock;
-    }
-
-    void SceneBuilder::MergeImported(std::unique_ptr<SceneBuilder> imported) {
-        MergeImported(imported.get());
-        importedBuilders.push_back(std::move(imported));
-    }
-
-    void SceneBuilder::MergeImported(SceneBuilder* imported) {
-        while (!imported->pushedGraphicsStates.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format("Missing end to AttributeBegin"));
-            imported->pushedGraphicsStates.pop_back();
+        [[nodiscard]] std::string SceneResource(std::string_view relative_path) {
+            return std::format("{}/{}", SPECTRA_PROJECT_SCENE_ROOT, relative_path);
         }
 
-        if (!imported->shapes.empty()) scene->AddShapes(imported->shapes);
-        if (!imported->instanceUses.empty()) scene->AddInstanceUses(imported->instanceUses);
+        [[nodiscard]] FileLoc SceneLocation(std::string_view scene_name) {
+            if (scene_name == "default") return FileLoc{"spectra://scene/default"};
+            throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", scene_name));
+        }
 
-        auto mergeVector = [](auto& base, auto& imported) {
-            if (base.empty())
-                base = std::move(imported);
-            else {
-                base.reserve(base.size() + imported.size());
-                std::move(std::begin(imported), std::end(imported), std::back_inserter(base));
-                imported.clear();
-                imported.shrink_to_fit();
+        [[nodiscard]] ParsedParameter* FloatParameter(std::string_view type, std::string_view name, std::initializer_list<Float> values, FileLoc location) {
+            ParsedParameter* parameter = new ParsedParameter(location);
+            parameter->type.assign(type);
+            parameter->name.assign(name);
+            for (Float value : values) parameter->AddFloat(value);
+            return parameter;
+        }
+
+        [[nodiscard]] ParsedParameter* IntegerParameter(std::string_view name, std::initializer_list<int> values, FileLoc location) {
+            ParsedParameter* parameter = new ParsedParameter(location);
+            parameter->type            = "integer";
+            parameter->name.assign(name);
+            for (int value : values) parameter->AddInt(value);
+            return parameter;
+        }
+
+        [[nodiscard]] ParsedParameter* StringParameter(std::string_view type, std::string_view name, std::initializer_list<std::string_view> values, FileLoc location) {
+            ParsedParameter* parameter = new ParsedParameter(location);
+            parameter->type.assign(type);
+            parameter->name.assign(name);
+            for (std::string_view value : values) parameter->AddString(value);
+            return parameter;
+        }
+
+        [[nodiscard]] ParsedParameter* StringParameter(std::string_view name, std::initializer_list<std::string_view> values, FileLoc location) {
+            return StringParameter("string", name, values, location);
+        }
+
+        [[nodiscard]] ParsedParameterVector ParameterList(std::initializer_list<ParsedParameter*> input) {
+            ParsedParameterVector parameters{};
+            for (ParsedParameter* parameter : input) parameters.push_back(parameter);
+            return parameters;
+        }
+
+        void BuildDefaultScene(SceneBuilder& builder) {
+            const FileLoc location        = SceneLocation("default");
+            const std::string mesh_00001  = SceneResource("pbrt-book/geometry/mesh_00001.ply");
+            const std::string mesh_00002  = SceneResource("pbrt-book/geometry/mesh_00002.ply");
+            const std::string mesh_00003  = SceneResource("pbrt-book/geometry/mesh_00003.ply");
+            const std::string book_cover  = SceneResource("pbrt-book/texture/book_pbrt.png");
+            const std::string book_pages  = SceneResource("pbrt-book/texture/book_pages.png");
+            const std::string uneven_bump = SceneResource("pbrt-book/texture/uneven_bump.png");
+
+            builder.Sampler("halton", ParameterList({IntegerParameter("pixelsamples", {2048}, location)}), location);
+            builder.Film("rgb",
+                ParameterList({
+                    StringParameter("filename", {"book.exr"}, location),
+                    IntegerParameter("yresolution", {1080}, location),
+                    IntegerParameter("xresolution", {1920}, location),
+                    StringParameter("sensor", {"canon_eos_100d"}, location),
+                    FloatParameter("float", "iso", {150.0f}, location),
+                }),
+                location);
+            builder.Scale(-1.0f, 1.0f, 1.0f, location);
+            builder.LookAt(0.0f, 2.1088f, 13.574f, 0.0f, 2.1088f, 12.574f, 0.0f, 1.0f, 0.0f, location);
+            builder.Camera("perspective", ParameterList({FloatParameter("float", "fov", {26.5f}, location)}), location);
+            builder.WorldBegin(location);
+
+            builder.AttributeBegin(location);
+            builder.AreaLightSource("diffuse", ParameterList({FloatParameter("rgb", "L", {41.5594f, 43.3127f, 45.066f}, location)}), location);
+            builder.Translate(34.92f, 55.92f, -15.351f, location);
+            builder.Shape("sphere", ParameterList({FloatParameter("float", "radius", {7.5f}, location)}), location);
+            builder.AttributeEnd(location);
+
+            builder.AttributeBegin(location);
+            builder.AreaLightSource("diffuse", ParameterList({FloatParameter("rgb", "L", {65.066f, 63.3127f, 61.5594f}, location)}), location);
+            builder.Translate(-32.892f, 55.92f, 36.293f, location);
+            builder.Shape("sphere", ParameterList({FloatParameter("float", "radius", {7.5f}, location)}), location);
+            builder.AttributeEnd(location);
+
+            builder.AttributeBegin(location);
+            builder.Material("diffuse", ParameterList({FloatParameter("rgb", "reflectance", {0.5f, 0.5f, 0.5f}, location)}), location);
+            builder.Scale(0.213f, 0.213f, 0.213f, location);
+            builder.AttributeBegin(location);
+            builder.Shape("plymesh", ParameterList({StringParameter("filename", {std::string_view{mesh_00001}}, location)}), location);
+            builder.AttributeEnd(location);
+            builder.AttributeEnd(location);
+
+            builder.Texture("book_cover", "spectrum", "imagemap", ParameterList({StringParameter("filename", {std::string_view{book_cover}}, location)}), location);
+            builder.Texture("book_pages", "spectrum", "imagemap", ParameterList({StringParameter("filename", {std::string_view{book_pages}}, location)}), location);
+            builder.Texture("uneven_bump_raw", "float", "imagemap",
+                ParameterList({
+                    StringParameter("filename", {std::string_view{uneven_bump}}, location),
+                    FloatParameter("float", "vscale", {1.5f}, location),
+                    FloatParameter("float", "uscale", {1.5f}, location),
+                }),
+                location);
+            builder.Texture("uneven_bump_scale", "float", "constant", ParameterList({FloatParameter("float", "value", {0.0002f}, location)}), location);
+            builder.Texture("uneven_bump", "float", "scale",
+                ParameterList({
+                    StringParameter("texture", "scale", {"uneven_bump_scale"}, location),
+                    StringParameter("texture", "tex", {"uneven_bump_raw"}, location),
+                }),
+                location);
+
+            builder.AttributeBegin(location);
+            builder.Material("diffuse", ParameterList({StringParameter("texture", "reflectance", {"book_pages"}, location)}), location);
+            builder.Translate(0.0f, 2.2f, 0.0f, location);
+            builder.Rotate(77.3425f, 0.403388f, -0.754838f, -0.517202f, location);
+            builder.Scale(0.5f, 0.5f, 0.5f, location);
+            builder.AttributeBegin(location);
+            builder.Shape("plymesh", ParameterList({StringParameter("filename", {std::string_view{mesh_00002}}, location)}), location);
+            builder.AttributeEnd(location);
+            builder.AttributeEnd(location);
+
+            builder.AttributeBegin(location);
+            builder.Material("coateddiffuse",
+                ParameterList({
+                    StringParameter("texture", "displacement", {"uneven_bump"}, location),
+                    StringParameter("texture", "reflectance", {"book_cover"}, location),
+                    FloatParameter("float", "roughness", {0.0003f}, location),
+                }),
+                location);
+            builder.Translate(0.0f, 2.2f, 0.0f, location);
+            builder.Rotate(77.3425f, 0.403388f, -0.754838f, -0.517202f, location);
+            builder.Scale(0.5f, 0.5f, 0.5f, location);
+            builder.AttributeBegin(location);
+            builder.Shape("plymesh", ParameterList({StringParameter("filename", {std::string_view{mesh_00003}}, location)}), location);
+            builder.AttributeEnd(location);
+            builder.AttributeEnd(location);
+
+            builder.Finish();
+        }
+
+        void BuildSceneCommands(std::string_view name, SceneBuilder& builder) {
+            if (name == "default") {
+                BuildDefaultScene(builder);
+                return;
             }
-        };
-        if (imported->activeInstanceDefinition) {
-            ActiveInstanceDefinition* current = imported->activeInstanceDefinition;
-            ActiveInstanceDefinition* parent  = current->parent;
-            SPECTRA_CHECK(parent != nullptr);
-
-            std::lock_guard<std::mutex> lock(parent->mutex);
-            mergeVector(parent->entity.shapes, current->entity.shapes);
-            mergeVector(parent->entity.animatedShapes, current->entity.animatedShapes);
-
-            delete current;
-
-            if (--parent->activeImports == 0) scene->AddInstanceDefinition(std::move(parent->entity));
+            throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", name));
         }
 
-        auto mergeSet = [this](auto& base, auto& imported, const char* name) {
-            for (const auto& item : imported) {
-                if (base.find(item) != base.end()) throw std::runtime_error(spectra::diagnostics::Format("%s: multiply defined %s.", item, name));
-                base.insert(std::move(item));
-            }
-            imported.clear();
-        };
-        mergeSet(namedMaterialNames, imported->namedMaterialNames, "named material");
-        mergeSet(floatTextureNames, imported->floatTextureNames, "texture");
-        mergeSet(spectrumTextureNames, imported->spectrumTextureNames, "texture");
+    } // namespace
+
+    [[nodiscard]] pstd::span<const SceneInfo> Scenes() {
+        return pstd::span<const SceneInfo>{scenes.data(), scenes.size()};
     }
 
-    void SceneDescription::Clear() {
-        pixelFilter = {};
-        film        = {};
-        sampler     = {};
-        accelerator = {};
-        integrator  = {};
-        camera      = {};
-        textures.clear();
-        materials.clear();
-        mediums.clear();
-        mediumBindings.clear();
-        lights.clear();
-        shapes.clear();
-        objectDefinitions.clear();
-        objectInstances.clear();
+    [[nodiscard]] const SceneInfo& SceneInfoFor(std::string_view name) {
+        for (const SceneInfo& scene : scenes)
+            if (scene.name == name) return scene;
+        throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", name));
     }
 
-    [[nodiscard]] SceneDescriptionFileLocation CopySceneDescriptionFileLocation(const FileLoc& location) {
-        return {std::string{location.filename}, location.line, location.column};
-    }
-
-    void DeleteParsedParameters(ParsedParameterVector& parameters) {
-        for (ParsedParameter* parameter : parameters) delete parameter;
-        parameters.clear();
-    }
-
-    [[nodiscard]] std::vector<SceneDescriptionParameter> CopySceneDescriptionParameters(ParsedParameterVector parameters) {
-        std::vector<SceneDescriptionParameter> copiedParameters{};
-        copiedParameters.reserve(parameters.size());
-        for (const ParsedParameter* parameter : parameters) {
-            if (parameter == nullptr) throw std::runtime_error(spectra::diagnostics::Format("Scene description parser produced a null parameter."));
-            SceneDescriptionParameter copiedParameter{};
-            copiedParameter.type        = parameter->type;
-            copiedParameter.name        = parameter->name;
-            copiedParameter.location    = CopySceneDescriptionFileLocation(parameter->loc);
-            copiedParameter.mayBeUnused = parameter->mayBeUnused;
-            copiedParameter.floats.reserve(parameter->floats.size());
-            copiedParameter.ints.reserve(parameter->ints.size());
-            copiedParameter.strings.reserve(parameter->strings.size());
-            copiedParameter.bools.reserve(parameter->bools.size());
-            for (const Float value : parameter->floats) copiedParameter.floats.push_back(static_cast<float>(value));
-            for (const int value : parameter->ints) copiedParameter.ints.push_back(value);
-            for (const std::string& value : parameter->strings) copiedParameter.strings.push_back(value);
-            for (const std::uint8_t value : parameter->bools) copiedParameter.bools.push_back(value);
-            copiedParameters.push_back(std::move(copiedParameter));
-        }
-        DeleteParsedParameters(parameters);
-        return copiedParameters;
-    }
-
-    [[nodiscard]] Transform SceneDescriptionTransformFromParserMatrix(const Float transform[16]) {
-        return Transpose(Transform{spectra::SquareMatrix<4>{pstd::MakeSpan(transform, 16)}});
-    }
-
-    [[nodiscard]] std::string FirstSceneDescriptionStringParameterValue(const std::vector<SceneDescriptionParameter>& parameters, const std::string& parameterName) {
-        for (const SceneDescriptionParameter& parameter : parameters)
-            if (parameter.name == parameterName && !parameter.strings.empty()) return parameter.strings.front();
-        return {};
-    }
-
-    template <typename Value>
-    void AppendSceneDescriptionVector(std::vector<Value>& destination, std::vector<Value>& source) {
-        destination.reserve(destination.size() + source.size());
-        for (Value& value : source) destination.push_back(std::move(value));
-        source.clear();
-    }
-
-    void MergeSceneDescriptionSetting(SceneDescriptionRenderSetting& destination, SceneDescriptionRenderSetting& source) {
-        if (source.present) destination = std::move(source);
-        source = {};
-    }
-
-    std::size_t FindOrCreateSceneDescriptionObjectDefinition(std::vector<SceneDescriptionObjectDefinition>& objectDefinitions, const std::string& name, const SceneDescriptionFileLocation& location) {
-        for (std::size_t index = 0; index < objectDefinitions.size(); ++index)
-            if (objectDefinitions[index].name == name) return index;
-        SceneDescriptionObjectDefinition objectDefinition{};
-        objectDefinition.name     = name;
-        objectDefinition.location = location;
-        objectDefinitions.push_back(std::move(objectDefinition));
-        return objectDefinitions.size() - 1;
-    }
-
-    struct SceneDescriptionBuildChunk {
-        SceneDescriptionRenderSetting pixelFilter{};
-        SceneDescriptionRenderSetting film{};
-        SceneDescriptionRenderSetting sampler{};
-        SceneDescriptionRenderSetting accelerator{};
-        SceneDescriptionRenderSetting integrator{};
-        SceneDescriptionRenderSetting camera{};
-        std::vector<SceneDescriptionTexture> textures{};
-        std::vector<SceneDescriptionMaterial> materials{};
-        std::vector<SceneDescriptionMedium> mediums{};
-        std::vector<SceneDescriptionMediumBinding> mediumBindings{};
-        std::vector<SceneDescriptionLight> lights{};
-        std::vector<SceneDescriptionShape> shapes{};
-        std::vector<SceneDescriptionObjectDefinition> objectDefinitions{};
-        std::vector<SceneDescriptionObjectInstance> objectInstances{};
-    };
-
-    void AppendSceneDescriptionBuildChunk(SceneDescription& description, SceneDescriptionBuildChunk chunk) {
-        MergeSceneDescriptionSetting(description.pixelFilter, chunk.pixelFilter);
-        MergeSceneDescriptionSetting(description.film, chunk.film);
-        MergeSceneDescriptionSetting(description.sampler, chunk.sampler);
-        MergeSceneDescriptionSetting(description.accelerator, chunk.accelerator);
-        MergeSceneDescriptionSetting(description.integrator, chunk.integrator);
-        MergeSceneDescriptionSetting(description.camera, chunk.camera);
-        AppendSceneDescriptionVector(description.textures, chunk.textures);
-        AppendSceneDescriptionVector(description.materials, chunk.materials);
-        AppendSceneDescriptionVector(description.mediums, chunk.mediums);
-        AppendSceneDescriptionVector(description.mediumBindings, chunk.mediumBindings);
-        AppendSceneDescriptionVector(description.lights, chunk.lights);
-        AppendSceneDescriptionVector(description.objectDefinitions, chunk.objectDefinitions);
-        for (SceneDescriptionShape& shape : chunk.shapes) {
-            const std::string objectDefinitionName           = shape.objectDefinitionName;
-            const SceneDescriptionFileLocation shapeLocation = shape.location;
-            const std::size_t shapeIndex                     = description.shapes.size();
-            description.shapes.push_back(std::move(shape));
-            if (!objectDefinitionName.empty()) {
-                const std::size_t objectDefinitionIndex = FindOrCreateSceneDescriptionObjectDefinition(description.objectDefinitions, objectDefinitionName, shapeLocation);
-                description.objectDefinitions[objectDefinitionIndex].shapeIndices.push_back(shapeIndex);
-            }
-        }
-        chunk.shapes.clear();
-        AppendSceneDescriptionVector(description.objectInstances, chunk.objectInstances);
-    }
-
-    struct SceneDescriptionBuilderGraphicsState {
-        static constexpr std::uint32_t startTransformBit = 1u << 0u;
-        static constexpr std::uint32_t endTransformBit   = 1u << 1u;
-        static constexpr std::uint32_t allTransformBits  = startTransformBit | endTransformBit;
-
-        std::string currentInsideMedium{};
-        std::string currentOutsideMedium{};
-        std::string currentMaterialName{};
-        int currentMaterialIndex = -1;
-        std::string areaLightType{};
-        SceneDescriptionFileLocation areaLightLocation{};
-        std::vector<SceneDescriptionParameter> areaLightParameters{};
-        bool reverseOrientation = false;
-        TransformSet ctm{};
-        std::uint32_t activeTransformBits = allTransformBits;
-        Float transformStartTime          = 0.0f;
-        Float transformEndTime            = 1.0f;
-    };
-
-    struct SceneDescriptionBuilderState {
-        SceneDescription* description = nullptr;
-        SceneDescriptionBuildChunk chunk{};
-        SceneDescriptionBuilderGraphicsState graphicsState{};
-        std::vector<SceneDescriptionBuilderGraphicsState> pushedGraphicsStates{};
-        std::map<std::string, TransformSet> namedCoordinateSystems{};
-        std::vector<std::unique_ptr<SceneDescriptionBuilder>> importedBuilders{};
-        std::string activeObjectDefinitionName{};
-        std::size_t materialIndexBase = 0;
-        bool rootBuilder              = true;
-        bool worldBegun               = false;
-
-        explicit SceneDescriptionBuilderState(SceneDescription* description) : description(description) {}
-
-        SceneDescriptionBuilderState(SceneDescription* description, const SceneDescriptionBuilderGraphicsState& parentGraphicsState, const std::vector<SceneDescriptionBuilderGraphicsState>& parentPushedGraphicsStates, const std::map<std::string, TransformSet>& parentNamedCoordinateSystems, const std::string& parentActiveObjectDefinitionName, std::size_t parentMaterialIndexBase, bool parentWorldBegun) : description(description), graphicsState(parentGraphicsState), pushedGraphicsStates(parentPushedGraphicsStates), namedCoordinateSystems(parentNamedCoordinateSystems), activeObjectDefinitionName(parentActiveObjectDefinitionName), materialIndexBase(parentMaterialIndexBase), rootBuilder(false), worldBegun(parentWorldBegun) {}
-
-        void MergeChunk(SceneDescriptionBuildChunk& importedChunk) {
-            MergeSceneDescriptionSetting(chunk.pixelFilter, importedChunk.pixelFilter);
-            MergeSceneDescriptionSetting(chunk.film, importedChunk.film);
-            MergeSceneDescriptionSetting(chunk.sampler, importedChunk.sampler);
-            MergeSceneDescriptionSetting(chunk.accelerator, importedChunk.accelerator);
-            MergeSceneDescriptionSetting(chunk.integrator, importedChunk.integrator);
-            MergeSceneDescriptionSetting(chunk.camera, importedChunk.camera);
-            AppendSceneDescriptionVector(chunk.textures, importedChunk.textures);
-            AppendSceneDescriptionVector(chunk.materials, importedChunk.materials);
-            AppendSceneDescriptionVector(chunk.mediums, importedChunk.mediums);
-            AppendSceneDescriptionVector(chunk.mediumBindings, importedChunk.mediumBindings);
-            AppendSceneDescriptionVector(chunk.lights, importedChunk.lights);
-            AppendSceneDescriptionVector(chunk.shapes, importedChunk.shapes);
-            AppendSceneDescriptionVector(chunk.objectDefinitions, importedChunk.objectDefinitions);
-            AppendSceneDescriptionVector(chunk.objectInstances, importedChunk.objectInstances);
-        }
-
-        [[nodiscard]] bool CurrentTransformIsAnimated() const {
-            return graphicsState.ctm.IsAnimated();
-        }
-
-        [[nodiscard]] Transform CurrentTransform() const {
-            return graphicsState.ctm[0];
-        }
-
-        [[nodiscard]] SceneDescriptionRenderSetting MakeRenderSetting(const std::string& type, const std::string& name, const std::vector<SceneDescriptionParameter>& parameters, const FileLoc& location, bool includeTransform) const {
-            SceneDescriptionRenderSetting setting{};
-            setting.present    = true;
-            setting.type       = type;
-            setting.name       = name;
-            setting.location   = CopySceneDescriptionFileLocation(location);
-            setting.transform  = includeTransform ? CurrentTransform() : Transform{};
-            setting.parameters = parameters;
-            return setting;
-        }
-
-        void ApplyTransformToActive(const Transform& transform) {
-            for (int index = 0; index < MaxTransforms; ++index) {
-                const std::uint32_t bit = 1u << static_cast<std::uint32_t>(index);
-                if ((graphicsState.activeTransformBits & bit) != 0u) graphicsState.ctm[index] = graphicsState.ctm[index] * transform;
-            }
-        }
-
-        void ReplaceActiveTransform(const Transform& transform) {
-            for (int index = 0; index < MaxTransforms; ++index) {
-                const std::uint32_t bit = 1u << static_cast<std::uint32_t>(index);
-                if ((graphicsState.activeTransformBits & bit) != 0u) graphicsState.ctm[index] = transform;
-            }
-        }
-    };
-
-    SceneDescriptionBuilder::SceneDescriptionBuilder(SceneDescription* description) : state(std::make_unique<SceneDescriptionBuilderState>(description)) {
-        if (description == nullptr) throw std::runtime_error(spectra::diagnostics::Format("SceneDescriptionBuilder requires a non-null SceneDescription."));
-    }
-
-    SceneDescriptionBuilder::~SceneDescriptionBuilder() = default;
-
-    void SceneDescriptionBuilder::Scale(Float sx, Float sy, Float sz, FileLoc loc) {
-        (void) loc;
-        state->ApplyTransformToActive(spectra::Scale(sx, sy, sz));
-    }
-
-    void SceneDescriptionBuilder::Shape(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        SceneDescriptionShape shape{};
-        shape.type                 = name;
-        shape.materialName         = state->graphicsState.currentMaterialName;
-        shape.materialIndex        = state->graphicsState.currentMaterialIndex;
-        shape.insideMedium         = state->graphicsState.currentInsideMedium;
-        shape.outsideMedium        = state->graphicsState.currentOutsideMedium;
-        shape.objectDefinitionName = state->activeObjectDefinitionName;
-        shape.areaLightType        = state->graphicsState.areaLightType;
-        shape.reverseOrientation   = state->graphicsState.reverseOrientation;
-        shape.animatedTransform    = state->CurrentTransformIsAnimated();
-        shape.location             = CopySceneDescriptionFileLocation(loc);
-        shape.transform            = state->CurrentTransform();
-        shape.parameters           = copiedParameters;
-        state->chunk.shapes.push_back(std::move(shape));
-
-        if (!state->graphicsState.areaLightType.empty()) {
-            SceneDescriptionLight light{};
-            light.type          = state->graphicsState.areaLightType;
-            light.area          = true;
-            light.outsideMedium = state->graphicsState.currentOutsideMedium;
-            light.location      = state->graphicsState.areaLightLocation;
-            light.transform     = state->CurrentTransform();
-            light.parameters    = state->graphicsState.areaLightParameters;
-            state->chunk.lights.push_back(std::move(light));
-        }
-    }
-
-    void SceneDescriptionBuilder::Option(const std::string& name, const std::string& value, FileLoc loc) {
-        (void) name;
-        (void) value;
-        (void) loc;
-    }
-
-    void SceneDescriptionBuilder::Identity(FileLoc loc) {
-        (void) loc;
-        state->ReplaceActiveTransform(spectra::Transform{});
-    }
-
-    void SceneDescriptionBuilder::Translate(Float dx, Float dy, Float dz, FileLoc loc) {
-        (void) loc;
-        state->ApplyTransformToActive(spectra::Translate(Vector3f{dx, dy, dz}));
-    }
-
-    void SceneDescriptionBuilder::Rotate(Float angle, Float ax, Float ay, Float az, FileLoc loc) {
-        (void) loc;
-        state->ApplyTransformToActive(spectra::Rotate(angle, Vector3f{ax, ay, az}));
-    }
-
-    void SceneDescriptionBuilder::LookAt(Float ex, Float ey, Float ez, Float lx, Float ly, Float lz, Float ux, Float uy, Float uz, FileLoc loc) {
-        (void) loc;
-        state->ApplyTransformToActive(spectra::LookAt(Point3f{ex, ey, ez}, Point3f{lx, ly, lz}, Vector3f{ux, uy, uz}));
-    }
-
-    void SceneDescriptionBuilder::ConcatTransform(Float transform[16], FileLoc loc) {
-        (void) loc;
-        state->ApplyTransformToActive(SceneDescriptionTransformFromParserMatrix(transform));
-    }
-
-    void SceneDescriptionBuilder::Transform(Float transform[16], FileLoc loc) {
-        (void) loc;
-        state->ReplaceActiveTransform(SceneDescriptionTransformFromParserMatrix(transform));
-    }
-
-    void SceneDescriptionBuilder::CoordinateSystem(const std::string& name, FileLoc loc) {
-        (void) loc;
-        state->namedCoordinateSystems[name] = state->graphicsState.ctm;
-    }
-
-    void SceneDescriptionBuilder::CoordSysTransform(const std::string& name, FileLoc loc) {
-        (void) loc;
-        const auto found = state->namedCoordinateSystems.find(name);
-        if (found != state->namedCoordinateSystems.end()) state->graphicsState.ctm = found->second;
-    }
-
-    void SceneDescriptionBuilder::ActiveTransformAll(FileLoc loc) {
-        (void) loc;
-        state->graphicsState.activeTransformBits = SceneDescriptionBuilderGraphicsState::allTransformBits;
-    }
-
-    void SceneDescriptionBuilder::ActiveTransformEndTime(FileLoc loc) {
-        (void) loc;
-        state->graphicsState.activeTransformBits = SceneDescriptionBuilderGraphicsState::endTransformBit;
-    }
-
-    void SceneDescriptionBuilder::ActiveTransformStartTime(FileLoc loc) {
-        (void) loc;
-        state->graphicsState.activeTransformBits = SceneDescriptionBuilderGraphicsState::startTransformBit;
-    }
-
-    void SceneDescriptionBuilder::TransformTimes(Float start, Float end, FileLoc loc) {
-        (void) loc;
-        state->graphicsState.transformStartTime = start;
-        state->graphicsState.transformEndTime   = end;
-    }
-
-    void SceneDescriptionBuilder::ColorSpace(const std::string& name, FileLoc loc) {
-        (void) name;
-        (void) loc;
-    }
-
-    void SceneDescriptionBuilder::PixelFilter(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        state->chunk.pixelFilter                                      = state->MakeRenderSetting(name, name, copiedParameters, loc, false);
-    }
-
-    void SceneDescriptionBuilder::Film(const std::string& type, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        state->chunk.film                                             = state->MakeRenderSetting(type, {}, copiedParameters, loc, false);
-    }
-
-    void SceneDescriptionBuilder::Accelerator(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        state->chunk.accelerator                                      = state->MakeRenderSetting(name, name, copiedParameters, loc, false);
-    }
-
-    void SceneDescriptionBuilder::Integrator(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        state->chunk.integrator                                       = state->MakeRenderSetting(name, name, copiedParameters, loc, false);
-    }
-
-    void SceneDescriptionBuilder::Camera(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        state->chunk.camera                                           = state->MakeRenderSetting(name, name, copiedParameters, loc, true);
-        state->namedCoordinateSystems["camera"]                       = Inverse(state->graphicsState.ctm);
-    }
-
-    void SceneDescriptionBuilder::MakeNamedMedium(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        SceneDescriptionMedium medium{};
-        medium.name       = name;
-        medium.type       = FirstSceneDescriptionStringParameterValue(copiedParameters, "type");
-        medium.location   = CopySceneDescriptionFileLocation(loc);
-        medium.transform  = state->CurrentTransform();
-        medium.parameters = copiedParameters;
-        state->chunk.mediums.push_back(std::move(medium));
-    }
-
-    void SceneDescriptionBuilder::MediumInterface(const std::string& insideName, const std::string& outsideName, FileLoc loc) {
-        state->graphicsState.currentInsideMedium  = insideName;
-        state->graphicsState.currentOutsideMedium = outsideName;
-        SceneDescriptionMediumBinding binding{};
-        binding.inside   = insideName;
-        binding.outside  = outsideName;
-        binding.location = CopySceneDescriptionFileLocation(loc);
-        state->chunk.mediumBindings.push_back(std::move(binding));
-    }
-
-    void SceneDescriptionBuilder::Sampler(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        state->chunk.sampler                                          = state->MakeRenderSetting(name, name, copiedParameters, loc, false);
-    }
-
-    void SceneDescriptionBuilder::WorldBegin(FileLoc loc) {
-        (void) loc;
-        state->graphicsState = {};
-        state->pushedGraphicsStates.clear();
-        state->activeObjectDefinitionName.clear();
-        state->namedCoordinateSystems["world"] = state->graphicsState.ctm;
-        state->worldBegun                      = true;
-    }
-
-    void SceneDescriptionBuilder::AttributeBegin(FileLoc loc) {
-        (void) loc;
-        state->pushedGraphicsStates.push_back(state->graphicsState);
-    }
-
-    void SceneDescriptionBuilder::AttributeEnd(FileLoc loc) {
-        (void) loc;
-        if (!state->pushedGraphicsStates.empty()) {
-            state->graphicsState = state->pushedGraphicsStates.back();
-            state->pushedGraphicsStates.pop_back();
-        }
-    }
-
-    void SceneDescriptionBuilder::Attribute(const std::string& target, ParsedParameterVector parameters, FileLoc loc) {
-        (void) target;
-        (void) loc;
-        DeleteParsedParameters(parameters);
-    }
-
-    void SceneDescriptionBuilder::Texture(const std::string& name, const std::string& type, const std::string& textureName, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        SceneDescriptionTexture texture{};
-        texture.name           = name;
-        texture.valueType      = type == "float" ? SceneDescriptionTextureValueType::Float : type == "spectrum" ? SceneDescriptionTextureValueType::Spectrum : SceneDescriptionTextureValueType::Unknown;
-        texture.implementation = textureName;
-        texture.location       = CopySceneDescriptionFileLocation(loc);
-        texture.transform      = state->CurrentTransform();
-        texture.parameters     = copiedParameters;
-        state->chunk.textures.push_back(std::move(texture));
-    }
-
-    void SceneDescriptionBuilder::Material(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        SceneDescriptionMaterial material{};
-        material.type       = name;
-        material.named      = false;
-        material.location   = CopySceneDescriptionFileLocation(loc);
-        material.parameters = copiedParameters;
-        state->chunk.materials.push_back(std::move(material));
-        state->graphicsState.currentMaterialIndex = static_cast<int>(state->materialIndexBase + state->chunk.materials.size() - 1);
-        state->graphicsState.currentMaterialName.clear();
-    }
-
-    void SceneDescriptionBuilder::MakeNamedMaterial(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        SceneDescriptionMaterial material{};
-        material.name       = name;
-        material.type       = FirstSceneDescriptionStringParameterValue(copiedParameters, "type");
-        material.named      = true;
-        material.location   = CopySceneDescriptionFileLocation(loc);
-        material.parameters = copiedParameters;
-        state->chunk.materials.push_back(std::move(material));
-    }
-
-    void SceneDescriptionBuilder::NamedMaterial(const std::string& name, FileLoc loc) {
-        (void) loc;
-        state->graphicsState.currentMaterialName  = name;
-        state->graphicsState.currentMaterialIndex = -1;
-    }
-
-    void SceneDescriptionBuilder::LightSource(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        const std::vector<SceneDescriptionParameter> copiedParameters = CopySceneDescriptionParameters(std::move(parameters));
-        SceneDescriptionLight light{};
-        light.type          = name;
-        light.area          = false;
-        light.outsideMedium = state->graphicsState.currentOutsideMedium;
-        light.location      = CopySceneDescriptionFileLocation(loc);
-        light.transform     = state->CurrentTransform();
-        light.parameters    = copiedParameters;
-        state->chunk.lights.push_back(std::move(light));
-    }
-
-    void SceneDescriptionBuilder::AreaLightSource(const std::string& name, ParsedParameterVector parameters, FileLoc loc) {
-        state->graphicsState.areaLightType       = name;
-        state->graphicsState.areaLightLocation   = CopySceneDescriptionFileLocation(loc);
-        state->graphicsState.areaLightParameters = CopySceneDescriptionParameters(std::move(parameters));
-    }
-
-    void SceneDescriptionBuilder::ReverseOrientation(FileLoc loc) {
-        (void) loc;
-        state->graphicsState.reverseOrientation = !state->graphicsState.reverseOrientation;
-    }
-
-    void SceneDescriptionBuilder::ObjectBegin(const std::string& name, FileLoc loc) {
-        state->pushedGraphicsStates.push_back(state->graphicsState);
-        state->activeObjectDefinitionName = name;
-        FindOrCreateSceneDescriptionObjectDefinition(state->chunk.objectDefinitions, name, CopySceneDescriptionFileLocation(loc));
-    }
-
-    void SceneDescriptionBuilder::ObjectEnd(FileLoc loc) {
-        (void) loc;
-        if (!state->pushedGraphicsStates.empty()) {
-            state->graphicsState = state->pushedGraphicsStates.back();
-            state->pushedGraphicsStates.pop_back();
-        }
-        state->activeObjectDefinitionName.clear();
-    }
-
-    void SceneDescriptionBuilder::ObjectInstance(const std::string& name, FileLoc loc) {
-        SceneDescriptionObjectInstance objectInstance{};
-        objectInstance.name              = name;
-        objectInstance.animatedTransform = state->CurrentTransformIsAnimated();
-        objectInstance.location          = CopySceneDescriptionFileLocation(loc);
-        objectInstance.transform         = state->CurrentTransform();
-        state->chunk.objectInstances.push_back(std::move(objectInstance));
-    }
-
-    void SceneDescriptionBuilder::EndOfFiles() {
-        if (!state->pushedGraphicsStates.empty()) throw std::runtime_error(spectra::diagnostics::Format("Missing AttributeEnd before EndOfFiles in Spectra scene description parser."));
-        if (state->rootBuilder) {
-            if (state->description == nullptr) throw std::runtime_error(spectra::diagnostics::Format("SceneDescriptionBuilder has no target description at EndOfFiles."));
-            AppendSceneDescriptionBuildChunk(*state->description, std::move(state->chunk));
-        }
-    }
-
-    bool SceneDescriptionBuilder::IsImportAllowed() const {
-        return state->worldBegun;
-    }
-
-    std::unique_ptr<SceneDescriptionBuilder> SceneDescriptionBuilder::CopyForImport() {
-        if (state->description == nullptr) throw std::runtime_error(spectra::diagnostics::Format("Cannot copy Spectra scene description import target without a description."));
-        std::unique_ptr<SceneDescriptionBuilder> builder = std::make_unique<SceneDescriptionBuilder>(state->description);
-        builder->state                                   = std::make_unique<SceneDescriptionBuilderState>(state->description, state->graphicsState, state->pushedGraphicsStates, state->namedCoordinateSystems, state->activeObjectDefinitionName, state->materialIndexBase + state->chunk.materials.size(), state->worldBegun);
-        return builder;
-    }
-
-    void SceneDescriptionBuilder::MergeImported(std::unique_ptr<SceneDescriptionBuilder> imported) {
-        if (imported == nullptr || imported->state == nullptr) throw std::runtime_error(spectra::diagnostics::Format("Spectra scene description import target is null."));
-        state->MergeChunk(imported->state->chunk);
-        state->importedBuilders.push_back(std::move(imported));
+    [[nodiscard]] BuiltScene BuildScene(std::string_view name, std::optional<Point2i> filmResolutionOverride) {
+        BuiltScene built_scene{};
+        built_scene.scene = std::make_unique<Scene>();
+        if (filmResolutionOverride.has_value())
+            built_scene.builder = std::make_unique<SceneBuilder>(built_scene.scene.get(), *filmResolutionOverride);
+        else
+            built_scene.builder = std::make_unique<SceneBuilder>(built_scene.scene.get());
+        BuildSceneCommands(name, *built_scene.builder);
+        return built_scene;
     }
 
     void SceneBuilder::Option(const std::string& name, const std::string& value, FileLoc loc) {

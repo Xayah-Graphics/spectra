@@ -90,7 +90,15 @@ if (SPECTRA_OPTIX_VERSION LESS 90100)
 endif ()
 math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
-set(SPECTRA_GPU_DEFINITIONS PTEX_STATIC "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>" "$<$<CONFIG:Debug>:SPECTRA_DEBUG_BUILD>")
+set(SPECTRA_PROJECT_SCENE_ROOT "${PROJECT_SOURCE_DIR}/scene")
+if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/pbrt-book/book.pbrt")
+    message(FATAL_ERROR "Default Spectra book scene is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/pbrt-book/book.pbrt")
+endif ()
+set(SPECTRA_GPU_DEFINITIONS
+        PTEX_STATIC
+        "$<$<COMPILE_LANGUAGE:CXX>:CUDA_NO_HALF>"
+        "$<$<CONFIG:Debug>:SPECTRA_DEBUG_BUILD>"
+)
 if (SPECTRA_FLOAT_AS_DOUBLE)
     list(APPEND SPECTRA_GPU_DEFINITIONS SPECTRA_FLOAT_AS_DOUBLE)
 endif ()
@@ -118,7 +126,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND SPECTRA_GPU_DEFINITIONS
             SPECTRA_IS_LINUX
-            SPECTRA_HAVE_MMAP
             "SPECTRA_NOINLINE=__attribute__((noinline))"
             "SPECTRA_RESTRICT=__restrict__"
             SPECTRA_HAVE_POSIX_MEMALIGN
@@ -386,6 +393,7 @@ add_library(
 add_library(spectra::gpu_lib ALIAS spectra_gpu_lib)
 add_dependencies(spectra_gpu_lib spectra_gpu_soa_generated)
 target_compile_definitions(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_DEFINITIONS})
+target_compile_definitions(spectra_gpu_lib PRIVATE "SPECTRA_PROJECT_SCENE_ROOT=\"${SPECTRA_PROJECT_SCENE_ROOT}\"")
 target_include_directories(spectra_gpu_lib PUBLIC ${SPECTRA_GPU_INCLUDE_DIRS})
 target_compile_options(
         spectra_gpu_lib
@@ -401,7 +409,6 @@ target_link_libraries(
         Ptex_static
         ZLIB::ZLIB
         deflate::deflate
-        double-conversion
         utf8proc
         CUDA::cudart
         CUDA::cuda_driver

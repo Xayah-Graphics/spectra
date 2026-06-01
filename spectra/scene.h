@@ -2,14 +2,12 @@
 #define SPECTRA_SCENE_H
 
 #include <array>
-#include <atomic>
+#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <ostream>
 #include <set>
 #include <spectra/pathtracer/core/cameras.h>
 #include <spectra/pathtracer/core/diagnostics.h>
@@ -22,6 +20,7 @@
 #include <spectra/pathtracer/util/string.h>
 #include <spectra/pathtracer/util/transform.h>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -119,179 +118,23 @@ namespace spectra::scene {
         return tInv;
     }
 
-    struct SceneDescriptionFileLocation {
-        std::string filename{};
-        int line   = 0;
-        int column = 0;
-    };
-
-    struct SceneDescriptionParameter {
-        std::string type{};
-        std::string name{};
-        SceneDescriptionFileLocation location{};
-        std::vector<float> floats{};
-        std::vector<int> ints{};
-        std::vector<std::string> strings{};
-        std::vector<std::uint8_t> bools{};
-        bool mayBeUnused = false;
-    };
-
-    enum class SceneDescriptionTextureValueType { Unknown, Float, Spectrum };
-
-    struct SceneDescriptionRenderSetting {
-        bool present = false;
-        std::string type{};
-        std::string name{};
-        SceneDescriptionFileLocation location{};
-        Transform transform{};
-        std::vector<SceneDescriptionParameter> parameters{};
-    };
-
-    struct SceneDescriptionTexture {
-        std::string name{};
-        SceneDescriptionTextureValueType valueType = SceneDescriptionTextureValueType::Unknown;
-        std::string implementation{};
-        SceneDescriptionFileLocation location{};
-        Transform transform{};
-        std::vector<SceneDescriptionParameter> parameters{};
-    };
-
-    struct SceneDescriptionMaterial {
-        std::string name{};
-        std::string type{};
-        bool named = false;
-        SceneDescriptionFileLocation location{};
-        std::vector<SceneDescriptionParameter> parameters{};
-    };
-
-    struct SceneDescriptionMedium {
-        std::string name{};
-        std::string type{};
-        SceneDescriptionFileLocation location{};
-        Transform transform{};
-        std::vector<SceneDescriptionParameter> parameters{};
-    };
-
-    struct SceneDescriptionMediumBinding {
-        std::string inside{};
-        std::string outside{};
-        SceneDescriptionFileLocation location{};
-    };
-
-    struct SceneDescriptionLight {
-        std::string type{};
-        bool area = false;
-        std::string outsideMedium{};
-        SceneDescriptionFileLocation location{};
-        Transform transform{};
-        std::vector<SceneDescriptionParameter> parameters{};
-    };
-
-    struct SceneDescriptionShape {
-        std::string type{};
-        std::string materialName{};
-        int materialIndex = -1;
-        std::string insideMedium{};
-        std::string outsideMedium{};
-        std::string objectDefinitionName{};
-        std::string areaLightType{};
-        bool reverseOrientation = false;
-        bool animatedTransform  = false;
-        SceneDescriptionFileLocation location{};
-        Transform transform{};
-        std::vector<SceneDescriptionParameter> parameters{};
-    };
-
-    struct SceneDescriptionObjectDefinition {
-        std::string name{};
-        SceneDescriptionFileLocation location{};
-        std::vector<std::size_t> shapeIndices{};
-    };
-
-    struct SceneDescriptionObjectInstance {
-        std::string name{};
-        bool animatedTransform = false;
-        SceneDescriptionFileLocation location{};
-        Transform transform{};
-    };
-
-    struct SceneDescription {
-        SceneDescriptionRenderSetting pixelFilter{};
-        SceneDescriptionRenderSetting film{};
-        SceneDescriptionRenderSetting sampler{};
-        SceneDescriptionRenderSetting accelerator{};
-        SceneDescriptionRenderSetting integrator{};
-        SceneDescriptionRenderSetting camera{};
-        std::vector<SceneDescriptionTexture> textures{};
-        std::vector<SceneDescriptionMaterial> materials{};
-        std::vector<SceneDescriptionMedium> mediums{};
-        std::vector<SceneDescriptionMediumBinding> mediumBindings{};
-        std::vector<SceneDescriptionLight> lights{};
-        std::vector<SceneDescriptionShape> shapes{};
-        std::vector<SceneDescriptionObjectDefinition> objectDefinitions{};
-        std::vector<SceneDescriptionObjectInstance> objectInstances{};
-
-        void Clear();
-    };
-
-    struct SceneDescriptionBuilderState;
-
-    class SceneDescriptionBuilder {
-    public:
-        explicit SceneDescriptionBuilder(SceneDescription* description);
-        ~SceneDescriptionBuilder();
-
-        SceneDescriptionBuilder(const SceneDescriptionBuilder&)            = delete;
-        SceneDescriptionBuilder& operator=(const SceneDescriptionBuilder&) = delete;
-        SceneDescriptionBuilder(SceneDescriptionBuilder&&)                 = delete;
-        SceneDescriptionBuilder& operator=(SceneDescriptionBuilder&&)      = delete;
-
-        void Option(const std::string& name, const std::string& value, FileLoc loc);
-        void Identity(FileLoc loc);
-        void Translate(Float dx, Float dy, Float dz, FileLoc loc);
-        void Rotate(Float angle, Float ax, Float ay, Float az, FileLoc loc);
-        void Scale(Float sx, Float sy, Float sz, FileLoc loc);
-        void LookAt(Float ex, Float ey, Float ez, Float lx, Float ly, Float lz, Float ux, Float uy, Float uz, FileLoc loc);
-        void ConcatTransform(Float transform[16], FileLoc loc);
-        void Transform(Float transform[16], FileLoc loc);
-        void CoordinateSystem(const std::string&, FileLoc loc);
-        void CoordSysTransform(const std::string&, FileLoc loc);
-        void ActiveTransformAll(FileLoc loc);
-        void ActiveTransformEndTime(FileLoc loc);
-        void ActiveTransformStartTime(FileLoc loc);
-        void TransformTimes(Float start, Float end, FileLoc loc);
-        void ColorSpace(const std::string& n, FileLoc loc);
-        void PixelFilter(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void Film(const std::string& type, ParsedParameterVector params, FileLoc loc);
-        void Sampler(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void Accelerator(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void Integrator(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void Camera(const std::string&, ParsedParameterVector params, FileLoc loc);
-        void MakeNamedMedium(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void MediumInterface(const std::string& insideName, const std::string& outsideName, FileLoc loc);
-        void WorldBegin(FileLoc loc);
-        void AttributeBegin(FileLoc loc);
-        void AttributeEnd(FileLoc loc);
-        void Attribute(const std::string& target, ParsedParameterVector params, FileLoc loc);
-        void Texture(const std::string& name, const std::string& type, const std::string& texname, ParsedParameterVector params, FileLoc loc);
-        void Material(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void MakeNamedMaterial(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void NamedMaterial(const std::string& name, FileLoc loc);
-        void LightSource(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void AreaLightSource(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void Shape(const std::string& name, ParsedParameterVector params, FileLoc loc);
-        void ReverseOrientation(FileLoc loc);
-        void ObjectBegin(const std::string& name, FileLoc loc);
-        void ObjectEnd(FileLoc loc);
-        void ObjectInstance(const std::string& name, FileLoc loc);
-        void EndOfFiles();
-
-        bool IsImportAllowed() const;
-        std::unique_ptr<SceneDescriptionBuilder> CopyForImport();
-        void MergeImported(std::unique_ptr<SceneDescriptionBuilder> imported);
-
-    private:
-        std::unique_ptr<SceneDescriptionBuilderState> state{};
+    struct SceneInfo {
+        std::string_view name{};
+        std::string_view title{};
+        std::string_view camera{};
+        std::string_view sampler{};
+        std::string_view integrator{};
+        std::string_view accelerator{};
+        std::size_t shape_count{};
+        std::size_t material_count{};
+        std::size_t texture_count{};
+        std::size_t medium_count{};
+        std::size_t light_count{};
+        std::size_t area_light_count{};
+        std::size_t infinite_light_count{};
+        std::size_t object_definition_count{};
+        std::size_t object_instance_count{};
+        float camera_fov_degrees{};
     };
 
     // Scene Definition
@@ -422,12 +265,7 @@ namespace spectra::scene {
         void ObjectEnd(FileLoc loc);
         void ObjectInstance(const std::string& name, FileLoc loc);
 
-        void EndOfFiles();
-
-        bool IsImportAllowed() const;
-        std::unique_ptr<SceneBuilder> CopyForImport();
-        void MergeImported(std::unique_ptr<SceneBuilder> imported);
-        void MergeImported(SceneBuilder*);
+        void Finish();
 
     private:
         // SceneBuilder::GraphicsState Definition
@@ -491,10 +329,7 @@ namespace spectra::scene {
         std::vector<GraphicsState> pushedGraphicsStates;
         std::vector<std::pair<char, FileLoc>> pushStack; // 'a': attribute, 'o': object
         struct ActiveInstanceDefinition {
-            std::mutex mutex;
-            std::atomic<int> activeImports{1};
             InstanceDefinitionSceneEntity entity;
-            ActiveInstanceDefinition* parent = nullptr;
         };
 
         ActiveInstanceDefinition* activeInstanceDefinition = nullptr;
@@ -503,7 +338,6 @@ namespace spectra::scene {
         // consistently ordered across runs.
         std::vector<ShapeSceneEntity> shapes;
         std::vector<InstanceSceneEntity> instanceUses;
-        std::vector<std::unique_ptr<SceneBuilder>> importedBuilders;
 
         std::set<std::string> namedMaterialNames, mediumNames;
         std::set<std::string> floatTextureNames, spectrumTextureNames, instanceNames;
@@ -515,10 +349,14 @@ namespace spectra::scene {
         CameraSceneEntity camera;
     };
 
-    void ParseFiles(SceneBuilder* target, pstd::span<const std::string> filenames);
-    void ParseString(SceneBuilder* target, std::string str);
-    void ParseFiles(SceneDescriptionBuilder* target, pstd::span<const std::string> filenames);
-    void ParseString(SceneDescriptionBuilder* target, std::string str);
+    struct BuiltScene {
+        std::unique_ptr<Scene> scene{};
+        std::unique_ptr<SceneBuilder> builder{};
+    };
+
+    [[nodiscard]] pstd::span<const SceneInfo> Scenes();
+    [[nodiscard]] const SceneInfo& SceneInfoFor(std::string_view name);
+    [[nodiscard]] BuiltScene BuildScene(std::string_view name, std::optional<Point2i> filmResolutionOverride = {});
 } // namespace spectra::scene
 
 #endif // SPECTRA_SCENE_H

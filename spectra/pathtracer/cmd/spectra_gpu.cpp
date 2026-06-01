@@ -31,7 +31,7 @@ namespace {
 
     void print_usage(std::string_view message) {
         if (!message.empty()) std::fprintf(stderr, "spectra_gpu: %.*s\n\n", static_cast<int>(message.size()), message.data());
-        std::fprintf(stderr, "usage: spectra_gpu <scene.pbrt> [--outfile <file.exr>] [--spp <n>] [--seed <n>] [--gpu-device <index>] [--quiet]\n");
+        std::fprintf(stderr, "usage: spectra_gpu <scene-name> [--outfile <file.exr>] [--spp <n>] [--seed <n>] [--gpu-device <index>] [--quiet]\n");
     }
 
     [[nodiscard]] const std::string& require_value(const std::vector<std::string>& arguments, std::size_t& index, std::string_view option) {
@@ -72,12 +72,12 @@ namespace {
 int main(int argc, char* argv[]) {
     try {
         const std::vector<std::string> arguments = command_line_arguments(argc, argv);
-        if (arguments.empty()) throw UsageError("missing scene filename");
+        if (arguments.empty()) throw UsageError("missing scene name");
 
         spectra::SpectraOptions options;
         options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
 
-        std::optional<std::string> scene_filename;
+        std::optional<std::string> scene_name;
 
         for (std::size_t index = 0; index < arguments.size(); ++index) {
             const std::string& argument = arguments[index];
@@ -97,23 +97,20 @@ int main(int argc, char* argv[]) {
             } else if (!argument.empty() && argument[0] == '-') {
                 throw UsageError("unknown argument \"" + argument + "\"");
             } else {
-                if (scene_filename.has_value()) throw UsageError("spectra_gpu accepts exactly one scene filename");
-                scene_filename = argument;
+                if (scene_name.has_value()) throw UsageError("spectra_gpu accepts exactly one scene name");
+                scene_name = argument;
             }
         }
 
-        if (!scene_filename.has_value()) throw UsageError("missing scene filename");
+        if (!scene_name.has_value()) throw UsageError("missing scene name");
         if (options.pixelSamples && *options.pixelSamples <= 0) throw UsageError("--spp must be positive");
         if (options.gpuDevice && *options.gpuDevice < 0) throw UsageError("--gpu-device must be non-negative");
 
         spectra::pathtracer::GpuRuntime runtime(options);
 
-        spectra::scene::Scene scene;
-        spectra::scene::SceneBuilder builder(&scene);
-        const std::vector<std::string> filenames{*scene_filename};
-        spectra::scene::ParseFiles(&builder, filenames);
+        spectra::scene::BuiltScene built_scene = spectra::scene::BuildScene(*scene_name);
 
-        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, scene);
+        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, *built_scene.scene);
 
         spectra::Float seconds = pathtracer.Render();
 

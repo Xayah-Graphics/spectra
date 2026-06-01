@@ -5,7 +5,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <spectra/pathtracer/integrator.h>
 #include <string>
@@ -19,7 +18,7 @@ namespace xayah::pathtracer {
 namespace xayah {
     class SpectraPathtracer final : public SpectraPlugin {
     public:
-        explicit SpectraPathtracer(std::filesystem::path scene_path);
+        explicit SpectraPathtracer(std::string scene_name);
         ~SpectraPathtracer() noexcept override;
 
         SpectraPathtracer(const SpectraPathtracer& other)                = delete;
@@ -94,7 +93,7 @@ namespace xayah {
         [[nodiscard]] PathtracerStatus pathtracer_status() const;
         [[nodiscard]] bool process_camera_input();
 
-        std::filesystem::path scene_path{};
+        std::string scene_name{};
         HostContext host{};
         bool attached{false};
 
