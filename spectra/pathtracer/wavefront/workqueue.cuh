@@ -104,8 +104,8 @@ namespace spectra {
 
     // WorkQueue Inline Functions
     template <typename F, typename WorkItem>
-    void ForAllQueued(const char* desc, const WorkQueue<WorkItem>* q, int maxQueued, F&& func) {
-        GPUParallelFor(desc, maxQueued, [=] __device__(int index) mutable {
+    void ForAllQueued(const WorkQueue<WorkItem>* q, int maxQueued, F&& func) {
+        GPUParallelFor(maxQueued, [=] __device__(int index) mutable {
             if (index >= q->Size()) return;
             func((*q)[index]);
         });

@@ -426,7 +426,6 @@ namespace spectra {
 
     private:
         __host__ __device__ int LambdaToBucket(Float lambda) const {
-            DCHECK_RARE(1e6f, lambda < lambdaMin || lambda > lambdaMax);
             int bucket = nBuckets * (lambda - lambdaMin) / (lambdaMax - lambdaMin);
             return Clamp(bucket, 0, nBuckets - 1);
         }

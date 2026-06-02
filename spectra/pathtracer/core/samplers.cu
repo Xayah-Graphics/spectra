@@ -1,12 +1,11 @@
-#include <cstdio>
 #include <spectra/pathtracer/core/cameras.cuh>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
-#include <spectra/pathtracer/util/string.cuh>
 #include <string>
+#include <vector>
 
 namespace spectra {
     __host__ __device__ void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension) {
@@ -319,26 +318,6 @@ namespace spectra {
         DCHECK_LT(index, streamCount);
         streamIndex = index;
         sampleIndex = 0;
-    }
-
-    std::string MLTSampler::DumpState() const {
-        std::string state;
-        for (const PrimarySample& Xi : X) {
-            char value[64];
-            std::snprintf(value, sizeof(value), "%f,", Xi.value);
-            state += value;
-        }
-        state += "0";
-        return state;
-    }
-
-    DebugMLTSampler DebugMLTSampler::Create(pstd::span<const std::string> state, int nSampleStreams) {
-        DebugMLTSampler ds(nSampleStreams);
-        ds.u.resize(state.size());
-        for (size_t i = 0; i < state.size(); ++i) {
-            if (!Atof(state[i], &ds.u[i])) throw std::runtime_error(diagnostics::Format("Invalid value in --debugstate: %s", state[i]));
-        }
-        return ds;
     }
 
     // Sampler Method Definitions

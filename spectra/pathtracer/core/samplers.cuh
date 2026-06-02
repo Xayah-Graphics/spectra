@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <memory>
 #include <spectra/pathtracer/base/sampler.cuh>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
@@ -21,7 +20,6 @@
 #include <spectra/pathtracer/util/pstd.cuh>
 #include <spectra/pathtracer/util/rng.cuh>
 #include <spectra/pathtracer/util/vecmath.cuh>
-#include <string>
 
 namespace spectra {
     // HaltonSampler Definition
@@ -455,8 +453,6 @@ namespace spectra {
             Point2f u(SobolSample(sobolIndex, 0, NoRandomizer()), SobolSample(sobolIndex, 1, NoRandomizer()));
             // Remap Sobol\+$'$ dimensions used for pixel samples
             for (int dim = 0; dim < 2; ++dim) {
-                DCHECK_RARE(1e-7, u[dim] * scale - pixel[dim] < 0);
-                DCHECK_RARE(1e-7, u[dim] * scale - pixel[dim] > 1);
                 u[dim] = Clamp(u[dim] * scale - pixel[dim], 0, OneMinusEpsilon);
             }
 
@@ -584,8 +580,6 @@ namespace spectra {
 
         __host__ __device__ void Accept();
 
-        std::string DumpState() const;
-
     protected:
         // MLTSampler Private Declarations
         struct PrimarySample {
@@ -621,34 +615,6 @@ namespace spectra {
         bool largeStep                 = true;
         int64_t lastLargeStepIteration = 0;
         int streamIndex, sampleIndex;
-    };
-
-    class DebugMLTSampler : public MLTSampler {
-    public:
-        static DebugMLTSampler Create(pstd::span<const std::string> state, int nSampleStreams);
-
-        __host__ __device__ Float Get1D() {
-            int index = GetNextIndex();
-#if defined(__CUDA_ARCH__)
-            return 0;
-#else
-            DCHECK_LT(index, u.size());
-            return u[index];
-#endif
-        }
-
-        __host__ __device__ Point2f Get2D() {
-            return {Get1D(), Get1D()};
-        }
-
-        __host__ __device__ Point2f GetPixel2D() {
-            return Get2D();
-        }
-
-    private:
-        DebugMLTSampler(int nSampleStreams) : MLTSampler(1, 0, 0.5, 0.5, nSampleStreams) {}
-
-        std::vector<Float> u;
     };
 
     // Sampler Inline Functions

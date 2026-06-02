@@ -85,10 +85,10 @@ namespace spectra::pathtracer {
         void EvaluateMaterialAndBSDF(MaterialEvalQueue* evalQueue, Transform movingFromCamera, int wavefrontDepth);
 
         template <typename F>
-        void ParallelFor(const char* description, int nItems, F&& func);
+        void ParallelFor(int nItems, F&& func);
 
         template <typename F>
-        void Do(const char* description, F&& func);
+        void Do(F&& func);
 
         RayQueue* CurrentRayQueue(int wavefrontDepth) {
             return rayQueues[wavefrontDepth & 1];

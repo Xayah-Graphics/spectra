@@ -4,29 +4,9 @@
 #include <spectra/pathtracer/util/check.cuh>
 #include <string>
 
-#ifdef NVTX
-#ifdef SPECTRA_IS_WINDOWS
-#include <windows.h>
-#else
-#include <sys/syscall.h>
-#endif // SPECTRA_IS_WINDOWS
-#include "nvtx3/nvToolsExt.h"
-#include "nvtx3/nvToolsExtCuda.h"
-#endif
-
 namespace spectra {
     int GPUInit(std::optional<int> cudaDevice) {
         cudaFree(nullptr);
-
-        int driverVersion;
-        CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
-        int runtimeVersion;
-        CUDA_CHECK(cudaRuntimeGetVersion(&runtimeVersion));
-        auto versionToString = [](int version) {
-            int major = version / 1000;
-            int minor = (version - major * 1000) / 10;
-            return std::to_string(major) + "." + std::to_string(minor);
-        };
 
         int nDevices;
         CUDA_CHECK(cudaGetDeviceCount(&nDevices));
@@ -61,9 +41,6 @@ namespace spectra {
 #endif
 
         int device = cudaDevice.value_or(0);
-#ifdef NVTX
-        nvtxNameCuDevice(device, "__device__");
-#endif
         CUDA_CHECK(cudaSetDevice(device));
 
         int hasUnifiedAddressing;
@@ -71,41 +48,14 @@ namespace spectra {
         if (!hasUnifiedAddressing) SPECTRA_FATAL("The selected GPU device (%d) does not support unified addressing.", device);
 
         CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
-        size_t stackSize;
-        CUDA_CHECK(cudaDeviceGetLimit(&stackSize, cudaLimitStackSize));
-
         CUDA_CHECK(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 32 * 1024 * 1024));
-
         CUDA_CHECK(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
 
-#ifdef NVTX
-#ifdef SPECTRA_IS_WINDOWS
-        nvtxNameOsThread(GetCurrentThreadId(), "MAIN_THREAD");
-#else
-        nvtxNameOsThread(syscall(SYS_gettid), "MAIN_THREAD");
-#endif
-#endif // NVTX
         return device;
     }
 
     void GPUThreadInit(const int cudaDevice) {
         CUDA_CHECK(cudaSetDevice(cudaDevice));
-    }
-
-    void GPURegisterThread(const char* name) {
-#ifdef NVTX
-#ifdef SPECTRA_IS_WINDOWS
-        nvtxNameOsThread(GetCurrentThreadId(), name);
-#else
-        nvtxNameOsThread(syscall(SYS_gettid), name);
-#endif
-#endif
-    }
-
-    void GPUNameStream(cudaStream_t stream, const char* name) {
-#ifdef NVTX
-        nvtxNameCuStream(stream, name);
-#endif
     }
 
     void GPUWait() {

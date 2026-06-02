@@ -27,16 +27,6 @@
 #include <unordered_map>
 #include <vector>
 
-#ifdef NVTX
-#ifdef UNICODE
-#undef UNICODE
-#endif // UNICODE
-#include <nvtx3/nvToolsExt.h>
-#ifdef RGB
-#undef RGB
-#endif // RGB
-#endif
-
 #define SPECTRA_OPTIX_CHECK(EXPR)                                                                                                        \
     do {                                                                                                                                 \
         OptixResult res = EXPR;                                                                                                          \
@@ -245,7 +235,7 @@ namespace spectra::optix {
                             std::memcpy(n, nCPU, nVertices * sizeof(Normal3f));
                             std::memcpy(uv, uvCPU, nVertices * sizeof(Point2f));
 
-                            GPUParallelFor("Evaluate Displacement", nVertices, [=] __device__(int i) {
+                            GPUParallelFor(nVertices, [=] __device__(int i) {
                                 TextureEvalContext ctx;
                                 ctx.p   = p[i];
                                 ctx.uv  = uv[i];
@@ -582,7 +572,6 @@ namespace spectra::optix {
             }
 
             Float uSeg = (u * nSegments) - segmentIndex;
-            SPECTRA_DCHECK(uSeg >= 0 && uSeg <= 1);
 
             Vector3f dpdu;
             Point3f p = EvaluateCubicBezier(segCpBezier, uSeg, &dpdu);
@@ -898,11 +887,7 @@ namespace spectra::optix {
         pipelineCompileOptions.usesMotionBlur        = false;
         pipelineCompileOptions.numPayloadValues      = 0;
         pipelineCompileOptions.numAttributeValues    = 4;
-#ifndef NDEBUG
-        pipelineCompileOptions.exceptionFlags = (OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW | OPTIX_EXCEPTION_FLAG_TRACE_DEPTH);
-#else
-        pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
-#endif
+        pipelineCompileOptions.exceptionFlags        = OPTIX_EXCEPTION_FLAG_NONE;
         pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
         pipelineCompileOptions.pipelineLaunchParamsSizeInBytes  = sizeof(RayIntersectParameters);
         pipelineCompileOptions.usesPrimitiveTypeFlags           = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE | OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM;
@@ -914,14 +899,9 @@ namespace spectra::optix {
 
     OptixModule SpectraOptiXAggregate::createOptiXModule(OptixDeviceContext optixContext, const char* input, size_t inputSize) {
         OptixModuleCompileOptions moduleCompileOptions = {};
-        moduleCompileOptions.maxRegisterCount          = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
-#ifndef NDEBUG
-        moduleCompileOptions.optLevel   = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
-        moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
-#else
-        moduleCompileOptions.optLevel   = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
-        moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
-#endif
+        moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
+        moduleCompileOptions.optLevel         = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
+        moduleCompileOptions.debugLevel       = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
         moduleCompileOptions.numPayloadTypes = 1;
         moduleCompileOptions.payloadTypes    = &SpectraOptiXPayload;
 
@@ -1053,20 +1033,12 @@ namespace spectra::optix {
         // Create OptiX context
         SPECTRA_OPTIX_CHECK(optixInit());
         OptixDeviceContextOptions ctxOptions = {};
-#ifndef NDEBUG
-        ctxOptions.logCallbackLevel = 4; // status/progress
-#else
         ctxOptions.logCallbackLevel = 2; // error
-#endif
         ctxOptions.logCallbackFunction = optixDiagnosticCallback;
-#ifndef NDEBUG
-        ctxOptions.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
-#endif
         SPECTRA_OPTIX_CHECK(optixDeviceContextCreate(cudaContext, &ctxOptions, &optixContext));
         SPECTRA_OPTIX_CHECK(optixDeviceContextSetCacheEnabled(optixContext, 1));
         SPECTRA_OPTIX_CHECK(optixDeviceContextSetCacheLocation(optixContext, SpectraOptiXCacheDir));
         SPECTRA_OPTIX_CHECK(optixDeviceContextSetCacheDatabaseSizes(optixContext, SpectraOptiXCacheSizeBytes / 2, SpectraOptiXCacheSizeBytes));
-
 
         // OptiX module
         optixModule = createOptiXModule(optixContext, reinterpret_cast<const char*>(SPECTRA_EMBEDDED_OPTIX_INPUT), static_cast<size_t>(SPECTRA_EMBEDDED_OPTIX_INPUT_SIZE));
@@ -1454,21 +1426,8 @@ namespace spectra::optix {
 
             ParamBufferState& pbs = getParamBuffer(params);
 
-#ifndef NDEBUG
-#endif
-#ifdef NVTX
-            nvtxRangePush("SpectraOptiXAggregate::IntersectClosest");
-#endif
-
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.ptr, sizeof(RayIntersectParameters), &intersectSBT, maxRays, 1, 1));
             SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent));
-
-#ifdef NVTX
-            nvtxRangePop();
-#endif
-#ifndef NDEBUG
-            SPECTRA_CUDA_CHECK(cudaDeviceSynchronize());
-#endif
         }
     }
 
@@ -1481,21 +1440,8 @@ namespace spectra::optix {
 
             ParamBufferState& pbs = getParamBuffer(params);
 
-#ifndef NDEBUG
-#endif
-#ifdef NVTX
-            nvtxRangePush("SpectraOptiXAggregate::IntersectShadow");
-#endif
-
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.ptr, sizeof(RayIntersectParameters), &shadowSBT, maxRays, 1, 1));
             SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent));
-
-#ifdef NVTX
-            nvtxRangePop();
-#endif
-#ifndef NDEBUG
-            SPECTRA_CUDA_CHECK(cudaDeviceSynchronize());
-#endif
         }
     }
 
@@ -1508,21 +1454,8 @@ namespace spectra::optix {
 
             ParamBufferState& pbs = getParamBuffer(params);
 
-#ifndef NDEBUG
-#endif
-#ifdef NVTX
-            nvtxRangePush("SpectraOptiXAggregate::IntersectShadowTr");
-#endif
-
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.ptr, sizeof(RayIntersectParameters), &shadowTrSBT, maxRays, 1, 1));
             SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent));
-
-#ifdef NVTX
-            nvtxRangePop();
-#endif
-#ifndef NDEBUG
-            SPECTRA_CUDA_CHECK(cudaDeviceSynchronize());
-#endif
         }
     }
 
@@ -1534,21 +1467,8 @@ namespace spectra::optix {
 
             ParamBufferState& pbs = getParamBuffer(params);
 
-#ifndef NDEBUG
-#endif
-#ifdef NVTX
-            nvtxRangePush("SpectraOptiXAggregate::IntersectOneRandom");
-#endif
-
             SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.ptr, sizeof(RayIntersectParameters), &randomHitSBT, maxRays, 1, 1));
             SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent));
-
-#ifdef NVTX
-            nvtxRangePop();
-#endif
-#ifndef NDEBUG
-            SPECTRA_CUDA_CHECK(cudaDeviceSynchronize());
-#endif
         }
     }
 } // namespace spectra::optix

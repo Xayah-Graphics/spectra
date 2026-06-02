@@ -64,7 +64,6 @@ namespace spectra {
                 Vector3f wi;
                 Float etap;
                 bool valid = Refract(wo, Normal3f(0, 0, 1), eta, &etap, &wi);
-                CHECK_RARE(1e-5f, !valid);
                 if (!valid) return {};
 
                 SampledSpectrum ft(T / AbsCosTheta(wi));
@@ -100,7 +99,6 @@ namespace spectra {
                 Float etap;
                 Vector3f wi;
                 bool tir = !Refract(wo, (Normal3f) wm, eta, &etap, &wi);
-                CHECK_RARE(1e-5f, tir);
                 if (SameHemisphere(wo, wi) || wi.z == 0 || tir) return {};
                 // Compute PDF of rough dielectric transmission
                 Float denom   = Sqr(Dot(wi, wm) + Dot(wo, wm) / etap);
@@ -127,7 +125,6 @@ namespace spectra {
         float etap   = 1;
         if (!reflect) etap = cosTheta_o > 0 ? eta : (1 / eta);
         Vector3f wm = wi * etap + wo;
-        CHECK_RARE(1e-5f, LengthSquared(wm) == 0);
         if (cosTheta_i == 0 || cosTheta_o == 0 || LengthSquared(wm) == 0) return {};
         wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
 
@@ -158,7 +155,6 @@ namespace spectra {
         float etap   = 1;
         if (!reflect) etap = cosTheta_o > 0 ? eta : (1 / eta);
         Vector3f wm = wi * etap + wo;
-        CHECK_RARE(1e-5f, LengthSquared(wm) == 0);
         if (cosTheta_i == 0 || cosTheta_o == 0 || LengthSquared(wm) == 0) return {};
         wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
 

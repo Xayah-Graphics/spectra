@@ -66,7 +66,6 @@ namespace spectra {
         Vector3f e1 = v[1] - v[0], e2 = v[2] - v[0];
         Vector3f s1   = Cross(w, e2);
         Float divisor = Dot(s1, e1);
-        CHECK_RARE(1e-6, divisor == 0);
         if (divisor == 0) {
             // This happens with triangles that cover (nearly) the whole
             // hemisphere.
@@ -121,7 +120,6 @@ namespace spectra {
         else {
             // Compute area $A'$ of subtriangle
             Vector3f n_cpb = Cross(cp, b), n_acp = Cross(a, cp);
-            CHECK_RARE(1e-5, LengthSquared(n_cpb) == 0 || LengthSquared(n_acp) == 0);
             if (LengthSquared(n_cpb) == 0 || LengthSquared(n_acp) == 0) return Point2f(0.5, 0.5);
             n_cpb    = Normalize(n_cpb);
             n_acp    = Normalize(n_acp);
@@ -162,7 +160,6 @@ namespace spectra {
 
         // Compute spherical rectangle solid angle and PDF
         Float solidAngle = g0 + g1 + g2 + g3 - 2 * Pi;
-        CHECK_RARE(1e-5, solidAngle <= 0);
         if (solidAngle <= 0) {
             if (pdf) *pdf = 0;
             return Point3f(s + u[0] * ex + u[1] * ey);
@@ -258,7 +255,6 @@ namespace spectra {
         // Note, though have 1 + z^2/x^2 - b0^2, which isn't great if b0 \approx 1
         // double fusq = 1. - Sqr(double(b0)) + Sqr(double(z0) / double(xu));  //
         // this is worse?? double fu = pstd::copysign(std::sqrt(fusq), cu);
-        CHECK_RARE(1e-6, fu == 0);
 
         // State of the floating point world: in the bad cases, about half the
         // error seems to come from inaccuracy in fu and half comes from

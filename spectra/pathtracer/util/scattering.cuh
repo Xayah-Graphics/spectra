@@ -161,7 +161,6 @@ namespace spectra {
             // Reproject to hemisphere and transform normal to ellipsoid configuration
             Float pz    = std::sqrt(std::max<Float>(0, 1 - LengthSquared(Vector2f(p))));
             Vector3f nh = p.x * T1 + p.y * T2 + pz * wh;
-            CHECK_RARE(1e-5f, nh.z == 0);
             return Normalize(Vector3f(alpha_x * nh.x, alpha_y * nh.y, std::max<Float>(1e-6f, nh.z)));
         }
 

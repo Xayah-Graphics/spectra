@@ -13,17 +13,6 @@
 #include <typeinfo>
 #include <vector>
 
-#ifdef NVTX
-#ifdef UNICODE
-#undef UNICODE
-#endif
-#include <nvtx3/nvToolsExt.h>
-
-#ifdef RGB
-#undef RGB
-#endif // RGB
-#endif
-
 #define CUDA_CHECK(EXPR)                                            \
     if (EXPR != cudaSuccess) {                                      \
         cudaError_t error = cudaGetLastError();                     \
@@ -42,7 +31,7 @@
 
 namespace spectra {
     template <typename F>
-    inline int GetBlockSize(const char* description, F kernel) {
+    inline int GetBlockSize(F kernel) {
         // Note: this isn't reentrant, but that's fine for our purposes...
         static std::map<std::type_index, int> kernelBlockSizes;
 
@@ -69,26 +58,16 @@ namespace spectra {
 
     // GPU Launch Function Declarations
     template <typename F>
-    void GPUParallelFor(const char* description, int nItems, F func);
+    void GPUParallelFor(int nItems, F func);
 
     template <typename F>
-    void GPUParallelFor(const char* description, int nItems, F func) {
-#ifdef NVTX
-        nvtxRangePush(description);
-#endif
+    void GPUParallelFor(int nItems, F func) {
         auto kernel = &Kernel<F>;
 
-        int blockSize = GetBlockSize(description, kernel);
+        int blockSize = GetBlockSize(kernel);
 
         int gridSize = (nItems + blockSize - 1) / blockSize;
         kernel<<<gridSize, blockSize>>>(func, nItems);
-
-#ifdef SPECTRA_DEBUG_BUILD
-        CUDA_CHECK(cudaDeviceSynchronize());
-#endif
-#ifdef NVTX
-        nvtxRangePop();
-#endif
     }
 
 #endif // __NVCC__
@@ -100,9 +79,6 @@ namespace spectra {
     void GPUThreadInit(int cudaDevice);
 
     void GPUMemset(void* ptr, int byte, size_t bytes);
-
-    void GPURegisterThread(const char* name);
-    void GPUNameStream(cudaStream_t stream, const char* name);
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_GPU_UTIL_H

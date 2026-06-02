@@ -6,7 +6,6 @@
 #include <spectra/pathtracer/util/taggedptr.cuh>
 #include <spectra/pathtracer/util/vecmath.cuh>
 #include <string>
-#include <vector>
 
 namespace spectra {
     class ParameterDictionary;
@@ -33,11 +32,10 @@ namespace spectra {
     class StratifiedSampler;
     class ZSobolSampler;
     class MLTSampler;
-    class DebugMLTSampler;
 
     // Sampler Definition
     class Sampler : public TaggedPointer< // Sampler Types
-                        PMJ02BNSampler, IndependentSampler, StratifiedSampler, HaltonSampler, PaddedSobolSampler, SobolSampler, ZSobolSampler, MLTSampler, DebugMLTSampler
+                        PMJ02BNSampler, IndependentSampler, StratifiedSampler, HaltonSampler, PaddedSobolSampler, SobolSampler, ZSobolSampler, MLTSampler
 
                         > {
     public:

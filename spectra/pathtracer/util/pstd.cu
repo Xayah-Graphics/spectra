@@ -54,22 +54,6 @@ namespace pstd {
         }
 
         void* monotonic_buffer_resource::do_allocate(size_t bytes, size_t align) {
-#ifndef NDEBUG
-            // Ensures that the monotonic_buffer_resource is used in the same
-            // thread that originally created it. This is an attempt to catch race
-            // conditions, since the class is, by design, not thread safe. Note
-            // that this CHECK effectively assumes that these are being allocated
-            // via something like ThreadLocal; there are perfectly reasonably ways
-            // of allocating these in one thread and using them in another thread,
-            // so this is tied to the pathtracer's current usage of them...
-            //
-            // (... and commented out since InternCache uses a single
-            // monotonic_buffer_resource across multiple threads but protects its
-            // use with a mutex.)
-            //
-            // CHECK(constructTID == std::this_thread::get_id());
-#endif
-
             if (bytes > block_size)
                 // We've got a big allocation; let the current block be so that
                 // smaller allocations have a chance at using up more of it.

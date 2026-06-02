@@ -60,22 +60,6 @@ namespace spectra {
         __host__ __device__ bool HasNaN() const {
             return IsNaN(x) || IsNaN(y);
         }
-#ifdef SPECTRA_DEBUG_BUILD
-        // The default versions of these are fine for release builds; for debug
-        // we define them so that we can add the Assert checks.
-        __host__ __device__ Tuple2(Child<T> c) {
-            DCHECK(!c.HasNaN());
-            x = c.x;
-            y = c.y;
-        }
-
-        __host__ __device__ Child<T>& operator=(Child<T> c) {
-            DCHECK(!c.HasNaN());
-            x = c.x;
-            y = c.y;
-            return static_cast<Child<T>&>(*this);
-        }
-#endif
 
         template <typename U>
         __host__ __device__ auto operator+(Child<U> c) const -> Child<decltype(T{} + U{})> {
@@ -279,25 +263,6 @@ namespace spectra {
         }
 
         static const int nDimensions = 3;
-
-#ifdef SPECTRA_DEBUG_BUILD
-        // The default versions of these are fine for release builds; for debug
-        // we define them so that we can add the Assert checks.
-        __host__ __device__ Tuple3(Child<T> c) {
-            DCHECK(!c.HasNaN());
-            x = c.x;
-            y = c.y;
-            z = c.z;
-        }
-
-        __host__ __device__ Child<T>& operator=(Child<T> c) {
-            DCHECK(!c.HasNaN());
-            x = c.x;
-            y = c.y;
-            z = c.z;
-            return static_cast<Child<T>&>(*this);
-        }
-#endif
 
         template <typename U>
         __host__ __device__ Child<T>& operator+=(Child<U> c) {

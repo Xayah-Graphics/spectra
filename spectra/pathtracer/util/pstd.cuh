@@ -158,17 +158,9 @@ namespace pstd {
 
         class alignas(64) monotonic_buffer_resource : public memory_resource {
         public:
-            explicit monotonic_buffer_resource(memory_resource* upstream) : upstream(upstream) {
-#ifndef NDEBUG
-                constructTID = std::this_thread::get_id();
-#endif
-            }
+            explicit monotonic_buffer_resource(memory_resource* upstream) : upstream(upstream) {}
 
-            monotonic_buffer_resource(size_t block_size, memory_resource* upstream) : block_size(block_size), upstream(upstream) {
-#ifndef NDEBUG
-                constructTID = std::this_thread::get_id();
-#endif
-            }
+            monotonic_buffer_resource(size_t block_size, memory_resource* upstream) : block_size(block_size), upstream(upstream) {}
 
             monotonic_buffer_resource() : monotonic_buffer_resource(get_default_resource()) {}
 
@@ -236,9 +228,6 @@ namespace pstd {
                 upstream->deallocate(b, sizeof(block) + b->size);
             }
 
-#ifndef NDEBUG
-            std::thread::id constructTID;
-#endif
             memory_resource* upstream;
             size_t block_size  = 256 * 1024;
             block* current     = nullptr;

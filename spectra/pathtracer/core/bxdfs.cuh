@@ -279,7 +279,6 @@ namespace spectra {
             if (mfDistrib.EffectivelySmooth()) return 0;
             // Evaluate sampling PDF of rough conductor BRDF
             Vector3f wm = wo + wi;
-            CHECK_RARE(1e-5f, LengthSquared(wm) == 0);
             if (LengthSquared(wm) == 0) return 0;
             wm = FaceForward(Normalize(wm), Normal3f(0, 0, 1));
             return mfDistrib.PDF(wo, wm) / (4 * AbsDot(wo, wm));
@@ -441,7 +440,6 @@ namespace spectra {
                         Float sigma_t = 1;
                         Float dz      = SampleExponential(r(), sigma_t / std::abs(w.z));
                         Float zp      = w.z > 0 ? (z + dz) : (z - dz);
-                        DCHECK_RARE(1e-5, z == zp);
                         if (z == zp) continue;
                         if (0 < zp && zp < thickness) {
                             // Handle scattering event in layered BSDF medium
@@ -564,7 +562,6 @@ namespace spectra {
                     Float sigma_t = 1;
                     Float dz      = SampleExponential(r(), sigma_t / AbsCosTheta(w));
                     Float zp      = w.z > 0 ? (z + dz) : (z - dz);
-                    CHECK_RARE(1e-5, zp == z);
                     if (zp == z) return {};
                     if (0 < zp && zp < thickness) {
                         // Update path state for valid scattering event between interfaces

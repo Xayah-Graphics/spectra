@@ -49,7 +49,6 @@ add_subdirectory(vendor/pbrt)
 # Spectra GPU
 # ============================================================================
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
-option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
 set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for spectra_gpu")
 set(SPECTRA_OPTIX_GPU_ARCH "sm_120" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
 set(SPECTRA_OPTIX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for spectra_gpu")
@@ -85,13 +84,9 @@ math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 
 set(SPECTRA_PROJECT_SCENE_ROOT "${PROJECT_SOURCE_DIR}/scene")
 set(SPECTRA_GPU_DEFINITIONS
         PTEX_STATIC
-        "$<$<CONFIG:Debug>:SPECTRA_DEBUG_BUILD>"
 )
 if (SPECTRA_FLOAT_AS_DOUBLE)
     list(APPEND SPECTRA_GPU_DEFINITIONS SPECTRA_FLOAT_AS_DOUBLE)
-endif ()
-if (SPECTRA_NVTX)
-    list(APPEND SPECTRA_GPU_DEFINITIONS NVTX)
 endif ()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
@@ -146,7 +141,6 @@ set(SPECTRA_GPU_CUDA_COMPILE_OPTIONS
         "$<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>"
         "$<$<COMPILE_LANGUAGE:CUDA>:--forward-unknown-to-host-compiler>"
-        "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>,$<NOT:$<BOOL:$<TARGET_PROPERTY:CUDA_PTX_COMPILATION>>>,$<NOT:$<BOOL:$<TARGET_PROPERTY:CUDA_OPTIX_COMPILATION>>>>:-G;-g;-lineinfo;-maxrregcount;128>"
 )
 
 get_filename_component(SPECTRA_GPU_CUDA_COMPILER_BIN "${CMAKE_CUDA_COMPILER}" DIRECTORY)
