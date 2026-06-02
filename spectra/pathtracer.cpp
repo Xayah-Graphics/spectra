@@ -972,6 +972,10 @@ namespace xayah {
 
     SpectraPathtracer::~SpectraPathtracer() noexcept = default;
 
+    SpectraPathtracer::SpectraPathtracer(SpectraPathtracer&& other) noexcept = default;
+
+    SpectraPathtracer& SpectraPathtracer::operator=(SpectraPathtracer&& other) noexcept = default;
+
     std::string_view SpectraPathtracer::name() const {
         return this->impl->name();
     }

@@ -473,14 +473,13 @@ endif ()
 # Spectra
 # ============================================================================
 add_library(spectra_core)
+add_library(spectra::core ALIAS spectra_core)
 target_sources(
         spectra_core
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/spectra.ixx
-        spectra/pathtracer.ixx
         PRIVATE
-        spectra/pathtracer.cpp
         spectra/spectra.cpp
 
         vendor/imgui/imgui.cpp
@@ -490,7 +489,7 @@ target_sources(
         vendor/imgui/backends/imgui_impl_glfw.cpp
         vendor/imgui/backends/imgui_impl_vulkan.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw CUDA::cudart spectra::scene spectra::gpu_lib)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(
         spectra_core
@@ -506,10 +505,28 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
 )
 
+add_library(spectra_pathtracer)
+add_library(spectra::pathtracer ALIAS spectra_pathtracer)
+target_sources(
+        spectra_pathtracer
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/pathtracer.ixx
+        PRIVATE
+        spectra/pathtracer.cpp
+)
+target_link_libraries(spectra_pathtracer PUBLIC spectra::core PRIVATE CUDA::cudart spectra::scene spectra::gpu_lib)
+set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(
+        spectra_pathtracer
+        PRIVATE
+        IMGUI_DEFINE_MATH_OPERATORS
+)
+
 
 # ============================================================================
 # Application
 # ============================================================================
 add_executable(spectra main.cpp)
-target_link_libraries(spectra PRIVATE spectra_core spectra::gpu_lib)
+target_link_libraries(spectra PRIVATE spectra::core spectra::pathtracer)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)

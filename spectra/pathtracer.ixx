@@ -15,23 +15,23 @@ import std;
 export import xayah.spectra;
 
 export namespace xayah {
-    class SpectraPathtracer final : public SpectraPlugin {
+    class SpectraPathtracer final {
     public:
         explicit SpectraPathtracer(std::string scene_name);
-        ~SpectraPathtracer() noexcept override;
+        ~SpectraPathtracer() noexcept;
 
-        SpectraPathtracer(const SpectraPathtracer& other)                = delete;
-        SpectraPathtracer(SpectraPathtracer&& other) noexcept            = delete;
-        SpectraPathtracer& operator=(const SpectraPathtracer& other)     = delete;
-        SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept = delete;
+        SpectraPathtracer(const SpectraPathtracer& other) = delete;
+        SpectraPathtracer(SpectraPathtracer&& other) noexcept;
+        SpectraPathtracer& operator=(const SpectraPathtracer& other) = delete;
+        SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept;
 
-        [[nodiscard]] std::string_view name() const override;
-        void attach(Spectra& spectra) override;
-        void detach(Spectra& spectra) noexcept override;
-        void before_imgui_shutdown(Spectra& spectra) noexcept override;
-        void after_imgui_created(Spectra& spectra) override;
-        [[nodiscard]] SpectraFrameResult begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) override;
-        void record_frame(const vk::raii::CommandBuffer& command_buffer) override;
+        [[nodiscard]] std::string_view name() const;
+        void attach(Spectra& spectra);
+        void detach(Spectra& spectra) noexcept;
+        void before_imgui_shutdown(Spectra& spectra) noexcept;
+        void after_imgui_created(Spectra& spectra);
+        [[nodiscard]] SpectraFrameResult begin_frame(Spectra& spectra, const SpectraFrameInfo& frame);
+        void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
         class Impl;

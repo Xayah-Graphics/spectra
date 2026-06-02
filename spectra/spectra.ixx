@@ -56,17 +56,15 @@ export namespace xayah {
         std::optional<std::string> window_detail{};
     };
 
-    class SpectraPlugin {
-    public:
-        virtual ~SpectraPlugin() = default;
-
-        [[nodiscard]] virtual std::string_view name() const                                                   = 0;
-        virtual void attach(Spectra& spectra)                                                                 = 0;
-        virtual void detach(Spectra& spectra) noexcept                                                        = 0;
-        virtual void before_imgui_shutdown(Spectra& spectra) noexcept                                         = 0;
-        virtual void after_imgui_created(Spectra& spectra)                                                    = 0;
-        [[nodiscard]] virtual SpectraFrameResult begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) = 0;
-        virtual void record_frame(const vk::raii::CommandBuffer& command_buffer)                              = 0;
+    template <typename Plugin>
+    concept SpectraPlugin = std::movable<std::remove_cvref_t<Plugin>> && requires(std::remove_cvref_t<Plugin>& plugin, const std::remove_cvref_t<Plugin>& const_plugin, Spectra& spectra, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& command_buffer) {
+        { const_plugin.name() } -> std::convertible_to<std::string_view>;
+        { plugin.attach(spectra) } -> std::same_as<void>;
+        { plugin.detach(spectra) } noexcept -> std::same_as<void>;
+        { plugin.before_imgui_shutdown(spectra) } noexcept -> std::same_as<void>;
+        { plugin.after_imgui_created(spectra) } -> std::same_as<void>;
+        { plugin.begin_frame(spectra, frame) } -> std::same_as<SpectraFrameResult>;
+        { plugin.record_frame(command_buffer) } -> std::same_as<void>;
     };
 
     class Spectra {
@@ -79,7 +77,8 @@ export namespace xayah {
         Spectra& operator=(const Spectra& other)     = delete;
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
-        void register_plugin(std::unique_ptr<SpectraPlugin> plugin);
+        template <SpectraPlugin Plugin>
+        void register_plugin(Plugin plugin);
         void run();
 
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const;
@@ -91,6 +90,29 @@ export namespace xayah {
 
     private:
         struct FrameState;
+        struct RegisteredPlugin {
+            template <SpectraPlugin Plugin>
+            explicit RegisteredPlugin(Plugin plugin) {
+                auto instance               = std::make_shared<Plugin>(std::move(plugin));
+                this->name                  = std::string{instance->name()};
+                this->attach                = [instance](Spectra& spectra) { instance->attach(spectra); };
+                this->detach                = [instance](Spectra& spectra) { instance->detach(spectra); };
+                this->before_imgui_shutdown = [instance](Spectra& spectra) { instance->before_imgui_shutdown(spectra); };
+                this->after_imgui_created   = [instance](Spectra& spectra) { instance->after_imgui_created(spectra); };
+                this->begin_frame           = [instance](Spectra& spectra, const SpectraFrameInfo& frame) { return instance->begin_frame(spectra, frame); };
+                this->record_frame          = [instance](const vk::raii::CommandBuffer& command_buffer) { instance->record_frame(command_buffer); };
+            }
+
+            std::string name{};
+            std::move_only_function<void(Spectra&)> attach{};
+            std::move_only_function<void(Spectra&)> detach{};
+            std::move_only_function<void(Spectra&)> before_imgui_shutdown{};
+            std::move_only_function<void(Spectra&)> after_imgui_created{};
+            std::move_only_function<SpectraFrameResult(Spectra&, const SpectraFrameInfo&)> begin_frame{};
+            std::move_only_function<void(const vk::raii::CommandBuffer&)> record_frame{};
+        };
+
+        void register_plugin(RegisteredPlugin plugin);
 
         void create_imgui();
         void notify_plugins_before_imgui_shutdown() noexcept;
@@ -164,6 +186,11 @@ export namespace xayah {
         bool dock_layout_initialized{false};
         bool imgui_shutdown_notified{false};
         std::vector<SpectraPanel> panels{};
-        std::vector<std::unique_ptr<SpectraPlugin>> plugins{};
+        std::vector<RegisteredPlugin> plugins{};
     };
+
+    template <SpectraPlugin Plugin>
+    void Spectra::register_plugin(Plugin plugin) {
+        this->register_plugin(RegisteredPlugin{std::move(plugin)});
+    }
 } // namespace xayah

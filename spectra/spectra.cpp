@@ -339,15 +339,14 @@ namespace xayah {
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::register_plugin(std::unique_ptr<SpectraPlugin> plugin) {
-        if (plugin == nullptr) throw std::runtime_error("Cannot register a null Spectra plugin");
-        const std::string_view plugin_name = plugin->name();
+    void Spectra::register_plugin(RegisteredPlugin plugin) {
+        const std::string_view plugin_name = plugin.name;
         if (plugin_name.empty()) throw std::runtime_error("Spectra plugin name must not be empty");
-        for (const std::unique_ptr<SpectraPlugin>& existing_plugin : this->plugins) {
-            if (existing_plugin->name() == plugin_name) throw std::runtime_error(std::string{"Duplicate Spectra plugin name: "} + std::string{plugin_name});
+        for (const RegisteredPlugin& existing_plugin : this->plugins) {
+            if (existing_plugin.name == plugin_name) throw std::runtime_error(std::string{"Duplicate Spectra plugin name: "} + std::string{plugin_name});
         }
-        plugin->attach(*this);
-        if (this->imgui.initialized) plugin->after_imgui_created(*this);
+        plugin.attach(*this);
+        if (this->imgui.initialized) plugin.after_imgui_created(*this);
         this->plugins.push_back(std::move(plugin));
     }
 
@@ -425,7 +424,7 @@ namespace xayah {
             vulkan_backend_initialized    = true;
             this->imgui.initialized       = true;
             this->imgui_shutdown_notified = false;
-            for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins) plugin->after_imgui_created(*this);
+            for (RegisteredPlugin& plugin : this->plugins) plugin.after_imgui_created(*this);
         } catch (...) {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
@@ -441,7 +440,7 @@ namespace xayah {
         if (this->imgui_shutdown_notified) return;
         for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin) {
             try {
-                (*plugin)->before_imgui_shutdown(*this);
+                plugin->before_imgui_shutdown(*this);
             } catch (...) {
             }
         }
@@ -464,7 +463,7 @@ namespace xayah {
         this->notify_plugins_before_imgui_shutdown();
         for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin) {
             try {
-                (*plugin)->detach(*this);
+                plugin->detach(*this);
             } catch (...) {
             }
         }
@@ -508,8 +507,8 @@ namespace xayah {
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
 
         const SpectraFrameInfo frame_info{frame.frame_index, frame.image_index};
-        for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins) {
-            SpectraFrameResult frame_result = plugin->begin_frame(*this, frame_info);
+        for (RegisteredPlugin& plugin : this->plugins) {
+            SpectraFrameResult frame_result = plugin.begin_frame(*this, frame_info);
             if (frame_result.completion_semaphore.has_value()) {
                 if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
                 frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
@@ -530,7 +529,7 @@ namespace xayah {
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
 
-        for (std::unique_ptr<SpectraPlugin>& plugin : this->plugins) plugin->record_frame(command_buffer);
+        for (RegisteredPlugin& plugin : this->plugins) plugin.record_frame(command_buffer);
 
         {
             const vk::ImageMemoryBarrier2 color_barrier{
