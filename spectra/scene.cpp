@@ -6,6 +6,7 @@ module;
 
 module spectra.scene;
 
+import spectra.util.math;
 import std;
 
 extern "C++" {
@@ -13,247 +14,6 @@ namespace spectra::scene::builtin {
     namespace {
         [[nodiscard]] std::string SceneResource(std::string_view relativePath) {
             return std::format("{}/{}", SPECTRA_PROJECT_SCENE_ROOT, relativePath);
-        }
-
-        struct Point3 {
-            float x{};
-            float y{};
-            float z{};
-        };
-
-        struct Vector3 {
-            float x{};
-            float y{};
-            float z{};
-        };
-
-        [[nodiscard]] Vector3 operator-(const Point3& a, const Point3& b) {
-            return Vector3{a.x - b.x, a.y - b.y, a.z - b.z};
-        }
-
-        [[nodiscard]] Vector3 Cross(const Vector3& a, const Vector3& b) {
-            return Vector3{
-                a.y * b.z - a.z * b.y,
-                a.z * b.x - a.x * b.z,
-                a.x * b.y - a.y * b.x,
-            };
-        }
-
-        [[nodiscard]] float Length(const Vector3& vector) {
-            return std::sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
-        }
-
-        [[nodiscard]] Vector3 Normalize(const Vector3& vector) {
-            const float length = Length(vector);
-            if (!(length > 0.0f)) throw std::runtime_error("Cannot normalize a zero-length scene vector.");
-            return Vector3{vector.x / length, vector.y / length, vector.z / length};
-        }
-
-        [[nodiscard]] std::array<float, 16> Multiply(const std::array<float, 16>& a, const std::array<float, 16>& b) {
-            std::array<float, 16> result{};
-            for (std::size_t row = 0; row < 4; ++row) {
-                for (std::size_t column = 0; column < 4; ++column) {
-                    for (std::size_t index = 0; index < 4; ++index) result[row * 4 + column] += a[row * 4 + index] * b[index * 4 + column];
-                }
-            }
-            return result;
-        }
-
-        [[nodiscard]] std::array<float, 16> Transpose(const std::array<float, 16>& matrix) {
-            return {
-                matrix[0],
-                matrix[4],
-                matrix[8],
-                matrix[12],
-                matrix[1],
-                matrix[5],
-                matrix[9],
-                matrix[13],
-                matrix[2],
-                matrix[6],
-                matrix[10],
-                matrix[14],
-                matrix[3],
-                matrix[7],
-                matrix[11],
-                matrix[15],
-            };
-        }
-
-        [[nodiscard]] Transform Multiply(const Transform& a, const Transform& b) {
-            return Transform{
-                .matrix  = Multiply(a.matrix, b.matrix),
-                .inverse = Multiply(b.inverse, a.inverse),
-            };
-        }
-
-        [[nodiscard]] Transform Inverse(const Transform& transform) {
-            return Transform{
-                .matrix  = transform.inverse,
-                .inverse = transform.matrix,
-            };
-        }
-
-        [[nodiscard]] Transform Translate(const Vector3& delta) {
-            return Transform{
-                .matrix =
-                    {
-                        1.0f,
-                        0.0f,
-                        0.0f,
-                        delta.x,
-                        0.0f,
-                        1.0f,
-                        0.0f,
-                        delta.y,
-                        0.0f,
-                        0.0f,
-                        1.0f,
-                        delta.z,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f,
-                    },
-                .inverse =
-                    {
-                        1.0f,
-                        0.0f,
-                        0.0f,
-                        -delta.x,
-                        0.0f,
-                        1.0f,
-                        0.0f,
-                        -delta.y,
-                        0.0f,
-                        0.0f,
-                        1.0f,
-                        -delta.z,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f,
-                    },
-            };
-        }
-
-        [[nodiscard]] Transform Scale(float x, float y, float z) {
-            return Transform{
-                .matrix =
-                    {
-                        x,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        y,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        z,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f,
-                    },
-                .inverse =
-                    {
-                        1.0f / x,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f / y,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f / z,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f,
-                    },
-            };
-        }
-
-        [[nodiscard]] Transform Rotate(float degrees, Vector3 axis) {
-            constexpr float radiansPerDegree = 0.017453292519943295769f;
-            axis                             = Normalize(axis);
-            const float sinTheta             = std::sin(degrees * radiansPerDegree);
-            const float cosTheta             = std::cos(degrees * radiansPerDegree);
-            const float oneMinusCosTheta     = 1.0f - cosTheta;
-            const std::array<float, 16> matrix{
-                axis.x * axis.x + (1.0f - axis.x * axis.x) * cosTheta,
-                axis.x * axis.y * oneMinusCosTheta - axis.z * sinTheta,
-                axis.x * axis.z * oneMinusCosTheta + axis.y * sinTheta,
-                0.0f,
-                axis.x * axis.y * oneMinusCosTheta + axis.z * sinTheta,
-                axis.y * axis.y + (1.0f - axis.y * axis.y) * cosTheta,
-                axis.y * axis.z * oneMinusCosTheta - axis.x * sinTheta,
-                0.0f,
-                axis.x * axis.z * oneMinusCosTheta - axis.y * sinTheta,
-                axis.y * axis.z * oneMinusCosTheta + axis.x * sinTheta,
-                axis.z * axis.z + (1.0f - axis.z * axis.z) * cosTheta,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-            };
-            return Transform{
-                .matrix  = matrix,
-                .inverse = Transpose(matrix),
-            };
-        }
-
-        [[nodiscard]] Transform LookAt(const Point3& position, const Point3& look, const Vector3& up) {
-            const Vector3 direction = Normalize(look - position);
-            const Vector3 right     = Normalize(Cross(Normalize(up), direction));
-            const Vector3 newUp     = Cross(direction, right);
-            const std::array<float, 16> worldFromCamera{
-                right.x,
-                newUp.x,
-                direction.x,
-                position.x,
-                right.y,
-                newUp.y,
-                direction.y,
-                position.y,
-                right.z,
-                newUp.z,
-                direction.z,
-                position.z,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-            };
-            const std::array<float, 16> cameraFromWorld{
-                right.x,
-                right.y,
-                right.z,
-                -(right.x * position.x + right.y * position.y + right.z * position.z),
-                newUp.x,
-                newUp.y,
-                newUp.z,
-                -(newUp.x * position.x + newUp.y * position.y + newUp.z * position.z),
-                direction.x,
-                direction.y,
-                direction.z,
-                -(direction.x * position.x + direction.y * position.y + direction.z * position.z),
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-            };
-            return Transform{
-                .matrix  = cameraFromWorld,
-                .inverse = worldFromCamera,
-            };
         }
 
         [[nodiscard]] SceneParameters Parameters(std::initializer_list<SceneParameter> parameters) {
@@ -294,22 +54,16 @@ namespace spectra::scene::builtin {
             return StringParameter("string", name, values);
         }
 
-        [[nodiscard]] Transform Compose(std::initializer_list<Transform> transforms) {
-            Transform result{};
-            for (const Transform& transform : transforms) result = Multiply(result, transform);
-            return result;
-        }
-
         [[nodiscard]] Scene BookScene() {
-            const std::string mesh00001     = SceneResource("pbrt-book/geometry/mesh_00001.ply");
-            const std::string mesh00002     = SceneResource("pbrt-book/geometry/mesh_00002.ply");
-            const std::string mesh00003     = SceneResource("pbrt-book/geometry/mesh_00003.ply");
-            const std::string bookCover     = SceneResource("pbrt-book/texture/book_pbrt.png");
-            const std::string bookPages     = SceneResource("pbrt-book/texture/book_pages.png");
-            const std::string unevenBump    = SceneResource("pbrt-book/texture/uneven_bump.png");
-            const Transform cameraFromWorld = Compose({
-                Scale(-1.0f, 1.0f, 1.0f),
-                LookAt(Point3(0.0f, 2.1088f, 13.574f), Point3(0.0f, 2.1088f, 12.574f), Vector3(0.0f, 1.0f, 0.0f)),
+            const std::string mesh00001           = SceneResource("pbrt-book/geometry/mesh_00001.ply");
+            const std::string mesh00002           = SceneResource("pbrt-book/geometry/mesh_00002.ply");
+            const std::string mesh00003           = SceneResource("pbrt-book/geometry/mesh_00003.ply");
+            const std::string bookCover           = SceneResource("pbrt-book/texture/book_pbrt.png");
+            const std::string bookPages           = SceneResource("pbrt-book/texture/book_pages.png");
+            const std::string unevenBump          = SceneResource("pbrt-book/texture/uneven_bump.png");
+            const math::Transform cameraFromWorld = math::Compose({
+                math::Scale(-1.0f, 1.0f, 1.0f),
+                math::LookAt(math::Point3(0.0f, 2.1088f, 13.574f), math::Point3(0.0f, 2.1088f, 12.574f), math::Vector3(0.0f, 1.0f, 0.0f)),
             });
 
             Scene scene{
@@ -333,7 +87,7 @@ namespace spectra::scene::builtin {
                             SceneCamera{
                                 .type            = "perspective",
                                 .parameters      = Parameters({FloatParameter("float", "fov", {26.5f})}),
-                                .worldFromCamera = Inverse(cameraFromWorld),
+                                .worldFromCamera = math::Inverse(cameraFromWorld),
                                 .fovDegrees      = 26.5f,
                             },
                         .sampler =
@@ -413,42 +167,44 @@ namespace spectra::scene::builtin {
                         SceneShape{
                             .type            = "sphere",
                             .parameters      = Parameters({FloatParameter("float", "radius", {7.5f})}),
-                            .worldFromObject = Translate(Vector3(34.92f, 55.92f, -15.351f)),
+                            .worldFromObject = math::Translate(math::Vector3(34.92f, 55.92f, -15.351f)),
                             .material        = "default_diffuse",
                             .areaLight       = SceneAreaLight{.type = "diffuse", .parameters = Parameters({FloatParameter("rgb", "L", {41.5594f, 43.3127f, 45.066f})})},
                         },
                         SceneShape{
                             .type            = "sphere",
                             .parameters      = Parameters({FloatParameter("float", "radius", {7.5f})}),
-                            .worldFromObject = Translate(Vector3(-32.892f, 55.92f, 36.293f)),
+                            .worldFromObject = math::Translate(math::Vector3(-32.892f, 55.92f, 36.293f)),
                             .material        = "default_diffuse",
                             .areaLight       = SceneAreaLight{.type = "diffuse", .parameters = Parameters({FloatParameter("rgb", "L", {65.066f, 63.3127f, 61.5594f})})},
                         },
                         SceneShape{
                             .type            = "plymesh",
                             .parameters      = Parameters({StringParameter("filename", {std::string_view{mesh00001}})}),
-                            .worldFromObject = Scale(0.213f, 0.213f, 0.213f),
+                            .worldFromObject = math::Scale(0.213f, 0.213f, 0.213f),
                             .material        = "gray_diffuse",
                         },
                         SceneShape{
-                            .type            = "plymesh",
-                            .parameters      = Parameters({StringParameter("filename", {std::string_view{mesh00002}})}),
-                            .worldFromObject = Compose({
-                                Translate(Vector3(0.0f, 2.2f, 0.0f)),
-                                Rotate(77.3425f, Vector3(0.403388f, -0.754838f, -0.517202f)),
-                                Scale(0.5f, 0.5f, 0.5f),
-                            }),
-                            .material        = "book_pages",
+                            .type       = "plymesh",
+                            .parameters = Parameters({StringParameter("filename", {std::string_view{mesh00002}})}),
+                            .worldFromObject =
+                                math::Compose(
+                                    {
+                                        math::Translate(math::Vector3(0.0f, 2.2f, 0.0f)),
+                                        math::Rotate(77.3425f, math::Vector3(0.403388f, -0.754838f, -0.517202f)),
+                                        math::Scale(0.5f, 0.5f, 0.5f),
+                                    }),
+                            .material = "book_pages",
                         },
                         SceneShape{
                             .type       = "plymesh",
                             .parameters = Parameters({StringParameter("filename", {std::string_view{mesh00003}})}),
                             .worldFromObject =
-                                Compose(
+                                math::Compose(
                                     {
-                                        Translate(Vector3(0.0f, 2.2f, 0.0f)),
-                                        Rotate(77.3425f, Vector3(0.403388f, -0.754838f, -0.517202f)),
-                                        Scale(0.5f, 0.5f, 0.5f),
+                                        math::Translate(math::Vector3(0.0f, 2.2f, 0.0f)),
+                                        math::Rotate(77.3425f, math::Vector3(0.403388f, -0.754838f, -0.517202f)),
+                                        math::Scale(0.5f, 0.5f, 0.5f),
                                     }),
                             .material = "book_cover",
                         },
@@ -458,9 +214,9 @@ namespace spectra::scene::builtin {
         }
 
         [[nodiscard]] Scene ExplosionScene() {
-            const std::string skyTexture    = SceneResource("explosion/textures/sky.exr");
-            const std::string fireVolume    = SceneResource("explosion/fire.nvdb");
-            const Transform cameraFromWorld = LookAt(Point3(0.0f, 120.0f, 20.0f), Point3(-0.5f, 0.0f, 30.0f), Vector3(0.0f, 0.0f, 1.0f));
+            const std::string skyTexture          = SceneResource("explosion/textures/sky.exr");
+            const std::string fireVolume          = SceneResource("explosion/fire.nvdb");
+            const math::Transform cameraFromWorld = math::LookAt(math::Point3(0.0f, 120.0f, 20.0f), math::Point3(-0.5f, 0.0f, 30.0f), math::Vector3(0.0f, 0.0f, 1.0f));
 
             Scene scene{
                 .name   = "explosion",
@@ -484,7 +240,7 @@ namespace spectra::scene::builtin {
                             SceneCamera{
                                 .type            = "perspective",
                                 .parameters      = Parameters({FloatParameter("float", "fov", {37.0f})}),
-                                .worldFromCamera = Inverse(cameraFromWorld),
+                                .worldFromCamera = math::Inverse(cameraFromWorld),
                                 .fovDegrees      = 37.0f,
                             },
                         .integrator =
@@ -521,9 +277,9 @@ namespace spectra::scene::builtin {
                                 FloatParameter("float", "temperaturecutoff", {1.0f}),
                                 FloatParameter("float", "temperaturescale", {100.0f}),
                             }),
-                            .worldFromMedium = Compose({
-                                Scale(1.0f, 1.0f, 1.6f),
-                                Rotate(90.0f, Vector3(1.0f, 0.0f, 0.0f)),
+                            .worldFromMedium = math::Compose({
+                                math::Scale(1.0f, 1.0f, 1.6f),
+                                math::Rotate(90.0f, math::Vector3(1.0f, 0.0f, 0.0f)),
                             }),
                         },
                     },
@@ -535,7 +291,7 @@ namespace spectra::scene::builtin {
                                 StringParameter("filename", {std::string_view{skyTexture}}),
                                 FloatParameter("float", "scale", {2.0f}),
                             }),
-                            .worldFromLight = Rotate(10.0f, Vector3(1.0f, 0.0f, 0.0f)),
+                            .worldFromLight = math::Rotate(10.0f, math::Vector3(1.0f, 0.0f, 0.0f)),
                         },
                     },
                 .shapes =
@@ -543,18 +299,20 @@ namespace spectra::scene::builtin {
                         SceneShape{
                             .type            = "sphere",
                             .parameters      = Parameters({FloatParameter("float", "radius", {80.0f})}),
-                            .worldFromObject = Translate(Vector3(0.0f, 40.0f, 0.0f)),
+                            .worldFromObject = math::Translate(math::Vector3(0.0f, 40.0f, 0.0f)),
                             .material        = "interface",
                             .insideMedium    = "kaboom",
                         },
                         SceneShape{
-                            .type            = "disk",
-                            .parameters      = Parameters({FloatParameter("float", "radius", {1000.0f})}),
-                            .worldFromObject = Compose({
-                                Translate(Vector3(0.0f, -50.0f, 0.0f)),
-                                Translate(Vector3(0.0f, 0.0f, -4.0f)),
-                            }),
-                            .material        = "ground",
+                            .type       = "disk",
+                            .parameters = Parameters({FloatParameter("float", "radius", {1000.0f})}),
+                            .worldFromObject =
+                                math::Compose(
+                                    {
+                                        math::Translate(math::Vector3(0.0f, -50.0f, 0.0f)),
+                                        math::Translate(math::Vector3(0.0f, 0.0f, -4.0f)),
+                                    }),
+                            .material = "ground",
                         },
                     },
             };

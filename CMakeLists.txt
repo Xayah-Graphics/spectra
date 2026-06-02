@@ -386,6 +386,18 @@ add_custom_command(
 )
 add_library(spectra_gpu_embedded_optix_input STATIC ${SPECTRA_GPU_EMBEDDED_OPTIX_INPUT})
 
+add_library(spectra_util)
+add_library(spectra::util ALIAS spectra_util)
+target_sources(
+        spectra_util
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/util/math.ixx
+        PRIVATE
+        spectra/util/math.cpp
+)
+set_property(TARGET spectra_util PROPERTY CXX_MODULE_STD ON)
+
 add_library(spectra_scene)
 add_library(spectra::scene ALIAS spectra_scene)
 target_sources(
@@ -396,6 +408,7 @@ target_sources(
         PRIVATE
         spectra/scene.cpp
 )
+target_link_libraries(spectra_scene PUBLIC spectra::util)
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_PROJECT_SCENE_ROOT=\"${SPECTRA_PROJECT_SCENE_ROOT}\"")
 

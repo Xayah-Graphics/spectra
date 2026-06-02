@@ -61,7 +61,7 @@ namespace spectra::pathtracer {
             };
         }
 
-        [[nodiscard]] Transform ToPathtracerTransform(const scene::Transform& transform) {
+        [[nodiscard]] Transform ToPathtracerTransform(const math::Transform& transform) {
             return Transform(ToPathtracerMatrix(transform.matrix), ToPathtracerMatrix(transform.inverse));
         }
 
@@ -203,7 +203,7 @@ namespace spectra::pathtracer {
                 return this->cameraEntity.cameraTransform.RenderFromWorld();
             }
 
-            [[nodiscard]] Transform RenderFromObjectTransform(const scene::Transform& worldFromObject) const {
+            [[nodiscard]] Transform RenderFromObjectTransform(const math::Transform& worldFromObject) const {
                 return this->RenderFromWorldTransform() * ToPathtracerTransform(worldFromObject);
             }
 

@@ -1,50 +1,12 @@
 export module spectra.scene;
 
+export import spectra.util.math;
 import std;
 
 export extern "C++" {
     namespace spectra::scene {
         enum class TextureKind { Float, Spectrum };
         enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
-
-        struct Transform {
-            std::array<float, 16> matrix{
-                1.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-            };
-            std::array<float, 16> inverse{
-                1.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                0.0f,
-                1.0f,
-            };
-        };
 
         struct SceneParameter {
             std::string type{};
@@ -66,7 +28,7 @@ export extern "C++" {
         struct SceneCamera {
             std::string type{"perspective"};
             SceneParameters parameters{};
-            Transform worldFromCamera{};
+            math::Transform worldFromCamera{};
             std::string medium{};
             float fovDegrees{};
         };
@@ -91,20 +53,20 @@ export extern "C++" {
             std::string name{};
             std::string type{};
             SceneParameters parameters{};
-            Transform worldFromTexture{};
+            math::Transform worldFromTexture{};
         };
 
         struct SceneMedium {
             std::string name{};
             std::string type{};
             SceneParameters parameters{};
-            Transform worldFromMedium{};
+            math::Transform worldFromMedium{};
         };
 
         struct SceneLight {
             std::string type{};
             SceneParameters parameters{};
-            Transform worldFromLight{};
+            math::Transform worldFromLight{};
             std::string medium{};
         };
 
@@ -116,7 +78,7 @@ export extern "C++" {
         struct SceneShape {
             std::string type{};
             SceneParameters parameters{};
-            Transform worldFromObject{};
+            math::Transform worldFromObject{};
             bool reverseOrientation{false};
             std::string material{};
             std::optional<SceneAreaLight> areaLight{};
@@ -131,7 +93,7 @@ export extern "C++" {
 
         struct SceneObjectInstance {
             std::string name{};
-            Transform worldFromInstance{};
+            math::Transform worldFromInstance{};
         };
 
         struct Scene {
