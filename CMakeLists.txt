@@ -51,7 +51,7 @@ add_subdirectory(vendor/pbrt)
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
 option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
 set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
-set(SPECTRA_OPTIX_GPU_ARCH "sm_80" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
+set(SPECTRA_OPTIX_GPU_ARCH "sm_120" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
 set(SPECTRA_OPTIX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for spectra_gpu")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for spectra_gpu")
 
