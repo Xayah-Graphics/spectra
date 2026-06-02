@@ -50,42 +50,35 @@ add_subdirectory(vendor/pbrt)
 # ============================================================================
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for spectra_gpu" OFF)
 option(SPECTRA_NVTX "Insert NVTX annotations for spectra_gpu" OFF)
-set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu")
+set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for spectra_gpu")
 set(SPECTRA_OPTIX_GPU_ARCH "sm_120" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
 set(SPECTRA_OPTIX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for spectra_gpu")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for spectra_gpu")
 
 if (SPECTRA_OPTIX_PATH STREQUAL "")
-    foreach (SPECTRA_OPTIX_DEFAULT_PATH IN ITEMS
-            "C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "/mnt/c/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0"
+    file(GLOB SPECTRA_OPTIX_DEFAULT_PATHS LIST_DIRECTORIES true
+            "C:/ProgramData/NVIDIA Corporation/OptiX SDK *"
+            "/mnt/c/ProgramData/NVIDIA Corporation/OptiX SDK *"
+            "/opt/NVIDIA-OptiX-SDK-*"
+            "/opt/OptiX SDK *"
+            "/opt/optix*"
+            "/usr/local/NVIDIA-OptiX-SDK-*"
+            "/usr/local/OptiX SDK *"
+            "/usr/local/optix*"
     )
+    foreach (SPECTRA_OPTIX_DEFAULT_PATH IN LISTS SPECTRA_OPTIX_DEFAULT_PATHS)
         if (EXISTS "${SPECTRA_OPTIX_DEFAULT_PATH}/include/optix.h")
-            set(SPECTRA_OPTIX_PATH "${SPECTRA_OPTIX_DEFAULT_PATH}" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu" FORCE)
-            break()
+            list(APPEND SPECTRA_OPTIX_CANDIDATE_PATHS "${SPECTRA_OPTIX_DEFAULT_PATH}")
         endif ()
     endforeach ()
+    if (SPECTRA_OPTIX_CANDIDATE_PATHS)
+        list(SORT SPECTRA_OPTIX_CANDIDATE_PATHS COMPARE NATURAL ORDER DESCENDING)
+        list(GET SPECTRA_OPTIX_CANDIDATE_PATHS 0 SPECTRA_OPTIX_PATH)
+        set(SPECTRA_OPTIX_PATH "${SPECTRA_OPTIX_PATH}" CACHE PATH "Path to OptiX SDK for spectra_gpu" FORCE)
+    endif ()
 endif ()
 if (SPECTRA_OPTIX_PATH STREQUAL "")
-    message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to the OptiX 9.1 SDK root for spectra_gpu; the default installation directory was not found.")
-endif ()
-if (NOT SPECTRA_OPTIX_GPU_ARCH MATCHES "^sm_[0-9]+$")
-    message(FATAL_ERROR "SPECTRA_OPTIX_GPU_ARCH='${SPECTRA_OPTIX_GPU_ARCH}' must use the form sm_XX.")
-endif ()
-if (NOT SPECTRA_OPTIX_CACHE_SIZE_MB MATCHES "^[0-9]+$")
-    message(FATAL_ERROR "SPECTRA_OPTIX_CACHE_SIZE_MB='${SPECTRA_OPTIX_CACHE_SIZE_MB}' must be a positive integer.")
-endif ()
-if (SPECTRA_OPTIX_CACHE_SIZE_MB LESS 1)
-    message(FATAL_ERROR "SPECTRA_OPTIX_CACHE_SIZE_MB must be greater than zero.")
-endif ()
-file(READ "${SPECTRA_OPTIX_PATH}/include/optix.h" SPECTRA_OPTIX_HEADER)
-string(REGEX MATCH "#define[ \t]+OPTIX_VERSION[ \t]+([0-9]+)" SPECTRA_OPTIX_VERSION_MATCH "${SPECTRA_OPTIX_HEADER}")
-if (NOT CMAKE_MATCH_1)
-    message(FATAL_ERROR "Could not read OPTIX_VERSION from '${SPECTRA_OPTIX_PATH}/include/optix.h'.")
-endif ()
-set(SPECTRA_OPTIX_VERSION "${CMAKE_MATCH_1}")
-if (SPECTRA_OPTIX_VERSION LESS 90100)
-    message(FATAL_ERROR "spectra_gpu requires OptiX SDK 9.1.0 or newer; found OPTIX_VERSION=${SPECTRA_OPTIX_VERSION}.")
+    message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to an OptiX SDK root; no default installation was found.")
 endif ()
 math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
@@ -179,7 +172,6 @@ file(WRITE "${SPECTRA_GPU_GENERATED_DIR}/spectra_optix_config.h"
         "\n"
         "namespace spectra::optix\n"
         "{\n"
-        "    inline constexpr unsigned int SpectraOptiXSdkVersion = ${SPECTRA_OPTIX_VERSION};\n"
         "    inline constexpr char SpectraOptiXCacheDir[] = \"${SPECTRA_OPTIX_CACHE_DIR_CONFIG}\";\n"
         "    inline constexpr std::size_t SpectraOptiXCacheSizeBytes = ${SPECTRA_OPTIX_CACHE_SIZE_BYTES}ull;\n"
         "} // namespace spectra::optix\n")
