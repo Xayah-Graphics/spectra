@@ -77,7 +77,7 @@ namespace spectra {
         // relaxed if they were problematic; the issue is that we currently
         // resolve MixMaterials in the closest hit shader...
         if (!BasicTextureEvaluator().CanEvaluate({amount}, {}))
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "The GPU renderer currently only supports basic textures "
+            throw std::runtime_error(diagnostics::Format(loc, "The GPU renderer currently only supports basic textures "
                                                                        "for its \"amount\" parameter."));
 
         return alloc.new_object<MixMaterial>(materials, amount);
@@ -92,27 +92,27 @@ namespace spectra {
         FloatTexture eumelanin   = parameters.GetFloatTextureOrNull("eumelanin", alloc);
         FloatTexture pheomelanin = parameters.GetFloatTextureOrNull("pheomelanin", alloc);
         if (sigma_a) {
-            if (reflectance) spectra::diagnostics::PrintWarning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
+            if (reflectance) diagnostics::PrintWarning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
             if (eumelanin)
-                spectra::diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"sigma_a\" was "
+                diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"sigma_a\" was "
                                                         "provided.");
             if (pheomelanin)
-                spectra::diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"sigma_a\" was "
+                diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"sigma_a\" was "
                                                         "provided.");
         } else if (reflectance) {
-            if (sigma_a) spectra::diagnostics::PrintWarning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
+            if (sigma_a) diagnostics::PrintWarning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
             if (eumelanin)
-                spectra::diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"reflectance\" was "
+                diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"reflectance\" was "
                                                         "provided.");
             if (pheomelanin)
-                spectra::diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"reflectance\" was "
+                diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"reflectance\" was "
                                                         "provided.");
         } else if (eumelanin || pheomelanin) {
             if (sigma_a)
-                spectra::diagnostics::PrintWarning(loc, "Ignoring \"sigma_a\" parameter since "
+                diagnostics::PrintWarning(loc, "Ignoring \"sigma_a\" parameter since "
                                                         "\"eumelanin\"/\"pheomelanin\" was provided.");
             if (reflectance)
-                spectra::diagnostics::PrintWarning(loc, "Ignoring \"reflectance\" parameter since "
+                diagnostics::PrintWarning(loc, "Ignoring \"reflectance\" parameter since "
                                                         "\"eumelanin\"/\"pheomelanin\" was provided.");
         } else {
             // Default: brown-ish hair.
@@ -145,7 +145,7 @@ namespace spectra {
         SpectrumTexture reflectance = parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
 
         if (reflectance && (eta || k))
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "For the conductor material, both \"reflectance\" "
+            throw std::runtime_error(diagnostics::Format(loc, "For the conductor material, both \"reflectance\" "
                                                                        "and \"eta\" and \"k\" can't be provided."));
         if (!reflectance) {
             if (!eta) eta = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-eta"));
@@ -299,7 +299,7 @@ namespace spectra {
         SpectrumTexture reflectance  = parameters.GetSpectrumTextureOrNull("reflectance", SpectrumType::Albedo, alloc);
 
         if (reflectance && (conductorEta || k))
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "For the coated conductor material, both \"reflectance\" "
+            throw std::runtime_error(diagnostics::Format(loc, "For the coated conductor material, both \"reflectance\" "
                                                                        "and \"eta\" and \"k\" can't be provided."));
         if (!reflectance) {
             if (!conductorEta) conductorEta = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-eta"));
@@ -331,8 +331,8 @@ namespace spectra {
         if (!name.empty()) {
             // 1. By name
             Spectrum sig_a, sig_s;
-            if (!GetMediumScatteringProperties(name, &sig_a, &sig_s, alloc)) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: named medium not found.", name));
-            if (g != 0) spectra::diagnostics::PrintWarning(loc, "Non-zero \"g\" ignored with named scattering coefficients.");
+            if (!GetMediumScatteringProperties(name, &sig_a, &sig_s, alloc)) throw std::runtime_error(diagnostics::Format(loc, "%s: named medium not found.", name));
+            if (g != 0) diagnostics::PrintWarning(loc, "Non-zero \"g\" ignored with named scattering coefficients.");
             g = 0; /* Enforce g=0 (the database specifies reduced scattering
                   coefficients) */
             sigma_a = alloc.new_object<SpectrumConstantTexture>(sig_a);
@@ -341,8 +341,8 @@ namespace spectra {
             // 2. sigma_a and sigma_s directly specified
             sigma_a = parameters.GetSpectrumTextureOrNull("sigma_a", SpectrumType::Unbounded, alloc);
             sigma_s = parameters.GetSpectrumTextureOrNull("sigma_s", SpectrumType::Unbounded, alloc);
-            if (sigma_a && !sigma_s) throw std::runtime_error(spectra::diagnostics::Format(loc, "Provided \"sigma_a\" parameter without \"sigma_s\"."));
-            if (sigma_s && !sigma_a) throw std::runtime_error(spectra::diagnostics::Format(loc, "Provided \"sigma_s\" parameter without \"sigma_a\"."));
+            if (sigma_a && !sigma_s) throw std::runtime_error(diagnostics::Format(loc, "Provided \"sigma_a\" parameter without \"sigma_s\"."));
+            if (sigma_s && !sigma_a) throw std::runtime_error(diagnostics::Format(loc, "Provided \"sigma_s\" parameter without \"sigma_a\"."));
 
             if (!sigma_a && !sigma_s) {
                 // 3. RGB/Spectrum, reflectance
@@ -397,7 +397,7 @@ namespace spectra {
     MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
         if (filename.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format("Filename must be provided for MeasuredMaterial"));
+            throw std::runtime_error(diagnostics::Format("Filename must be provided for MeasuredMaterial"));
             return nullptr;
         }
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
@@ -410,7 +410,7 @@ namespace spectra {
         /*const */ std::map<std::string, Material>& namedMaterials, const FileLoc* loc, Allocator alloc) {
         Material material;
         if (name.empty() || name == "none") {
-            spectra::diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.", name.c_str());
+            diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.", name.c_str());
             return nullptr;
         } else if (name == "interface")
             return nullptr;
@@ -436,24 +436,24 @@ namespace spectra {
             material = SubsurfaceMaterial::Create(parameters, normalMap, loc, alloc);
         else if (name == "mix") {
             std::vector<std::string> materialNames = parameters.GetStringArray("materials");
-            if (materialNames.size() != 2) throw std::runtime_error(spectra::diagnostics::Format("Must provide two values for \"string materials\" for mix material."));
+            if (materialNames.size() != 2) throw std::runtime_error(diagnostics::Format("Must provide two values for \"string materials\" for mix material."));
 
             Material materials[2];
             for (int i = 0; i < 2; ++i) {
                 auto iter = namedMaterials.find(materialNames[i]);
-                if (iter == namedMaterials.end()) throw std::runtime_error(spectra::diagnostics::Format("%s: named material not found.", materialNames[i]));
+                if (iter == namedMaterials.end()) throw std::runtime_error(diagnostics::Format("%s: named material not found.", materialNames[i]));
                 materials[i] = iter->second;
 
                 if (materials[i] == nullptr)
-                    throw std::runtime_error(spectra::diagnostics::Format("%s: an \"interface\" material cannot be used as an element of "
+                    throw std::runtime_error(diagnostics::Format("%s: an \"interface\" material cannot be used as an element of "
                                                                           "the \"mix\" material.",
                         materialNames[i]));
             }
             material = MixMaterial::Create(materials, parameters, loc, alloc);
         } else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: material type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: material type unknown.", name));
 
-        if (!material) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create material.", name));
+        if (!material) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create material.", name));
 
         parameters.ReportUnused();
         return material;

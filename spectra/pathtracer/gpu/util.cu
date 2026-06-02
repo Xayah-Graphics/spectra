@@ -52,9 +52,9 @@ namespace spectra {
 
 #ifdef SPECTRA_IS_WINDOWS
         if (nDevices > 1)
-            throw std::runtime_error(spectra::diagnostics::Format("Found multiple GPUs.\n"
+            throw std::runtime_error(diagnostics::Format("Found multiple GPUs.\n"
                                                                   "On Windows, this unfortunately causes a significant slowdown with "
-                                                                  "pbrt.\n"
+                                                                  "Spectra.\n"
                                                                   "Please select a single GPU and use the --gpu-device command line "
                                                                   "option to specify it.\n"
                                                                   "Found devices:\n%s",

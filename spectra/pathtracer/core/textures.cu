@@ -33,7 +33,7 @@ namespace spectra {
         else if (type == "planar")
             return alloc.new_object<PlanarMapping>(Inverse(renderFromTexture), parameters.GetOneVector3f("v1", Vector3f(1, 0, 0)), parameters.GetOneVector3f("v2", Vector3f(0, 1, 0)), parameters.GetOneFloat("udelta", 0.f), parameters.GetOneFloat("vdelta", 0.f));
         else {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "2D texture mapping \"%s\" unknown", type));
+            throw std::runtime_error(diagnostics::Format(loc, "2D texture mapping \"%s\" unknown", type));
             return alloc.new_object<UVMapping>();
         }
     }
@@ -110,7 +110,7 @@ namespace spectra {
     FloatCheckerboardTexture* FloatCheckerboardTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
         int dim = parameters.GetOneInt("dimension", 2);
         if (dim != 2 && dim != 3) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%d dimensional checkerboard texture not supported", dim));
+            throw std::runtime_error(diagnostics::Format(loc, "%d dimensional checkerboard texture not supported", dim));
             return nullptr;
         }
         FloatTexture tex1 = parameters.GetFloatTexture("tex1", 1.f, alloc);
@@ -131,7 +131,7 @@ namespace spectra {
     SpectrumCheckerboardTexture* SpectrumCheckerboardTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
         int dim = parameters.GetOneInt("dimension", 2);
         if (dim != 2 && dim != 3) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%d dimensional checkerboard texture not supported", dim));
+            throw std::runtime_error(diagnostics::Format(loc, "%d dimensional checkerboard texture not supported", dim));
             return nullptr;
         }
 
@@ -243,11 +243,11 @@ namespace spectra {
         if (ff)
             filterOptions.filter = *ff;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: filter function unknown", filter));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: filter function unknown", filter));
 
         std::string wrapString            = parameters.GetOneString("wrap", "repeat");
         pstd::optional<WrapMode> wrapMode = ParseWrapMode(wrapString.c_str());
-        if (!wrapMode) throw std::runtime_error(spectra::diagnostics::Format("%s: wrap mode unknown", wrapString));
+        if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
@@ -272,11 +272,11 @@ namespace spectra {
         if (ff)
             filterOptions.filter = *ff;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: filter function unknown", filter));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: filter function unknown", filter));
 
         std::string wrapString            = parameters.GetOneString("wrap", "repeat");
         pstd::optional<WrapMode> wrapMode = ParseWrapMode(wrapString.c_str());
-        if (!wrapMode) throw std::runtime_error(spectra::diagnostics::Format("%s: wrap mode unknown", wrapString));
+        if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
@@ -358,7 +358,7 @@ namespace spectra {
 
     struct : public PtexErrorHandler {
         void reportError(const char* error) override {
-            throw std::runtime_error(spectra::diagnostics::Format("%s", error));
+            throw std::runtime_error(diagnostics::Format("%s", error));
         }
     } errorHandler;
 
@@ -382,10 +382,10 @@ namespace spectra {
         Ptex::String error;
         PtexTexture* texture = cache->get(filename.c_str(), error);
         if (!texture)
-            throw std::runtime_error(spectra::diagnostics::Format("%s", error));
+            throw std::runtime_error(diagnostics::Format("%s", error));
         else {
             if (texture->numChannels() != 1 && texture->numChannels() != 3)
-                throw std::runtime_error(spectra::diagnostics::Format("%s: only one and three channel ptex textures are supported", filename));
+                throw std::runtime_error(diagnostics::Format("%s: only one and three channel ptex textures are supported", filename));
             else
                 valid = true;
             texture->release();
@@ -705,7 +705,7 @@ namespace spectra {
         else if (mode == "black")
             return cudaAddressModeBorder;
         else
-            throw std::runtime_error(spectra::diagnostics::Format("%s: texture wrap mode not supported", mode));
+            throw std::runtime_error(diagnostics::Format("%s: texture wrap mode not supported", mode));
     }
 
     GPUSpectrumImageTexture* GPUSpectrumImageTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
@@ -715,7 +715,7 @@ namespace spectra {
 
         std::string wrapString            = parameters.GetOneString("wrap", "repeat");
         pstd::optional<WrapMode> wrapMode = ParseWrapMode(wrapString.c_str());
-        if (!wrapMode) throw std::runtime_error(spectra::diagnostics::Format("%s: wrap mode unknown", wrapString));
+        if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
@@ -865,7 +865,7 @@ namespace spectra {
                         textureCacheMutex.unlock();
                         isSingleChannel = true;
                     } else {
-                        spectra::diagnostics::PrintWarning(loc, "%s: unable to decipher image format", filename);
+                        diagnostics::PrintWarning(loc, "%s: unable to decipher image format", filename);
                         return nullptr;
                     }
                 } // profile scope
@@ -905,7 +905,7 @@ namespace spectra {
 
         std::string wrapString            = parameters.GetOneString("wrap", "repeat");
         pstd::optional<WrapMode> wrapMode = ParseWrapMode(wrapString.c_str());
-        if (!wrapMode) throw std::runtime_error(spectra::diagnostics::Format("%s: wrap mode unknown", wrapString));
+        if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
@@ -956,7 +956,7 @@ namespace spectra {
                     image          = std::move(avgImage);
                     convertedImage = true;
                 } else
-                    throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: %d channel image, without RGB channels.", filename, image.NChannels()));
+                    throw std::runtime_error(diagnostics::Format(loc, "%s: %d channel image, without RGB channels.", filename, image.NChannels()));
             }
 
             mipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);
@@ -1020,9 +1020,9 @@ namespace spectra {
         else if (name == "ptex")
             tex = GPUFloatPtexTexture::Create(renderFromTexture, parameters, loc, alloc);
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: float texture type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: float texture type unknown.", name));
 
-        if (!tex) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create texture.", name));
+        if (!tex) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create texture.", name));
 
         parameters.ReportUnused();
         return tex;
@@ -1051,9 +1051,9 @@ namespace spectra {
         else if (name == "ptex")
             tex = GPUSpectrumPtexTexture::Create(renderFromTexture, parameters, spectrumType, loc, alloc);
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: spectrum texture type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: spectrum texture type unknown.", name));
 
-        if (!tex) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create texture.", name));
+        if (!tex) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create texture.", name));
 
         parameters.ReportUnused();
 

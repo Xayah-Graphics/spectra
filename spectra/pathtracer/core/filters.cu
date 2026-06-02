@@ -100,9 +100,9 @@ namespace spectra {
         else if (name == "triangle")
             filter = TriangleFilter::Create(parameters, loc, alloc);
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: filter type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: filter type unknown.", name));
 
-        if (!filter) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create filter.", name));
+        if (!filter) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create filter.", name));
 
         parameters.ReportUnused();
         return filter;

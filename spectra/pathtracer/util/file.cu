@@ -107,7 +107,7 @@ namespace spectra {
     std::string ReadFileContents(std::string filename) {
 #ifdef SPECTRA_IS_WINDOWS
         std::ifstream ifs(WStringFromUTF8(filename).c_str(), std::ios::binary);
-        if (!ifs) throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
+        if (!ifs) throw std::runtime_error(diagnostics::Format("%s: %s", filename, SystemErrorString()));
         return std::string((std::istreambuf_iterator<char>(ifs)), (std::istreambuf_iterator<char>()));
 #else
         int fd = open(filename.c_str(), O_RDONLY);
@@ -143,7 +143,7 @@ namespace spectra {
     std::vector<Float> ReadFloatFile(std::string filename) {
         FILE* f = FOpenRead(filename);
         if (f == nullptr) {
-            throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open file", filename));
+            throw std::runtime_error(diagnostics::Format("%s: unable to open file", filename));
             return {};
         }
 
@@ -168,7 +168,7 @@ namespace spectra {
                 } else {
                     curNumber[curNumberPos++] = '\0';
                     Float v;
-                    if (!Atof(curNumber, &v)) throw std::runtime_error(spectra::diagnostics::Format("%s: unable to parse float value \"%s\"", filename, curNumber));
+                    if (!Atof(curNumber, &v)) throw std::runtime_error(diagnostics::Format("%s: unable to parse float value \"%s\"", filename, curNumber));
                     values.push_back(v);
                     inNumber     = false;
                     curNumberPos = 0;
@@ -181,7 +181,7 @@ namespace spectra {
                     while ((c = getc(f)) != '\n' && c != EOF);
                     ++lineNumber;
                 } else if (isspace(c) == 0) {
-                    throw std::runtime_error(spectra::diagnostics::Format("%s: unexpected character \"%c\" found at line %d.", filename, c, lineNumber));
+                    throw std::runtime_error(diagnostics::Format("%s: unexpected character \"%c\" found at line %d.", filename, c, lineNumber));
                     return {};
                 }
             }
@@ -199,7 +199,7 @@ namespace spectra {
         out << contents;
         out.close();
         if (!out.good()) {
-            throw std::runtime_error(spectra::diagnostics::Format("%s: %s", filename, SystemErrorString()));
+            throw std::runtime_error(diagnostics::Format("%s: %s", filename, SystemErrorString()));
             return false;
         }
         return true;

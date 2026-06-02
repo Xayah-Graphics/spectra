@@ -86,17 +86,17 @@ namespace spectra {
     pstd::optional<Spectrum> PiecewiseLinearSpectrum::Read(const std::string& fn, Allocator alloc) {
         std::vector<Float> vals = ReadFloatFile(fn);
         if (vals.empty()) {
-            spectra::diagnostics::PrintWarning("%s: unable to read spectrum file.", fn);
+            diagnostics::PrintWarning("%s: unable to read spectrum file.", fn);
             return {};
         } else {
             if (vals.size() % 2 != 0) {
-                spectra::diagnostics::PrintWarning("%s: extra value found in spectrum file.", fn);
+                diagnostics::PrintWarning("%s: extra value found in spectrum file.", fn);
                 return {};
             }
             pstd::vector<Float> lambda, v;
             for (size_t i = 0; i < vals.size() / 2; ++i) {
                 if (i > 0 && vals[2 * i] <= lambda.back()) {
-                    spectra::diagnostics::PrintWarning("%s: spectrum file invalid: at %d'th entry, "
+                    diagnostics::PrintWarning("%s: spectrum file invalid: at %d'th entry, "
                                                        "wavelengths aren't "
                                                        "increasing: %f >= %f.",
                         fn, int(i), lambda.back(), vals[2 * i]);

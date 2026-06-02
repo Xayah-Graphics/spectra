@@ -77,11 +77,11 @@ namespace spectra {
         else if (s == "permutedigits")
             randomizer = RandomizeStrategy::PermuteDigits;
         else if (s == "fastowen")
-            throw std::runtime_error(spectra::diagnostics::Format("\"fastowen\" randomization not supported by Halton sampler."));
+            throw std::runtime_error(diagnostics::Format("\"fastowen\" randomization not supported by Halton sampler."));
         else if (s == "owen")
             randomizer = RandomizeStrategy::Owen;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to HaltonSampler", s));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to HaltonSampler", s));
 
         return alloc.new_object<HaltonSampler>(nsamp, fullResolution, randomizer, seed, alloc);
     }
@@ -111,7 +111,7 @@ namespace spectra {
         else if (s == "owen")
             randomizer = RandomizeStrategy::Owen;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to PaddedSobolSampler", s));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to PaddedSobolSampler", s));
 
         return alloc.new_object<PaddedSobolSampler>(nsamp, randomizer, seed);
     }
@@ -138,7 +138,7 @@ namespace spectra {
         else if (s == "owen")
             randomizer = RandomizeStrategy::Owen;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to ZSobolSampler", s));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to ZSobolSampler", s));
 
         return alloc.new_object<ZSobolSampler>(nsamp, fullResolution, randomizer, seed);
     }
@@ -146,10 +146,10 @@ namespace spectra {
     // PMJ02BNSampler Method Definitions
     PMJ02BNSampler::PMJ02BNSampler(int samplesPerPixel, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), seed(seed) {
         if (!IsPowerOf4(samplesPerPixel))
-            spectra::diagnostics::PrintWarning("PMJ02BNSampler results are best with power-of-4 samples per "
+            diagnostics::PrintWarning("PMJ02BNSampler results are best with power-of-4 samples per "
                                                "pixel (1, 4, 16, 64, ...)");
         // Get sorted pmj02bn samples for pixel samples
-        if (samplesPerPixel > nPMJ02bnSamples) throw std::runtime_error(spectra::diagnostics::Format("PMJ02BNSampler only supports up to %d samples per pixel", nPMJ02bnSamples));
+        if (samplesPerPixel > nPMJ02bnSamples) throw std::runtime_error(diagnostics::Format("PMJ02BNSampler only supports up to %d samples per pixel", nPMJ02bnSamples));
         // Compute _pixelTileSize_ for pmj02bn pixel samples and allocate _pixelSamples_
         pixelTileSize     = 1 << (Log4Int(nPMJ02bnSamples) - Log4Int(RoundUpPow4(samplesPerPixel)));
         int nPixelSamples = pixelTileSize * pixelTileSize * samplesPerPixel;
@@ -215,7 +215,7 @@ namespace spectra {
         else if (s == "owen")
             randomizer = RandomizeStrategy::Owen;
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unknown randomization strategy given to SobolSampler", s));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to SobolSampler", s));
 
         int seed = parameters.GetOneInt("seed", Options->seed);
 
@@ -336,7 +336,7 @@ namespace spectra {
         DebugMLTSampler ds(nSampleStreams);
         ds.u.resize(state.size());
         for (size_t i = 0; i < state.size(); ++i) {
-            if (!Atof(state[i], &ds.u[i])) throw std::runtime_error(spectra::diagnostics::Format("Invalid value in --debugstate: %s", state[i]));
+            if (!Atof(state[i], &ds.u[i])) throw std::runtime_error(diagnostics::Format("Invalid value in --debugstate: %s", state[i]));
         }
         return ds;
     }
@@ -359,8 +359,8 @@ namespace spectra {
         else if (name == "stratified")
             sampler = StratifiedSampler::Create(parameters, loc, alloc);
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: sampler type unknown.", name));
-        if (!sampler) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create sampler.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: sampler type unknown.", name));
+        if (!sampler) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create sampler.", name));
         parameters.ReportUnused();
 
         return sampler;

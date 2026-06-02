@@ -149,9 +149,9 @@ namespace spectra {
             static std::mutex mutex;
 
             std::vector<std::string> params = SplitStringsFromWhitespace(name);
-            if (params.size() != 2 || params[0] != "gamma") throw std::runtime_error(spectra::diagnostics::Format("%s: expected \"gamma <value>\" for color encoding", name));
+            if (params.size() != 2 || params[0] != "gamma") throw std::runtime_error(diagnostics::Format("%s: expected \"gamma <value>\" for color encoding", name));
             Float gamma = atof(params[1].c_str());
-            if (gamma == 0) throw std::runtime_error(spectra::diagnostics::Format("%s: unable to parse gamma value", params[1]));
+            if (gamma == 0) throw std::runtime_error(diagnostics::Format("%s: unable to parse gamma value", params[1]));
 
             std::lock_guard<std::mutex> lock(mutex);
             auto iter = cache.find(gamma);

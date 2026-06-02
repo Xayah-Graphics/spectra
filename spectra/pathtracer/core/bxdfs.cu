@@ -567,7 +567,7 @@ namespace spectra {
 #define SAFE_READ(vars, size, count) ASSERT(fread(vars, size, count, file) == (count), "Unable to read " #vars ".")
 
         FILE* file = FOpenRead(filename);
-        if (file == NULL) throw std::runtime_error(spectra::diagnostics::Format("%s: unable to open file", filename));
+        if (file == NULL) throw std::runtime_error(diagnostics::Format("%s: unable to open file", filename));
 
         ASSERT(!fseek(file, 0, SEEK_END), "Unable to seek to end of file.");
 
@@ -692,7 +692,7 @@ namespace spectra {
                 luminance.shape[2] == spectra.shape[3] && luminance.shape[3] == spectra.shape[4] &&
 
                 jacobian.shape.size() == 1 && jacobian.shape[0] == 1 && jacobian.dtype == Tensor::UInt8)) {
-            throw std::runtime_error(spectra::diagnostics::Format("%s: invalid BRDF file structure.", filename));
+            throw std::runtime_error(diagnostics::Format("%s: invalid BRDF file structure.", filename));
             return nullptr;
         }
 
@@ -703,7 +703,7 @@ namespace spectra {
         if (!brdf->isotropic) {
             float* phi_i_data = (float*) phi_i.data.get();
             int reduction     = (int) std::rint((2 * Pi) / (phi_i_data[phi_i.shape[0] - 1] - phi_i_data[0]));
-            if (reduction != 1) throw std::runtime_error(spectra::diagnostics::Format("%s: reduction %d (!= 1) not supported", filename, reduction));
+            if (reduction != 1) throw std::runtime_error(diagnostics::Format("%s: reduction %d (!= 1) not supported", filename, reduction));
         }
 
         /* Construct NDF interpolant data structure */

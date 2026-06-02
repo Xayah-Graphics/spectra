@@ -46,7 +46,7 @@ namespace spectra {
         else if (name == "exhaustive")
             return alloc.new_object<ExhaustiveLightSampler>(lights, alloc);
         else {
-            throw std::runtime_error(spectra::diagnostics::Format(R"(Light sample distribution type "%s" unknown.)", name.c_str()));
+            throw std::runtime_error(diagnostics::Format(R"(Light sample distribution type "%s" unknown.)", name.c_str()));
         }
     }
 

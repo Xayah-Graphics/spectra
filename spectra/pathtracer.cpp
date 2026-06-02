@@ -134,7 +134,7 @@ namespace xayah::pathtracer {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
-        RenderPipeline(std::string_view scene_name, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        RenderPipeline(const spectra::scene::Scene& scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
         ~RenderPipeline() noexcept;
 
         RenderPipeline(const RenderPipeline& other)                = delete;
@@ -388,10 +388,10 @@ namespace {
 } // namespace
 
 namespace xayah::pathtracer {
-    RenderPipeline::RenderPipeline(std::string_view scene_name, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    RenderPipeline::RenderPipeline(const spectra::scene::Scene& scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         try {
             RenderPipeline& pathtracer = *this;
-            if (scene_name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
+            if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
             if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
             if (frame_count == 0) throw std::runtime_error("Spectra pathtracer requires at least one frame in flight");
             if (spectra::Options == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer before Spectra pathtracer runtime is initialized");
@@ -400,8 +400,7 @@ namespace xayah::pathtracer {
             pathtracer.device          = &device;
             pathtracer.frame_count     = frame_count;
 
-            spectra::scene::Scene scene = spectra::scene::BuildScene(scene_name);
-            pathtracer.integrator       = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene, spectra::Point2i{resolution[0], resolution[1]});
+            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene, spectra::Point2i{resolution[0], resolution[1]});
             pathtracer.integrator->PrefetchGPUAllocations();
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
@@ -567,7 +566,7 @@ namespace xayah::pathtracer {
             result.rendered_sample = true;
             result.sample_pixels   = sample_pixels;
         }
-        RenderPipeline::FrameResource& output_frame = pathtracer.frames.at(frame_index);
+        FrameResource& output_frame = pathtracer.frames.at(frame_index);
         pathtracer.integrator->UpdateFramebufferFromFilm(pathtracer.pixel_bounds, pathtracer.exposure, output_frame.cuda_pixels);
 
         cudaExternalSemaphoreSignalParams signal_params{};
@@ -577,7 +576,7 @@ namespace xayah::pathtracer {
 
     void RenderPipeline::record_copy(const vk::raii::CommandBuffer& command_buffer) {
         RenderPipeline& pathtracer                    = *this;
-        RenderPipeline::FrameResource& frame          = pathtracer.frames.at(pathtracer.active_frame_index);
+        FrameResource& frame          = pathtracer.frames.at(pathtracer.active_frame_index);
         const vk::PipelineStageFlags2 src_image_stage = frame.image_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader;
         const vk::AccessFlags2 src_image_access       = frame.image_layout == vk::ImageLayout::eUndefined ? vk::AccessFlagBits2::eNone : vk::AccessFlagBits2::eShaderSampledRead;
         transition_image_layout(command_buffer, *frame.image, frame.image_layout, vk::ImageLayout::eTransferDstOptimal, vk::ImageAspectFlagBits::eColor, src_image_stage, src_image_access, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
@@ -840,15 +839,6 @@ namespace xayah::pathtracer {
 } // namespace xayah::pathtracer
 
 
-namespace xayah::pathtracer {
-    [[nodiscard]] spectra::SpectraOptions interactive_runtime_options() {
-        spectra::SpectraOptions options{};
-        options.nThreads       = 30;
-        options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
-        return options;
-    }
-} // namespace xayah::pathtracer
-
 namespace xayah {
     class SpectraPathtracer::Impl {
     public:
@@ -931,11 +921,12 @@ namespace xayah {
             std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
+        spectra::scene::Scene scene{};
         std::optional<spectra::scene::SceneInfo> scene_info{};
         std::array<int, 2> scene_film_resolution{0, 0};
         spectra::Transform scene_camera_from_world{};
         int scene_sampler_sample_count{0};
-        std::unique_ptr<xayah::pathtracer::RenderPipeline> render_pipeline{};
+        std::unique_ptr<pathtracer::RenderPipeline> render_pipeline{};
         std::unique_ptr<spectra::pathtracer::GpuRuntime> gpu_runtime{};
 
         struct {
@@ -983,23 +974,23 @@ namespace xayah {
         return this->impl->name();
     }
 
-    void SpectraPathtracer::attach(xayah::Spectra& spectra) {
+    void SpectraPathtracer::attach(Spectra& spectra) {
         this->impl->attach(spectra);
     }
 
-    void SpectraPathtracer::detach(xayah::Spectra& spectra) noexcept {
+    void SpectraPathtracer::detach(Spectra& spectra) noexcept {
         this->impl->detach(spectra);
     }
 
-    void SpectraPathtracer::before_imgui_shutdown(xayah::Spectra& spectra) noexcept {
+    void SpectraPathtracer::before_imgui_shutdown(Spectra& spectra) noexcept {
         this->impl->before_imgui_shutdown(spectra);
     }
 
-    void SpectraPathtracer::after_imgui_created(xayah::Spectra& spectra) {
+    void SpectraPathtracer::after_imgui_created(Spectra& spectra) {
         this->impl->after_imgui_created(spectra);
     }
 
-    xayah::SpectraFrameResult SpectraPathtracer::begin_frame(xayah::Spectra& spectra, const xayah::SpectraFrameInfo& frame) {
+    SpectraFrameResult SpectraPathtracer::begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) {
         return this->impl->begin_frame(spectra, frame);
     }
 
@@ -1077,13 +1068,17 @@ namespace xayah {
         return *this->scene_info;
     }
 
-    void SpectraPathtracer::Impl::attach(xayah::Spectra& spectra) {
+    void SpectraPathtracer::Impl::attach(Spectra& spectra) {
         if (this->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
         this->update_host(spectra.physical_device(), spectra.device(), spectra.frame_count(), spectra.swapchain_extent());
         this->attached = true;
         try {
-            this->gpu_runtime = std::make_unique<spectra::pathtracer::GpuRuntime>(xayah::pathtracer::interactive_runtime_options());
-            this->scene_info  = spectra::scene::SceneInfoFor(this->scene_name);
+            spectra::SpectraOptions options{};
+            options.nThreads       = 30;
+            options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
+            this->gpu_runtime      = std::make_unique<spectra::pathtracer::GpuRuntime>(options);
+            this->scene            = spectra::scene::BuildScene(this->scene_name);
+            this->scene_info       = spectra::scene::DescribeScene(this->scene);
             this->register_panels(spectra);
             spectra.set_window_detail(this->window_detail());
         } catch (...) {
@@ -1092,26 +1087,26 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::detach(xayah::Spectra&) noexcept {
+    void SpectraPathtracer::Impl::detach(Spectra&) noexcept {
         this->detach_noexcept();
     }
 
-    void SpectraPathtracer::Impl::before_imgui_shutdown(xayah::Spectra&) noexcept {
+    void SpectraPathtracer::Impl::before_imgui_shutdown(Spectra&) noexcept {
         if (this->render_pipeline != nullptr) this->render_pipeline->release_viewport_descriptors_noexcept();
     }
 
-    void SpectraPathtracer::Impl::after_imgui_created(xayah::Spectra&) {
+    void SpectraPathtracer::Impl::after_imgui_created(Spectra&) {
         if (this->render_pipeline != nullptr) this->render_pipeline->create_viewport_descriptors();
     }
 
-    xayah::SpectraFrameResult SpectraPathtracer::Impl::begin_frame(xayah::Spectra& spectra, const xayah::SpectraFrameInfo& frame) {
+    SpectraFrameResult SpectraPathtracer::Impl::begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) {
         this->update_host(spectra.physical_device(), spectra.device(), spectra.frame_count(), spectra.swapchain_extent());
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
-        xayah::SpectraFrameResult result{};
+        SpectraFrameResult result{};
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
             result.close_requested                                                   = this->process_camera_input();
-            const xayah::pathtracer::RenderPipeline::RenderFrameResult render_result = this->render_pipeline->render_frame(frame.frame_index, this->camera.moving_from_camera);
+            const pathtracer::RenderPipeline::RenderFrameResult render_result = this->render_pipeline->render_frame(frame.frame_index, this->camera.moving_from_camera);
             result.completion_semaphore                                              = this->render_pipeline->active_cuda_complete_semaphore();
             this->update_frame_statistics(frame.frame_index, frame.image_index, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
         } else {
@@ -1141,6 +1136,7 @@ namespace xayah {
     }
 
     void SpectraPathtracer::Impl::unload_scene_noexcept() noexcept {
+        this->scene = spectra::scene::Scene{};
         this->scene_info.reset();
         this->scene_film_resolution      = {0, 0};
         this->scene_camera_from_world    = spectra::Transform{};
@@ -1154,8 +1150,11 @@ namespace xayah {
         try {
             if (this->gpu_runtime == nullptr) throw std::runtime_error("Spectra pathtracer runtime is not initialized");
             if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available");
-            this->gpu_runtime->ResetOptions(xayah::pathtracer::interactive_runtime_options());
-            this->render_pipeline            = std::make_unique<xayah::pathtracer::RenderPipeline>(this->scene_name, resolution, *this->physical_device, *this->device, this->frame_count);
+            spectra::SpectraOptions options{};
+            options.nThreads       = 30;
+            options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
+            this->gpu_runtime->ResetOptions(options);
+            this->render_pipeline            = std::make_unique<pathtracer::RenderPipeline>(this->scene, resolution, *this->physical_device, *this->device, this->frame_count);
             this->scene_film_resolution      = this->render_pipeline->film_resolution();
             this->scene_sampler_sample_count = this->render_pipeline->sampler_sample_count();
             this->scene_camera_from_world    = this->render_pipeline->camera_from_world_transform();
@@ -1176,7 +1175,7 @@ namespace xayah {
         if (this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
 
         const bool preserve_camera = this->camera.initialized;
-        const xayah::pathtracer::InteractiveCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
+        const pathtracer::InteractiveCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
         const float preserved_speed             = this->camera.speed;
         const int preserved_samples             = this->render_pipeline == nullptr ? 0 : this->render_pipeline->target_sample_count();
         const float preserved_exposure          = this->render_pipeline == nullptr ? 1.0f : this->render_pipeline->current_exposure();
@@ -1197,7 +1196,7 @@ namespace xayah {
                 this->camera.up                   = preserved_pose.up;
                 this->camera.basis_handedness     = preserved_pose.basis_handedness;
                 this->camera.speed                = preserved_speed;
-                this->camera.fov_degrees          = xayah::pathtracer::interactive_camera_fov_degrees(this->active_scene_info());
+                this->camera.fov_degrees          = pathtracer::interactive_camera_fov_degrees(this->active_scene_info());
                 this->camera.mouse_position_known = false;
                 this->camera.input_enabled        = false;
                 this->camera.moving_from_camera   = xayah::pathtracer::moving_from_camera_from_interactive_pose(this->camera.camera_from_world, preserved_pose);
@@ -1262,11 +1261,11 @@ namespace xayah {
         const float initial_move_scale = this->render_pipeline->camera_initial_move_scale();
         if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
         this->camera.camera_from_world                      = this->scene_camera_from_world;
-        const xayah::pathtracer::InteractiveCameraPose pose = xayah::pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
+        const pathtracer::InteractiveCameraPose pose = pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
         this->camera.initialized                            = true;
         this->camera.input_enabled                          = false;
         this->camera.speed                                  = initial_move_scale * 60.0f;
-        this->camera.fov_degrees                            = xayah::pathtracer::interactive_camera_fov_degrees(this->active_scene_info());
+        this->camera.fov_degrees                            = pathtracer::interactive_camera_fov_degrees(this->active_scene_info());
         this->camera.basis_handedness                       = pose.basis_handedness;
         this->camera.eye                                    = pose.eye;
         this->camera.center                                 = pose.center;
@@ -1284,7 +1283,7 @@ namespace xayah {
     void SpectraPathtracer::Impl::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
-        const xayah::pathtracer::InteractiveCameraPose pose = xayah::pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
+        const pathtracer::InteractiveCameraPose pose = pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
         this->camera.eye                                    = pose.eye;
         this->camera.center                                 = pose.center;
         this->camera.up                                     = pose.up;
@@ -1366,7 +1365,7 @@ namespace xayah {
         const bool shift = io.KeyShift;
         const bool ctrl  = io.KeyCtrl;
         const bool alt   = io.KeyAlt;
-        xayah::pathtracer::InteractiveCameraPose pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
+        pathtracer::InteractiveCameraPose pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
         bool camera_changed = false;
         if (!alt) {
             if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid");
@@ -1815,153 +1814,79 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::register_panels(xayah::Spectra& spectra) {
-        struct PanelDefinition {
-            const char* id{};
-            const char* title{};
-            const char* icon{};
-            const char* shortcut_label{};
-            ImGuiKey shortcut_key{ImGuiKey_None};
-            xayah::SpectraDockSlot dock_slot{xayah::SpectraDockSlot::Floating};
-            ImGuiWindowFlags window_flags{0};
-            bool closable{true};
-            bool show_in_menu{true};
-            bool show_in_toolbar{true};
-            bool zero_window_padding{false};
-            void (xayah::SpectraPathtracer::Impl::*draw)();
-        };
-
-        constexpr std::array panels{
-            PanelDefinition{
-                "pathtracer.viewport",
-                "Viewport",
-                nullptr,
-                nullptr,
-                ImGuiKey_None,
-                xayah::SpectraDockSlot::Center,
-                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
-                false,
-                false,
-                false,
-                true,
-                &xayah::SpectraPathtracer::Impl::draw_viewport_window,
-            },
-            PanelDefinition{
-                "pathtracer.camera",
-                "Camera",
-                ICON_MS_PHOTO_CAMERA,
-                "F1",
-                ImGuiKey_F1,
-                xayah::SpectraDockSlot::Left,
-                0,
-                true,
-                true,
-                true,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_camera_window,
-            },
-            PanelDefinition{
-                "pathtracer.scene_browser",
-                "Scene Browser",
-                ICON_MS_ACCOUNT_TREE,
-                "F2",
-                ImGuiKey_F2,
-                xayah::SpectraDockSlot::Right,
-                0,
-                true,
-                true,
-                true,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_scene_browser_window,
-            },
-            PanelDefinition{
-                "pathtracer.settings",
-                "Settings",
-                ICON_MS_SETTINGS,
-                "F3",
-                ImGuiKey_F3,
-                xayah::SpectraDockSlot::Left,
-                0,
-                true,
-                true,
-                true,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_settings_window,
-            },
-            PanelDefinition{
-                "pathtracer.inspector",
-                "Inspector",
-                ICON_MS_LIST_ALT,
-                "F4",
-                ImGuiKey_F4,
-                xayah::SpectraDockSlot::RightBottom,
-                0,
-                true,
-                true,
-                true,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_inspector_window,
-            },
-            PanelDefinition{
-                "pathtracer.environment",
-                "Environment",
-                ICON_MS_PUBLIC,
-                "F5",
-                ImGuiKey_F5,
-                xayah::SpectraDockSlot::LeftBottom,
-                0,
-                true,
-                true,
-                true,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_environment_window,
-            },
-            PanelDefinition{
-                "pathtracer.tonemapper",
-                "Tonemapper",
-                ICON_MS_TONALITY,
-                "F6",
-                ImGuiKey_F6,
-                xayah::SpectraDockSlot::LeftBottom,
-                0,
-                true,
-                true,
-                true,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_tonemapper_window,
-            },
-            PanelDefinition{
-                "pathtracer.statistics",
-                "Statistics",
-                ICON_MS_ANALYTICS,
-                nullptr,
-                ImGuiKey_None,
-                xayah::SpectraDockSlot::Bottom,
-                0,
-                true,
-                true,
-                false,
-                false,
-                &xayah::SpectraPathtracer::Impl::draw_statistics_window,
-            },
-        };
-
-        for (const PanelDefinition& definition : panels) {
-            if (definition.id == nullptr || definition.title == nullptr || definition.draw == nullptr) throw std::runtime_error("Invalid Spectra pathtracer panel definition");
-            xayah::SpectraPanel panel{};
-            panel.id                  = definition.id;
-            panel.title               = definition.title;
-            panel.icon                = definition.icon == nullptr ? "" : definition.icon;
-            panel.shortcut_label      = definition.shortcut_label == nullptr ? "" : definition.shortcut_label;
-            panel.shortcut_key        = definition.shortcut_key;
-            panel.dock_slot           = definition.dock_slot;
-            panel.window_flags        = definition.window_flags;
-            panel.closable            = definition.closable;
-            panel.show_in_menu        = definition.show_in_menu;
-            panel.show_in_toolbar     = definition.show_in_toolbar;
-            panel.zero_window_padding = definition.zero_window_padding;
-            panel.draw                = [this, draw = definition.draw] { (this->*draw)(); };
-            spectra.register_panel(std::move(panel));
-        }
+    void SpectraPathtracer::Impl::register_panels(Spectra& spectra) {
+        spectra.register_panel(SpectraPanel{
+            .id                  = "pathtracer.viewport",
+            .title               = "Viewport",
+            .dock_slot           = SpectraDockSlot::Center,
+            .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
+            .closable            = false,
+            .show_in_menu        = false,
+            .show_in_toolbar     = false,
+            .zero_window_padding = true,
+            .draw                = [this] { this->draw_viewport_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id             = "pathtracer.camera",
+            .title          = "Camera",
+            .icon           = ICON_MS_PHOTO_CAMERA,
+            .shortcut_label = "F1",
+            .shortcut_key   = ImGuiKey_F1,
+            .dock_slot      = SpectraDockSlot::Left,
+            .draw           = [this] { this->draw_camera_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id             = "pathtracer.scene_browser",
+            .title          = "Scene Browser",
+            .icon           = ICON_MS_ACCOUNT_TREE,
+            .shortcut_label = "F2",
+            .shortcut_key   = ImGuiKey_F2,
+            .dock_slot      = SpectraDockSlot::Right,
+            .draw           = [this] { this->draw_scene_browser_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id             = "pathtracer.settings",
+            .title          = "Settings",
+            .icon           = ICON_MS_SETTINGS,
+            .shortcut_label = "F3",
+            .shortcut_key   = ImGuiKey_F3,
+            .dock_slot      = SpectraDockSlot::Left,
+            .draw           = [this] { this->draw_settings_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id             = "pathtracer.inspector",
+            .title          = "Inspector",
+            .icon           = ICON_MS_LIST_ALT,
+            .shortcut_label = "F4",
+            .shortcut_key   = ImGuiKey_F4,
+            .dock_slot      = SpectraDockSlot::RightBottom,
+            .draw           = [this] { this->draw_inspector_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id             = "pathtracer.environment",
+            .title          = "Environment",
+            .icon           = ICON_MS_PUBLIC,
+            .shortcut_label = "F5",
+            .shortcut_key   = ImGuiKey_F5,
+            .dock_slot      = SpectraDockSlot::LeftBottom,
+            .draw           = [this] { this->draw_environment_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id             = "pathtracer.tonemapper",
+            .title          = "Tonemapper",
+            .icon           = ICON_MS_TONALITY,
+            .shortcut_label = "F6",
+            .shortcut_key   = ImGuiKey_F6,
+            .dock_slot      = SpectraDockSlot::LeftBottom,
+            .draw           = [this] { this->draw_tonemapper_window(); },
+        });
+        spectra.register_panel(SpectraPanel{
+            .id              = "pathtracer.statistics",
+            .title           = "Statistics",
+            .icon            = ICON_MS_ANALYTICS,
+            .dock_slot       = SpectraDockSlot::Bottom,
+            .show_in_toolbar = false,
+            .draw            = [this] { this->draw_statistics_window(); },
+        });
     }
 } // namespace xayah

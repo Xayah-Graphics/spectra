@@ -244,7 +244,7 @@ namespace spectra {
 
         // Compute sampling distribution for _ProjectionLight_
         ImageChannelDesc channelDesc = image.GetChannelDesc({"R", "G", "B"});
-        if (!channelDesc) throw std::runtime_error(spectra::diagnostics::Format("Image used for ProjectionLight does not have R, G, B channels."));
+        if (!channelDesc) throw std::runtime_error(diagnostics::Format("Image used for ProjectionLight does not have R, G, B channels."));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
         auto dwdA = [&](const Point2f& p) {
@@ -367,17 +367,17 @@ namespace spectra {
         Float fov   = parameters.GetOneFloat("fov", 90.);
 
         std::string texname = ResolveFilename(parameters.GetOneString("filename", ""));
-        if (texname.empty()) throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide \"filename\" to \"projection\" light source"));
+        if (texname.empty()) throw std::runtime_error(diagnostics::Format(loc, "Must provide \"filename\" to \"projection\" light source"));
 
         ImageAndMetadata imageAndMetadata = Image::Read(texname, alloc);
-        if (imageAndMetadata.image.HasAnyInfinitePixels()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: image has infinite pixel values and so is not suitable as a light.", texname));
-        if (imageAndMetadata.image.HasAnyNaNPixels()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: image has not-a-number pixel values and so is not suitable as a light.", texname));
+        if (imageAndMetadata.image.HasAnyInfinitePixels()) throw std::runtime_error(diagnostics::Format(loc, "%s: image has infinite pixel values and so is not suitable as a light.", texname));
+        if (imageAndMetadata.image.HasAnyNaNPixels()) throw std::runtime_error(diagnostics::Format(loc, "%s: image has not-a-number pixel values and so is not suitable as a light.", texname));
 
         const RGBColorSpace* colorSpace = imageAndMetadata.metadata.GetColorSpace();
 
         ImageChannelDesc channelDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Image provided to \"projection\" light must have R, G, "
+            throw std::runtime_error(diagnostics::Format(loc, "Image provided to \"projection\" light must have R, G, "
                                                                        "and B channels."));
         Image image = imageAndMetadata.image.SelectChannels(channelDesc, alloc);
 
@@ -485,19 +485,19 @@ namespace spectra {
 
         std::string texname = ResolveFilename(parameters.GetOneString("filename", ""));
         if (texname.empty())
-            spectra::diagnostics::PrintWarning(loc, "No \"filename\" parameter provided for goniometric light.");
+            diagnostics::PrintWarning(loc, "No \"filename\" parameter provided for goniometric light.");
         else {
             ImageAndMetadata imageAndMetadata = Image::Read(texname, alloc);
 
-            if (imageAndMetadata.image.HasAnyInfinitePixels()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: image has infinite pixel values and so is not suitable as a light.", texname));
+            if (imageAndMetadata.image.HasAnyInfinitePixels()) throw std::runtime_error(diagnostics::Format(loc, "%s: image has infinite pixel values and so is not suitable as a light.", texname));
             if (imageAndMetadata.image.HasAnyNaNPixels())
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "%s: image has not-a-number pixel values and so is not suitable as "
                     "a light.",
                     texname));
 
             if (imageAndMetadata.image.Resolution().x != imageAndMetadata.image.Resolution().y)
-                throw std::runtime_error(spectra::diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
+                throw std::runtime_error(diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
                                                                       "this is an equal-area environment map.",
                     texname, imageAndMetadata.image.Resolution().x, imageAndMetadata.image.Resolution().y));
 
@@ -506,7 +506,7 @@ namespace spectra {
 
             if (rgbDesc) {
                 if (yDesc)
-                    throw std::runtime_error(spectra::diagnostics::Format("%s: has both \"R\", \"G\", and \"B\" or \"Y\" "
+                    throw std::runtime_error(diagnostics::Format("%s: has both \"R\", \"G\", and \"B\" or \"Y\" "
                                                                           "channels.",
                         texname));
                 image = Image(imageAndMetadata.image.Format(), imageAndMetadata.image.Resolution(), {"Y"}, imageAndMetadata.image.Encoding(), alloc);
@@ -515,7 +515,7 @@ namespace spectra {
             } else if (yDesc)
                 image = imageAndMetadata.image;
             else
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "%s: has neither \"R\", \"G\", and \"B\" or \"Y\" "
                     "channels.",
                     texname));
@@ -562,7 +562,7 @@ namespace spectra {
         if (image) {
             ImageChannelDesc desc = image.GetChannelDesc({"R", "G", "B"});
             if (!desc)
-                throw std::runtime_error(spectra::diagnostics::Format("Image used for DiffuseAreaLight doesn't have R, G, B "
+                throw std::runtime_error(diagnostics::Format("Image used for DiffuseAreaLight doesn't have R, G, B "
                                                                       "channels."));
             CHECK_EQ(3, desc.size());
             CHECK(desc.IsIdentity());
@@ -574,7 +574,7 @@ namespace spectra {
         // Warn if light has transformation with non-uniform scale, though not
         // for Triangles or bilinear patches, since this doesn't matter for them.
         if (renderFromLight.HasScale() && !shape.Is<Triangle>() && !shape.Is<BilinearPatch>())
-            spectra::diagnostics::PrintWarning("Scaling detected in rendering to light space transformation! "
+            diagnostics::PrintWarning("Scaling detected in rendering to light space transformation! "
                                                "The system has numerous assumptions, implicit and explicit, "
                                                "that this transform will have no scale factors in it. "
                                                "Proceed at your own risk; your image may have errors.");
@@ -691,19 +691,19 @@ namespace spectra {
         Image image(alloc);
         const RGBColorSpace* imageColorSpace = nullptr;
         if (!filename.empty()) {
-            if (L) throw std::runtime_error(spectra::diagnostics::Format(loc, "Both \"L\" and \"filename\" specified for DiffuseAreaLight."));
+            if (L) throw std::runtime_error(diagnostics::Format(loc, "Both \"L\" and \"filename\" specified for DiffuseAreaLight."));
             ImageAndMetadata im = Image::Read(filename, alloc);
 
-            if (im.image.HasAnyInfinitePixels()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: image has infinite pixel values and so is not suitable as a light.", filename));
+            if (im.image.HasAnyInfinitePixels()) throw std::runtime_error(diagnostics::Format(loc, "%s: image has infinite pixel values and so is not suitable as a light.", filename));
             if (im.image.HasAnyNaNPixels())
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "%s: image has not-a-number pixel values and so is not suitable as "
                     "a light.",
                     filename));
 
             ImageChannelDesc channelDesc = im.image.GetChannelDesc({"R", "G", "B"});
             if (!channelDesc)
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "%s: Image provided to \"diffuse\" area light must have "
                     "R, G, and B channels.",
                     filename));
@@ -797,13 +797,13 @@ namespace spectra {
         // Initialize sampling PDFs for image infinite area light
         ImageChannelDesc channelDesc = image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
-            throw std::runtime_error(spectra::diagnostics::Format("%s: image used for ImageInfiniteLight doesn't have R, G, B "
+            throw std::runtime_error(diagnostics::Format("%s: image used for ImageInfiniteLight doesn't have R, G, B "
                                                                   "channels.",
                 filename));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
         if (image.Resolution().x != image.Resolution().y)
-            throw std::runtime_error(spectra::diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
+            throw std::runtime_error(diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
                                                                   "this is an equal area environment map.",
                 filename, image.Resolution().x, image.Resolution().y));
         Array2D<Float> d = image.GetSamplingDistribution();
@@ -878,18 +878,18 @@ namespace spectra {
     PortalImageInfiniteLight::PortalImageInfiniteLight(const Transform& renderFromLight, Image equalAreaImage, const RGBColorSpace* imageColorSpace, Float scale, const std::string& filename, std::vector<Point3f> p, Allocator alloc) : LightBase(LightType::Infinite, renderFromLight, MediumInterface()), image(alloc), imageColorSpace(imageColorSpace), scale(scale), filename(filename), distribution(alloc) {
         ImageChannelDesc channelDesc = equalAreaImage.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
-            throw std::runtime_error(spectra::diagnostics::Format("%s: image used for PortalImageInfiniteLight doesn't have R, "
+            throw std::runtime_error(diagnostics::Format("%s: image used for PortalImageInfiniteLight doesn't have R, "
                                                                   "G, B channels.",
                 filename));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
 
         if (equalAreaImage.Resolution().x != equalAreaImage.Resolution().y)
-            throw std::runtime_error(spectra::diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
+            throw std::runtime_error(diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
                                                                   "this is an equal area environment map.",
                 filename, equalAreaImage.Resolution().x, equalAreaImage.Resolution().y));
 
-        if (p.size() != 4) throw std::runtime_error(spectra::diagnostics::Format("Expected 4 vertices for infinite light portal but given %d", p.size()));
+        if (p.size() != 4) throw std::runtime_error(diagnostics::Format("Expected 4 vertices for infinite light portal but given %d", p.size()));
         for (int i = 0; i < 4; ++i) portal[i] = p[i];
 
         // PortalImageInfiniteLight constructor conclusion
@@ -899,9 +899,9 @@ namespace spectra {
         Vector3f p32 = Normalize(portal[2] - portal[3]);
         Vector3f p03 = Normalize(portal[3] - portal[0]);
         // Do opposite edges have the same direction?
-        if (std::abs(Dot(p01, p32) - 1) > .001 || std::abs(Dot(p12, p03) - 1) > .001) throw std::runtime_error(spectra::diagnostics::Format("Infinite light portal isn't a planar quadrilateral"));
+        if (std::abs(Dot(p01, p32) - 1) > .001 || std::abs(Dot(p12, p03) - 1) > .001) throw std::runtime_error(diagnostics::Format("Infinite light portal isn't a planar quadrilateral"));
         // Sides perpendicular?
-        if (std::abs(Dot(p01, p12)) > .001 || std::abs(Dot(p12, p32)) > .001 || std::abs(Dot(p32, p03)) > .001 || std::abs(Dot(p03, p01)) > .001) throw std::runtime_error(spectra::diagnostics::Format("Infinite light portal isn't a planar quadrilateral"));
+        if (std::abs(Dot(p01, p12)) > .001 || std::abs(Dot(p12, p32)) > .001 || std::abs(Dot(p32, p03)) > .001 || std::abs(Dot(p03, p01)) > .001) throw std::runtime_error(diagnostics::Format("Infinite light portal isn't a planar quadrilateral"));
         portalFrame = Frame::FromXY(p03, p01);
 
         // Resample environment map into rectified image
@@ -1211,7 +1211,7 @@ namespace spectra {
                 light = alloc.new_object<UniformInfiniteLight>(renderFromLight, &colorSpace->illuminant, scale);
             } else if (!L.empty() && portal.empty()) {
                 if (!filename.empty())
-                    throw std::runtime_error(spectra::diagnostics::Format(loc, "Can't specify both emission \"L\" and "
+                    throw std::runtime_error(diagnostics::Format(loc, "Can't specify both emission \"L\" and "
                                                                                "\"filename\" with ImageInfiniteLight"));
 
                 // Scale the light spectrum to be equivalent to 1 nit
@@ -1238,7 +1238,7 @@ namespace spectra {
                     // that doesn't allow things like putting an emissive sphere out
                     // there for the sun, so here we go...
                     if (!L[0].Is<RGBIlluminantSpectrum>())
-                        spectra::diagnostics::PrintWarning(loc, "Converting non-RGB \"L\" parameter to RGB so that a "
+                        diagnostics::PrintWarning(loc, "Converting non-RGB \"L\" parameter to RGB so that a "
                                                                 "portal light can be used.");
                     XYZ xyz = SpectrumToXYZ(L[0]);
                     RGB rgb = RGBColorSpace::sRGB->ToRGB(xyz);
@@ -1253,12 +1253,12 @@ namespace spectra {
                     imageAndMetadata = Image::Read(filename, alloc);
 
                     if (imageAndMetadata.image.HasAnyInfinitePixels())
-                        throw std::runtime_error(spectra::diagnostics::Format(loc,
+                        throw std::runtime_error(diagnostics::Format(loc,
                             "%s: image has infinite pixel values and so is not "
                             "suitable as a light.",
                             filename));
                     if (imageAndMetadata.image.HasAnyNaNPixels())
-                        throw std::runtime_error(spectra::diagnostics::Format(loc,
+                        throw std::runtime_error(diagnostics::Format(loc,
                             "%s: image has not-a-number pixel values and so is not "
                             "suitable as a light.",
                             filename));
@@ -1268,7 +1268,7 @@ namespace spectra {
 
                 ImageChannelDesc channelDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
                 if (!channelDesc)
-                    throw std::runtime_error(spectra::diagnostics::Format(loc,
+                    throw std::runtime_error(diagnostics::Format(loc,
                         "%s: image provided to \"infinite\" light must "
                         "have R, G, and B channels.",
                         filename));
@@ -1314,9 +1314,9 @@ namespace spectra {
                     light = alloc.new_object<ImageInfiniteLight>(renderFromLight, std::move(image), colorSpace, scale, filename, alloc);
             }
         } else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: light type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: light type unknown.", name));
 
-        if (!light) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create light.", name));
+        if (!light) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create light.", name));
 
         parameters.ReportUnused();
         return light;
@@ -1327,9 +1327,9 @@ namespace spectra {
         if (name == "diffuse")
             area = DiffuseAreaLight::Create(renderFromLight, mediumInterface.outside, parameters, parameters.ColorSpace(), loc, alloc, shape, alpha);
         else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: area light type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: area light type unknown.", name));
 
-        if (!area) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create area light.", name));
+        if (!area) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create area light.", name));
 
         parameters.ReportUnused();
         return area;

@@ -210,14 +210,18 @@ namespace spectra::pathtracer {
                 this->RequireMaterial(shape.material);
                 Transform renderFromObject = this->RenderFromObjectTransform(shape.worldFromObject);
                 Allocator allocator        = this->compiled.threadAllocators.Get();
-                WavefrontShapeSceneEntity entity{};
-                static_cast<WavefrontSceneEntity&>(entity) = this->MakeEntity(shape.type, shape.parameters);
-                entity.renderFromObject                    = allocator.new_object<Transform>(renderFromObject);
-                entity.objectFromRender                    = allocator.new_object<Transform>(spectra::Inverse(renderFromObject));
-                entity.reverseOrientation                  = shape.reverseOrientation;
-                entity.materialName                        = shape.material;
-                entity.insideMedium                        = shape.insideMedium;
-                entity.outsideMedium                       = shape.outsideMedium;
+                WavefrontSceneEntity base  = this->MakeEntity(shape.type, shape.parameters);
+                WavefrontShapeSceneEntity entity{
+                    .name               = std::move(base.name),
+                    .loc                = base.loc,
+                    .parameters         = std::move(base.parameters),
+                    .renderFromObject   = allocator.new_object<Transform>(renderFromObject),
+                    .objectFromRender   = allocator.new_object<Transform>(Inverse(renderFromObject)),
+                    .reverseOrientation = shape.reverseOrientation,
+                    .materialName       = shape.material,
+                    .insideMedium       = shape.insideMedium,
+                    .outsideMedium      = shape.outsideMedium,
+                };
                 if (!shape.insideMedium.empty() || !shape.outsideMedium.empty()) this->compiled.haveMedia = true;
                 if (shape.areaLight.has_value()) entity.areaLight = this->MakeEntity(shape.areaLight->type, shape.areaLight->parameters);
                 return entity;
@@ -226,7 +230,7 @@ namespace spectra::pathtracer {
             [[nodiscard]] Medium FindMedium(const std::string& name, const FileLoc* loc) const {
                 if (name.empty()) return nullptr;
                 std::map<std::string, Medium>::const_iterator iter = this->compiled.media.find(name);
-                if (iter == this->compiled.media.end()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: medium not defined", name));
+                if (iter == this->compiled.media.end()) throw std::runtime_error(diagnostics::Format(loc, "%s: medium not defined", name));
                 return iter->second;
             }
 
@@ -235,15 +239,20 @@ namespace spectra::pathtracer {
                 if (settings.camera.fovDegrees <= 0.0f) throw std::runtime_error(std::format("{} scene camera fov must be positive.", this->source.source));
                 this->ApplyFilmResolutionOverride(&settings.film.parameters);
 
-                WavefrontSceneEntity filterEntity                      = this->MakeEntity(settings.filter.type, settings.filter.parameters);
-                WavefrontSceneEntity filmEntity                        = this->MakeEntity(settings.film.type, settings.film.parameters);
-                this->samplerEntity                                    = this->MakeEntity(settings.sampler.type, settings.sampler.parameters);
-                this->compiled.integrator                              = this->MakeEntity(settings.integrator.type, settings.integrator.parameters);
-                this->compiled.accelerator                             = this->MakeEntity(settings.accelerator.type, settings.accelerator.parameters);
-                static_cast<WavefrontSceneEntity&>(this->cameraEntity) = this->MakeEntity(settings.camera.type, settings.camera.parameters);
-                const Transform worldFromCamera                        = ToPathtracerTransform(settings.camera.worldFromCamera);
-                this->cameraEntity.cameraTransform                     = CameraTransform(AnimatedTransform(worldFromCamera, 0.0f, worldFromCamera, 1.0f));
-                this->cameraEntity.medium                              = settings.camera.medium;
+                WavefrontSceneEntity filterEntity = this->MakeEntity(settings.filter.type, settings.filter.parameters);
+                WavefrontSceneEntity filmEntity   = this->MakeEntity(settings.film.type, settings.film.parameters);
+                this->samplerEntity               = this->MakeEntity(settings.sampler.type, settings.sampler.parameters);
+                this->compiled.integrator         = this->MakeEntity(settings.integrator.type, settings.integrator.parameters);
+                this->compiled.accelerator        = this->MakeEntity(settings.accelerator.type, settings.accelerator.parameters);
+                WavefrontSceneEntity cameraEntity = this->MakeEntity(settings.camera.type, settings.camera.parameters);
+                const Transform worldFromCamera   = ToPathtracerTransform(settings.camera.worldFromCamera);
+                this->cameraEntity                = WavefrontCameraSceneEntity{
+                    .name            = std::move(cameraEntity.name),
+                    .loc             = cameraEntity.loc,
+                    .parameters      = std::move(cameraEntity.parameters),
+                    .cameraTransform = CameraTransform(AnimatedTransform(worldFromCamera, 0.0f, worldFromCamera, 1.0f)),
+                    .medium          = settings.camera.medium,
+                };
 
                 this->compiled.filmColorSpace = filmEntity.parameters.ColorSpace();
                 this->renderSettingsReady     = true;
@@ -252,7 +261,7 @@ namespace spectra::pathtracer {
                 this->compiled.filter = Filter::Create(filterEntity.name, filterEntity.parameters, &filterEntity.loc, alloc);
 
                 Float exposureTime = this->cameraEntity.parameters.GetOneFloat("shutterclose", 1.0f) - this->cameraEntity.parameters.GetOneFloat("shutteropen", 0.0f);
-                if (exposureTime <= 0.0f) throw std::runtime_error(spectra::diagnostics::Format(&this->cameraEntity.loc, "The specified camera shutter times imply that the shutter does not open. A black image will result."));
+                if (exposureTime <= 0.0f) throw std::runtime_error(diagnostics::Format(&this->cameraEntity.loc, "The specified camera shutter times imply that the shutter does not open. A black image will result."));
 
                 this->compiled.film = Film::Create(filmEntity.name, filmEntity.parameters, exposureTime, this->cameraEntity.cameraTransform, this->compiled.filter, &filmEntity.loc, alloc);
             }
@@ -285,9 +294,13 @@ namespace spectra::pathtracer {
                 else
                     this->RequireUniqueName(this->spectrumTextureNames, "spectrum texture", texture.name);
 
-                WavefrontTextureSceneEntity entity{};
-                static_cast<WavefrontSceneEntity&>(entity) = this->MakeEntity(texture.type, texture.parameters);
-                entity.renderFromObject                    = this->RenderFromObjectTransform(texture.worldFromTexture);
+                WavefrontSceneEntity base = this->MakeEntity(texture.type, texture.parameters);
+                WavefrontTransformedSceneEntity entity{
+                    .name             = std::move(base.name),
+                    .loc              = base.loc,
+                    .parameters       = std::move(base.parameters),
+                    .renderFromObject = this->RenderFromObjectTransform(texture.worldFromTexture),
+                };
 
                 std::lock_guard<std::mutex> lock(this->textureMutex);
                 if (texture.kind == scene::TextureKind::Float) {
@@ -305,8 +318,8 @@ namespace spectra::pathtracer {
                 }
 
                 std::string filename = ResolveFilename(entity.parameters.GetOneString("filename", ""));
-                if (filename.empty()) throw std::runtime_error(spectra::diagnostics::Format(&entity.loc, "\"string filename\" not provided for image texture."));
-                if (!FileExists(filename)) throw std::runtime_error(spectra::diagnostics::Format(&entity.loc, "%s: file not found.", filename));
+                if (filename.empty()) throw std::runtime_error(diagnostics::Format(&entity.loc, "\"string filename\" not provided for image texture."));
+                if (!FileExists(filename)) throw std::runtime_error(diagnostics::Format(&entity.loc, "%s: file not found.", filename));
 
                 if (this->loadingTextureFilenames.find(filename) != this->loadingTextureFilenames.end()) {
                     if (texture.kind == scene::TextureKind::Float)
@@ -341,9 +354,13 @@ namespace spectra::pathtracer {
                 this->RequireRenderSettings();
                 this->RequireUniqueName(this->mediumNames, "medium", medium.name);
 
-                WavefrontMediumSceneEntity entity{};
-                static_cast<WavefrontSceneEntity&>(entity) = this->MakeEntity(medium.type, medium.parameters);
-                entity.renderFromObject                    = this->RenderFromObjectTransform(medium.worldFromMedium);
+                WavefrontSceneEntity base = this->MakeEntity(medium.type, medium.parameters);
+                WavefrontTransformedSceneEntity entity{
+                    .name             = std::move(base.name),
+                    .loc              = base.loc,
+                    .parameters       = std::move(base.parameters),
+                    .renderFromObject = this->RenderFromObjectTransform(medium.worldFromMedium),
+                };
 
                 auto create = [entity, this]() { return Medium::Create(entity.name, entity.parameters, entity.renderFromObject, &entity.loc, this->compiled.threadAllocators.Get()); };
 
@@ -355,10 +372,14 @@ namespace spectra::pathtracer {
             void AddLight(const scene::SceneLight& light) {
                 this->RequireRenderSettings();
 
-                WavefrontLightSceneEntity entity{};
-                static_cast<WavefrontSceneEntity&>(entity) = this->MakeEntity(light.type, light.parameters);
-                entity.renderFromObject                    = this->RenderFromObjectTransform(light.worldFromLight);
-                entity.medium                              = light.medium;
+                WavefrontSceneEntity base = this->MakeEntity(light.type, light.parameters);
+                WavefrontLightSceneEntity entity{
+                    .name             = std::move(base.name),
+                    .loc              = base.loc,
+                    .parameters       = std::move(base.parameters),
+                    .renderFromObject = this->RenderFromObjectTransform(light.worldFromLight),
+                    .medium           = light.medium,
+                };
 
                 Medium lightMedium = this->FindMedium(entity.medium, &entity.loc);
                 auto create        = [this, entity, lightMedium]() { return Light::Create(entity.name, entity.parameters, entity.renderFromObject, this->compiled.camera.GetCameraTransform(), lightMedium, &entity.loc, this->compiled.threadAllocators.Get()); };
@@ -394,7 +415,7 @@ namespace spectra::pathtracer {
                 this->RequireRenderSettings();
                 if (this->objectDefinitionNames.find(instance.name) == this->objectDefinitionNames.end()) throw std::runtime_error(std::format("{} scene references unknown object definition \"{}\".", this->source.source, instance.name));
 
-                Transform worldFromRender = spectra::Inverse(this->RenderFromWorldTransform());
+                Transform worldFromRender = Inverse(this->RenderFromWorldTransform());
                 this->compiled.instances.push_back({
                     .name               = instance.name,
                     .loc                = this->location,
@@ -426,7 +447,7 @@ namespace spectra::pathtracer {
                     ImageAndMetadata immeta  = Image::Read(filename, Allocator(), ColorEncoding::Linear);
                     Image& image             = immeta.image;
                     ImageChannelDesc rgbDesc = image.GetChannelDesc({"R", "G", "B"});
-                    if (!rgbDesc) throw std::runtime_error(spectra::diagnostics::Format("%s: normal map image must contain R, G, and B channels", filename));
+                    if (!rgbDesc) throw std::runtime_error(diagnostics::Format("%s: normal map image must contain R, G, and B channels", filename));
                     Image* normalMap = alloc.new_object<Image>(alloc);
                     *normalMap       = image.SelectChannels(rgbDesc);
                     return normalMap;
@@ -470,7 +491,7 @@ namespace spectra::pathtracer {
                 this->textureMutex.unlock();
 
                 Allocator alloc = this->compiled.threadAllocators.Get();
-                for (const std::pair<std::string, WavefrontTextureSceneEntity>& texture : this->asyncSpectrumTextures) {
+                for (const std::pair<std::string, WavefrontTransformedSceneEntity>& texture : this->asyncSpectrumTextures) {
                     Transform renderFromTexture = texture.second.renderFromObject;
                     TextureParameterDictionary textureParameters(&texture.second.parameters, nullptr);
                     SpectrumTexture unboundedTexture                   = SpectrumTexture::Create(texture.second.name, renderFromTexture, textureParameters, SpectrumType::Unbounded, &texture.second.loc, alloc);
@@ -479,14 +500,14 @@ namespace spectra::pathtracer {
                     textures.illuminantSpectrumTextures[texture.first] = illuminantTexture;
                 }
 
-                for (const std::pair<std::string, WavefrontTextureSceneEntity>& texture : this->serialFloatTextures) {
+                for (const std::pair<std::string, WavefrontTransformedSceneEntity>& texture : this->serialFloatTextures) {
                     Allocator alloc             = this->compiled.threadAllocators.Get();
                     Transform renderFromTexture = texture.second.renderFromObject;
                     TextureParameterDictionary textureParameters(&texture.second.parameters, &textures);
                     textures.floatTextures[texture.first] = FloatTexture::Create(texture.second.name, renderFromTexture, textureParameters, &texture.second.loc, alloc);
                 }
 
-                for (const std::pair<std::string, WavefrontTextureSceneEntity>& texture : this->serialSpectrumTextures) {
+                for (const std::pair<std::string, WavefrontTransformedSceneEntity>& texture : this->serialSpectrumTextures) {
                     Allocator alloc             = this->compiled.threadAllocators.Get();
                     Transform renderFromTexture = texture.second.renderFromObject;
                     TextureParameterDictionary textureParameters(&texture.second.parameters, &textures);
@@ -505,7 +526,7 @@ namespace spectra::pathtracer {
                     std::string alphaTextureName = parameters.GetTexture("alpha");
                     if (!alphaTextureName.empty()) {
                         std::map<std::string, FloatTexture>::const_iterator iter = this->compiled.textures.floatTextures.find(alphaTextureName);
-                        if (iter == this->compiled.textures.floatTextures.end()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: couldn't find float texture for \"alpha\" parameter.", alphaTextureName));
+                        if (iter == this->compiled.textures.floatTextures.end()) throw std::runtime_error(diagnostics::Format(loc, "%s: couldn't find float texture for \"alpha\" parameter.", alphaTextureName));
                         if (!BasicTextureEvaluator().CanEvaluate({iter->second}, {})) return nullptr;
                         return iter->second;
                     }
@@ -521,9 +542,9 @@ namespace spectra::pathtracer {
                     if (!shape.areaLight.has_value()) continue;
 
                     std::map<std::string, Material>::const_iterator materialIter = this->compiled.materials.find(shape.materialName);
-                    if (materialIter == this->compiled.materials.end()) throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "%s: no named material defined.", shape.materialName));
+                    if (materialIter == this->compiled.materials.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: no named material defined.", shape.materialName));
 
-                    if (!materialIter->second) throw std::runtime_error(spectra::diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
+                    if (!materialIter->second) throw std::runtime_error(diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
 
                     pstd::vector<Shape> shapeObjects = Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender, shape.reverseOrientation, shape.parameters, this->compiled.textures.floatTextures, &shape.loc, alloc);
                     FloatTexture alphaTexture        = getAlphaTexture(shape.parameters, &shape.loc);
@@ -560,9 +581,9 @@ namespace spectra::pathtracer {
             std::mutex lightMutex;
             std::vector<AsyncJob<Light>*> lightJobs{};
             std::mutex textureMutex;
-            std::vector<std::pair<std::string, WavefrontTextureSceneEntity>> serialFloatTextures{};
-            std::vector<std::pair<std::string, WavefrontTextureSceneEntity>> serialSpectrumTextures{};
-            std::vector<std::pair<std::string, WavefrontTextureSceneEntity>> asyncSpectrumTextures{};
+            std::vector<std::pair<std::string, WavefrontTransformedSceneEntity>> serialFloatTextures{};
+            std::vector<std::pair<std::string, WavefrontTransformedSceneEntity>> serialSpectrumTextures{};
+            std::vector<std::pair<std::string, WavefrontTransformedSceneEntity>> asyncSpectrumTextures{};
             std::set<std::string> loadingTextureFilenames{};
             std::map<std::string, AsyncJob<FloatTexture>*> floatTextureJobs{};
             std::map<std::string, AsyncJob<SpectrumTexture>*> spectrumTextureJobs{};

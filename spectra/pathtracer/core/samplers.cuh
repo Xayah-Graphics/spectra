@@ -131,7 +131,7 @@ namespace spectra {
         static PaddedSobolSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
 
         PaddedSobolSampler(int samplesPerPixel, RandomizeStrategy randomizer, int seed = 0) : samplesPerPixel(samplesPerPixel), randomize(randomizer), seed(seed) {
-            if (!IsPowerOf2(samplesPerPixel)) spectra::diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
+            if (!IsPowerOf2(samplesPerPixel)) diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
         }
 
         __host__ __device__ int SamplesPerPixel() const {
@@ -200,7 +200,7 @@ namespace spectra {
     public:
         // ZSobolSampler Public Methods
         ZSobolSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize, int seed = 0) : randomize(randomize), seed(seed) {
-            if (!IsPowerOf2(samplesPerPixel)) spectra::diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
+            if (!IsPowerOf2(samplesPerPixel)) diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
             log2SamplesPerPixel     = Log2Int(samplesPerPixel);
             int res                 = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));
             int log4SamplesPerPixel = (log2SamplesPerPixel + 1) / 2;
@@ -416,7 +416,7 @@ namespace spectra {
         // SobolSampler Public Methods
         SobolSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize, int seed = 0) : samplesPerPixel(samplesPerPixel), seed(seed), randomize(randomize) {
             if (!IsPowerOf2(samplesPerPixel))
-                spectra::diagnostics::PrintWarning("Non power-of-two sample count %d will perform suboptimally with the "
+                diagnostics::PrintWarning("Non power-of-two sample count %d will perform suboptimally with the "
                                                    "SobolSampler.",
                     samplesPerPixel);
             scale = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));

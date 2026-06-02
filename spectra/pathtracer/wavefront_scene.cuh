@@ -29,24 +29,33 @@ namespace spectra::pathtracer {
         ParameterDictionary parameters{};
     };
 
-    struct WavefrontCameraSceneEntity : WavefrontSceneEntity {
+    struct WavefrontCameraSceneEntity {
+        std::string name{};
+        FileLoc loc{};
+        ParameterDictionary parameters{};
         CameraTransform cameraTransform{};
         std::string medium{};
     };
 
-    struct WavefrontTransformedSceneEntity : WavefrontSceneEntity {
+    struct WavefrontTransformedSceneEntity {
+        std::string name{};
+        FileLoc loc{};
+        ParameterDictionary parameters{};
         Transform renderFromObject{};
     };
 
-    struct WavefrontMediumSceneEntity : WavefrontTransformedSceneEntity {};
-
-    struct WavefrontTextureSceneEntity : WavefrontTransformedSceneEntity {};
-
-    struct WavefrontLightSceneEntity : WavefrontTransformedSceneEntity {
+    struct WavefrontLightSceneEntity {
+        std::string name{};
+        FileLoc loc{};
+        ParameterDictionary parameters{};
+        Transform renderFromObject{};
         std::string medium{};
     };
 
-    struct WavefrontShapeSceneEntity : WavefrontSceneEntity {
+    struct WavefrontShapeSceneEntity {
+        std::string name{};
+        FileLoc loc{};
+        ParameterDictionary parameters{};
         const Transform* renderFromObject = nullptr;
         const Transform* objectFromRender = nullptr;
         bool reverseOrientation{false};

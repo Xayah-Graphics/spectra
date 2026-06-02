@@ -102,8 +102,8 @@ namespace spectra::pathtracer {
 #endif // SPECTRA_IS_WINDOWS
 
     GpuRuntime::GpuRuntime(const SpectraOptions& options) {
-        if (detail::runtime_initialized) throw std::runtime_error(spectra::diagnostics::Format("Spectra GPU runtime cannot initialize more than once per process"));
-        if (Options != nullptr) throw std::runtime_error(spectra::diagnostics::Format("Spectra GPU runtime cannot initialize while runtime options are active"));
+        if (detail::runtime_initialized) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime cannot initialize more than once per process"));
+        if (Options != nullptr) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime cannot initialize while runtime options are active"));
 
         Options = new SpectraOptions(options);
 
@@ -142,8 +142,8 @@ namespace spectra::pathtracer {
     }
 
     void GpuRuntime::ResetOptions(const SpectraOptions& options) {
-        if (!this->initialized) throw std::runtime_error(spectra::diagnostics::Format("Spectra GPU runtime is not initialized."));
-        if (Options == nullptr) throw std::runtime_error(spectra::diagnostics::Format("Spectra global options are unavailable."));
+        if (!this->initialized) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime is not initialized."));
+        if (Options == nullptr) throw std::runtime_error(diagnostics::Format("Spectra global options are unavailable."));
         *Options = options;
         detail::CopyRuntimeOptionsToGPU();
     }
@@ -189,7 +189,7 @@ namespace spectra::pathtracer {
         if (MixMaterial* mix = m.CastOrNullptr<MixMaterial>(); mix) {
             // This is a somewhat odd place for this check, but it's convenient...
             if (!m.CanEvaluateTextures(BasicTextureEvaluator()))
-                throw std::runtime_error(spectra::diagnostics::Format("\"mix\" material has a texture that can't be evaluated with the "
+                throw std::runtime_error(diagnostics::Format("\"mix\" material has a texture that can't be evaluated with the "
                                                                       "BasicTextureEvaluator, which is all that is currently supported "
                                                                       "in the Spectra pathtracer."));
 
@@ -244,14 +244,14 @@ namespace spectra::pathtracer {
 
         bool haveLights = !wavefrontScene->allLights.empty();
         for (const auto& medium : wavefrontScene->media) haveLights |= medium.second.IsEmissive();
-        if (!haveLights) throw std::runtime_error(spectra::diagnostics::Format("No light sources specified"));
+        if (!haveLights) throw std::runtime_error(diagnostics::Format("No light sources specified"));
 
         std::string lightSamplerName = wavefrontScene->integrator.parameters.GetOneString("lightsampler", "bvh");
         if (wavefrontScene->allLights.size() == 1) lightSamplerName = "uniform";
         lightSampler = LightSampler::Create(lightSamplerName, wavefrontScene->allLights, alloc);
 
         if (wavefrontScene->integrator.name != "path" && wavefrontScene->integrator.name != "volpath")
-            spectra::diagnostics::PrintWarning(&wavefrontScene->integrator.loc,
+            diagnostics::PrintWarning(&wavefrontScene->integrator.loc,
                 "Ignoring specified integrator \"%s\": the Spectra pathtracer "
                 "always uses a \"volpath\" integrator.",
                 wavefrontScene->integrator.name);
@@ -400,7 +400,7 @@ namespace spectra::pathtracer {
 
     void WavefrontPathtracer::HandleEscapedRays() {
         if (!escapedRayQueue) return;
-        ForAllQueued("Handle escaped rays", escapedRayQueue, maxQueueSize, [=, *this] __host__ __device__(const spectra::EscapedRayWorkItem w) mutable {
+        ForAllQueued("Handle escaped rays", escapedRayQueue, maxQueueSize, [=, *this] __host__ __device__(const EscapedRayWorkItem w) mutable {
             // Compute weighted radiance for escaped ray
             SampledSpectrum L(0.f);
             for (const auto& light : *infiniteLights) {
@@ -428,7 +428,7 @@ namespace spectra::pathtracer {
     }
 
     void WavefrontPathtracer::HandleEmissiveIntersection() {
-        ForAllQueued("Handle emitters hit by indirect rays", hitAreaLightQueue, maxQueueSize, [=, *this] __host__ __device__(const spectra::HitAreaLightWorkItem w) mutable {
+        ForAllQueued("Handle emitters hit by indirect rays", hitAreaLightQueue, maxQueueSize, [=, *this] __host__ __device__(const HitAreaLightWorkItem w) mutable {
             // Find emitted radiance from surface that ray hit
             SampledSpectrum Le = w.areaLight.L(w.p, w.n, w.uv, w.wo, w.lambda);
             if (!Le) return;
@@ -562,7 +562,7 @@ namespace spectra::pathtracer {
         std::string desc = std::string("Generate ray samples - ") + ConcreteSampler::Name();
 
         RayQueue* rayQueue = CurrentRayQueue(wavefrontDepth);
-        spectra::ForAllQueued(desc.c_str(), rayQueue, maxQueueSize, [=, *this] __host__ __device__(const spectra::RayWorkItem w) mutable {
+        spectra::ForAllQueued(desc.c_str(), rayQueue, maxQueueSize, [=, *this] __host__ __device__(const RayWorkItem w) mutable {
             // Generate samples for ray segment at current sample index
             // Find first sample dimension
             int dimension = 6 + 7 * w.depth;
@@ -626,7 +626,7 @@ namespace spectra::pathtracer {
 
         RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
         auto queue             = evalQueue->Get<MaterialEvalWorkItem<ConcreteMaterial>>();
-        spectra::ForAllQueued(desc.c_str(), queue, maxQueueSize, [=, *this] __host__ __device__(const spectra::MaterialEvalWorkItem<ConcreteMaterial> w) mutable {
+        spectra::ForAllQueued(desc.c_str(), queue, maxQueueSize, [=, *this] __host__ __device__(const MaterialEvalWorkItem<ConcreteMaterial> w) mutable {
             // Evaluate material and BSDF for ray intersection
             TextureEvaluator texEval;
             // Compute differentials for position and $(u,v)$ at intersection point
@@ -823,7 +823,7 @@ namespace spectra::pathtracer {
         if (!haveMedia) return;
 
         RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
-        ForAllQueued("Sample medium interaction", mediumSampleQueue, maxQueueSize, [=, *this] __host__ __device__(spectra::MediumSampleWorkItem w) mutable {
+        ForAllQueued("Sample medium interaction", mediumSampleQueue, maxQueueSize, [=, *this] __host__ __device__(MediumSampleWorkItem w) mutable {
             Ray ray    = w.ray;
             Float tMax = w.tMax;
 
@@ -967,7 +967,7 @@ namespace spectra::pathtracer {
         RayQueue* nextRayQueue    = NextRayQueue(wavefrontDepth);
 
         std::string desc = std::string("Sample direct/indirect - ") + ConcretePhaseFunction::Name();
-        spectra::ForAllQueued(desc.c_str(), mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(), maxQueueSize, [=, *this] __host__ __device__(const spectra::MediumScatterWorkItem<ConcretePhaseFunction> w) mutable {
+        spectra::ForAllQueued(desc.c_str(), mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(), maxQueueSize, [=, *this] __host__ __device__(const MediumScatterWorkItem<ConcretePhaseFunction> w) mutable {
             RaySamples raySamples = pixelSampleState.samples[w.pixelIndex];
             Vector3f wo           = w.wo;
 
@@ -1031,7 +1031,7 @@ namespace spectra::pathtracer {
 
         RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
 
-        ForAllQueued("Get BSSRDF and enqueue probe ray", bssrdfEvalQueue, maxQueueSize, [=, *this] __host__ __device__(const spectra::GetBSSRDFAndProbeRayWorkItem w) mutable {
+        ForAllQueued("Get BSSRDF and enqueue probe ray", bssrdfEvalQueue, maxQueueSize, [=, *this] __host__ __device__(const GetBSSRDFAndProbeRayWorkItem w) mutable {
             const SubsurfaceMaterial* material = w.material.Cast<SubsurfaceMaterial>();
             MaterialEvalContext ctx            = w.GetMaterialEvalContext();
             SampledWavelengths lambda          = w.lambda;
@@ -1047,7 +1047,7 @@ namespace spectra::pathtracer {
 
         aggregate->IntersectOneRandom(maxQueueSize, subsurfaceScatterQueue);
 
-        ForAllQueued("Handle out-scattering after SSS", subsurfaceScatterQueue, maxQueueSize, [=, *this] __host__ __device__(spectra::SubsurfaceScatterWorkItem w) mutable {
+        ForAllQueued("Handle out-scattering after SSS", subsurfaceScatterQueue, maxQueueSize, [=, *this] __host__ __device__(SubsurfaceScatterWorkItem w) mutable {
             if (w.reservoirPDF == 0) return;
 
             TabulatedBSSRDF bssrdf = w.bssrdf;

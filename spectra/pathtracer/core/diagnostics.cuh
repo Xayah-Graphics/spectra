@@ -225,10 +225,6 @@ namespace spectra::diagnostics {
     } while (false)
 #endif
 
-#ifndef SPECTRA_FATAL
-#define SPECTRA_FATAL(...) spectra::diagnostics::Fatal(__FILE__, __LINE__, __VA_ARGS__)
-#endif
-
 #define SPECTRA_CHECK_EQ(A, B) SPECTRA_CHECK_IMPL(A, B, ==)
 #define SPECTRA_CHECK_NE(A, B) SPECTRA_CHECK_IMPL(A, B, !=)
 #define SPECTRA_CHECK_GT(A, B) SPECTRA_CHECK_IMPL(A, B, >)

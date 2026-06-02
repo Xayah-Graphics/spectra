@@ -190,7 +190,7 @@ namespace spectra {
                 if (rgbDesc)
                     image = image.SelectChannels(rgbDesc, alloc);
                 else
-                    throw std::runtime_error(spectra::diagnostics::Format("%s: image doesn't have R, G, and B channels", filename));
+                    throw std::runtime_error(diagnostics::Format("%s: image doesn't have R, G, and B channels", filename));
             }
         }
 

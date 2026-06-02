@@ -269,41 +269,41 @@ namespace spectra {
             if (P.size() == 3)
                 vi = {0, 1, 2};
             else {
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
+                throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
                                                                            "triangle mesh."));
                 return {};
             }
         } else if ((vi.size() % 3) != 0u) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of vertex indices %d not a multiple of 3.", int(vi.size())));
+            throw std::runtime_error(diagnostics::Format(loc, "Number of vertex indices %d not a multiple of 3.", int(vi.size())));
         }
 
         if (P.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex positions \"P\" must be provided with triangle mesh."));
+            throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" must be provided with triangle mesh."));
             return {};
         }
 
         if (!uvs.empty() && uvs.size() != P.size()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"uv\"s for triangle mesh must match \"P\"s. "
+            throw std::runtime_error(diagnostics::Format(loc, "Number of \"uv\"s for triangle mesh must match \"P\"s. "
                                                                        "Discarding uvs."));
             uvs = {};
         }
 
         std::vector<Vector3f> S = parameters.GetVector3fArray("S");
         if (!S.empty() && S.size() != P.size()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"S\"s for triangle mesh must match \"P\"s. "
+            throw std::runtime_error(diagnostics::Format(loc, "Number of \"S\"s for triangle mesh must match \"P\"s. "
                                                                        "Discarding \"S\"s."));
             S = {};
         }
         std::vector<Normal3f> N = parameters.GetNormal3fArray("N");
         if (!N.empty() && N.size() != P.size()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"N\"s for triangle mesh must match \"P\"s. "
+            throw std::runtime_error(diagnostics::Format(loc, "Number of \"N\"s for triangle mesh must match \"P\"s. "
                                                                        "Discarding \"N\"s."));
             N = {};
         }
 
         for (size_t i = 0; i < vi.size(); ++i)
             if (vi[i] >= P.size()) {
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "trianglemesh has out of-bounds vertex index %d (%d \"P\" "
                     "values were given. Discarding this mesh.",
                     vi[i], (int) P.size()));
@@ -312,7 +312,7 @@ namespace spectra {
 
         std::vector<int> faceIndices = parameters.GetIntArray("faceIndices");
         if (!faceIndices.empty() && faceIndices.size() != vi.size() / 3) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc,
+            throw std::runtime_error(diagnostics::Format(loc,
                 "Number of face indices %d does not match number of triangles %d. "
                 "Discarding face indices.",
                 int(faceIndices.size()), int(vi.size() / 3)));
@@ -558,13 +558,13 @@ namespace spectra {
 
         int degree = parameters.GetOneInt("degree", 3);
         if (degree != 2 && degree != 3) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.", degree));
+            throw std::runtime_error(diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.", degree));
             return {};
         }
 
         std::string basis = parameters.GetOneString("basis", "bezier");
         if (basis != "bezier" && basis != "bspline") {
-            throw std::runtime_error(spectra::diagnostics::Format(loc,
+            throw std::runtime_error(diagnostics::Format(loc,
                 "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
                 "supported.",
                 basis));
@@ -578,7 +578,7 @@ namespace spectra {
             // subsequent segments reuse the last control point of the previous
             // one and then use degree more control points.
             if (((cp.size() - 1 - degree) % degree) != 0) {
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "Invalid number of control points %d: for the degree %d "
                     "Bezier basis %d + n * %d are required, for n >= 0.",
                     (int) cp.size(), degree, degree + 1, degree));
@@ -587,7 +587,7 @@ namespace spectra {
             nSegments = (cp.size() - 1) / degree;
         } else {
             if (cp.size() < degree + 1) {
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "Invalid number of control points %d: for the degree %d "
                     "b-spline basis, must have >= %d.",
                     int(cp.size()), degree, degree + 1));
@@ -605,16 +605,16 @@ namespace spectra {
         else if (curveType == "cylinder")
             type = CurveType::Cylinder;
         else {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, R"(Unknown curve type "%s".)", curveType));
+            throw std::runtime_error(diagnostics::Format(loc, R"(Unknown curve type "%s".)", curveType));
         }
 
         std::vector<Normal3f> n = parameters.GetNormal3fArray("N");
         if (!n.empty()) {
             if (type != CurveType::Ribbon) {
-                spectra::diagnostics::PrintWarning("Curve normals are only used with \"ribbon\" type curves.");
+                diagnostics::PrintWarning("Curve normals are only used with \"ribbon\" type curves.");
                 n = {};
             } else if (n.size() != nSegments + 1) {
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "Invalid number of normals %d: must provide %d normals for "
                     "ribbon "
                     "curves with %d segments.",
@@ -622,7 +622,7 @@ namespace spectra {
                 return {};
             }
         } else if (type == CurveType::Ribbon) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
+            throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
                                                                        "curves."));
             return {};
         }
@@ -632,7 +632,7 @@ namespace spectra {
         int sd = 0;
 
         if (type == CurveType::Ribbon && n.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
+            throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
                                                                        "curves."));
             return {};
         }
@@ -689,36 +689,36 @@ namespace spectra {
                 // single patch
                 vertexIndices = {0, 1, 2, 3};
             else {
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
+                throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
                                                                            "bilinear patch mesh shape."));
                 return {};
             }
         } else if ((vertexIndices.size() % 4) != 0u) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of vertex indices %d not a multiple of 4.", int(vertexIndices.size())));
+            throw std::runtime_error(diagnostics::Format(loc, "Number of vertex indices %d not a multiple of 4.", int(vertexIndices.size())));
         }
 
         if (P.empty()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex positions \"P\" must be provided with bilinear "
+            throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" must be provided with bilinear "
                                                                        "patch mesh shape."));
             return {};
         }
 
         if (!uv.empty() && uv.size() != P.size()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"uv\"s for bilinear patch mesh must match \"P\"s. "
+            throw std::runtime_error(diagnostics::Format(loc, "Number of \"uv\"s for bilinear patch mesh must match \"P\"s. "
                                                                        "Discarding uvs."));
             uv = {};
         }
 
         std::vector<Normal3f> N = parameters.GetNormal3fArray("N");
         if (!N.empty() && N.size() != P.size()) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "Number of \"N\"s for bilinear patch mesh must match \"P\"s. "
+            throw std::runtime_error(diagnostics::Format(loc, "Number of \"N\"s for bilinear patch mesh must match \"P\"s. "
                                                                        "Discarding \"N\"s."));
             N = {};
         }
 
         for (size_t i = 0; i < vertexIndices.size(); ++i)
             if (vertexIndices[i] >= P.size()) {
-                throw std::runtime_error(spectra::diagnostics::Format(loc,
+                throw std::runtime_error(diagnostics::Format(loc,
                     "Bilinear patch mesh has out of-bounds vertex index %d (%d "
                     "\"P\" "
                     "values were given. Discarding this mesh.",
@@ -728,7 +728,7 @@ namespace spectra {
 
         std::vector<int> faceIndices = parameters.GetIntArray("faceIndices");
         if (!faceIndices.empty() && faceIndices.size() != vertexIndices.size() / 4) {
-            throw std::runtime_error(spectra::diagnostics::Format(loc,
+            throw std::runtime_error(diagnostics::Format(loc,
                 "Number of face indices %d does not match number of bilinear "
                 "patches %d. "
                 "Discarding face indices.",
@@ -743,7 +743,7 @@ namespace spectra {
         PiecewiseConstant2D* imageDist = nullptr;
         if (!filename.empty()) {
             if (!uv.empty())
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "\"emissionfilename\" is currently ignored for bilinear patches "
+                throw std::runtime_error(diagnostics::Format(loc, "\"emissionfilename\" is currently ignored for bilinear patches "
                                                                            "if \"uv\" coordinates have been provided--sorry!"));
             else {
                 ImageAndMetadata im = Image::Read(filename, alloc);
@@ -1116,7 +1116,7 @@ namespace spectra {
             std::string displacementTexName = parameters.GetTexture("displacement");
             if (!displacementTexName.empty()) {
                 auto iter = floatTextures.find(displacementTexName);
-                if (iter == floatTextures.end()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: no such texture defined.", displacementTexName));
+                if (iter == floatTextures.end()) throw std::runtime_error(diagnostics::Format(loc, "%s: no such texture defined.", displacementTexName));
                 FloatTexture displacement = iter->second;
 
 
@@ -1153,11 +1153,11 @@ namespace spectra {
             int nLevels                    = parameters.GetOneInt("levels", 3);
             std::vector<int> vertexIndices = parameters.GetIntArray("indices");
             if (vertexIndices.empty())
-                throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex indices \"indices\" not provided for "
+                throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" not provided for "
                                                                            "LoopSubdiv shape."));
 
             std::vector<Point3f> P = parameters.GetPoint3fArray("P");
-            if (P.empty()) throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex positions \"P\" not provided for LoopSubdiv shape."));
+            if (P.empty()) throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" not provided for LoopSubdiv shape."));
 
             // don't actually use this for now...
             std::string scheme = parameters.GetOneString("scheme", "loop");
@@ -1166,9 +1166,9 @@ namespace spectra {
 
             shapes = Triangle::CreateTriangles(mesh, alloc);
         } else
-            throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: shape type unknown.", name));
+            throw std::runtime_error(diagnostics::Format(loc, "%s: shape type unknown.", name));
 
-        if (shapes.empty()) throw std::runtime_error(spectra::diagnostics::Format(loc, "%s: unable to create shape.", name));
+        if (shapes.empty()) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create shape.", name));
 
         return shapes;
     }

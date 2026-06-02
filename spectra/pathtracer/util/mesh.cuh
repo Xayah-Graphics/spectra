@@ -77,7 +77,7 @@ namespace spectra {
 
         template <typename Dist, typename Disp>
         TriQuadMesh Displace(Dist&& dist, Float maxDist, Disp&& displace, const FileLoc* loc = nullptr) const {
-            if (uv.empty()) throw std::runtime_error(spectra::diagnostics::Format(loc, "Vertex uvs are currently required by Displace(). Sorry.\n"));
+            if (uv.empty()) throw std::runtime_error(diagnostics::Format(loc, "Vertex uvs are currently required by Displace(). Sorry.\n"));
 
             // Prepare the output mesh
             TriQuadMesh outputMesh = *this;

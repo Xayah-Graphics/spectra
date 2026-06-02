@@ -168,9 +168,9 @@ namespace spectra {
 
         // Note that this should probably instead be "return Sqr(roughness)" to
         // be more perceptually uniform, though this wasn't noticed until some
-        // time after pbrt-v4 shipped: https://github.com/mmp/pbrt-v4/issues/479.
+        // time after the original spectral scattering implementation shipped.
         // therefore, we will leave it as is so that the rendered results with
-        // existing pbrt-v4 scenes doesn't change unexpectedly.
+        // existing imported scenes doesn't change unexpectedly.
         __host__ __device__ static Float RoughnessToAlpha(Float roughness) {
             return std::sqrt(roughness);
         }

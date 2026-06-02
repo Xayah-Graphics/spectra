@@ -436,7 +436,7 @@ namespace spectra {
             if (abort)
                 SPECTRA_FATAL("%p: %s (%s:%d)", ptr, msg, file, line);
             else
-                spectra::diagnostics::PrintWarning("%p: %s (%s:%d)", ptr, msg, file, line);
+                diagnostics::PrintWarning("%p: %s (%s:%d)", ptr, msg, file, line);
         }
 
         NanoVDBBuffer() = default;

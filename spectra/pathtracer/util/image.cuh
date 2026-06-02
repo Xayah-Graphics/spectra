@@ -366,7 +366,7 @@ namespace spectra {
         // CHECK(!IsNaN(value));
         if (IsNaN(value)) {
 #if !defined(__CUDA_ARCH__)
-            spectra::diagnostics::PrintWarning("NaN at pixel %d,%d comp %d", p.x, p.y, c);
+            diagnostics::PrintWarning("NaN at pixel %d,%d comp %d", p.x, p.y, c);
 #endif
             value = 0;
         }

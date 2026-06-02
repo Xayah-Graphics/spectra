@@ -607,10 +607,6 @@ namespace spectra::scene {
         };
     }
 
-    SceneInfo SceneInfoFor(std::string_view name) {
-        return DescribeScene(builtin::BuildScene(name));
-    }
-
     Scene BuildScene(std::string_view name) {
         return builtin::BuildScene(name);
     }

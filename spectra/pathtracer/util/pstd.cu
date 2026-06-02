@@ -61,7 +61,7 @@ namespace pstd {
             // that this CHECK effectively assumes that these are being allocated
             // via something like ThreadLocal; there are perfectly reasonably ways
             // of allocating these in one thread and using them in another thread,
-            // so this is tied to pbrt's current usage of them...
+            // so this is tied to the pathtracer's current usage of them...
             //
             // (... and commented out since InternCache uses a single
             // monotonic_buffer_resource across multiple threads but protects its

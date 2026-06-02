@@ -168,7 +168,6 @@ export extern "C++" {
         };
 
         [[nodiscard]] SceneInfo DescribeScene(const Scene& scene);
-        [[nodiscard]] SceneInfo SceneInfoFor(std::string_view name);
         [[nodiscard]] Scene BuildScene(std::string_view name);
     } // namespace spectra::scene
 }
