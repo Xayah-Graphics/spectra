@@ -68,23 +68,23 @@ namespace spectra::scene {
         this->dirty       = dirty;
     }
 
-    EditableScene::EditableScene(SceneSnapshot snapshot) {
+    SceneWorkspace::SceneWorkspace(SceneSnapshot snapshot) {
         this->assignMissingIds(snapshot);
         if (snapshot.revision.value == 0) snapshot.revision = SceneRevision{1};
         this->currentSnapshot = std::make_shared<SceneSnapshot>(std::move(snapshot));
     }
 
-    [[nodiscard]] bool EditableScene::loaded() const {
+    [[nodiscard]] bool SceneWorkspace::loaded() const {
         return this->currentSnapshot != nullptr;
     }
 
-    [[nodiscard]] std::shared_ptr<const SceneSnapshot> EditableScene::snapshot() const {
-        if (this->currentSnapshot == nullptr) throw std::runtime_error("Editable scene does not contain a loaded snapshot");
+    [[nodiscard]] std::shared_ptr<const SceneSnapshot> SceneWorkspace::snapshot() const {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded snapshot");
         return this->currentSnapshot;
     }
 
-    [[nodiscard]] SceneEditBatch EditableScene::commit(SceneEditBuilder edit) {
-        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded scene");
+    [[nodiscard]] SceneEditBatch SceneWorkspace::commit(SceneEditBuilder edit) {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded scene workspace");
         if (!edit.replacement.has_value()) throw std::runtime_error("Cannot commit an empty scene edit");
         if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit a scene edit without dirty state");
 
@@ -94,26 +94,27 @@ namespace spectra::scene {
         this->assignMissingIds(next);
         this->currentSnapshot = std::make_shared<SceneSnapshot>(std::move(next));
 
-        SceneEditBatch batch{
-            .beforeRevision = beforeRevision,
-            .afterRevision  = this->currentSnapshot->revision,
-            .dirty          = edit.dirty,
-        };
-        batch.cameras.push_back(this->currentSnapshot->renderSettings.camera.id);
-        for (const SceneMaterial& material : this->currentSnapshot->materials) batch.materials.push_back(material.id);
-        for (const SceneTexture& texture : this->currentSnapshot->textures) batch.textures.push_back(texture.id);
-        for (const SceneMedium& medium : this->currentSnapshot->media) batch.media.push_back(medium.id);
-        for (const SceneLight& light : this->currentSnapshot->lights) batch.lights.push_back(light.id);
-        for (const SceneShape& shape : this->currentSnapshot->shapes) batch.shapes.push_back(shape.id);
-        for (const SceneObjectDefinition& definition : this->currentSnapshot->objectDefinitions) {
-            batch.objectDefinitions.push_back(definition.id);
-            for (const SceneShape& shape : definition.shapes) batch.shapes.push_back(shape.id);
-        }
-        for (const SceneObjectInstance& instance : this->currentSnapshot->objectInstances) batch.objectInstances.push_back(instance.id);
+        SceneEditBatch batch = this->fullEdit(beforeRevision, *this->currentSnapshot);
+        batch.dirty          = edit.dirty;
+        this->lastEdit       = batch;
         return batch;
     }
 
-    void EditableScene::assignMissingIds(SceneSnapshot& snapshot) {
+    [[nodiscard]] SceneEditBatch SceneWorkspace::changes_since(const SceneRevision revision) const {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot query scene changes from an unloaded workspace");
+        if (revision == this->currentSnapshot->revision) {
+            return SceneEditBatch{
+                .beforeRevision = revision,
+                .afterRevision  = revision,
+                .dirty          = SceneDirtyFlags::None,
+            };
+        }
+        if (revision.value == 0) return this->fullEdit(revision, *this->currentSnapshot);
+        if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
+        throw std::runtime_error("Scene edit history for the requested revision is unavailable");
+    }
+
+    void SceneWorkspace::assignMissingIds(SceneSnapshot& snapshot) {
         std::uint64_t maxId  = 0;
         const auto observeId = [&maxId](const auto id) { maxId = std::max(maxId, SceneIdValue(id)); };
         observeId(snapshot.renderSettings.camera.id);
@@ -149,280 +150,274 @@ namespace spectra::scene {
             if (instance.id.value == 0) instance.id = SceneObjectInstanceId{this->nextSceneId()};
     }
 
-    [[nodiscard]] std::uint64_t EditableScene::nextSceneId() {
+    [[nodiscard]] std::uint64_t SceneWorkspace::nextSceneId() {
         const std::uint64_t id = this->nextId;
         ++this->nextId;
         return id;
+    }
+
+    [[nodiscard]] SceneEditBatch SceneWorkspace::fullEdit(const SceneRevision before, const SceneSnapshot& snapshot) const {
+        SceneEditBatch batch{
+            .beforeRevision = before,
+            .afterRevision  = snapshot.revision,
+            .dirty          = SceneDirtyFlags::Camera | SceneDirtyFlags::Film | SceneDirtyFlags::RenderSettings | SceneDirtyFlags::Transform | SceneDirtyFlags::Geometry | SceneDirtyFlags::Material | SceneDirtyFlags::Texture | SceneDirtyFlags::Light | SceneDirtyFlags::Medium | SceneDirtyFlags::Topology | SceneDirtyFlags::CompiledScene,
+        };
+        batch.cameras.push_back(snapshot.renderSettings.camera.id);
+        for (const SceneMaterial& material : snapshot.materials) batch.materials.push_back(material.id);
+        for (const SceneTexture& texture : snapshot.textures) batch.textures.push_back(texture.id);
+        for (const SceneMedium& medium : snapshot.media) batch.media.push_back(medium.id);
+        for (const SceneLight& light : snapshot.lights) batch.lights.push_back(light.id);
+        for (const SceneShape& shape : snapshot.shapes) batch.shapes.push_back(shape.id);
+        for (const SceneObjectDefinition& definition : snapshot.objectDefinitions) {
+            batch.objectDefinitions.push_back(definition.id);
+            for (const SceneShape& shape : definition.shapes) batch.shapes.push_back(shape.id);
+        }
+        for (const SceneObjectInstance& instance : snapshot.objectInstances) batch.objectInstances.push_back(instance.id);
+        return batch;
     }
 } // namespace spectra::scene
 
 namespace spectra::scene::builtin {
     namespace {
-        [[nodiscard]] std::string SceneResource(std::string_view relativePath) {
+        [[nodiscard]] std::string SceneResource(const std::string_view relativePath) {
             return std::format("{}/{}", SPECTRA_PROJECT_SCENE_ROOT, relativePath);
         }
 
-        [[nodiscard]] SceneParameters Parameters(std::initializer_list<SceneParameter> parameters) {
-            return SceneParameters{
-                .values = std::vector<SceneParameter>(parameters),
-            };
+        [[nodiscard]] SceneSpectrumInput Rgb(const float r, const float g, const float b) {
+            return SceneSpectrumInput{SceneRgb{r, g, b}};
         }
 
-        [[nodiscard]] SceneParameter FloatParameter(std::string_view type, std::string_view name, std::initializer_list<float> values) {
-            return SceneParameter{
-                .type   = std::string{type},
-                .name   = std::string{name},
-                .values = std::vector<float>(values),
-            };
+        [[nodiscard]] SceneSpectrumInput SpectrumSamples(std::initializer_list<float> values) {
+            return SceneSpectrumInput{std::vector<float>(values)};
         }
 
-        [[nodiscard]] SceneParameter IntegerParameter(std::string_view name, std::initializer_list<int> values) {
-            return SceneParameter{
-                .type   = "integer",
-                .name   = std::string{name},
-                .values = std::vector<int>(values),
-            };
+        [[nodiscard]] SceneSpectrumInput SpectrumTexture(const SceneTextureId texture) {
+            return SceneSpectrumInput{SceneTextureReference{texture}};
         }
 
-        [[nodiscard]] SceneParameter StringParameter(std::string_view type, std::string_view name, std::initializer_list<std::string_view> values) {
-            SceneParameter parameter{
-                .type   = std::string{type},
-                .name   = std::string{name},
-                .values = std::vector<std::string>{},
-            };
-            std::vector<std::string>& strings = std::get<std::vector<std::string>>(parameter.values);
-            strings.reserve(values.size());
-            for (std::string_view value : values) strings.emplace_back(value);
-            return parameter;
+        [[nodiscard]] SceneFloatInput FloatValue(const float value) {
+            return SceneFloatInput{value};
         }
 
-        [[nodiscard]] SceneParameter StringParameter(std::string_view name, std::initializer_list<std::string_view> values) {
-            return StringParameter("string", name, values);
+        [[nodiscard]] SceneFloatInput FloatTexture(const SceneTextureId texture) {
+            return SceneFloatInput{SceneTextureReference{texture}};
         }
 
         [[nodiscard]] SceneSnapshot BookScene() {
+            const SceneMaterialId defaultDiffuse{1};
+            const SceneMaterialId grayDiffuse{2};
+            const SceneMaterialId bookPagesMaterial{3};
+            const SceneMaterialId bookCoverMaterial{4};
+            const SceneTextureId bookCoverTexture{5};
+            const SceneTextureId bookPagesTexture{6};
+            const SceneTextureId unevenBumpRaw{7};
+            const SceneTextureId unevenBumpScale{8};
+            const SceneTextureId unevenBump{9};
             const std::string mesh00001           = SceneResource("pbrt-book/geometry/mesh_00001.ply");
             const std::string mesh00002           = SceneResource("pbrt-book/geometry/mesh_00002.ply");
             const std::string mesh00003           = SceneResource("pbrt-book/geometry/mesh_00003.ply");
             const std::string bookCover           = SceneResource("pbrt-book/texture/book_pbrt.png");
             const std::string bookPages           = SceneResource("pbrt-book/texture/book_pages.png");
-            const std::string unevenBump          = SceneResource("pbrt-book/texture/uneven_bump.png");
+            const std::string unevenBumpFile      = SceneResource("pbrt-book/texture/uneven_bump.png");
             const math::Transform cameraFromWorld = math::Compose({
                 math::Scale(-1.0f, 1.0f, 1.0f),
                 math::LookAt(math::Point3(0.0f, 2.1088f, 13.574f), math::Point3(0.0f, 2.1088f, 12.574f), math::Vector3(0.0f, 1.0f, 0.0f)),
             });
 
-            SceneSnapshot scene{
+            return SceneSnapshot{
                 .name   = "default",
                 .title  = "PBRT Book",
                 .source = "spectra://scene/default",
                 .renderSettings =
                     SceneRenderSettings{
                         .film =
-                            SceneComponent{
-                                .type       = "rgb",
-                                .parameters = Parameters({
-                                    StringParameter("filename", {"book.exr"}),
-                                    IntegerParameter("yresolution", {1080}),
-                                    IntegerParameter("xresolution", {1920}),
-                                    StringParameter("sensor", {"canon_eos_100d"}),
-                                    FloatParameter("float", "iso", {150.0f}),
-                                }),
+                            SceneFilmSettings{
+                                .filename    = "book.exr",
+                                .sensor      = "canon_eos_100d",
+                                .xResolution = 1920,
+                                .yResolution = 1080,
+                                .iso         = 150.0f,
                             },
                         .camera =
                             SceneCamera{
-                                .type            = "perspective",
-                                .parameters      = Parameters({FloatParameter("float", "fov", {26.5f})}),
+                                .kind            = CameraKind::Perspective,
                                 .worldFromCamera = math::Inverse(cameraFromWorld),
                                 .fovDegrees      = 26.5f,
                             },
                         .sampler =
-                            SceneComponent{
-                                .type       = "halton",
-                                .parameters = Parameters({IntegerParameter("pixelsamples", {2048})}),
+                            SceneSamplerSettings{
+                                .kind         = SamplerKind::Halton,
+                                .pixelSamples = 2048,
                             },
                     },
                 .materials =
                     {
                         SceneMaterial{
-                            .name = "default_diffuse",
-                            .type = "diffuse",
+                            .id    = defaultDiffuse,
+                            .name  = "default_diffuse",
+                            .value = SceneDiffuseMaterial{},
                         },
                         SceneMaterial{
-                            .name       = "gray_diffuse",
-                            .type       = "diffuse",
-                            .parameters = Parameters({FloatParameter("rgb", "reflectance", {0.5f, 0.5f, 0.5f})}),
+                            .id    = grayDiffuse,
+                            .name  = "gray_diffuse",
+                            .value = SceneDiffuseMaterial{.reflectance = Rgb(0.5f, 0.5f, 0.5f)},
                         },
                         SceneMaterial{
-                            .name       = "book_pages",
-                            .type       = "diffuse",
-                            .parameters = Parameters({StringParameter("texture", "reflectance", {"book_pages"})}),
+                            .id    = bookPagesMaterial,
+                            .name  = "book_pages",
+                            .value = SceneDiffuseMaterial{.reflectance = SpectrumTexture(bookPagesTexture)},
                         },
                         SceneMaterial{
-                            .name       = "book_cover",
-                            .type       = "coateddiffuse",
-                            .parameters = Parameters({
-                                StringParameter("texture", "displacement", {"uneven_bump"}),
-                                StringParameter("texture", "reflectance", {"book_cover"}),
-                                FloatParameter("float", "roughness", {0.0003f}),
-                            }),
+                            .id    = bookCoverMaterial,
+                            .name  = "book_cover",
+                            .value = SceneCoatedDiffuseMaterial{.reflectance = SpectrumTexture(bookCoverTexture), .roughness = FloatValue(0.0003f), .displacement = FloatTexture(unevenBump)},
                         },
                     },
                 .textures =
                     {
                         SceneTexture{
-                            .kind       = TextureKind::Spectrum,
-                            .name       = "book_cover",
-                            .type       = "imagemap",
-                            .parameters = Parameters({StringParameter("filename", {std::string_view{bookCover}})}),
+                            .id    = bookCoverTexture,
+                            .kind  = TextureKind::Spectrum,
+                            .name  = "book_cover",
+                            .value = SceneImageTexture{.filename = bookCover},
                         },
                         SceneTexture{
-                            .kind       = TextureKind::Spectrum,
-                            .name       = "book_pages",
-                            .type       = "imagemap",
-                            .parameters = Parameters({StringParameter("filename", {std::string_view{bookPages}})}),
+                            .id    = bookPagesTexture,
+                            .kind  = TextureKind::Spectrum,
+                            .name  = "book_pages",
+                            .value = SceneImageTexture{.filename = bookPages},
                         },
                         SceneTexture{
-                            .kind       = TextureKind::Float,
-                            .name       = "uneven_bump_raw",
-                            .type       = "imagemap",
-                            .parameters = Parameters({
-                                StringParameter("filename", {std::string_view{unevenBump}}),
-                                FloatParameter("float", "vscale", {1.5f}),
-                                FloatParameter("float", "uscale", {1.5f}),
-                            }),
+                            .id    = unevenBumpRaw,
+                            .kind  = TextureKind::Float,
+                            .name  = "uneven_bump_raw",
+                            .value = SceneImageTexture{.filename = unevenBumpFile, .uScale = 1.5f, .vScale = 1.5f},
                         },
                         SceneTexture{
-                            .kind       = TextureKind::Float,
-                            .name       = "uneven_bump_scale",
-                            .type       = "constant",
-                            .parameters = Parameters({FloatParameter("float", "value", {0.0002f})}),
+                            .id    = unevenBumpScale,
+                            .kind  = TextureKind::Float,
+                            .name  = "uneven_bump_scale",
+                            .value = SceneConstantFloatTexture{.value = 0.0002f},
                         },
                         SceneTexture{
-                            .kind       = TextureKind::Float,
-                            .name       = "uneven_bump",
-                            .type       = "scale",
-                            .parameters = Parameters({
-                                StringParameter("texture", "scale", {"uneven_bump_scale"}),
-                                StringParameter("texture", "tex", {"uneven_bump_raw"}),
-                            }),
+                            .id    = unevenBump,
+                            .kind  = TextureKind::Float,
+                            .name  = "uneven_bump",
+                            .value = SceneScaleFloatTexture{.scale = unevenBumpScale, .texture = unevenBumpRaw},
                         },
                     },
                 .shapes =
                     {
                         SceneShape{
-                            .type            = "sphere",
-                            .parameters      = Parameters({FloatParameter("float", "radius", {7.5f})}),
+                            .id              = SceneShapeId{10},
+                            .name            = "warm_area_light",
+                            .value           = SceneSphere{.radius = 7.5f},
                             .worldFromObject = math::Translate(math::Vector3(34.92f, 55.92f, -15.351f)),
-                            .material        = "default_diffuse",
-                            .areaLight       = SceneAreaLight{.type = "diffuse", .parameters = Parameters({FloatParameter("rgb", "L", {41.5594f, 43.3127f, 45.066f})})},
+                            .material        = defaultDiffuse,
+                            .areaLight       = SceneAreaLight{.value = SceneDiffuseAreaLight{.emission = Rgb(41.5594f, 43.3127f, 45.066f)}},
                         },
                         SceneShape{
-                            .type            = "sphere",
-                            .parameters      = Parameters({FloatParameter("float", "radius", {7.5f})}),
+                            .id              = SceneShapeId{11},
+                            .name            = "cool_area_light",
+                            .value           = SceneSphere{.radius = 7.5f},
                             .worldFromObject = math::Translate(math::Vector3(-32.892f, 55.92f, 36.293f)),
-                            .material        = "default_diffuse",
-                            .areaLight       = SceneAreaLight{.type = "diffuse", .parameters = Parameters({FloatParameter("rgb", "L", {65.066f, 63.3127f, 61.5594f})})},
+                            .material        = defaultDiffuse,
+                            .areaLight       = SceneAreaLight{.value = SceneDiffuseAreaLight{.emission = Rgb(65.066f, 63.3127f, 61.5594f)}},
                         },
                         SceneShape{
-                            .type            = "plymesh",
-                            .parameters      = Parameters({StringParameter("filename", {std::string_view{mesh00001}})}),
+                            .id              = SceneShapeId{12},
+                            .name            = "book_table",
+                            .value           = ScenePlyMesh{.filename = mesh00001},
                             .worldFromObject = math::Scale(0.213f, 0.213f, 0.213f),
-                            .material        = "gray_diffuse",
+                            .material        = grayDiffuse,
                         },
                         SceneShape{
-                            .type       = "plymesh",
-                            .parameters = Parameters({StringParameter("filename", {std::string_view{mesh00002}})}),
-                            .worldFromObject =
-                                math::Compose(
-                                    {
-                                        math::Translate(math::Vector3(0.0f, 2.2f, 0.0f)),
-                                        math::Rotate(77.3425f, math::Vector3(0.403388f, -0.754838f, -0.517202f)),
-                                        math::Scale(0.5f, 0.5f, 0.5f),
-                                    }),
-                            .material = "book_pages",
+                            .id              = SceneShapeId{13},
+                            .name            = "book_pages_mesh",
+                            .value           = ScenePlyMesh{.filename = mesh00002},
+                            .worldFromObject = math::Compose({
+                                math::Translate(math::Vector3(0.0f, 2.2f, 0.0f)),
+                                math::Rotate(77.3425f, math::Vector3(0.403388f, -0.754838f, -0.517202f)),
+                                math::Scale(0.5f, 0.5f, 0.5f),
+                            }),
+                            .material        = bookPagesMaterial,
                         },
                         SceneShape{
-                            .type       = "plymesh",
-                            .parameters = Parameters({StringParameter("filename", {std::string_view{mesh00003}})}),
-                            .worldFromObject =
-                                math::Compose(
-                                    {
-                                        math::Translate(math::Vector3(0.0f, 2.2f, 0.0f)),
-                                        math::Rotate(77.3425f, math::Vector3(0.403388f, -0.754838f, -0.517202f)),
-                                        math::Scale(0.5f, 0.5f, 0.5f),
-                                    }),
-                            .material = "book_cover",
+                            .id              = SceneShapeId{14},
+                            .name            = "book_cover_mesh",
+                            .value           = ScenePlyMesh{.filename = mesh00003},
+                            .worldFromObject = math::Compose({
+                                math::Translate(math::Vector3(0.0f, 2.2f, 0.0f)),
+                                math::Rotate(77.3425f, math::Vector3(0.403388f, -0.754838f, -0.517202f)),
+                                math::Scale(0.5f, 0.5f, 0.5f),
+                            }),
+                            .material        = bookCoverMaterial,
                         },
                     },
             };
-            return scene;
         }
 
         [[nodiscard]] SceneSnapshot ExplosionScene() {
+            const SceneMaterialId interfaceMaterial{1};
+            const SceneMaterialId groundMaterial{2};
+            const SceneMediumId fireMedium{3};
+            const SceneLightId skyLight{4};
             const std::string skyTexture          = SceneResource("explosion/textures/sky.exr");
             const std::string fireVolume          = SceneResource("explosion/fire.nvdb");
             const math::Transform cameraFromWorld = math::LookAt(math::Point3(0.0f, 120.0f, 20.0f), math::Point3(-0.5f, 0.0f, 30.0f), math::Vector3(0.0f, 0.0f, 1.0f));
 
-            SceneSnapshot scene{
+            return SceneSnapshot{
                 .name   = "explosion",
                 .title  = "Explosion",
                 .source = "spectra://scene/explosion",
                 .renderSettings =
                     SceneRenderSettings{
                         .film =
-                            SceneComponent{
-                                .type       = "rgb",
-                                .parameters = Parameters({
-                                    IntegerParameter("xresolution", {1300}),
-                                    IntegerParameter("yresolution", {1800}),
-                                    StringParameter("sensor", {"nikon_d850"}),
-                                    FloatParameter("float", "whitebalance", {6000.0f}),
-                                    FloatParameter("float", "iso", {100.0f}),
-                                    StringParameter("filename", {"explosion.exr"}),
-                                }),
+                            SceneFilmSettings{
+                                .filename     = "explosion.exr",
+                                .sensor       = "nikon_d850",
+                                .xResolution  = 1300,
+                                .yResolution  = 1800,
+                                .iso          = 100.0f,
+                                .whiteBalance = 6000.0f,
                             },
                         .camera =
                             SceneCamera{
-                                .type            = "perspective",
-                                .parameters      = Parameters({FloatParameter("float", "fov", {37.0f})}),
                                 .worldFromCamera = math::Inverse(cameraFromWorld),
                                 .fovDegrees      = 37.0f,
                             },
                         .integrator =
-                            SceneComponent{
-                                .type       = "volpath",
-                                .parameters = Parameters({IntegerParameter("maxdepth", {5})}),
+                            SceneIntegratorSettings{
+                                .maxDepth = 5,
                             },
                     },
                 .materials =
                     {
                         SceneMaterial{
-                            .name = "interface",
-                            .type = "interface",
+                            .id    = interfaceMaterial,
+                            .name  = "interface",
+                            .value = SceneInterfaceMaterial{},
                         },
                         SceneMaterial{
-                            .name       = "ground",
-                            .type       = "coateddiffuse",
-                            .parameters = Parameters({
-                                FloatParameter("rgb", "reflectance", {0.4f, 0.4f, 0.4f}),
-                                FloatParameter("float", "roughness", {0.001f}),
-                            }),
+                            .id    = groundMaterial,
+                            .name  = "ground",
+                            .value = SceneCoatedDiffuseMaterial{.reflectance = Rgb(0.4f, 0.4f, 0.4f), .roughness = FloatValue(0.001f)},
                         },
                     },
                 .media =
                     {
                         SceneMedium{
-                            .name            = "kaboom",
-                            .type            = "nanovdb",
-                            .parameters      = Parameters({
-                                StringParameter("filename", {std::string_view{fireVolume}}),
-                                FloatParameter("spectrum", "sigma_s", {200.0f, 10.0f, 900.0f, 10.0f}),
-                                FloatParameter("spectrum", "sigma_a", {200.0f, 10.0f, 900.0f, 10.0f}),
-                                FloatParameter("float", "Lescale", {5.0f}),
-                                FloatParameter("float", "temperaturecutoff", {1.0f}),
-                                FloatParameter("float", "temperaturescale", {100.0f}),
-                            }),
+                            .id   = fireMedium,
+                            .name = "kaboom",
+                            .value =
+                                SceneNanoVdbMedium{
+                                    .filename          = fireVolume,
+                                    .sigmaS            = std::vector<float>{200.0f, 10.0f, 900.0f, 10.0f},
+                                    .sigmaA            = std::vector<float>{200.0f, 10.0f, 900.0f, 10.0f},
+                                    .leScale           = 5.0f,
+                                    .temperatureCutoff = 1.0f,
+                                    .temperatureScale  = 100.0f,
+                                },
                             .worldFromMedium = math::Compose({
                                 math::Scale(1.0f, 1.0f, 1.6f),
                                 math::Rotate(90.0f, math::Vector3(1.0f, 0.0f, 0.0f)),
@@ -432,43 +427,40 @@ namespace spectra::scene::builtin {
                 .lights =
                     {
                         SceneLight{
-                            .type           = "infinite",
-                            .parameters     = Parameters({
-                                StringParameter("filename", {std::string_view{skyTexture}}),
-                                FloatParameter("float", "scale", {2.0f}),
-                            }),
+                            .id             = skyLight,
+                            .name           = "sky",
+                            .value          = SceneInfiniteLight{.filename = skyTexture, .scale = 2.0f},
                             .worldFromLight = math::Rotate(10.0f, math::Vector3(1.0f, 0.0f, 0.0f)),
                         },
                     },
                 .shapes =
                     {
                         SceneShape{
-                            .type            = "sphere",
-                            .parameters      = Parameters({FloatParameter("float", "radius", {80.0f})}),
+                            .id              = SceneShapeId{5},
+                            .name            = "volume_boundary",
+                            .value           = SceneSphere{.radius = 80.0f},
                             .worldFromObject = math::Translate(math::Vector3(0.0f, 40.0f, 0.0f)),
-                            .material        = "interface",
-                            .insideMedium    = "kaboom",
+                            .material        = interfaceMaterial,
+                            .insideMedium    = fireMedium,
                         },
                         SceneShape{
-                            .type       = "disk",
-                            .parameters = Parameters({FloatParameter("float", "radius", {1000.0f})}),
-                            .worldFromObject =
-                                math::Compose(
-                                    {
-                                        math::Translate(math::Vector3(0.0f, -50.0f, 0.0f)),
-                                        math::Translate(math::Vector3(0.0f, 0.0f, -4.0f)),
-                                    }),
-                            .material = "ground",
+                            .id              = SceneShapeId{6},
+                            .name            = "ground_disk",
+                            .value           = SceneDisk{.radius = 1000.0f},
+                            .worldFromObject = math::Compose({
+                                math::Translate(math::Vector3(0.0f, -50.0f, 0.0f)),
+                                math::Translate(math::Vector3(0.0f, 0.0f, -4.0f)),
+                            }),
+                            .material        = groundMaterial,
                         },
                     },
             };
-            return scene;
         }
     } // namespace
 
-    EditableScene BuildScene(std::string_view name) {
-        if (name == "default") return EditableScene{BookScene()};
-        if (name == "explosion") return EditableScene{ExplosionScene()};
+    SceneWorkspace BuildScene(const std::string_view name) {
+        if (name == "default") return SceneWorkspace{BookScene()};
+        if (name == "explosion") return SceneWorkspace{ExplosionScene()};
         throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", name));
     }
 } // namespace spectra::scene::builtin
@@ -489,15 +481,34 @@ namespace spectra::scene {
 
         std::size_t infiniteLightCount = 0;
         for (const SceneLight& light : scene.lights)
-            if (light.type == "infinite" || light.type == "portal") ++infiniteLightCount;
+            if (std::holds_alternative<SceneInfiniteLight>(light.value)) ++infiniteLightCount;
+
+        std::string camera = "perspective";
+        if (scene.renderSettings.camera.kind != CameraKind::Perspective) throw std::runtime_error("Unknown Spectra camera kind");
+
+        std::string sampler{};
+        switch (scene.renderSettings.sampler.kind) {
+        case SamplerKind::Halton: sampler = "halton"; break;
+        case SamplerKind::ZSobol: sampler = "zsobol"; break;
+        }
+
+        std::string integrator{};
+        switch (scene.renderSettings.integrator.kind) {
+        case IntegratorKind::VolPath: integrator = "volpath"; break;
+        }
+
+        std::string accelerator{};
+        switch (scene.renderSettings.accelerator.kind) {
+        case AcceleratorKind::Bvh: accelerator = "bvh"; break;
+        }
 
         return SceneInfo{
             .name                    = scene.name,
             .title                   = scene.title,
-            .camera                  = scene.renderSettings.camera.type,
-            .sampler                 = scene.renderSettings.sampler.type,
-            .integrator              = scene.renderSettings.integrator.type,
-            .accelerator             = scene.renderSettings.accelerator.type,
+            .camera                  = camera,
+            .sampler                 = sampler,
+            .integrator              = integrator,
+            .accelerator             = accelerator,
             .shape_count             = scene.shapes.size() + definitionShapeCount,
             .material_count          = scene.materials.size(),
             .texture_count           = scene.textures.size(),
@@ -511,7 +522,7 @@ namespace spectra::scene {
         };
     }
 
-    EditableScene BuildScene(std::string_view name) {
+    SceneWorkspace BuildScene(const std::string_view name) {
         return builtin::BuildScene(name);
     }
 } // namespace spectra::scene

@@ -11,13 +11,13 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-export module xayah.spectra.pathtracer;
+export module xayah.spectra.rasterizer;
 
 import std;
 import spectra.scene;
 
 export namespace xayah {
-    enum class PathtracerDockSlot {
+    enum class RasterizerDockSlot {
         Center,
         Left,
         LeftBottom,
@@ -27,13 +27,13 @@ export namespace xayah {
         Floating,
     };
 
-    struct PathtracerPanel {
+    struct RasterizerPanel {
         std::string id{};
         std::string title{};
         std::string icon{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
-        PathtracerDockSlot dock_slot{PathtracerDockSlot::Floating};
+        RasterizerDockSlot dock_slot{RasterizerDockSlot::Floating};
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
@@ -43,27 +43,26 @@ export namespace xayah {
         std::move_only_function<void()> draw{};
     };
 
-    struct PathtracerFrameInfo {
+    struct RasterizerFrameInfo {
         std::uint32_t frame_index{};
         std::uint32_t image_index{};
     };
 
-    struct PathtracerFrameResult {
+    struct RasterizerFrameResult {
         std::optional<vk::Semaphore> completion_semaphore{};
         bool close_requested{false};
         std::optional<std::string> window_detail{};
     };
 
     template <typename Frame>
-    concept PathtracerFrameInfoLike = requires(const Frame& frame) {
+    concept RasterizerFrameInfoLike = requires(const Frame& frame) {
         { frame.frame_index } -> std::convertible_to<std::uint32_t>;
         { frame.image_index } -> std::convertible_to<std::uint32_t>;
     };
 
     template <typename Host>
-    concept PathtracerHost = requires(Host& host, PathtracerPanel panel, std::string detail) {
+    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, std::string detail) {
         { host.scene_snapshot() } -> std::same_as<std::shared_ptr<const spectra::scene::SceneSnapshot>>;
-        { host.scene_changes_since(spectra::scene::SceneRevision{}) } -> std::same_as<spectra::scene::SceneEditBatch>;
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
@@ -72,23 +71,19 @@ export namespace xayah {
         { host.set_window_detail(std::move(detail)) } -> std::same_as<void>;
     };
 
-    class PathtracerHostView {
+    class RasterizerHostView {
     public:
-        template <PathtracerHost Host>
-        explicit PathtracerHostView(Host& host) : sceneSnapshotCallback([&host] { return host.scene_snapshot(); }), sceneChangesSinceCallback([&host](spectra::scene::SceneRevision revision) { return host.scene_changes_since(revision); }), physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        template <RasterizerHost Host>
+        explicit RasterizerHostView(Host& host) : sceneSnapshotCallback([&host] { return host.scene_snapshot(); }), physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
-        PathtracerHostView(const PathtracerHostView& other)                = delete;
-        PathtracerHostView(PathtracerHostView&& other) noexcept            = default;
-        PathtracerHostView& operator=(const PathtracerHostView& other)     = delete;
-        PathtracerHostView& operator=(PathtracerHostView&& other) noexcept = default;
-        ~PathtracerHostView() noexcept                                     = default;
+        RasterizerHostView(const RasterizerHostView& other)                = delete;
+        RasterizerHostView(RasterizerHostView&& other) noexcept            = default;
+        RasterizerHostView& operator=(const RasterizerHostView& other)     = delete;
+        RasterizerHostView& operator=(RasterizerHostView&& other) noexcept = default;
+        ~RasterizerHostView() noexcept                                     = default;
 
         [[nodiscard]] std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot() {
             return this->sceneSnapshotCallback();
-        }
-
-        [[nodiscard]] spectra::scene::SceneEditBatch scene_changes_since(spectra::scene::SceneRevision revision) {
-            return this->sceneChangesSinceCallback(revision);
         }
 
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() {
@@ -107,7 +102,7 @@ export namespace xayah {
             return this->swapchainExtentCallback();
         }
 
-        void register_panel(PathtracerPanel panel) {
+        void register_panel(RasterizerPanel panel) {
             this->registerPanelCallback(std::move(panel));
         }
 
@@ -117,51 +112,50 @@ export namespace xayah {
 
     private:
         std::move_only_function<std::shared_ptr<const spectra::scene::SceneSnapshot>()> sceneSnapshotCallback{};
-        std::move_only_function<spectra::scene::SceneEditBatch(spectra::scene::SceneRevision)> sceneChangesSinceCallback{};
         std::move_only_function<const vk::raii::PhysicalDevice&()> physicalDeviceCallback{};
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
-        std::move_only_function<void(PathtracerPanel)> registerPanelCallback{};
+        std::move_only_function<void(RasterizerPanel)> registerPanelCallback{};
         std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 
-    class SpectraPathtracer final {
+    class SpectraRasterizer final {
     public:
-        SpectraPathtracer();
-        ~SpectraPathtracer() noexcept;
+        SpectraRasterizer();
+        ~SpectraRasterizer() noexcept;
 
-        SpectraPathtracer(const SpectraPathtracer& other) = delete;
-        SpectraPathtracer(SpectraPathtracer&& other) noexcept;
-        SpectraPathtracer& operator=(const SpectraPathtracer& other) = delete;
-        SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept;
+        SpectraRasterizer(const SpectraRasterizer& other) = delete;
+        SpectraRasterizer(SpectraRasterizer&& other) noexcept;
+        SpectraRasterizer& operator=(const SpectraRasterizer& other) = delete;
+        SpectraRasterizer& operator=(SpectraRasterizer&& other) noexcept;
 
         [[nodiscard]] std::string_view name() const;
 
-        template <PathtracerHost Host>
+        template <RasterizerHost Host>
         void attach(Host& host) {
-            this->attach(PathtracerHostView{host});
+            this->attach(RasterizerHostView{host});
         }
 
-        template <PathtracerHost Host>
+        template <RasterizerHost Host>
         void detach(Host&) noexcept {
             this->detach();
         }
 
-        template <PathtracerHost Host>
+        template <RasterizerHost Host>
         void before_imgui_shutdown(Host&) noexcept {
             this->before_imgui_shutdown();
         }
 
-        template <PathtracerHost Host>
+        template <RasterizerHost Host>
         void after_imgui_created(Host&) {
             this->after_imgui_created();
         }
 
-        template <PathtracerHost Host, typename Frame>
-            requires PathtracerFrameInfoLike<Frame>
-        [[nodiscard]] PathtracerFrameResult begin_frame(Host& host, const Frame& frame) {
-            return this->begin_frame(PathtracerHostView{host}, PathtracerFrameInfo{
+        template <RasterizerHost Host, typename Frame>
+            requires RasterizerFrameInfoLike<Frame>
+        [[nodiscard]] RasterizerFrameResult begin_frame(Host& host, const Frame& frame) {
+            return this->begin_frame(RasterizerHostView{host}, RasterizerFrameInfo{
                                                                    .frame_index = static_cast<std::uint32_t>(frame.frame_index),
                                                                    .image_index = static_cast<std::uint32_t>(frame.image_index),
                                                                });
@@ -173,10 +167,10 @@ export namespace xayah {
         class Impl;
         std::unique_ptr<Impl> impl;
 
-        void attach(PathtracerHostView host);
+        void attach(RasterizerHostView host);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        [[nodiscard]] PathtracerFrameResult begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame);
+        [[nodiscard]] RasterizerFrameResult begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame);
     };
 } // namespace xayah

@@ -23,6 +23,7 @@ module;
 module xayah.spectra;
 
 import std;
+import spectra.scene;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -161,6 +162,23 @@ namespace xayah {
         return this->swapchain.extent;
     }
 
+    std::shared_ptr<const spectra::scene::SceneSnapshot> Spectra::scene_snapshot() const {
+        return this->scene_workspace.snapshot();
+    }
+
+    spectra::scene::SceneEditBatch Spectra::scene_changes_since(const spectra::scene::SceneRevision revision) const {
+        return this->scene_workspace.changes_since(revision);
+    }
+
+    spectra::scene::SceneEditBatch Spectra::commit_scene(spectra::scene::SceneEditBuilder edit) {
+        return this->scene_workspace.commit(std::move(edit));
+    }
+
+    void Spectra::activate_renderer(const std::size_t renderer_index) {
+        if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        this->active_renderer_index = renderer_index;
+    }
+
     void Spectra::store_panel(SpectraPanel panel) {
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
         if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
@@ -177,7 +195,8 @@ namespace xayah {
         this->window_title.detail = std::move(detail);
     }
 
-    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
+    Spectra::Spectra(spectra::scene::SceneWorkspace scene_workspace, const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try : scene_workspace(std::move(scene_workspace)) {
+        if (!this->scene_workspace.loaded()) throw std::runtime_error("Spectra requires a loaded scene workspace");
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
         const std::string app_name_string{app_name};
@@ -316,7 +335,7 @@ namespace xayah {
         } catch (...) {
         }
 
-        this->detach_plugins_noexcept();
+        this->detach_renderers_noexcept();
         this->destroy_imgui();
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
@@ -339,15 +358,16 @@ namespace xayah {
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::register_plugin(RegisteredPlugin plugin) {
-        const std::string_view plugin_name = plugin.name;
-        if (plugin_name.empty()) throw std::runtime_error("Spectra plugin name must not be empty");
-        for (const RegisteredPlugin& existing_plugin : this->plugins) {
-            if (existing_plugin.name == plugin_name) throw std::runtime_error(std::string{"Duplicate Spectra plugin name: "} + std::string{plugin_name});
+    void Spectra::register_renderer(RegisteredRenderer renderer) {
+        const std::string_view renderer_name = renderer.name;
+        if (renderer_name.empty()) throw std::runtime_error("Spectra renderer name must not be empty");
+        for (const RegisteredRenderer& existing_renderer : this->renderers) {
+            if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
         }
-        plugin.attach(*this);
-        if (this->imgui.initialized) plugin.after_imgui_created(*this);
-        this->plugins.push_back(std::move(plugin));
+        renderer.attach(*this);
+        if (this->imgui.initialized) renderer.after_imgui_created(*this);
+        this->renderers.push_back(std::move(renderer));
+        if (this->renderers.size() == 1) this->active_renderer_index = 0;
     }
 
     void Spectra::run() {
@@ -424,7 +444,7 @@ namespace xayah {
             vulkan_backend_initialized    = true;
             this->imgui.initialized       = true;
             this->imgui_shutdown_notified = false;
-            for (RegisteredPlugin& plugin : this->plugins) plugin.after_imgui_created(*this);
+            for (RegisteredRenderer& renderer : this->renderers) renderer.after_imgui_created(*this);
         } catch (...) {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
@@ -436,11 +456,11 @@ namespace xayah {
         }
     }
 
-    void Spectra::notify_plugins_before_imgui_shutdown() noexcept {
+    void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
         if (this->imgui_shutdown_notified) return;
-        for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin) {
+        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
             try {
-                plugin->before_imgui_shutdown(*this);
+                renderer->before_imgui_shutdown(*this);
             } catch (...) {
             }
         }
@@ -448,7 +468,7 @@ namespace xayah {
     }
 
     void Spectra::destroy_imgui() noexcept {
-        this->notify_plugins_before_imgui_shutdown();
+        this->notify_renderers_before_imgui_shutdown();
         if (this->imgui.initialized) {
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -459,16 +479,17 @@ namespace xayah {
         this->dock_layout_initialized = false;
     }
 
-    void Spectra::detach_plugins_noexcept() noexcept {
-        this->notify_plugins_before_imgui_shutdown();
-        for (auto plugin = this->plugins.rbegin(); plugin != this->plugins.rend(); ++plugin) {
+    void Spectra::detach_renderers_noexcept() noexcept {
+        this->notify_renderers_before_imgui_shutdown();
+        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
             try {
-                plugin->detach(*this);
+                renderer->detach(*this);
             } catch (...) {
             }
         }
-        this->plugins.clear();
+        this->renderers.clear();
         this->panels.clear();
+        this->active_renderer_index   = 0;
         this->dock_layout_initialized = false;
     }
 
@@ -506,16 +527,16 @@ namespace xayah {
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
 
+        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
         const SpectraFrameInfo frame_info{frame.frame_index, frame.image_index};
-        for (RegisteredPlugin& plugin : this->plugins) {
-            SpectraFrameResult frame_result = plugin.begin_frame(*this, frame_info);
-            if (frame_result.completion_semaphore.has_value()) {
-                if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
-                frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
-            }
-            if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-            if (frame_result.window_detail.has_value()) this->set_window_detail(std::move(*frame_result.window_detail));
+        SpectraFrameResult frame_result = this->renderers[this->active_renderer_index].begin_frame(*this, frame_info);
+        if (frame_result.completion_semaphore.has_value()) {
+            if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
+            frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
         }
+        if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
+        if (frame_result.window_detail.has_value()) this->set_window_detail(std::move(*frame_result.window_detail));
         return true;
     }
 
@@ -529,7 +550,9 @@ namespace xayah {
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
 
-        for (RegisteredPlugin& plugin : this->plugins) plugin.record_frame(command_buffer);
+        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        this->renderers[this->active_renderer_index].record_frame(command_buffer);
 
         {
             const vk::ImageMemoryBarrier2 color_barrier{
@@ -648,6 +671,13 @@ namespace xayah {
                 const std::string label = panel.icon.empty() ? panel.title : panel.icon + " " + panel.title;
                 const char* shortcut    = panel.shortcut_label.empty() ? nullptr : panel.shortcut_label.c_str();
                 ImGui::MenuItem(label.c_str(), shortcut, &panel.visible);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Renderer")) {
+            for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
+                const bool selected = renderer_index == this->active_renderer_index;
+                if (ImGui::MenuItem(this->renderers[renderer_index].name.c_str(), nullptr, selected)) this->activate_renderer(renderer_index);
             }
             ImGui::EndMenu();
         }

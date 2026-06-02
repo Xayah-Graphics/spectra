@@ -460,7 +460,7 @@ target_sources(
         PRIVATE
         spectra/spectra.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw spectra::imgui)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan spectra::scene PRIVATE glfw spectra::imgui)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
@@ -475,15 +475,30 @@ target_sources(
         PRIVATE
         spectra/pathtracer.cpp
 )
-target_link_libraries(spectra_pathtracer PUBLIC Vulkan::Vulkan PRIVATE CUDA::cudart spectra::scene spectra::gpu_lib spectra::imgui)
+target_link_libraries(spectra_pathtracer PUBLIC Vulkan::Vulkan spectra::scene PRIVATE CUDA::cudart spectra::gpu_lib spectra::imgui)
 set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_pathtracer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_pathtracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+
+add_library(spectra_rasterizer)
+add_library(spectra::rasterizer ALIAS spectra_rasterizer)
+target_sources(
+        spectra_rasterizer
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/rasterizer.ixx
+        PRIVATE
+        spectra/rasterizer.cpp
+)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::scene PRIVATE spectra::imgui)
+set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(spectra_rasterizer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(spectra_rasterizer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 
 # ============================================================================
 # Application
 # ============================================================================
 add_executable(spectra main.cpp)
-target_link_libraries(spectra PRIVATE spectra::core spectra::pathtracer)
+target_link_libraries(spectra PRIVATE spectra::core spectra::pathtracer spectra::rasterizer)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)

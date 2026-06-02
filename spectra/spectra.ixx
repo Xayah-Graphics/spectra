@@ -15,6 +15,7 @@ module;
 export module xayah.spectra;
 
 import std;
+import spectra.scene;
 
 export namespace xayah {
     enum class SpectraDockSlot {
@@ -78,20 +79,20 @@ export namespace xayah {
         std::optional<std::string>{std::move(result.window_detail)};
     };
 
-    template <typename Plugin, typename Host>
-    concept SpectraPluginForHost = std::movable<std::remove_cvref_t<Plugin>> && requires(std::remove_cvref_t<Plugin>& plugin, const std::remove_cvref_t<Plugin>& constPlugin, Host& host, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& commandBuffer) {
-        { constPlugin.name() } -> std::convertible_to<std::string_view>;
-        { plugin.attach(host) } -> std::same_as<void>;
-        { plugin.detach(host) } noexcept -> std::same_as<void>;
-        { plugin.before_imgui_shutdown(host) } noexcept -> std::same_as<void>;
-        { plugin.after_imgui_created(host) } -> std::same_as<void>;
-        { plugin.begin_frame(host, frame) } -> SpectraFrameResultLike;
-        { plugin.record_frame(commandBuffer) } -> std::same_as<void>;
+    template <typename Renderer, typename Host>
+    concept SpectraRendererForHost = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, const std::remove_cvref_t<Renderer>& constRenderer, Host& host, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& commandBuffer) {
+        { constRenderer.name() } -> std::convertible_to<std::string_view>;
+        { renderer.attach(host) } -> std::same_as<void>;
+        { renderer.detach(host) } noexcept -> std::same_as<void>;
+        { renderer.before_imgui_shutdown(host) } noexcept -> std::same_as<void>;
+        { renderer.after_imgui_created(host) } -> std::same_as<void>;
+        { renderer.begin_frame(host, frame) } -> SpectraFrameResultLike;
+        { renderer.record_frame(commandBuffer) } -> std::same_as<void>;
     };
 
     class Spectra {
     public:
-        explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
+        explicit Spectra(spectra::scene::SceneWorkspace scene_workspace, const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
 
         Spectra(const Spectra& other)                = delete;
@@ -99,15 +100,19 @@ export namespace xayah {
         Spectra& operator=(const Spectra& other)     = delete;
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
-        template <typename Plugin>
-            requires SpectraPluginForHost<Plugin, Spectra>
-        void register_plugin(Plugin plugin);
+        template <typename Renderer>
+            requires SpectraRendererForHost<Renderer, Spectra>
+        void register_renderer(Renderer renderer);
         void run();
 
+        [[nodiscard]] std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot() const;
+        [[nodiscard]] spectra::scene::SceneEditBatch scene_changes_since(spectra::scene::SceneRevision revision) const;
+        [[nodiscard]] spectra::scene::SceneEditBatch commit_scene(spectra::scene::SceneEditBuilder edit);
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const;
         [[nodiscard]] const vk::raii::Device& device() const;
         [[nodiscard]] std::uint32_t frame_count() const;
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
+        void activate_renderer(std::size_t renderer_index);
         template <typename Panel>
             requires SpectraPanelLike<Panel>
         void register_panel(Panel panel);
@@ -115,11 +120,11 @@ export namespace xayah {
 
     private:
         struct FrameState;
-        struct RegisteredPlugin {
-            template <typename Plugin>
-                requires SpectraPluginForHost<Plugin, Spectra>
-            explicit RegisteredPlugin(Plugin plugin) {
-                auto instance               = std::make_shared<Plugin>(std::move(plugin));
+        struct RegisteredRenderer {
+            template <typename Renderer>
+                requires SpectraRendererForHost<Renderer, Spectra>
+            explicit RegisteredRenderer(Renderer renderer) {
+                auto instance               = std::make_shared<Renderer>(std::move(renderer));
                 this->name                  = std::string{instance->name()};
                 this->attach                = [instance](Spectra& spectra) { instance->attach(spectra); };
                 this->detach                = [instance](Spectra& spectra) { instance->detach(spectra); };
@@ -145,13 +150,13 @@ export namespace xayah {
             std::move_only_function<void(const vk::raii::CommandBuffer&)> record_frame{};
         };
 
-        void register_plugin(RegisteredPlugin plugin);
+        void register_renderer(RegisteredRenderer renderer);
         void store_panel(SpectraPanel panel);
 
         void create_imgui();
-        void notify_plugins_before_imgui_shutdown() noexcept;
+        void notify_renderers_before_imgui_shutdown() noexcept;
         void destroy_imgui() noexcept;
-        void detach_plugins_noexcept() noexcept;
+        void detach_renderers_noexcept() noexcept;
 
         bool begin_frame(FrameState& frame);
         void record_frame(FrameState& frame);
@@ -219,8 +224,10 @@ export namespace xayah {
 
         bool dock_layout_initialized{false};
         bool imgui_shutdown_notified{false};
+        std::size_t active_renderer_index{0};
+        spectra::scene::SceneWorkspace scene_workspace{};
         std::vector<SpectraPanel> panels{};
-        std::vector<RegisteredPlugin> plugins{};
+        std::vector<RegisteredRenderer> renderers{};
     };
 
     template <typename Panel>
@@ -243,9 +250,9 @@ export namespace xayah {
         });
     }
 
-    template <typename Plugin>
-        requires SpectraPluginForHost<Plugin, Spectra>
-    void Spectra::register_plugin(Plugin plugin) {
-        this->register_plugin(RegisteredPlugin{std::move(plugin)});
+    template <typename Renderer>
+        requires SpectraRendererForHost<Renderer, Spectra>
+    void Spectra::register_renderer(Renderer renderer) {
+        this->register_renderer(RegisteredRenderer{std::move(renderer)});
     }
 } // namespace xayah
