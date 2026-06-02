@@ -15,9 +15,12 @@
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
 #include <spectra/pathtracer/util/pstd.cuh>
-#include <spectra/scene.h>
 #include <string>
 #include <vector>
+
+namespace spectra::scene {
+    struct Scene;
+} // namespace spectra::scene
 
 namespace spectra::pathtracer {
     struct WavefrontSceneEntity {

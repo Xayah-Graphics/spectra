@@ -7,7 +7,6 @@
 #include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/integrator.cuh>
 #include <spectra/pathtracer/util/float.cuh>
-#include <spectra/scene.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,6 +22,8 @@
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/string.cuh>
 #endif
+
+import spectra.scene;
 
 namespace {
     class UsageError : public std::runtime_error {

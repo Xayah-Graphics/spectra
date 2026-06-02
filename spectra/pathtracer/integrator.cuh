@@ -18,7 +18,7 @@
 #include <spectra/pathtracer/wavefront/workqueue.cuh>
 
 namespace spectra::scene {
-    class Scene;
+    struct Scene;
 } // namespace spectra::scene
 
 namespace spectra::optix {

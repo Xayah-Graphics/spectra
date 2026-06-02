@@ -1,3 +1,5 @@
+module;
+
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
@@ -6,30 +8,21 @@
 #include <windows.h>
 #endif
 #define GLFW_INCLUDE_VULKAN
-#include "spectra.h"
 #include <GLFW/glfw3.h>
-#include <algorithm>
-#include <array>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
-#include <cstdint>
-#include <format>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <iostream>
-#include <limits>
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <material_symbols/material_symbols_rounded_regular.h>
-#include <memory>
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 #include <vulkan/vulkan_raii.hpp>
+
+module xayah.spectra;
+
+import std;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {

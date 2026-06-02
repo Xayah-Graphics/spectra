@@ -1,12 +1,20 @@
-#ifndef XAYAH_SPECTRA_PATHTRACER_H
-#define XAYAH_SPECTRA_PATHTRACER_H
+module;
 
-#include "spectra.h"
-#include <memory>
-#include <string>
-#include <string_view>
+#if defined(_WIN32)
+#define VK_USE_PLATFORM_WIN32_KHR
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
 
-namespace xayah {
+#include <vulkan/vulkan_raii.hpp>
+
+export module xayah.spectra.pathtracer;
+
+import std;
+export import xayah.spectra;
+
+export namespace xayah {
     class SpectraPathtracer final : public SpectraPlugin {
     public:
         explicit SpectraPathtracer(std::string scene_name);
@@ -30,5 +38,3 @@ namespace xayah {
         std::unique_ptr<Impl> impl;
     };
 } // namespace xayah
-
-#endif

@@ -35,6 +35,8 @@
 #include <variant>
 #include <vector>
 
+import spectra.scene;
+
 namespace spectra::pathtracer {
     namespace {
         [[nodiscard]] SquareMatrix<4> ToPathtracerMatrix(const std::array<float, 16>& matrix) {

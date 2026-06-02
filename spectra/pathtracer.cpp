@@ -1,3 +1,5 @@
+module;
+
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
@@ -8,19 +10,11 @@
 #include <unistd.h>
 #endif
 
-#include "pathtracer.h"
-#include <algorithm>
-#include <array>
 #include <backends/imgui_impl_vulkan.h>
-#include <cmath>
-#include <cstdint>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
-#include <format>
 #include <imgui.h>
-#include <limits>
 #include <material_symbols/IconsMaterialSymbols.h>
-#include <memory>
 #include <spectra/pathtracer/base/film.cuh>
 #include <spectra/pathtracer/base/sampler.cuh>
 #include <spectra/pathtracer/core/cameras.cuh>
@@ -30,14 +24,14 @@
 #include <spectra/pathtracer/integrator.cuh>
 #include <spectra/pathtracer/util/transform.cuh>
 #include <spectra/pathtracer/util/vecmath.cuh>
-#include <spectra/scene.h>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 #include <vulkan/vulkan_raii.hpp>
+
+module xayah.spectra.pathtracer;
+
+import std;
+import spectra.scene;
+import xayah.spectra;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {

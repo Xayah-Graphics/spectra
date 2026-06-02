@@ -1,5 +1,4 @@
-#ifndef XAYAH_SPECTRA_SPECTRA_H
-#define XAYAH_SPECTRA_SPECTRA_H
+module;
 
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -8,20 +7,16 @@
 #endif
 #endif
 
-#include <cstdint>
-#include <functional>
+#include <GLFW/glfw3.h>
 #include <imgui.h>
-#include <memory>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
 
 #include <vulkan/vulkan_raii.hpp>
 
-struct GLFWwindow;
+export module xayah.spectra;
 
-namespace xayah {
+import std;
+
+export namespace xayah {
     class Spectra;
 
     enum class SpectraDockSlot {
@@ -172,5 +167,3 @@ namespace xayah {
         std::vector<std::unique_ptr<SpectraPlugin>> plugins{};
     };
 } // namespace xayah
-
-#endif

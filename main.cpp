@@ -1,10 +1,6 @@
-#include "spectra/pathtracer.h"
-#include "spectra/spectra.h"
-#include <exception>
-#include <iostream>
-#include <memory>
-#include <stdexcept>
-#include <string>
+import std;
+import xayah.spectra;
+import xayah.spectra.pathtracer;
 
 int main(const int argc, char** argv) {
     try {

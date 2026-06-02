@@ -1,17 +1,14 @@
-#include <cmath>
-#include <format>
-#include <initializer_list>
-#include <spectra/scene.h>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <variant>
-#include <vector>
+module;
 
 #ifndef SPECTRA_PROJECT_SCENE_ROOT
 #error "SPECTRA_PROJECT_SCENE_ROOT must point to the project-local scene directory."
 #endif
 
+module spectra.scene;
+
+import std;
+
+extern "C++" {
 namespace spectra::scene::builtin {
     namespace {
         [[nodiscard]] std::string SceneResource(std::string_view relativePath) {
@@ -618,3 +615,4 @@ namespace spectra::scene {
         return builtin::BuildScene(name);
     }
 } // namespace spectra::scene
+}

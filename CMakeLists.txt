@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 4.3.0)
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 project(spectra VERSION 1.0.0 LANGUAGES C CXX CUDA)
 
 
@@ -8,6 +9,8 @@ project(spectra VERSION 1.0.0 LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API ON)
+set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
 
 # ============================================================================
@@ -383,6 +386,19 @@ add_custom_command(
 )
 add_library(spectra_gpu_embedded_optix_input STATIC ${SPECTRA_GPU_EMBEDDED_OPTIX_INPUT})
 
+add_library(spectra_scene)
+add_library(spectra::scene ALIAS spectra_scene)
+target_sources(
+        spectra_scene
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/scene.ixx
+        PRIVATE
+        spectra/scene.cpp
+)
+set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(spectra_scene PRIVATE "SPECTRA_PROJECT_SCENE_ROOT=\"${SPECTRA_PROJECT_SCENE_ROOT}\"")
+
 add_library(
         spectra_gpu_lib
         STATIC
@@ -393,7 +409,6 @@ add_library(
         ${SPECTRA_GPU_DEVICE_SOURCE}
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
-        spectra/scene.cpp
         spectra/pathtracer/wavefront_scene.cpp
         spectra/pathtracer/optix/aggregate.cu
         spectra/pathtracer/integrator.cu
@@ -412,6 +427,8 @@ target_compile_options(
 )
 target_link_libraries(
         spectra_gpu_lib
+        PUBLIC
+        spectra::scene
         PRIVATE
         OpenEXR::OpenEXR
         Ptex_static
@@ -422,6 +439,7 @@ target_link_libraries(
         Threads::Threads
         spectra_gpu_embedded_optix_input
 )
+set_property(TARGET spectra_gpu_lib PROPERTY CXX_MODULE_STD ON)
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(spectra_gpu_lib PRIVATE dbghelp shell32 wsock32 ws2_32)
 endif ()
@@ -430,7 +448,8 @@ set_property(TARGET spectra_gpu_lib PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 add_executable(spectra_gpu_exe spectra_gpu.cpp)
 add_executable(spectra::gpu ALIAS spectra_gpu_exe)
-target_link_libraries(spectra_gpu_exe PRIVATE spectra_gpu_lib Threads::Threads)
+target_link_libraries(spectra_gpu_exe PRIVATE spectra::scene spectra_gpu_lib Threads::Threads)
+set_property(TARGET spectra_gpu_exe PROPERTY CXX_MODULE_STD ON)
 set_target_properties(spectra_gpu_exe PROPERTIES OUTPUT_NAME spectra_gpu)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(spectra_gpu_exe PRIVATE -rdynamic "LINKER:--no-as-needed")
@@ -443,10 +462,12 @@ endif ()
 add_library(spectra_core)
 target_sources(
         spectra_core
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/spectra.ixx
+        spectra/pathtracer.ixx
         PRIVATE
-        spectra/pathtracer.h
         spectra/pathtracer.cpp
-        spectra/spectra.h
         spectra/spectra.cpp
 
         vendor/imgui/imgui.cpp
@@ -456,7 +477,8 @@ target_sources(
         vendor/imgui/backends/imgui_impl_glfw.cpp
         vendor/imgui/backends/imgui_impl_vulkan.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw CUDA::cudart spectra::gpu_lib)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw CUDA::cudart spectra::scene spectra::gpu_lib)
+set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(
         spectra_core
         PRIVATE
@@ -477,3 +499,4 @@ target_include_directories(
 # ============================================================================
 add_executable(spectra main.cpp)
 target_link_libraries(spectra PRIVATE spectra_core spectra::gpu_lib)
+set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
