@@ -31,10 +31,6 @@ endif ()
 # ============================================================================
 # Dependencies
 # ============================================================================
-if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt/CMakeLists.txt")
-    message(FATAL_ERROR "Expected local renderer dependencies at '${CMAKE_CURRENT_SOURCE_DIR}/vendor/pbrt'.")
-endif ()
-
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CUDAToolkit REQUIRED)
@@ -45,15 +41,7 @@ if (CUDAToolkit_VERSION VERSION_LESS 13.0)
     message(FATAL_ERROR "spectra requires CUDA Toolkit 13.0 or newer; found ${CUDAToolkit_VERSION}.")
 endif ()
 
-set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(vendor/glfw)
-if (NOT TARGET glfw)
-    message(FATAL_ERROR "Top-level GLFW dependency did not define the glfw target.")
-endif ()
-
 add_subdirectory(vendor/pbrt)
 
 
@@ -68,10 +56,18 @@ set(SPECTRA_OPTIX_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/optix-cache" CACHE PATH
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for spectra_gpu")
 
 if (SPECTRA_OPTIX_PATH STREQUAL "")
-    message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to the OptiX 9.1 SDK root for spectra_gpu.")
+    foreach (SPECTRA_OPTIX_DEFAULT_PATH IN ITEMS
+            "C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0"
+            "/mnt/c/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0"
+    )
+        if (EXISTS "${SPECTRA_OPTIX_DEFAULT_PATH}/include/optix.h")
+            set(SPECTRA_OPTIX_PATH "${SPECTRA_OPTIX_DEFAULT_PATH}" CACHE PATH "Path to OptiX 9.1 SDK for spectra_gpu" FORCE)
+            break()
+        endif ()
+    endforeach ()
 endif ()
-if (NOT EXISTS "${SPECTRA_OPTIX_PATH}/include/optix.h")
-    message(FATAL_ERROR "SPECTRA_OPTIX_PATH='${SPECTRA_OPTIX_PATH}' does not contain include/optix.h.")
+if (SPECTRA_OPTIX_PATH STREQUAL "")
+    message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to the OptiX 9.1 SDK root for spectra_gpu; the default installation directory was not found.")
 endif ()
 if (NOT SPECTRA_OPTIX_GPU_ARCH MATCHES "^sm_[0-9]+$")
     message(FATAL_ERROR "SPECTRA_OPTIX_GPU_ARCH='${SPECTRA_OPTIX_GPU_ARCH}' must use the form sm_XX.")
@@ -94,18 +90,6 @@ endif ()
 math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
 set(SPECTRA_PROJECT_SCENE_ROOT "${PROJECT_SOURCE_DIR}/scene")
-if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/pbrt-book/book.pbrt")
-    message(FATAL_ERROR "Default Spectra book scene is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/pbrt-book/book.pbrt")
-endif ()
-if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/explosion.pbrt")
-    message(FATAL_ERROR "Default Spectra explosion scene is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/explosion/explosion.pbrt")
-endif ()
-if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/fire.nvdb")
-    message(FATAL_ERROR "Default Spectra explosion volume is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/explosion/fire.nvdb")
-endif ()
-if (NOT EXISTS "${SPECTRA_PROJECT_SCENE_ROOT}/explosion/textures/sky.exr")
-    message(FATAL_ERROR "Default Spectra explosion sky texture is missing: ${SPECTRA_PROJECT_SCENE_ROOT}/explosion/textures/sky.exr")
-endif ()
 set(SPECTRA_GPU_DEFINITIONS
         PTEX_STATIC
         "$<$<CONFIG:Debug>:SPECTRA_DEBUG_BUILD>"
@@ -212,7 +196,6 @@ set(SPECTRA_GPU_INCLUDE_DIRS
         ${SPECTRA_GPU_GENERATED_DIR}
         ${SPECTRA_OPTIX_PATH}/include
         ${CUDAToolkit_INCLUDE_DIRS}
-        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
 set(SPECTRA_GPU_BIN2C_SCRIPT ${SPECTRA_GPU_GENERATED_DIR}/spectra_gpu_bin2c_embed.cmake)
 file(WRITE "${SPECTRA_GPU_BIN2C_SCRIPT}" [=[
@@ -471,6 +454,21 @@ endif ()
 # ============================================================================
 # Spectra
 # ============================================================================
+add_library(spectra_imgui)
+add_library(spectra::imgui ALIAS spectra_imgui)
+target_sources(
+        spectra_imgui
+        PRIVATE
+        vendor/imgui/imgui.cpp
+        vendor/imgui/imgui_draw.cpp
+        vendor/imgui/imgui_tables.cpp
+        vendor/imgui/imgui_widgets.cpp
+        vendor/imgui/backends/imgui_impl_glfw.cpp
+        vendor/imgui/backends/imgui_impl_vulkan.cpp
+)
+target_link_libraries(spectra_imgui PUBLIC Vulkan::Vulkan PRIVATE glfw)
+target_include_directories(spectra_imgui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui)
+
 add_library(spectra_core)
 add_library(spectra::core ALIAS spectra_core)
 target_sources(
@@ -480,29 +478,11 @@ target_sources(
         spectra/spectra.ixx
         PRIVATE
         spectra/spectra.cpp
-
-        vendor/imgui/imgui.cpp
-        vendor/imgui/imgui_draw.cpp
-        vendor/imgui/imgui_tables.cpp
-        vendor/imgui/imgui_widgets.cpp
-        vendor/imgui/backends/imgui_impl_glfw.cpp
-        vendor/imgui/backends/imgui_impl_vulkan.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw spectra::imgui)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(
-        spectra_core
-        PRIVATE
-        IMGUI_DEFINE_MATH_OPERATORS
-)
-target_include_directories(
-        spectra_core
-        PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/glfw/include
-)
+target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(spectra_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 add_library(spectra_pathtracer)
 add_library(spectra::pathtracer ALIAS spectra_pathtracer)
@@ -514,13 +494,10 @@ target_sources(
         PRIVATE
         spectra/pathtracer.cpp
 )
-target_link_libraries(spectra_pathtracer PUBLIC spectra::core PRIVATE CUDA::cudart spectra::scene spectra::gpu_lib)
+target_link_libraries(spectra_pathtracer PUBLIC Vulkan::Vulkan PRIVATE CUDA::cudart spectra::scene spectra::gpu_lib spectra::imgui)
 set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(
-        spectra_pathtracer
-        PRIVATE
-        IMGUI_DEFINE_MATH_OPERATORS
-)
+target_compile_definitions(spectra_pathtracer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(spectra_pathtracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 
 # ============================================================================

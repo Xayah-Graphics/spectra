@@ -161,7 +161,7 @@ namespace xayah {
         return this->swapchain.extent;
     }
 
-    void Spectra::register_panel(SpectraPanel panel) {
+    void Spectra::store_panel(SpectraPanel panel) {
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
         if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
         if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");

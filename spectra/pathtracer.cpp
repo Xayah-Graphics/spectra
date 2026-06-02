@@ -33,7 +33,6 @@ module xayah.spectra.pathtracer;
 
 import std;
 import spectra.scene;
-import xayah.spectra;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -912,11 +911,11 @@ namespace xayah {
         ~Impl() noexcept;
 
         [[nodiscard]] std::string_view name() const;
-        void attach(Spectra& spectra);
-        void detach(Spectra& spectra) noexcept;
-        void before_imgui_shutdown(Spectra& spectra) noexcept;
-        void after_imgui_created(Spectra& spectra);
-        [[nodiscard]] SpectraFrameResult begin_frame(Spectra& spectra, const SpectraFrameInfo& frame);
+        void attach(PathtracerHostView host);
+        void detach() noexcept;
+        void before_imgui_shutdown() noexcept;
+        void after_imgui_created();
+        [[nodiscard]] PathtracerFrameResult begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame);
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
@@ -939,7 +938,7 @@ namespace xayah {
             [[nodiscard]] float average() const;
         };
 
-        void register_panels(Spectra& spectra);
+        void register_panels(PathtracerHostView& host);
         void detach_noexcept() noexcept;
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         [[nodiscard]] std::string window_detail() const;
@@ -1048,24 +1047,24 @@ namespace xayah {
         return this->impl->name();
     }
 
-    void SpectraPathtracer::attach(Spectra& spectra) {
-        this->impl->attach(spectra);
+    void SpectraPathtracer::attach(PathtracerHostView host) {
+        this->impl->attach(std::move(host));
     }
 
-    void SpectraPathtracer::detach(Spectra& spectra) noexcept {
-        this->impl->detach(spectra);
+    void SpectraPathtracer::detach() noexcept {
+        this->impl->detach();
     }
 
-    void SpectraPathtracer::before_imgui_shutdown(Spectra& spectra) noexcept {
-        this->impl->before_imgui_shutdown(spectra);
+    void SpectraPathtracer::before_imgui_shutdown() noexcept {
+        this->impl->before_imgui_shutdown();
     }
 
-    void SpectraPathtracer::after_imgui_created(Spectra& spectra) {
-        this->impl->after_imgui_created(spectra);
+    void SpectraPathtracer::after_imgui_created() {
+        this->impl->after_imgui_created();
     }
 
-    SpectraFrameResult SpectraPathtracer::begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) {
-        return this->impl->begin_frame(spectra, frame);
+    PathtracerFrameResult SpectraPathtracer::begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame) {
+        return this->impl->begin_frame(std::move(host), frame);
     }
 
     void SpectraPathtracer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
@@ -1147,39 +1146,39 @@ namespace xayah {
         return *this->scene_snapshot;
     }
 
-    void SpectraPathtracer::Impl::attach(Spectra& spectra) {
+    void SpectraPathtracer::Impl::attach(PathtracerHostView host) {
         if (this->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
-        this->update_host(spectra.physical_device(), spectra.device(), spectra.frame_count(), spectra.swapchain_extent());
+        this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->attached = true;
         try {
             this->gpu_runtime    = std::make_unique<spectra::pathtracer::GpuRuntime>(this->runtime_config);
             this->editable_scene = spectra::scene::BuildScene(this->scene_name);
             this->scene_snapshot = this->editable_scene.snapshot();
             this->scene_info     = spectra::scene::DescribeScene(this->active_scene_snapshot());
-            this->register_panels(spectra);
-            spectra.set_window_detail(this->window_detail());
+            this->register_panels(host);
+            host.set_window_detail(this->window_detail());
         } catch (...) {
             this->detach_noexcept();
             throw;
         }
     }
 
-    void SpectraPathtracer::Impl::detach(Spectra&) noexcept {
+    void SpectraPathtracer::Impl::detach() noexcept {
         this->detach_noexcept();
     }
 
-    void SpectraPathtracer::Impl::before_imgui_shutdown(Spectra&) noexcept {
+    void SpectraPathtracer::Impl::before_imgui_shutdown() noexcept {
         if (this->render_pipeline != nullptr) this->render_pipeline->release_viewport_descriptors_noexcept();
     }
 
-    void SpectraPathtracer::Impl::after_imgui_created(Spectra&) {
+    void SpectraPathtracer::Impl::after_imgui_created() {
         if (this->render_pipeline != nullptr) this->render_pipeline->create_viewport_descriptors();
     }
 
-    SpectraFrameResult SpectraPathtracer::Impl::begin_frame(Spectra& spectra, const SpectraFrameInfo& frame) {
-        this->update_host(spectra.physical_device(), spectra.device(), spectra.frame_count(), spectra.swapchain_extent());
+    PathtracerFrameResult SpectraPathtracer::Impl::begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame) {
+        this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
-        SpectraFrameResult result{};
+        PathtracerFrameResult result{};
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
             result.close_requested                                            = this->process_camera_input();
@@ -1889,11 +1888,11 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::register_panels(Spectra& spectra) {
-        spectra.register_panel(SpectraPanel{
+    void SpectraPathtracer::Impl::register_panels(PathtracerHostView& host) {
+        host.register_panel(PathtracerPanel{
             .id                  = "pathtracer.viewport",
             .title               = "Viewport",
-            .dock_slot           = SpectraDockSlot::Center,
+            .dock_slot           = PathtracerDockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
             .closable            = false,
             .show_in_menu        = false,
@@ -1901,65 +1900,65 @@ namespace xayah {
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id             = "pathtracer.camera",
             .title          = "Camera",
             .icon           = ICON_MS_PHOTO_CAMERA,
             .shortcut_label = "F1",
             .shortcut_key   = ImGuiKey_F1,
-            .dock_slot      = SpectraDockSlot::Left,
+            .dock_slot      = PathtracerDockSlot::Left,
             .draw           = [this] { this->draw_camera_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id             = "pathtracer.scene_browser",
             .title          = "Scene Browser",
             .icon           = ICON_MS_ACCOUNT_TREE,
             .shortcut_label = "F2",
             .shortcut_key   = ImGuiKey_F2,
-            .dock_slot      = SpectraDockSlot::Right,
+            .dock_slot      = PathtracerDockSlot::Right,
             .draw           = [this] { this->draw_scene_browser_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id             = "pathtracer.settings",
             .title          = "Settings",
             .icon           = ICON_MS_SETTINGS,
             .shortcut_label = "F3",
             .shortcut_key   = ImGuiKey_F3,
-            .dock_slot      = SpectraDockSlot::Left,
+            .dock_slot      = PathtracerDockSlot::Left,
             .draw           = [this] { this->draw_settings_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id             = "pathtracer.inspector",
             .title          = "Inspector",
             .icon           = ICON_MS_LIST_ALT,
             .shortcut_label = "F4",
             .shortcut_key   = ImGuiKey_F4,
-            .dock_slot      = SpectraDockSlot::RightBottom,
+            .dock_slot      = PathtracerDockSlot::RightBottom,
             .draw           = [this] { this->draw_inspector_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id             = "pathtracer.environment",
             .title          = "Environment",
             .icon           = ICON_MS_PUBLIC,
             .shortcut_label = "F5",
             .shortcut_key   = ImGuiKey_F5,
-            .dock_slot      = SpectraDockSlot::LeftBottom,
+            .dock_slot      = PathtracerDockSlot::LeftBottom,
             .draw           = [this] { this->draw_environment_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id             = "pathtracer.tonemapper",
             .title          = "Tonemapper",
             .icon           = ICON_MS_TONALITY,
             .shortcut_label = "F6",
             .shortcut_key   = ImGuiKey_F6,
-            .dock_slot      = SpectraDockSlot::LeftBottom,
+            .dock_slot      = PathtracerDockSlot::LeftBottom,
             .draw           = [this] { this->draw_tonemapper_window(); },
         });
-        spectra.register_panel(SpectraPanel{
+        host.register_panel(PathtracerPanel{
             .id              = "pathtracer.statistics",
             .title           = "Statistics",
             .icon            = ICON_MS_ANALYTICS,
-            .dock_slot       = SpectraDockSlot::Bottom,
+            .dock_slot       = PathtracerDockSlot::Bottom,
             .show_in_toolbar = false,
             .draw            = [this] { this->draw_statistics_window(); },
         });

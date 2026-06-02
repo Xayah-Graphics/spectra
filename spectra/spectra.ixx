@@ -17,8 +17,6 @@ export module xayah.spectra;
 import std;
 
 export namespace xayah {
-    class Spectra;
-
     enum class SpectraDockSlot {
         Center,
         Left,
@@ -56,15 +54,39 @@ export namespace xayah {
         std::optional<std::string> window_detail{};
     };
 
-    template <typename Plugin>
-    concept SpectraPlugin = std::movable<std::remove_cvref_t<Plugin>> && requires(std::remove_cvref_t<Plugin>& plugin, const std::remove_cvref_t<Plugin>& const_plugin, Spectra& spectra, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& command_buffer) {
-        { const_plugin.name() } -> std::convertible_to<std::string_view>;
-        { plugin.attach(spectra) } -> std::same_as<void>;
-        { plugin.detach(spectra) } noexcept -> std::same_as<void>;
-        { plugin.before_imgui_shutdown(spectra) } noexcept -> std::same_as<void>;
-        { plugin.after_imgui_created(spectra) } -> std::same_as<void>;
-        { plugin.begin_frame(spectra, frame) } -> std::same_as<SpectraFrameResult>;
-        { plugin.record_frame(command_buffer) } -> std::same_as<void>;
+    template <typename Panel>
+    concept SpectraPanelLike = requires(Panel panel) {
+        std::string{std::move(panel.id)};
+        std::string{std::move(panel.title)};
+        std::string{std::move(panel.icon)};
+        std::string{std::move(panel.shortcut_label)};
+        static_cast<ImGuiKey>(panel.shortcut_key);
+        static_cast<std::underlying_type_t<SpectraDockSlot>>(panel.dock_slot);
+        static_cast<ImGuiWindowFlags>(panel.window_flags);
+        { panel.visible } -> std::convertible_to<bool>;
+        { panel.closable } -> std::convertible_to<bool>;
+        { panel.show_in_menu } -> std::convertible_to<bool>;
+        { panel.show_in_toolbar } -> std::convertible_to<bool>;
+        { panel.zero_window_padding } -> std::convertible_to<bool>;
+        std::move_only_function<void()>{std::move(panel.draw)};
+    };
+
+    template <typename Result>
+    concept SpectraFrameResultLike = requires(Result result) {
+        std::optional<vk::Semaphore>{std::move(result.completion_semaphore)};
+        { result.close_requested } -> std::convertible_to<bool>;
+        std::optional<std::string>{std::move(result.window_detail)};
+    };
+
+    template <typename Plugin, typename Host>
+    concept SpectraPluginForHost = std::movable<std::remove_cvref_t<Plugin>> && requires(std::remove_cvref_t<Plugin>& plugin, const std::remove_cvref_t<Plugin>& constPlugin, Host& host, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& commandBuffer) {
+        { constPlugin.name() } -> std::convertible_to<std::string_view>;
+        { plugin.attach(host) } -> std::same_as<void>;
+        { plugin.detach(host) } noexcept -> std::same_as<void>;
+        { plugin.before_imgui_shutdown(host) } noexcept -> std::same_as<void>;
+        { plugin.after_imgui_created(host) } -> std::same_as<void>;
+        { plugin.begin_frame(host, frame) } -> SpectraFrameResultLike;
+        { plugin.record_frame(commandBuffer) } -> std::same_as<void>;
     };
 
     class Spectra {
@@ -77,7 +99,8 @@ export namespace xayah {
         Spectra& operator=(const Spectra& other)     = delete;
         Spectra& operator=(Spectra&& other) noexcept = delete;
 
-        template <SpectraPlugin Plugin>
+        template <typename Plugin>
+            requires SpectraPluginForHost<Plugin, Spectra>
         void register_plugin(Plugin plugin);
         void run();
 
@@ -85,13 +108,16 @@ export namespace xayah {
         [[nodiscard]] const vk::raii::Device& device() const;
         [[nodiscard]] std::uint32_t frame_count() const;
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
-        void register_panel(SpectraPanel panel);
+        template <typename Panel>
+            requires SpectraPanelLike<Panel>
+        void register_panel(Panel panel);
         void set_window_detail(std::string detail);
 
     private:
         struct FrameState;
         struct RegisteredPlugin {
-            template <SpectraPlugin Plugin>
+            template <typename Plugin>
+                requires SpectraPluginForHost<Plugin, Spectra>
             explicit RegisteredPlugin(Plugin plugin) {
                 auto instance               = std::make_shared<Plugin>(std::move(plugin));
                 this->name                  = std::string{instance->name()};
@@ -99,8 +125,15 @@ export namespace xayah {
                 this->detach                = [instance](Spectra& spectra) { instance->detach(spectra); };
                 this->before_imgui_shutdown = [instance](Spectra& spectra) { instance->before_imgui_shutdown(spectra); };
                 this->after_imgui_created   = [instance](Spectra& spectra) { instance->after_imgui_created(spectra); };
-                this->begin_frame           = [instance](Spectra& spectra, const SpectraFrameInfo& frame) { return instance->begin_frame(spectra, frame); };
-                this->record_frame          = [instance](const vk::raii::CommandBuffer& command_buffer) { instance->record_frame(command_buffer); };
+                this->begin_frame           = [instance](Spectra& spectra, const SpectraFrameInfo& frame) {
+                    auto result = instance->begin_frame(spectra, frame);
+                    return SpectraFrameResult{
+                        .completion_semaphore = std::optional<vk::Semaphore>{std::move(result.completion_semaphore)},
+                        .close_requested      = static_cast<bool>(result.close_requested),
+                        .window_detail        = std::optional<std::string>{std::move(result.window_detail)},
+                    };
+                };
+                this->record_frame = [instance](const vk::raii::CommandBuffer& command_buffer) { instance->record_frame(command_buffer); };
             }
 
             std::string name{};
@@ -113,6 +146,7 @@ export namespace xayah {
         };
 
         void register_plugin(RegisteredPlugin plugin);
+        void store_panel(SpectraPanel panel);
 
         void create_imgui();
         void notify_plugins_before_imgui_shutdown() noexcept;
@@ -189,7 +223,28 @@ export namespace xayah {
         std::vector<RegisteredPlugin> plugins{};
     };
 
-    template <SpectraPlugin Plugin>
+    template <typename Panel>
+        requires SpectraPanelLike<Panel>
+    void Spectra::register_panel(Panel panel) {
+        this->store_panel(SpectraPanel{
+            .id                  = std::string{std::move(panel.id)},
+            .title               = std::string{std::move(panel.title)},
+            .icon                = std::string{std::move(panel.icon)},
+            .shortcut_label      = std::string{std::move(panel.shortcut_label)},
+            .shortcut_key        = static_cast<ImGuiKey>(panel.shortcut_key),
+            .dock_slot           = static_cast<SpectraDockSlot>(static_cast<std::underlying_type_t<SpectraDockSlot>>(panel.dock_slot)),
+            .window_flags        = static_cast<ImGuiWindowFlags>(panel.window_flags),
+            .visible             = static_cast<bool>(panel.visible),
+            .closable            = static_cast<bool>(panel.closable),
+            .show_in_menu        = static_cast<bool>(panel.show_in_menu),
+            .show_in_toolbar     = static_cast<bool>(panel.show_in_toolbar),
+            .zero_window_padding = static_cast<bool>(panel.zero_window_padding),
+            .draw                = std::move(panel.draw),
+        });
+    }
+
+    template <typename Plugin>
+        requires SpectraPluginForHost<Plugin, Spectra>
     void Spectra::register_plugin(Plugin plugin) {
         this->register_plugin(RegisteredPlugin{std::move(plugin)});
     }
