@@ -13,7 +13,6 @@
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 #include <spectra/pathtracer/util/containers.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/math.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
@@ -356,7 +355,7 @@ namespace spectra {
         Float power = parameters.GetOneFloat("power", -1);
         Float fov   = parameters.GetOneFloat("fov", 90.);
 
-        std::string texname = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string texname = parameters.GetOneString("filename", "");
         if (texname.empty()) throw std::runtime_error(diagnostics::Format(loc, "Must provide \"filename\" to \"projection\" light source"));
 
         ImageAndMetadata imageAndMetadata = Image::Read(texname, alloc);
@@ -473,7 +472,7 @@ namespace spectra {
 
         Image image(alloc);
 
-        std::string texname = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string texname = parameters.GetOneString("filename", "");
         if (texname.empty())
             diagnostics::PrintWarning(loc, "No \"filename\" parameter provided for goniometric light.");
         else {
@@ -677,7 +676,7 @@ namespace spectra {
         Float scale   = parameters.GetOneFloat("scale", 1);
         bool twoSided = parameters.GetOneBool("twosided", false);
 
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
         Image image(alloc);
         const RGBColorSpace* imageColorSpace = nullptr;
         if (!filename.empty()) {
@@ -1183,7 +1182,7 @@ namespace spectra {
             std::vector<Spectrum> L         = parameters.GetSpectrumArray("L", SpectrumType::Illuminant, alloc);
             Float scale                     = parameters.GetOneFloat("scale", 1);
             std::vector<Point3f> portal     = parameters.GetPoint3fArray("portal");
-            std::string filename            = ResolveFilename(parameters.GetOneString("filename", ""));
+            std::string filename            = parameters.GetOneString("filename", "");
             Float E_v                       = parameters.GetOneFloat("illuminance", -1);
 
             if (L.empty() && filename.empty() && portal.empty()) {

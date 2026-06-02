@@ -1095,7 +1095,7 @@ namespace spectra {
         CameraBaseParameters cameraBaseParameters(cameraTransform, film, medium, parameters, loc);
 
         // Realistic camera-specific parameters
-        std::string lensFile   = ResolveFilename(parameters.GetOneString("lensfile", ""));
+        std::string lensFile   = parameters.GetOneString("lensfile", "");
         Float apertureDiameter = parameters.GetOneFloat("aperturediameter", 1.0);
         Float focusDistance    = parameters.GetOneFloat("focusdistance", 10.0);
 
@@ -1181,7 +1181,7 @@ namespace spectra {
                 std::reverse(vert.begin(), vert.end());
                 apertureImage = rasterize(vert);
             } else {
-                ImageAndMetadata im = Image::Read(ResolveFilename(apertureName), alloc);
+                ImageAndMetadata im = Image::Read(apertureName, alloc);
                 apertureImage       = std::move(im.image);
                 if (apertureImage.NChannels() > 1) {
                     ImageChannelDesc rgbDesc = apertureImage.GetChannelDesc({"R", "G", "B"});

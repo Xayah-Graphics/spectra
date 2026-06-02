@@ -16,7 +16,6 @@
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/optix/aggregate.cuh>
 #include <spectra/pathtracer/optix/optix.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/loopsubdiv.cuh>
 #include <spectra/pathtracer/util/mesh.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
@@ -202,7 +201,7 @@ namespace spectra::optix {
             const auto& shape = shapes[i];
             if (shape.name != "plymesh") return;
 
-            std::string filename = ResolveFilename(shape.parameters.GetOneString("filename", ""));
+            std::string filename = shape.parameters.GetOneString("filename", "");
             if (filename.empty()) throw std::runtime_error(diagnostics::Format(&shape.loc, "plymesh: \"filename\" must be provided."));
             TriQuadMesh plyMesh = TriQuadMesh::ReadPLY(filename); // todo: alloc
             if (!plyMesh.triIndices.empty() || !plyMesh.quadIndices.empty()) {
@@ -311,7 +310,7 @@ namespace spectra::optix {
                     // plumbing and it's a rare case. The underlying issue
                     // is that when we create AreaLights for emissive
                     // shapes earlier, we're not expecting this..
-                    std::string filename = ResolveFilename(shape.parameters.GetOneString("filename", ""));
+                    std::string filename = shape.parameters.GetOneString("filename", "");
                     throw std::runtime_error(diagnostics::Format(&shape.loc,
                         "%s: PLY file being used as an area light has quads--"
                         "this is currently unsupported. Please replace them with "

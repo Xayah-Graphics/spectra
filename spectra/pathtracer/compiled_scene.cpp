@@ -318,7 +318,7 @@ namespace spectra::pathtracer {
                     }
                 }
 
-                std::string filename = ResolveFilename(entity.parameters.GetOneString("filename", ""));
+                std::string filename = entity.parameters.GetOneString("filename", "");
                 if (filename.empty()) throw std::runtime_error(diagnostics::Format(&entity.loc, "\"string filename\" not provided for image texture."));
                 if (!FileExists(filename)) throw std::runtime_error(diagnostics::Format(&entity.loc, "%s: file not found.", filename));
 
@@ -439,7 +439,7 @@ namespace spectra::pathtracer {
             }
 
             void StartLoadingNormalMaps(const ParameterDictionary& parameters) {
-                std::string filename = ResolveFilename(parameters.GetOneString("normalmap", ""));
+                std::string filename = parameters.GetOneString("normalmap", "");
                 if (filename.empty()) return;
                 if (this->normalMapJobs.find(filename) != this->normalMapJobs.end()) return;
 
@@ -468,7 +468,7 @@ namespace spectra::pathtracer {
                     const std::string& name             = material.first;
                     const PathtracerSceneEntity& entity = material.second;
                     Allocator alloc                     = this->compiled.threadAllocators.Get();
-                    std::string normalMapName           = ResolveFilename(entity.parameters.GetOneString("normalmap", ""));
+                    std::string normalMapName           = entity.parameters.GetOneString("normalmap", "");
                     Image* normalMap                    = nullptr;
                     if (!normalMapName.empty()) {
                         SPECTRA_CHECK(this->normalMaps.find(normalMapName) != this->normalMaps.end());

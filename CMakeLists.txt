@@ -96,8 +96,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     list(APPEND SPECTRA_GPU_DEFINITIONS
             SPECTRA_IS_WINDOWS
             SPECTRA_IS_MSVC
-            UNICODE
-            _UNICODE
             NOMINMAX
             _CRT_SECURE_NO_WARNINGS
             _ENABLE_EXTENDED_ALIGNED_STORAGE
@@ -176,7 +174,6 @@ set(SPECTRA_GPU_INCLUDE_DIRS
         ${QOI_INCLUDE}
         ${ZLIB_INCLUDE_DIRS}
         ${PTEX_INCLUDE}
-        ${DOUBLE_CONVERSION_INCLUDE}
         ${NANOVDB_INCLUDE}
         ${PROJECT_BINARY_DIR}
         ${SPECTRA_GPU_GENERATED_DIR}
@@ -314,7 +311,6 @@ set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/sobolmatrices.cu
         spectra/pathtracer/util/spectrum.cu
         spectra/pathtracer/util/stbimage.cu
-        spectra/pathtracer/util/string.cu
         spectra/pathtracer/util/transform.cu
         spectra/pathtracer/util/vecmath.cu
 )
@@ -414,7 +410,6 @@ target_link_libraries(
         OpenEXR::OpenEXR
         Ptex_static
         ZLIB::ZLIB
-        utf8proc
         CUDA::cudart
         CUDA::cuda_driver
         Threads::Threads

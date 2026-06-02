@@ -5,7 +5,6 @@
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
 #include <spectra/pathtracer/util/spectrum.cuh>
 #include <utility>
@@ -356,7 +355,7 @@ namespace spectra {
 
     // TODO: move this functionality (but not the caching?) to a Spectrum method.
     static Spectrum readSpectrumFromFile(const std::string& filename, Allocator alloc) {
-        std::string fn = ResolveFilename(filename);
+        const std::string& fn = filename;
         if (cachedSpectra.find(fn) != cachedSpectra.end()) return cachedSpectra[fn];
 
         pstd::optional<Spectrum> pls = PiecewiseLinearSpectrum::Read(fn, alloc);

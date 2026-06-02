@@ -10,7 +10,6 @@
 #include <spectra/pathtracer/core/textures.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/math.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
 #include <spectra/pathtracer/util/spectrum.cuh>
@@ -395,7 +394,7 @@ namespace spectra {
 
 
     MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc) {
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
         if (filename.empty()) {
             throw std::runtime_error(diagnostics::Format("Filename must be provided for MeasuredMaterial"));
             return nullptr;

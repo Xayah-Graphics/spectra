@@ -7,7 +7,6 @@
 #include <spectra/pathtracer/core/textures.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/check.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/loopsubdiv.cuh>
@@ -724,7 +723,7 @@ namespace spectra {
         // Grab this before the vertexIndices are std::moved...
         size_t nBlps = vertexIndices.size() / 4;
 
-        std::string filename           = ResolveFilename(parameters.GetOneString("emissionfilename", ""));
+        std::string filename           = parameters.GetOneString("emissionfilename", "");
         PiecewiseConstant2D* imageDist = nullptr;
         if (!filename.empty()) {
             if (!uv.empty())
@@ -1077,7 +1076,7 @@ namespace spectra {
             TriangleMesh* mesh = Triangle::CreateMesh(renderFromObject, reverseOrientation, parameters, loc, bufferCache, alloc);
             shapes             = Triangle::CreateTriangles(mesh, alloc);
         } else if (name == "plymesh") {
-            std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+            std::string filename = parameters.GetOneString("filename", "");
             TriQuadMesh plyMesh  = TriQuadMesh::ReadPLY(filename);
 
             Float edgeLength = parameters.GetOneFloat("edgelength", 1.f);

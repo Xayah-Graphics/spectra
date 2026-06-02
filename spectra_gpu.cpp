@@ -17,15 +17,6 @@
 #include <utility>
 #include <vector>
 
-#ifdef SPECTRA_IS_WINDOWS
-// clang-format off
-#include <Windows.h>
-#include <shellapi.h>
-// clang-format on
-#include <spectra/pathtracer/util/check.cuh>
-#include <spectra/pathtracer/util/string.cuh>
-#endif
-
 import spectra.scene;
 
 namespace {
@@ -55,21 +46,9 @@ namespace {
     }
 
     [[nodiscard]] std::vector<std::string> command_line_arguments(int argc, char* argv[]) {
-#ifdef SPECTRA_IS_WINDOWS
-        static_cast<void>(argc);
-        static_cast<void>(argv);
-        int windows_argc = 0;
-        LPWSTR* argvw    = CommandLineToArgvW(GetCommandLineW(), &windows_argc);
-        CHECK(argvw != nullptr);
-        std::vector<std::string> arguments;
-        if (windows_argc > 1) arguments.reserve(static_cast<std::size_t>(windows_argc - 1));
-        for (int index = 1; index < windows_argc; ++index) arguments.push_back(spectra::UTF8FromWString(argvw[index]));
-        CHECK(LocalFree(argvw) == nullptr);
-#else
         std::vector<std::string> arguments;
         if (argc > 1) arguments.reserve(static_cast<std::size_t>(argc - 1));
         for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
-#endif
         return arguments;
     }
 } // namespace

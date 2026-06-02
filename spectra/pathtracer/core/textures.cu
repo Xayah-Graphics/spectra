@@ -250,7 +250,7 @@ namespace spectra {
         if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
 
         const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
@@ -279,7 +279,7 @@ namespace spectra {
         if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
 
         const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
@@ -458,7 +458,7 @@ namespace spectra {
     }
 
     FloatPtexTexture* FloatPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
-        std::string filename       = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename       = parameters.GetOneString("filename", "");
         std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
         ColorEncoding encoding     = ColorEncoding::Get(encodingString, alloc);
         Float scale                = parameters.GetOneFloat("scale", 1.f);
@@ -466,7 +466,7 @@ namespace spectra {
     }
 
     SpectrumPtexTexture* SpectrumPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
-        std::string filename       = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename       = parameters.GetOneString("filename", "");
         std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
         ColorEncoding encoding     = ColorEncoding::Get(encodingString, alloc);
         Float scale                = parameters.GetOneFloat("scale", 1.f);
@@ -494,7 +494,7 @@ namespace spectra {
     static std::map<std::tuple<std::string, std::string, Float>, GPUFloatPtexTexture*> ptexFloatTextureCache;
 
     GPUFloatPtexTexture* GPUFloatPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
-        std::string filename       = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename       = parameters.GetOneString("filename", "");
         std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
         Float scale                = parameters.GetOneFloat("scale", 1.f);
 
@@ -546,7 +546,7 @@ namespace spectra {
     static std::map<std::tuple<std::string, std::string, Float>, GPUSpectrumPtexTexture*> ptexSpectrumTextureCache;
 
     GPUSpectrumPtexTexture* GPUSpectrumPtexTexture::Create(const Transform& renderFromTexture, const TextureParameterDictionary& parameters, SpectrumType spectrumType, const FileLoc* loc, Allocator alloc) {
-        std::string filename       = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename       = parameters.GetOneString("filename", "");
         std::string encodingString = parameters.GetOneString("encoding", "gamma 2.2");
         Float scale                = parameters.GetOneFloat("scale", 1.f);
 
@@ -714,7 +714,7 @@ namespace spectra {
         if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
 
         const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
@@ -904,7 +904,7 @@ namespace spectra {
         if (!wrapMode) throw std::runtime_error(diagnostics::Format("%s: wrap mode unknown", wrapString));
         Float scale          = parameters.GetOneFloat("scale", 1.f);
         bool invert          = parameters.GetOneBool("invert", false);
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
 
         const char* defaultEncoding = HasExtension(filename, "png") ? "sRGB" : "linear";
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);

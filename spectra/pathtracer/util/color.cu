@@ -1,15 +1,37 @@
 #include <algorithm>
-#include <cstdlib>
-#include <iterator>
+#include <charconv>
+#include <cctype>
 #include <mutex>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/spectrum.cuh>
-#include <spectra/pathtracer/util/string.cuh>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace spectra {
+    static std::vector<std::string> SplitWhitespaceTokens(std::string_view text) {
+        std::vector<std::string> tokens;
+        std::string_view::iterator start = text.begin();
+        while (start != text.end()) {
+            while (start != text.end() && std::isspace(static_cast<unsigned char>(*start)) != 0) ++start;
+            std::string_view::iterator end = start;
+            while (end != text.end() && std::isspace(static_cast<unsigned char>(*end)) == 0) ++end;
+            if (start != end) tokens.push_back(std::string(start, end));
+            start = end;
+        }
+        return tokens;
+    }
+
+    static bool ParseFloatToken(std::string_view text, Float* value) {
+        const char* begin = text.data();
+        const char* end   = begin + text.size();
+        std::from_chars_result result = std::from_chars(begin, end, *value);
+        return result.ec == std::errc{} && result.ptr == end;
+    }
+
     __host__ __device__ void ColorEncoding::ToLinear(pstd::span<const uint8_t> vin, pstd::span<Float> vout) const {
         auto tolin = [&](auto ptr) { return ptr->ToLinear(vin, vout); };
         Dispatch(tolin);
@@ -159,10 +181,10 @@ namespace spectra {
             static std::map<float, ColorEncoding> cache;
             static std::mutex mutex;
 
-            std::vector<std::string> params = SplitStringsFromWhitespace(name);
+            std::vector<std::string> params = SplitWhitespaceTokens(name);
             if (params.size() != 2 || params[0] != "gamma") throw std::runtime_error(diagnostics::Format("%s: expected \"gamma <value>\" for color encoding", name));
-            Float gamma = atof(params[1].c_str());
-            if (gamma == 0) throw std::runtime_error(diagnostics::Format("%s: unable to parse gamma value", params[1]));
+            Float gamma;
+            if (!ParseFloatToken(params[1], &gamma) || gamma == 0) throw std::runtime_error(diagnostics::Format("%s: unable to parse gamma value", params[1]));
 
             std::lock_guard<std::mutex> lock(mutex);
             auto iter = cache.find(gamma);

@@ -30,22 +30,22 @@ typedef IMATH_NAMESPACE::half half;
 #include <spectra/pathtracer/util/math.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
 #include <spectra/pathtracer/util/pstd.cuh>
-#include <spectra/pathtracer/util/string.cuh>
 
-// No need, since we need to do our own file i/o to support UTF-8 filenames.
 #define LODEPNG_NO_COMPILE_DISK
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <format>
 #include <lodepng/lodepng.h>
 #include <numeric>
+#include <string_view>
+#include <system_error>
 
 // use lodepng and get 16-bit.
 #define STBI_NO_PNG
 // too old school
 #define STBI_NO_PIC
 #define STBI_ASSERT CHECK
-#define STBI_WINDOWS_UTF8
 #include <stb/stb_image.h>
 
 #define QOI_NO_STDIO
@@ -53,6 +53,20 @@ typedef IMATH_NAMESPACE::half half;
 #include <qoi/qoi.h>
 
 namespace spectra {
+    static bool ParseIntToken(std::string_view text, int* value) {
+        const char* begin = text.data();
+        const char* end   = begin + text.size();
+        std::from_chars_result result = std::from_chars(begin, end, *value);
+        return result.ec == std::errc{} && result.ptr == end;
+    }
+
+    static bool ParseFloatToken(std::string_view text, float* value) {
+        const char* begin = text.data();
+        const char* end   = begin + text.size();
+        std::from_chars_result result = std::from_chars(begin, end, *value);
+        return result.ec == std::errc{} && result.ptr == end;
+    }
+
     __host__ __device__ int TexelBytes(PixelFormat format) {
         switch (format) {
         case PixelFormat::U256: return 1;
@@ -1357,15 +1371,15 @@ namespace spectra {
         // read the rest of the header
         // read width
         if (readWord(fp, buffer, BUFFER_SIZE) == -1) goto fail;
-        if (!Atoi(buffer, &width)) throw std::runtime_error(diagnostics::Format("%s: unable to decode width \"%s\"", filename, buffer));
+        if (!ParseIntToken(buffer, &width)) throw std::runtime_error(diagnostics::Format("%s: unable to decode width \"%s\"", filename, buffer));
 
         // read height
         if (readWord(fp, buffer, BUFFER_SIZE) == -1) goto fail;
-        if (!Atoi(buffer, &height)) throw std::runtime_error(diagnostics::Format("%s: unable to decode height \"%s\"", filename, buffer));
+        if (!ParseIntToken(buffer, &height)) throw std::runtime_error(diagnostics::Format("%s: unable to decode height \"%s\"", filename, buffer));
 
         // read scale
         if (readWord(fp, buffer, BUFFER_SIZE) == -1) goto fail;
-        if (!Atof(buffer, &scale)) throw std::runtime_error(diagnostics::Format("%s: unable to decode scale \"%s\"", filename, buffer));
+        if (!ParseFloatToken(buffer, &scale)) throw std::runtime_error(diagnostics::Format("%s: unable to decode scale \"%s\"", filename, buffer));
 
         // read the data
         nFloats = nChannels * size_t(width) * size_t(height);

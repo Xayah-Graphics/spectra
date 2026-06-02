@@ -32,14 +32,12 @@
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 #include <spectra/pathtracer/util/containers.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
 #include <spectra/pathtracer/util/pstd.cuh>
 #include <spectra/pathtracer/util/sampling.cuh>
 #include <spectra/pathtracer/util/spectrum.cuh>
-#include <spectra/pathtracer/util/string.cuh>
 #include <spectra/pathtracer/util/taggedptr.cuh>
 #include <spectra/pathtracer/util/vecmath.cuh>
 #include <string>

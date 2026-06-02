@@ -4,7 +4,6 @@
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
 #define NANOVDB_USE_ZIP 1
 #include <algorithm>
@@ -400,7 +399,7 @@ namespace spectra {
 
 
     NanoVDBMedium* NanoVDBMedium::Create(const ParameterDictionary& parameters, const Transform& renderFromMedium, const FileLoc* loc, Allocator alloc) {
-        std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
+        std::string filename = parameters.GetOneString("filename", "");
         if (filename.empty()) throw std::runtime_error(diagnostics::Format(loc, "Must supply \"filename\" to \"nanovdb\" medium."));
 
         nanovdb::GridHandle<NanoVDBBuffer> densityGrid;
