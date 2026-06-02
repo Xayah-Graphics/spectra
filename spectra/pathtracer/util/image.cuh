@@ -36,7 +36,14 @@ namespace spectra {
         return format == PixelFormat::Float;
     }
 
-    __host__ __device__ int TexelBytes(PixelFormat format);
+    __host__ __device__ inline int TexelBytes(PixelFormat format) {
+        switch (format) {
+        case PixelFormat::U256: return 1;
+        case PixelFormat::Half: return 2;
+        case PixelFormat::Float: return 4;
+        default: SPECTRA_FATAL("Unhandled PixelFormat in TexelBytes()"); return 0;
+        }
+    }
 
     // ResampleWeight Definition
     struct ResampleWeight {

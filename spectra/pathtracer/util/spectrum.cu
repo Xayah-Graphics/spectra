@@ -9,7 +9,7 @@
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/rng.cuh>
 #include <spectra/pathtracer/util/sampling.cuh>
 #include <spectra/pathtracer/util/spectrum.cuh>

@@ -7,7 +7,7 @@
 #include <spectra/pathtracer/core/filters.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/lowdiscrepancy.cuh>
 #include <spectra/pathtracer/util/math.cuh>

@@ -22,7 +22,7 @@
 #include <spectra/pathtracer/core/textures.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
 #include <spectra/pathtracer/util/mesh.cuh>

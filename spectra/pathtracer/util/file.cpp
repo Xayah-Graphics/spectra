@@ -1,13 +1,14 @@
 #include <algorithm>
-#include <charconv>
 #include <cctype>
 #include <cerrno>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <spectra/pathtracer/core/diagnostics.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,32 +24,25 @@ namespace spectra {
         return message;
     }
 
-    static std::string ExtensionFromFilename(std::string_view filename) {
-        size_t dot   = filename.find_last_of('.');
-        size_t slash = filename.find_last_of("/\\");
-        if (dot == std::string_view::npos || (slash != std::string_view::npos && dot < slash)) return "";
-        return std::string(filename.substr(dot + 1));
+    static std::string NormalizedExtension(std::string extension) {
+        if (!extension.empty() && extension.front() == '.') extension.erase(0, 1);
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return extension;
     }
 
     static bool ParseFloatToken(std::string_view text, Float* value) {
-        const char* begin = text.data();
-        const char* end   = begin + text.size();
+        const char* begin             = text.data();
+        const char* end               = begin + text.size();
         std::from_chars_result result = std::from_chars(begin, end, *value);
         return result.ec == std::errc{} && result.ptr == end;
     }
 
     bool HasExtension(std::string filename, std::string e) {
-        std::string ext = e;
-        if (!ext.empty() && ext[0] == '.') ext.erase(0, 1);
-
-        std::string filenameExtension = ExtensionFromFilename(filename);
-        if (ext.size() > filenameExtension.size()) return false;
-        return std::equal(ext.rbegin(), ext.rend(), filenameExtension.rbegin(), [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+        return NormalizedExtension(std::filesystem::path(filename).extension().string()) == NormalizedExtension(e);
     }
 
     bool FileExists(std::string filename) {
-        std::ifstream ifs(filename);
-        return (bool) ifs;
+        return std::filesystem::exists(std::filesystem::path(filename));
     }
 
     std::string ReadFileContents(std::string filename) {
@@ -67,10 +61,7 @@ namespace spectra {
 
     std::vector<Float> ReadFloatFile(std::string filename) {
         FILE* f = FOpenRead(filename);
-        if (f == nullptr) {
-            throw std::runtime_error(diagnostics::Format("%s: unable to open file", filename));
-            return {};
-        }
+        if (f == nullptr) throw std::runtime_error(diagnostics::Format("%s: unable to open file", filename));
 
         int c;
         bool inNumber = false;
@@ -101,7 +92,6 @@ namespace spectra {
                     ++lineNumber;
                 } else if (isspace(c) == 0) {
                     throw std::runtime_error(diagnostics::Format("%s: unexpected character \"%c\" found at line %d.", filename, c, lineNumber));
-                    return {};
                 }
             }
         }
@@ -115,7 +105,6 @@ namespace spectra {
         out.close();
         if (!out.good()) {
             throw std::runtime_error(diagnostics::Format("%s: %s", filename, SystemErrorString()));
-            return false;
         }
         return true;
     }

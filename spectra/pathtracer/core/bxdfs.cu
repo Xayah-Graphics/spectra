@@ -6,7 +6,7 @@
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/hash.cuh>
 #include <spectra/pathtracer/util/math.cuh>

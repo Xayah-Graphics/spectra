@@ -16,7 +16,7 @@
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/lowdiscrepancy.cuh>
 #include <spectra/pathtracer/util/memory.cuh>

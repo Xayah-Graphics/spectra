@@ -293,8 +293,8 @@ set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/bluenoise.cu
         spectra/pathtracer/util/color.cu
         spectra/pathtracer/util/colorspace.cu
-        spectra/pathtracer/util/file.cu
-        spectra/pathtracer/util/image.cu
+        spectra/pathtracer/util/file.cpp
+        spectra/pathtracer/util/image.cpp
         spectra/pathtracer/util/loopsubdiv.cu
         spectra/pathtracer/util/lowdiscrepancy.cu
         spectra/pathtracer/util/math.cu

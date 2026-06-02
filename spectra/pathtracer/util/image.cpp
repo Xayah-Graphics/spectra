@@ -1,13 +1,7 @@
-#if defined(__CUDACC__) && !defined(CUDA_NO_HALF)
+// Host image I/O uses OpenEXR/Imath half support. CUDA's global half aliases
+// conflict with Imath when this file is compiled by the C++ compiler.
 #define CUDA_NO_HALF
-#endif
 
-#if !defined(__CUDA_ARCH__)
-// OpenEXR's Imath half alias must be declared before CUDA's fp16 headers.
-#if defined(__CUDACC__) && defined(CUDA_NO_HALF)
-#include <half.h>
-typedef IMATH_NAMESPACE::half half;
-#endif
 #include <ImfChannelList.h>
 #include <ImfChromaticitiesAttribute.h>
 #include <ImfFloatAttribute.h>
@@ -19,13 +13,11 @@ typedef IMATH_NAMESPACE::half half;
 #include <ImfOutputFile.h>
 #include <ImfStringAttribute.h>
 #include <ImfStringVectorAttribute.h>
-#endif
-
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/util/bluenoise.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
-#include <spectra/pathtracer/util/file.cuh>
+#include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/math.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
@@ -54,28 +46,18 @@ typedef IMATH_NAMESPACE::half half;
 
 namespace spectra {
     static bool ParseIntToken(std::string_view text, int* value) {
-        const char* begin = text.data();
-        const char* end   = begin + text.size();
+        const char* begin             = text.data();
+        const char* end               = begin + text.size();
         std::from_chars_result result = std::from_chars(begin, end, *value);
         return result.ec == std::errc{} && result.ptr == end;
     }
 
     static bool ParseFloatToken(std::string_view text, float* value) {
-        const char* begin = text.data();
-        const char* end   = begin + text.size();
+        const char* begin             = text.data();
+        const char* end               = begin + text.size();
         std::from_chars_result result = std::from_chars(begin, end, *value);
         return result.ec == std::errc{} && result.ptr == end;
     }
-
-    __host__ __device__ int TexelBytes(PixelFormat format) {
-        switch (format) {
-        case PixelFormat::U256: return 1;
-        case PixelFormat::Half: return 2;
-        case PixelFormat::Float: return 4;
-        default: SPECTRA_FATAL("Unhandled PixelFormat in TexelBytes()"); return 0;
-        }
-    }
-
 
     const RGBColorSpace* ImageMetadata::GetColorSpace() const {
         if (colorSpace && *colorSpace) return *colorSpace;
@@ -717,7 +699,6 @@ namespace spectra {
     }
 
     // ImageIO Local Declarations
-#if !defined(__CUDA_ARCH__)
     static ImageAndMetadata ReadEXR(const std::string& name, Allocator alloc);
     static ImageAndMetadata ReadPNG(const std::string& name, Allocator alloc, ColorEncoding encoding);
     static ImageAndMetadata ReadPFM(const std::string& filename, Allocator alloc);
@@ -1466,15 +1447,9 @@ namespace spectra {
 
     bool Image::WritePFM(const std::string& filename, const ImageMetadata& metadata) const {
         FILE* fp = FOpenWrite(filename);
-        if (!fp) {
-            throw std::runtime_error(diagnostics::Format("%s: unable to open output PFM file.", filename));
-            return false;
-        }
+        if (!fp) throw std::runtime_error(diagnostics::Format("%s: unable to open output PFM file.", filename));
 
-        if (NChannels() != 3) {
-            throw std::runtime_error(diagnostics::Format("%s: only 3-channel images are supported for PFM."));
-            return false;
-        }
+        if (NChannels() != 3) throw std::runtime_error(diagnostics::Format("%s: only 3-channel images are supported for PFM."));
 
         std::unique_ptr<float[]> scanline = std::make_unique<float[]>(3 * resolution.x);
         float scale;
@@ -1514,9 +1489,7 @@ namespace spectra {
         return true;
 
     fail:
-        throw std::runtime_error(diagnostics::Format("Error writing PFM file \"%s\"", filename));
         fclose(fp);
-        return false;
+        throw std::runtime_error(diagnostics::Format("Error writing PFM file \"%s\"", filename));
     }
-#endif
 } // namespace spectra
