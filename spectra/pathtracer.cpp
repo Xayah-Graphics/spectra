@@ -17,6 +17,7 @@ module;
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <spectra/pathtracer/base/film.cuh>
 #include <spectra/pathtracer/base/sampler.cuh>
+#include <spectra/pathtracer/compiled_scene.cuh>
 #include <spectra/pathtracer/core/cameras.cuh>
 #include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
@@ -135,7 +136,7 @@ namespace xayah::pathtracer {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
-        RenderPipeline(const spectra::scene::Scene& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        RenderPipeline(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
         ~RenderPipeline() noexcept;
 
         RenderPipeline(const RenderPipeline& other)                = delete;
@@ -157,12 +158,16 @@ namespace xayah::pathtracer {
         void set_target_sample_count(int target_sample_count);
         void set_exposure(float value);
         void request_reset_accumulation();
+        void replace_scene(const spectra::scene::SceneSnapshot& scene, const spectra::scene::SceneEditBatch& edit_batch);
         void release_viewport_descriptors_noexcept() noexcept;
         void create_viewport_descriptors();
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
 
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene{};
         std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
+        spectra::pathtracer::RenderConfig render_config{};
+        spectra::scene::SceneRevision scene_revision{};
         spectra::Bounds2i pixel_bounds{};
         spectra::Vector2i resolution{};
         spectra::Transform render_from_camera{};
@@ -385,57 +390,97 @@ namespace {
         }
         destroy_pathtracer_frame_resources_noexcept(pathtracer);
         pathtracer.integrator.reset();
+        pathtracer.compiled_scene.reset();
+    }
+
+    void destroy_pathtracer_integrator_noexcept(xayah::pathtracer::RenderPipeline& pathtracer) noexcept {
+        try {
+            if (pathtracer.device != nullptr) pathtracer.device->waitIdle();
+            if (pathtracer.integrator != nullptr) spectra::GPUWait();
+            if (pathtracer.integrator != nullptr) pathtracer.integrator->ReleaseAggregate();
+        } catch (...) {
+        }
+        pathtracer.integrator.reset();
+        pathtracer.compiled_scene.reset();
+    }
+
+    struct PathtracerSessionResources {
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene{};
+        std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
+    };
+
+    [[nodiscard]] PathtracerSessionResources create_pathtracer_session_resources(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution) {
+        if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(scene, render_config, &spectra::CUDATrackedMemoryResource::singleton, spectra::Point2i{resolution[0], resolution[1]});
+        std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator         = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, *compiled_scene, render_config);
+        return PathtracerSessionResources{
+            .compiled_scene = std::move(compiled_scene),
+            .integrator     = std::move(integrator),
+        };
+    }
+
+    void initialize_pathtracer_integrator_state(xayah::pathtracer::RenderPipeline& pathtracer) {
+        if (pathtracer.integrator == nullptr) throw std::runtime_error("Cannot initialize Spectra pathtracer state without an integrator");
+        pathtracer.integrator->PrefetchGPUAllocations();
+        pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
+        pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
+        if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive");
+        pathtracer.max_samples = pathtracer.integrator->sampler.SamplesPerPixel();
+        if (pathtracer.max_samples <= 0) throw std::runtime_error("Spectra pathtracer sampler SPP must be positive");
+        pathtracer.target_samples     = pathtracer.max_samples;
+        pathtracer.sample_index       = 0;
+        pathtracer.reset_requested    = false;
+        pathtracer.render_from_camera = pathtracer.integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
+        pathtracer.camera_from_render = spectra::Inverse(pathtracer.render_from_camera);
+        pathtracer.camera_from_world  = pathtracer.integrator->camera.GetCameraTransform().CameraFromWorld(pathtracer.integrator->camera.SampleTime(0.0f));
+
+        pathtracer.integrator->RenderSample(pathtracer.pixel_bounds, spectra::Transform{}, pathtracer.sample_index);
+        ++pathtracer.sample_index;
+        spectra::GPUWait();
+
+        const spectra::Bounds3f scene_bounds = pathtracer.integrator->Bounds();
+        pathtracer.initial_move_scale        = spectra::Length(scene_bounds.Diagonal()) / 1000.0f;
+        if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra pathtracer scene bounds must define a positive interactive move scale");
+        const spectra::Transform world_from_render = spectra::Inverse(pathtracer.render_from_camera * pathtracer.camera_from_world);
+        spectra::Bounds3f world_bounds{};
+        bool has_world_bounds = false;
+        for (const float x : std::array<float, 2>{scene_bounds.pMin.x, scene_bounds.pMax.x}) {
+            for (const float y : std::array<float, 2>{scene_bounds.pMin.y, scene_bounds.pMax.y}) {
+                for (const float z : std::array<float, 2>{scene_bounds.pMin.z, scene_bounds.pMax.z}) {
+                    const spectra::Point3f corner_world = world_from_render(spectra::Point3f{x, y, z});
+                    validate_finite_point(corner_world, "Spectra pathtracer scene focus bounds contain a non-finite value");
+                    if (!has_world_bounds)
+                        world_bounds = spectra::Bounds3f{corner_world};
+                    else
+                        world_bounds = spectra::Union(world_bounds, corner_world);
+                    has_world_bounds = true;
+                }
+            }
+        }
+        if (!has_world_bounds) throw std::runtime_error("Spectra pathtracer scene focus bounds are unavailable");
+        pathtracer.initial_focus_bounds = world_bounds;
     }
 } // namespace
 
 namespace xayah::pathtracer {
-    RenderPipeline::RenderPipeline(const spectra::scene::Scene& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    RenderPipeline::RenderPipeline(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         try {
             RenderPipeline& pathtracer = *this;
-            if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
+            if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
             if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
             if (frame_count == 0) throw std::runtime_error("Spectra pathtracer requires at least one frame in flight");
 
             pathtracer.physical_device = &physical_device;
             pathtracer.device          = &device;
             pathtracer.frame_count     = frame_count;
+            pathtracer.render_config   = render_config;
+            pathtracer.scene_revision  = scene.revision;
 
-            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene, render_config, spectra::Point2i{resolution[0], resolution[1]});
-            pathtracer.integrator->PrefetchGPUAllocations();
-            pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
-            pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
-            if (pathtracer.resolution.x <= 0 || pathtracer.resolution.y <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive");
-            pathtracer.max_samples = pathtracer.integrator->sampler.SamplesPerPixel();
-            if (pathtracer.max_samples <= 0) throw std::runtime_error("Spectra pathtracer sampler SPP must be positive");
-            pathtracer.target_samples = pathtracer.max_samples;
-            pathtracer.integrator->RenderSample(pathtracer.pixel_bounds, spectra::Transform{}, pathtracer.sample_index);
-            ++pathtracer.sample_index;
-            spectra::GPUWait();
-
-            pathtracer.render_from_camera        = pathtracer.integrator->camera.GetCameraTransform().RenderFromCamera().startTransform;
-            pathtracer.camera_from_render        = spectra::Inverse(pathtracer.render_from_camera);
-            pathtracer.camera_from_world         = pathtracer.integrator->camera.GetCameraTransform().CameraFromWorld(pathtracer.integrator->camera.SampleTime(0.0f));
-            const spectra::Bounds3f scene_bounds = pathtracer.integrator->Bounds();
-            pathtracer.initial_move_scale        = spectra::Length(scene_bounds.Diagonal()) / 1000.0f;
-            if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra pathtracer scene bounds must define a positive interactive move scale");
-            const spectra::Transform world_from_render = spectra::Inverse(pathtracer.render_from_camera * pathtracer.camera_from_world);
-            spectra::Bounds3f world_bounds{};
-            bool has_world_bounds = false;
-            for (const float x : std::array<float, 2>{scene_bounds.pMin.x, scene_bounds.pMax.x}) {
-                for (const float y : std::array<float, 2>{scene_bounds.pMin.y, scene_bounds.pMax.y}) {
-                    for (const float z : std::array<float, 2>{scene_bounds.pMin.z, scene_bounds.pMax.z}) {
-                        const spectra::Point3f corner_world = world_from_render(spectra::Point3f{x, y, z});
-                        validate_finite_point(corner_world, "Spectra pathtracer scene focus bounds contain a non-finite value");
-                        if (!has_world_bounds)
-                            world_bounds = spectra::Bounds3f{corner_world};
-                        else
-                            world_bounds = spectra::Union(world_bounds, corner_world);
-                        has_world_bounds = true;
-                    }
-                }
-            }
-            if (!has_world_bounds) throw std::runtime_error("Spectra pathtracer scene focus bounds are unavailable");
-            pathtracer.initial_focus_bounds = world_bounds;
+            PathtracerSessionResources resources = create_pathtracer_session_resources(scene, render_config, resolution);
+            pathtracer.compiled_scene            = std::move(resources.compiled_scene);
+            pathtracer.integrator                = std::move(resources.integrator);
+            initialize_pathtracer_integrator_state(pathtracer);
 
             validate_cuda_vulkan_device(physical_device);
             create_pathtracer_frame_resources(pathtracer, physical_device, device, frame_count);
@@ -525,6 +570,27 @@ namespace xayah::pathtracer {
 
     void RenderPipeline::request_reset_accumulation() {
         this->reset_requested = true;
+    }
+
+    void RenderPipeline::replace_scene(const spectra::scene::SceneSnapshot& scene, const spectra::scene::SceneEditBatch& edit_batch) {
+        if (edit_batch.dirty == spectra::scene::SceneDirtyFlags::None) throw std::runtime_error("Cannot replace Spectra pathtracer scene without dirty state");
+        if (edit_batch.beforeRevision != this->scene_revision) throw std::runtime_error("Spectra pathtracer scene edit does not start from the active scene revision");
+        if (edit_batch.afterRevision != scene.revision) throw std::runtime_error("Spectra pathtracer scene edit does not match the replacement scene snapshot revision");
+        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available for scene replacement");
+
+        const int preserved_target_samples        = this->target_samples;
+        const float preserved_exposure            = this->exposure;
+        PathtracerSessionResources next_resources = create_pathtracer_session_resources(scene, this->render_config, std::array<int, 2>{this->resolution.x, this->resolution.y});
+
+        this->device->waitIdle();
+        spectra::GPUWait();
+        destroy_pathtracer_integrator_noexcept(*this);
+        this->compiled_scene = std::move(next_resources.compiled_scene);
+        this->integrator     = std::move(next_resources.integrator);
+        this->scene_revision = scene.revision;
+        this->exposure       = preserved_exposure;
+        initialize_pathtracer_integrator_state(*this);
+        this->target_samples = std::min(std::max(1, preserved_target_samples), this->max_samples);
     }
 
     void RenderPipeline::release_viewport_descriptors_noexcept() noexcept {
@@ -878,6 +944,7 @@ namespace xayah {
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         [[nodiscard]] std::string window_detail() const;
         [[nodiscard]] const spectra::scene::SceneInfo& active_scene_info() const;
+        [[nodiscard]] const spectra::scene::SceneSnapshot& active_scene_snapshot() const;
 
         void draw_viewport_window();
         void draw_camera_window();
@@ -921,7 +988,8 @@ namespace xayah {
             std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
-        spectra::scene::Scene scene{};
+        spectra::scene::EditableScene editable_scene{};
+        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot{};
         std::optional<spectra::scene::SceneInfo> scene_info{};
         spectra::pathtracer::RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
         spectra::pathtracer::RenderConfig render_config{.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld};
@@ -1074,14 +1142,20 @@ namespace xayah {
         return *this->scene_info;
     }
 
+    const spectra::scene::SceneSnapshot& SpectraPathtracer::Impl::active_scene_snapshot() const {
+        if (this->scene_snapshot == nullptr) throw std::runtime_error("Spectra scene snapshot is not loaded");
+        return *this->scene_snapshot;
+    }
+
     void SpectraPathtracer::Impl::attach(Spectra& spectra) {
         if (this->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
         this->update_host(spectra.physical_device(), spectra.device(), spectra.frame_count(), spectra.swapchain_extent());
         this->attached = true;
         try {
-            this->gpu_runtime = std::make_unique<spectra::pathtracer::GpuRuntime>(this->runtime_config);
-            this->scene       = spectra::scene::BuildScene(this->scene_name);
-            this->scene_info  = spectra::scene::DescribeScene(this->scene);
+            this->gpu_runtime    = std::make_unique<spectra::pathtracer::GpuRuntime>(this->runtime_config);
+            this->editable_scene = spectra::scene::BuildScene(this->scene_name);
+            this->scene_snapshot = this->editable_scene.snapshot();
+            this->scene_info     = spectra::scene::DescribeScene(this->active_scene_snapshot());
             this->register_panels(spectra);
             spectra.set_window_detail(this->window_detail());
         } catch (...) {
@@ -1139,7 +1213,8 @@ namespace xayah {
     }
 
     void SpectraPathtracer::Impl::unload_scene_noexcept() noexcept {
-        this->scene = spectra::scene::Scene{};
+        this->editable_scene = spectra::scene::EditableScene{};
+        this->scene_snapshot.reset();
         this->scene_info.reset();
         this->scene_film_resolution      = {0, 0};
         this->scene_camera_from_world    = spectra::Transform{};
@@ -1154,7 +1229,7 @@ namespace xayah {
             if (this->gpu_runtime == nullptr) throw std::runtime_error("Spectra pathtracer runtime is not initialized");
             if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available");
             this->gpu_runtime->UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(this->render_config));
-            this->render_pipeline            = std::make_unique<pathtracer::RenderPipeline>(this->scene, this->render_config, resolution, *this->physical_device, *this->device, this->frame_count);
+            this->render_pipeline            = std::make_unique<pathtracer::RenderPipeline>(this->active_scene_snapshot(), this->render_config, resolution, *this->physical_device, *this->device, this->frame_count);
             this->scene_film_resolution      = this->render_pipeline->film_resolution();
             this->scene_sampler_sample_count = this->render_pipeline->sampler_sample_count();
             this->scene_camera_from_world    = this->render_pipeline->camera_from_world_transform();

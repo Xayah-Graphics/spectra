@@ -20,7 +20,7 @@
 #include <spectra/pathtracer/wavefront/workqueue.cuh>
 
 namespace spectra::scene {
-    struct Scene;
+    struct SceneSnapshot;
 } // namespace spectra::scene
 
 namespace spectra::optix {
@@ -28,6 +28,7 @@ namespace spectra::optix {
 } // namespace spectra::optix
 
 namespace spectra::pathtracer {
+    class CompiledPathtracerScene;
     class PathtracerRuntimeResources;
 
     class GpuRuntime {
@@ -51,7 +52,7 @@ namespace spectra::pathtracer {
 
     class WavefrontPathtracer {
     public:
-        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, const RenderConfig& config, std::optional<Point2i> filmResolutionOverride = {});
+        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, CompiledPathtracerScene& compiledScene, const RenderConfig& config);
         __host__ __device__ ~WavefrontPathtracer();
 
         Float Render();
@@ -128,6 +129,7 @@ namespace spectra::pathtracer {
 
         RayQueue* rayQueues[2];
 
+        CompiledPathtracerScene* compiledScene    = nullptr;
         optix::SpectraOptiXAggregate* aggregate   = nullptr;
         const WavefrontPathtracer* aggregateOwner = this;
 

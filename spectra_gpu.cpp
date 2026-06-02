@@ -2,7 +2,9 @@
 #include <cstdio>
 #include <cuda_runtime_api.h>
 #include <exception>
+#include <memory>
 #include <optional>
+#include <spectra/pathtracer/compiled_scene.cuh>
 #include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/gpu/memory.cuh>
@@ -113,9 +115,10 @@ int main(int argc, char* argv[]) {
         spectra::pathtracer::GpuRuntime runtime(runtime_config);
         runtime.UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(render_config));
 
-        spectra::scene::Scene scene = spectra::scene::BuildScene(*scene_name);
-
-        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, scene, render_config);
+        spectra::scene::EditableScene editable_scene                                 = spectra::scene::BuildScene(*scene_name);
+        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot          = editable_scene.snapshot();
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(*scene_snapshot, render_config, &spectra::CUDATrackedMemoryResource::singleton);
+        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, *compiled_scene, render_config);
 
         spectra::Float seconds = pathtracer.Render();
 

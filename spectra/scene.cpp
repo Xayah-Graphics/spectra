@@ -10,6 +10,152 @@ import spectra.util.math;
 import std;
 
 extern "C++" {
+namespace spectra::scene {
+    [[nodiscard]] SceneDirtyFlags operator|(const SceneDirtyFlags left, const SceneDirtyFlags right) {
+        return static_cast<SceneDirtyFlags>(static_cast<std::uint32_t>(left) | static_cast<std::uint32_t>(right));
+    }
+
+    [[nodiscard]] SceneDirtyFlags operator&(const SceneDirtyFlags left, const SceneDirtyFlags right) {
+        return static_cast<SceneDirtyFlags>(static_cast<std::uint32_t>(left) & static_cast<std::uint32_t>(right));
+    }
+
+    SceneDirtyFlags& operator|=(SceneDirtyFlags& left, const SceneDirtyFlags right) {
+        left = left | right;
+        return left;
+    }
+
+    [[nodiscard]] bool HasDirtyFlag(const SceneDirtyFlags flags, const SceneDirtyFlags flag) {
+        return (flags & flag) != SceneDirtyFlags::None;
+    }
+
+    namespace {
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneCameraId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneMaterialId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneTextureId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneMediumId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneLightId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneShapeId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneObjectDefinitionId id) {
+            return id.value;
+        }
+
+        [[nodiscard]] std::uint64_t SceneIdValue(const SceneObjectInstanceId id) {
+            return id.value;
+        }
+    } // namespace
+
+    void SceneEditBuilder::replaceSnapshot(SceneSnapshot snapshot, const SceneDirtyFlags dirty) {
+        if (dirty == SceneDirtyFlags::None) throw std::runtime_error("Scene snapshot replacement must describe dirty state");
+        this->replacement = std::move(snapshot);
+        this->dirty       = dirty;
+    }
+
+    EditableScene::EditableScene(SceneSnapshot snapshot) {
+        this->assignMissingIds(snapshot);
+        if (snapshot.revision.value == 0) snapshot.revision = SceneRevision{1};
+        this->currentSnapshot = std::make_shared<SceneSnapshot>(std::move(snapshot));
+    }
+
+    [[nodiscard]] bool EditableScene::loaded() const {
+        return this->currentSnapshot != nullptr;
+    }
+
+    [[nodiscard]] std::shared_ptr<const SceneSnapshot> EditableScene::snapshot() const {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Editable scene does not contain a loaded snapshot");
+        return this->currentSnapshot;
+    }
+
+    [[nodiscard]] SceneEditBatch EditableScene::commit(SceneEditBuilder edit) {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded scene");
+        if (!edit.replacement.has_value()) throw std::runtime_error("Cannot commit an empty scene edit");
+        if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit a scene edit without dirty state");
+
+        SceneSnapshot next                 = std::move(*edit.replacement);
+        const SceneRevision beforeRevision = this->currentSnapshot->revision;
+        next.revision                      = SceneRevision{beforeRevision.value + 1};
+        this->assignMissingIds(next);
+        this->currentSnapshot = std::make_shared<SceneSnapshot>(std::move(next));
+
+        SceneEditBatch batch{
+            .beforeRevision = beforeRevision,
+            .afterRevision  = this->currentSnapshot->revision,
+            .dirty          = edit.dirty,
+        };
+        batch.cameras.push_back(this->currentSnapshot->renderSettings.camera.id);
+        for (const SceneMaterial& material : this->currentSnapshot->materials) batch.materials.push_back(material.id);
+        for (const SceneTexture& texture : this->currentSnapshot->textures) batch.textures.push_back(texture.id);
+        for (const SceneMedium& medium : this->currentSnapshot->media) batch.media.push_back(medium.id);
+        for (const SceneLight& light : this->currentSnapshot->lights) batch.lights.push_back(light.id);
+        for (const SceneShape& shape : this->currentSnapshot->shapes) batch.shapes.push_back(shape.id);
+        for (const SceneObjectDefinition& definition : this->currentSnapshot->objectDefinitions) {
+            batch.objectDefinitions.push_back(definition.id);
+            for (const SceneShape& shape : definition.shapes) batch.shapes.push_back(shape.id);
+        }
+        for (const SceneObjectInstance& instance : this->currentSnapshot->objectInstances) batch.objectInstances.push_back(instance.id);
+        return batch;
+    }
+
+    void EditableScene::assignMissingIds(SceneSnapshot& snapshot) {
+        std::uint64_t maxId  = 0;
+        const auto observeId = [&maxId](const auto id) { maxId = std::max(maxId, SceneIdValue(id)); };
+        observeId(snapshot.renderSettings.camera.id);
+        for (const SceneMaterial& material : snapshot.materials) observeId(material.id);
+        for (const SceneTexture& texture : snapshot.textures) observeId(texture.id);
+        for (const SceneMedium& medium : snapshot.media) observeId(medium.id);
+        for (const SceneLight& light : snapshot.lights) observeId(light.id);
+        for (const SceneShape& shape : snapshot.shapes) observeId(shape.id);
+        for (const SceneObjectDefinition& definition : snapshot.objectDefinitions) {
+            observeId(definition.id);
+            for (const SceneShape& shape : definition.shapes) observeId(shape.id);
+        }
+        for (const SceneObjectInstance& instance : snapshot.objectInstances) observeId(instance.id);
+        this->nextId = std::max(this->nextId, maxId + 1);
+
+        if (snapshot.renderSettings.camera.id.value == 0) snapshot.renderSettings.camera.id = SceneCameraId{this->nextSceneId()};
+        for (SceneMaterial& material : snapshot.materials)
+            if (material.id.value == 0) material.id = SceneMaterialId{this->nextSceneId()};
+        for (SceneTexture& texture : snapshot.textures)
+            if (texture.id.value == 0) texture.id = SceneTextureId{this->nextSceneId()};
+        for (SceneMedium& medium : snapshot.media)
+            if (medium.id.value == 0) medium.id = SceneMediumId{this->nextSceneId()};
+        for (SceneLight& light : snapshot.lights)
+            if (light.id.value == 0) light.id = SceneLightId{this->nextSceneId()};
+        for (SceneShape& shape : snapshot.shapes)
+            if (shape.id.value == 0) shape.id = SceneShapeId{this->nextSceneId()};
+        for (SceneObjectDefinition& definition : snapshot.objectDefinitions) {
+            if (definition.id.value == 0) definition.id = SceneObjectDefinitionId{this->nextSceneId()};
+            for (SceneShape& shape : definition.shapes)
+                if (shape.id.value == 0) shape.id = SceneShapeId{this->nextSceneId()};
+        }
+        for (SceneObjectInstance& instance : snapshot.objectInstances)
+            if (instance.id.value == 0) instance.id = SceneObjectInstanceId{this->nextSceneId()};
+    }
+
+    [[nodiscard]] std::uint64_t EditableScene::nextSceneId() {
+        const std::uint64_t id = this->nextId;
+        ++this->nextId;
+        return id;
+    }
+} // namespace spectra::scene
+
 namespace spectra::scene::builtin {
     namespace {
         [[nodiscard]] std::string SceneResource(std::string_view relativePath) {
@@ -54,7 +200,7 @@ namespace spectra::scene::builtin {
             return StringParameter("string", name, values);
         }
 
-        [[nodiscard]] Scene BookScene() {
+        [[nodiscard]] SceneSnapshot BookScene() {
             const std::string mesh00001           = SceneResource("pbrt-book/geometry/mesh_00001.ply");
             const std::string mesh00002           = SceneResource("pbrt-book/geometry/mesh_00002.ply");
             const std::string mesh00003           = SceneResource("pbrt-book/geometry/mesh_00003.ply");
@@ -66,7 +212,7 @@ namespace spectra::scene::builtin {
                 math::LookAt(math::Point3(0.0f, 2.1088f, 13.574f), math::Point3(0.0f, 2.1088f, 12.574f), math::Vector3(0.0f, 1.0f, 0.0f)),
             });
 
-            Scene scene{
+            SceneSnapshot scene{
                 .name   = "default",
                 .title  = "PBRT Book",
                 .source = "spectra://scene/default",
@@ -213,12 +359,12 @@ namespace spectra::scene::builtin {
             return scene;
         }
 
-        [[nodiscard]] Scene ExplosionScene() {
+        [[nodiscard]] SceneSnapshot ExplosionScene() {
             const std::string skyTexture          = SceneResource("explosion/textures/sky.exr");
             const std::string fireVolume          = SceneResource("explosion/fire.nvdb");
             const math::Transform cameraFromWorld = math::LookAt(math::Point3(0.0f, 120.0f, 20.0f), math::Point3(-0.5f, 0.0f, 30.0f), math::Vector3(0.0f, 0.0f, 1.0f));
 
-            Scene scene{
+            SceneSnapshot scene{
                 .name   = "explosion",
                 .title  = "Explosion",
                 .source = "spectra://scene/explosion",
@@ -320,15 +466,15 @@ namespace spectra::scene::builtin {
         }
     } // namespace
 
-    Scene BuildScene(std::string_view name) {
-        if (name == "default") return BookScene();
-        if (name == "explosion") return ExplosionScene();
+    EditableScene BuildScene(std::string_view name) {
+        if (name == "default") return EditableScene{BookScene()};
+        if (name == "explosion") return EditableScene{ExplosionScene()};
         throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", name));
     }
 } // namespace spectra::scene::builtin
 
 namespace spectra::scene {
-    SceneInfo DescribeScene(const Scene& scene) {
+    SceneInfo DescribeScene(const SceneSnapshot& scene) {
         std::size_t definitionShapeCount     = 0;
         std::size_t definitionAreaLightCount = 0;
         for (const SceneObjectDefinition& definition : scene.objectDefinitions) {
@@ -365,7 +511,7 @@ namespace spectra::scene {
         };
     }
 
-    Scene BuildScene(std::string_view name) {
+    EditableScene BuildScene(std::string_view name) {
         return builtin::BuildScene(name);
     }
 } // namespace spectra::scene

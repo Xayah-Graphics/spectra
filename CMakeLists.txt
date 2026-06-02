@@ -421,7 +421,7 @@ add_library(
         ${SPECTRA_GPU_DEVICE_SOURCE}
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${PROJECT_SOURCE_DIR}/vendor/pbrt/rply/rply.cpp
-        spectra/pathtracer/wavefront_scene.cpp
+        spectra/pathtracer/compiled_scene.cpp
         spectra/pathtracer/optix/aggregate.cu
         spectra/pathtracer/integrator.cu
 )

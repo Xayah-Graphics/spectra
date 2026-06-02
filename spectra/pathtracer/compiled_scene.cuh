@@ -1,5 +1,5 @@
-#ifndef SPECTRA_PATHTRACER_WAVEFRONT_SCENE_H
-#define SPECTRA_PATHTRACER_WAVEFRONT_SCENE_H
+#ifndef SPECTRA_PATHTRACER_COMPILED_SCENE_H
+#define SPECTRA_PATHTRACER_COMPILED_SCENE_H
 
 #include <map>
 #include <memory>
@@ -22,7 +22,7 @@
 #include <vector>
 
 namespace spectra::scene {
-    struct Scene;
+    struct SceneSnapshot;
 } // namespace spectra::scene
 
 namespace spectra {
@@ -30,13 +30,13 @@ namespace spectra {
 } // namespace spectra
 
 namespace spectra::pathtracer {
-    struct WavefrontSceneEntity {
+    struct PathtracerSceneEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
     };
 
-    struct WavefrontCameraSceneEntity {
+    struct PathtracerCameraSceneEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
@@ -44,14 +44,14 @@ namespace spectra::pathtracer {
         std::string medium{};
     };
 
-    struct WavefrontTransformedSceneEntity {
+    struct PathtracerTransformedSceneEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
         Transform renderFromObject{};
     };
 
-    struct WavefrontLightSceneEntity {
+    struct PathtracerLightSceneEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
@@ -59,7 +59,7 @@ namespace spectra::pathtracer {
         std::string medium{};
     };
 
-    struct WavefrontShapeSceneEntity {
+    struct PathtracerShapeSceneEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
@@ -67,38 +67,38 @@ namespace spectra::pathtracer {
         const Transform* objectFromRender = nullptr;
         bool reverseOrientation{false};
         std::string materialName{};
-        std::optional<WavefrontSceneEntity> areaLight{};
+        std::optional<PathtracerSceneEntity> areaLight{};
         std::string insideMedium{};
         std::string outsideMedium{};
     };
 
-    struct WavefrontInstanceDefinitionSceneEntity {
+    struct PathtracerInstanceDefinitionSceneEntity {
         std::string name{};
         FileLoc loc{};
-        std::vector<WavefrontShapeSceneEntity> shapes{};
+        std::vector<PathtracerShapeSceneEntity> shapes{};
     };
 
-    struct WavefrontInstanceSceneEntity {
+    struct PathtracerInstanceSceneEntity {
         std::string name{};
         FileLoc loc{};
         Transform renderFromInstance{};
     };
 
-    class WavefrontScene {
+    class CompiledPathtracerScene {
     public:
-        explicit WavefrontScene(pstd::pmr::memory_resource* memoryResource);
+        explicit CompiledPathtracerScene(pstd::pmr::memory_resource* memoryResource);
 
-        WavefrontScene(const WavefrontScene&)                = delete;
-        WavefrontScene(WavefrontScene&&) noexcept            = delete;
-        WavefrontScene& operator=(const WavefrontScene&)     = delete;
-        WavefrontScene& operator=(WavefrontScene&&) noexcept = delete;
+        CompiledPathtracerScene(const CompiledPathtracerScene&)                = delete;
+        CompiledPathtracerScene(CompiledPathtracerScene&&) noexcept            = delete;
+        CompiledPathtracerScene& operator=(const CompiledPathtracerScene&)     = delete;
+        CompiledPathtracerScene& operator=(CompiledPathtracerScene&&) noexcept = delete;
 
-        WavefrontSceneEntity integrator{};
-        WavefrontSceneEntity accelerator{};
+        PathtracerSceneEntity integrator{};
+        PathtracerSceneEntity accelerator{};
         const RGBColorSpace* filmColorSpace{nullptr};
-        std::vector<WavefrontShapeSceneEntity> shapes{};
-        std::vector<WavefrontInstanceSceneEntity> instances{};
-        std::map<std::string, WavefrontInstanceDefinitionSceneEntity> instanceDefinitions{};
+        std::vector<PathtracerShapeSceneEntity> shapes{};
+        std::vector<PathtracerInstanceSceneEntity> instances{};
+        std::map<std::string, PathtracerInstanceDefinitionSceneEntity> instanceDefinitions{};
         NamedTextures textures{};
         std::map<std::string, Medium> media{};
         std::map<std::string, Material> materials{};
@@ -116,7 +116,7 @@ namespace spectra::pathtracer {
         ThreadLocal<Allocator> threadAllocators;
     };
 
-    [[nodiscard]] std::unique_ptr<WavefrontScene> CreateWavefrontScene(const scene::Scene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
+    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
 } // namespace spectra::pathtracer
 
-#endif // SPECTRA_PATHTRACER_WAVEFRONT_SCENE_H
+#endif // SPECTRA_PATHTRACER_COMPILED_SCENE_H
