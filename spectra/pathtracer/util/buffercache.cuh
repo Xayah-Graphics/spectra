@@ -88,14 +88,35 @@ namespace spectra {
         std::atomic<size_t> bytesUsed{};
     };
 
-    // BufferCache Global Declarations
-    extern BufferCache<int>* intBufferCache;
-    extern BufferCache<Point2f>* point2BufferCache;
-    extern BufferCache<Point3f>* point3BufferCache;
-    extern BufferCache<Vector3f>* vector3BufferCache;
-    extern BufferCache<Normal3f>* normal3BufferCache;
+    class MeshBufferCache {
+    public:
+        const int* Lookup(pstd::span<const int> values, Allocator alloc) {
+            return intBuffers.LookupOrAdd(values, alloc);
+        }
 
-    void InitBufferCaches();
+        const Point2f* Lookup(pstd::span<const Point2f> values, Allocator alloc) {
+            return point2Buffers.LookupOrAdd(values, alloc);
+        }
+
+        const Point3f* Lookup(pstd::span<const Point3f> values, Allocator alloc) {
+            return point3Buffers.LookupOrAdd(values, alloc);
+        }
+
+        const Vector3f* Lookup(pstd::span<const Vector3f> values, Allocator alloc) {
+            return vector3Buffers.LookupOrAdd(values, alloc);
+        }
+
+        const Normal3f* Lookup(pstd::span<const Normal3f> values, Allocator alloc) {
+            return normal3Buffers.LookupOrAdd(values, alloc);
+        }
+
+    private:
+        BufferCache<int> intBuffers{};
+        BufferCache<Point2f> point2Buffers{};
+        BufferCache<Point3f> point3Buffers{};
+        BufferCache<Vector3f> vector3Buffers{};
+        BufferCache<Normal3f> normal3Buffers{};
+    };
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_UTIL_BUFFERCACHE_H

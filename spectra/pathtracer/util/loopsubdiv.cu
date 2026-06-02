@@ -2,6 +2,7 @@
 #include <map>
 #include <set>
 #include <spectra/pathtracer/core/diagnostics.cuh>
+#include <spectra/pathtracer/util/buffercache.cuh>
 #include <spectra/pathtracer/util/containers.cuh>
 #include <spectra/pathtracer/util/loopsubdiv.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
@@ -129,7 +130,7 @@ namespace spectra {
     }
 
     // LoopSubdiv Function Definitions
-    TriangleMesh* LoopSubdivide(const Transform* renderFromObject, bool reverseOrientation, int nLevels, pstd::span<const int> vertexIndices, pstd::span<const Point3f> p, Allocator alloc) {
+    TriangleMesh* LoopSubdivide(const Transform* renderFromObject, bool reverseOrientation, int nLevels, pstd::span<const int> vertexIndices, pstd::span<const Point3f> p, MeshBufferCache& bufferCache, Allocator alloc) {
         std::vector<SDVertex*> vertices;
         std::vector<SDFace*> faces;
         // Allocate _LoopSubdiv_ vertices and faces
@@ -366,7 +367,7 @@ namespace spectra {
                     ++vp;
                 }
             }
-            return alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, verts, pLimit, std::vector<Vector3f>(), Ns, std::vector<Point2f>(), std::vector<int>(), alloc);
+            return alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, verts, pLimit, std::vector<Vector3f>(), Ns, std::vector<Point2f>(), std::vector<int>(), bufferCache, alloc);
         }
     }
 

@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_INTEGRATOR_H
 #define SPECTRA_PATHTRACER_INTEGRATOR_H
 
+#include <memory>
 #include <optional>
 #include <spectra/pathtracer/base/bxdf.cuh>
 #include <spectra/pathtracer/base/camera.cuh>
@@ -27,6 +28,8 @@ namespace spectra::optix {
 } // namespace spectra::optix
 
 namespace spectra::pathtracer {
+    class PathtracerRuntimeResources;
+
     class GpuRuntime {
     public:
         explicit GpuRuntime(const RuntimeConfig& config);
@@ -41,6 +44,7 @@ namespace spectra::pathtracer {
         void WaitGpuNoexcept() const noexcept;
 
     private:
+        std::unique_ptr<PathtracerRuntimeResources> resources{};
         bool initialized{false};
         int cudaDevice{};
     };

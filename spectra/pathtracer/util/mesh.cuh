@@ -14,6 +14,7 @@
 #include <vector>
 
 namespace spectra {
+    class MeshBufferCache;
     class PiecewiseConstant2D;
     class Transform;
     struct FileLoc;
@@ -22,12 +23,10 @@ namespace spectra {
     class TriangleMesh {
     public:
         // TriangleMesh Public Methods
-        TriangleMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> vertexIndices, std::vector<Point3f> p, std::vector<Vector3f> S, std::vector<Normal3f> N, std::vector<Point2f> uv, std::vector<int> faceIndices, Allocator alloc);
+        TriangleMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> vertexIndices, std::vector<Point3f> p, std::vector<Vector3f> S, std::vector<Normal3f> N, std::vector<Point2f> uv, std::vector<int> faceIndices, MeshBufferCache& bufferCache, Allocator alloc);
 
 
         bool WritePLY(std::string filename) const;
-
-        static void Init(Allocator alloc);
 
         // TriangleMesh Public Members
         int nTriangles, nVertices;
@@ -44,10 +43,8 @@ namespace spectra {
     class BilinearPatchMesh {
     public:
         // BilinearPatchMesh Public Methods
-        BilinearPatchMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> vertexIndices, std::vector<Point3f> p, std::vector<Normal3f> N, std::vector<Point2f> uv, std::vector<int> faceIndices, PiecewiseConstant2D* imageDist, Allocator alloc);
+        BilinearPatchMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> vertexIndices, std::vector<Point3f> p, std::vector<Normal3f> N, std::vector<Point2f> uv, std::vector<int> faceIndices, PiecewiseConstant2D* imageDist, MeshBufferCache& bufferCache, Allocator alloc);
 
-
-        static void Init(Allocator alloc);
 
         // BilinearPatchMesh Public Members
         bool reverseOrientation, transformSwapsHandedness;

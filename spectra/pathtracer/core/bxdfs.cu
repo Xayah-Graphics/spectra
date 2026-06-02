@@ -452,11 +452,7 @@ namespace spectra {
         RGB eumelaninSigma_a(0.419f, 0.697f, 1.37f);
         RGB pheomelaninSigma_a(0.187f, 0.4f, 1.05f);
         RGB sigma_a = ce * eumelaninSigma_a + cp * pheomelaninSigma_a;
-#if defined(__CUDA_ARCH__)
-        return RGBUnboundedSpectrum(*RGBColorSpace_sRGB, sigma_a);
-#else
-        return RGBUnboundedSpectrum(*RGBColorSpace::sRGB, sigma_a);
-#endif
+        return RGBUnboundedSpectrum(*RGBColorSpace::SRGB(), sigma_a);
     }
 
     __host__ __device__ SampledSpectrum HairBxDF::SigmaAFromReflectance(const SampledSpectrum& c, Float beta_n, const SampledWavelengths& lambda) {
@@ -728,10 +724,9 @@ namespace spectra {
         return brdf;
     }
 
-    MeasuredBxDFData* MeasuredBxDF::BRDFDataFromFile(const std::string& filename, Allocator alloc) {
-        static std::map<std::string, MeasuredBxDFData*> loadedData;
-        if (loadedData.find(filename) == loadedData.end()) loadedData[filename] = MeasuredBxDFData::Create(filename, alloc);
-        return loadedData[filename];
+    MeasuredBxDFData* MeasuredBxDF::BRDFDataFromFile(const std::string& filename, std::map<std::string, MeasuredBxDFData*>& cache, Allocator alloc) {
+        if (cache.find(filename) == cache.end()) cache[filename] = MeasuredBxDFData::Create(filename, alloc);
+        return cache[filename];
     }
 
     // MeasuredBxDF Method Definitions

@@ -311,11 +311,7 @@ namespace spectra {
         t         = t * nSeg - first;
         RGB rgb   = 1.5f * EvaluateCubicBezier(pstd::span(colors + first, 4), t);
 
-#if defined(__CUDA_ARCH__)
-        return RGBAlbedoSpectrum(*RGBColorSpace_sRGB, rgb).Sample(lambda);
-#else
-        return RGBAlbedoSpectrum(*RGBColorSpace::sRGB, rgb).Sample(lambda);
-#endif
+        return RGBAlbedoSpectrum(*RGBColorSpace::SRGB(), rgb).Sample(lambda);
     }
 
 
@@ -453,11 +449,11 @@ namespace spectra {
         DCHECK_EQ(3, nc);
         RGB rgb(result[0], result[1], result[2]);
         if (spectrumType == SpectrumType::Unbounded)
-            return RGBUnboundedSpectrum(*RGBColorSpace::sRGB, rgb).Sample(lambda);
+            return RGBUnboundedSpectrum(*RGBColorSpace::SRGB(), rgb).Sample(lambda);
         else if (spectrumType == SpectrumType::Albedo)
-            return RGBAlbedoSpectrum(*RGBColorSpace::sRGB, Clamp(rgb, 0, 1)).Sample(lambda);
+            return RGBAlbedoSpectrum(*RGBColorSpace::SRGB(), Clamp(rgb, 0, 1)).Sample(lambda);
         else
-            return RGBIlluminantSpectrum(*RGBColorSpace::sRGB, rgb).Sample(lambda);
+            return RGBIlluminantSpectrum(*RGBColorSpace::SRGB(), rgb).Sample(lambda);
 #endif
     }
 
@@ -747,7 +743,7 @@ namespace spectra {
                 mipArray      = lumIter->second.mipArray;
                 readMode      = lumIter->second.readMode;
                 nMIPMapLevels = lumIter->second.nMIPMapLevels;
-                colorSpace    = RGBColorSpace::sRGB;
+                colorSpace    = RGBColorSpace::SRGB();
                 textureCacheMutex.unlock();
                 isSingleChannel = true;
             } else {

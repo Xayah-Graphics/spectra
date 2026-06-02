@@ -129,22 +129,21 @@ namespace spectra {
 
     protected:
         // LightBase Protected Methods
-        static const DenselySampledSpectrum* LookupSpectrum(Spectrum s);
+        static const DenselySampledSpectrum* LookupSpectrum(Spectrum s, InternCache<DenselySampledSpectrum>& spectrumCache);
 
         // LightBase Protected Members
         LightType type;
         Transform renderFromLight;
         MediumInterface mediumInterface;
-        static InternCache<DenselySampledSpectrum>* spectrumCache;
     };
 
     // PointLight Definition
     class PointLight : public LightBase {
     public:
         // PointLight Public Methods
-        PointLight(Transform renderFromLight, MediumInterface mediumInterface, Spectrum I, Float scale) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), I(LookupSpectrum(I)), scale(scale) {}
+        PointLight(Transform renderFromLight, MediumInterface mediumInterface, Spectrum I, Float scale, InternCache<DenselySampledSpectrum>& spectrumCache) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), I(LookupSpectrum(I, spectrumCache)), scale(scale) {}
 
-        static PointLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static PointLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
         void Preprocess(const Bounds3f& sceneBounds) {}
@@ -180,9 +179,9 @@ namespace spectra {
     class DistantLight : public LightBase {
     public:
         // DistantLight Public Methods
-        DistantLight(const Transform& renderFromLight, Spectrum Lemit, Float scale) : LightBase(LightType::DeltaDirection, renderFromLight, {}), Lemit(LookupSpectrum(Lemit)), scale(scale) {}
+        DistantLight(const Transform& renderFromLight, Spectrum Lemit, Float scale, InternCache<DenselySampledSpectrum>& spectrumCache) : LightBase(LightType::DeltaDirection, renderFromLight, {}), Lemit(LookupSpectrum(Lemit, spectrumCache)), scale(scale) {}
 
-        static DistantLight* Create(const Transform& renderFromLight, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static DistantLight* Create(const Transform& renderFromLight, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
 
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 
@@ -262,9 +261,9 @@ namespace spectra {
     class GoniometricLight : public LightBase {
     public:
         // GoniometricLight Public Methods
-        GoniometricLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum I, Float scale, Image image, Allocator alloc);
+        GoniometricLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum I, Float scale, Image image, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
 
-        static GoniometricLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static GoniometricLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
 
         void Preprocess(const Bounds3f& sceneBounds) {}
 
@@ -301,9 +300,9 @@ namespace spectra {
     class DiffuseAreaLight : public LightBase {
     public:
         // DiffuseAreaLight Public Methods
-        DiffuseAreaLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Le, Float scale, const Shape shape, FloatTexture alpha, Image image, const RGBColorSpace* imageColorSpace, bool twoSided);
+        DiffuseAreaLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Le, Float scale, const Shape shape, FloatTexture alpha, Image image, const RGBColorSpace* imageColorSpace, bool twoSided, InternCache<DenselySampledSpectrum>& spectrumCache);
 
-        static DiffuseAreaLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc, const Shape shape, FloatTexture alpha);
+        static DiffuseAreaLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc, const Shape shape, FloatTexture alpha);
 
         void Preprocess(const Bounds3f& sceneBounds) {}
 
@@ -368,7 +367,7 @@ namespace spectra {
     class UniformInfiniteLight : public LightBase {
     public:
         // UniformInfiniteLight Public Methods
-        UniformInfiniteLight(const Transform& renderFromLight, Spectrum Lemit, Float scale);
+        UniformInfiniteLight(const Transform& renderFromLight, Spectrum Lemit, Float scale, InternCache<DenselySampledSpectrum>& spectrumCache);
 
         void Preprocess(const Bounds3f& sceneBounds) {
             sceneBounds.BoundingSphere(&sceneCenter, &sceneRadius);
@@ -555,9 +554,9 @@ namespace spectra {
     class SpotLight : public LightBase {
     public:
         // SpotLight Public Methods
-        SpotLight(const Transform& renderFromLight, const MediumInterface& m, Spectrum I, Float scale, Float totalWidth, Float falloffStart);
+        SpotLight(const Transform& renderFromLight, const MediumInterface& m, Spectrum I, Float scale, Float totalWidth, Float falloffStart, InternCache<DenselySampledSpectrum>& spectrumCache);
 
-        static SpotLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static SpotLight* Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
 
         void Preprocess(const Bounds3f& sceneBounds) {}
 

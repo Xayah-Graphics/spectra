@@ -11,6 +11,7 @@
 
 namespace spectra {
     class Interaction;
+    class MeshBufferCache;
     class ParameterDictionary;
     class Ray;
     class Transform;
@@ -38,7 +39,7 @@ namespace spectra {
         // Shape Interface
         using TaggedPointer::TaggedPointer;
 
-        static pstd::vector<Shape> Create(const std::string& name, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, const ParameterDictionary& parameters, const std::map<std::string, FloatTexture>& floatTextures, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
+        static pstd::vector<Shape> Create(const std::string& name, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, const ParameterDictionary& parameters, const std::map<std::string, FloatTexture>& floatTextures, const pathtracer::RenderConfig& config, const FileLoc* loc, MeshBufferCache& bufferCache, Allocator alloc);
 
         __host__ __device__ inline Bounds3f Bounds() const;
 

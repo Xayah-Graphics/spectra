@@ -4,6 +4,7 @@
 #include <spectra/pathtracer/base/medium.cuh>
 #include <spectra/pathtracer/base/shape.cuh>
 #include <spectra/pathtracer/base/texture.cuh>
+#include <spectra/pathtracer/util/containers.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
 #include <spectra/pathtracer/util/pstd.cuh>
@@ -18,6 +19,7 @@ namespace spectra {
     class SampledSpectrum;
     class SampledWavelengths;
     class Transform;
+    class DenselySampledSpectrum;
     struct FileLoc;
 
     // LightType Definition
@@ -48,8 +50,8 @@ namespace spectra {
         // Light Interface
         using TaggedPointer::TaggedPointer;
 
-        static Light Create(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const CameraTransform& cameraTransform, Medium outsideMedium, const FileLoc* loc, Allocator alloc);
-        static Light CreateArea(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const MediumInterface& mediumInterface, const Shape shape, FloatTexture alpha, const FileLoc* loc, Allocator alloc);
+        static Light Create(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const CameraTransform& cameraTransform, Medium outsideMedium, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
+        static Light CreateArea(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const MediumInterface& mediumInterface, const Shape shape, FloatTexture alpha, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc);
 
         SampledSpectrum Phi(SampledWavelengths lambda) const;
 

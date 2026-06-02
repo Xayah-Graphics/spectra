@@ -7,14 +7,14 @@
 
 namespace spectra {
     // TriangleMesh Method Definitions
-    TriangleMesh::TriangleMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> indices, std::vector<Point3f> p, std::vector<Vector3f> s, std::vector<Normal3f> n, std::vector<Point2f> uv, std::vector<int> faceIndices, Allocator alloc) : nTriangles(indices.size() / 3), nVertices(p.size()) {
+    TriangleMesh::TriangleMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> indices, std::vector<Point3f> p, std::vector<Vector3f> s, std::vector<Normal3f> n, std::vector<Point2f> uv, std::vector<int> faceIndices, MeshBufferCache& bufferCache, Allocator alloc) : nTriangles(indices.size() / 3), nVertices(p.size()) {
         CHECK_EQ((indices.size() % 3), 0);
         // Initialize mesh _vertexIndices_
-        vertexIndices = intBufferCache->LookupOrAdd(indices, alloc);
+        vertexIndices = bufferCache.Lookup(pstd::span<const int>(indices.data(), indices.size()), alloc);
 
         // Transform mesh vertices to rendering space and initialize mesh _p_
         for (Point3f& pt : p) pt = renderFromObject(pt);
-        this->p = point3BufferCache->LookupOrAdd(p, alloc);
+        this->p = bufferCache.Lookup(pstd::span<const Point3f>(p.data(), p.size()), alloc);
 
         // Remainder of _TriangleMesh_ constructor
         this->reverseOrientation       = reverseOrientation;
@@ -22,7 +22,7 @@ namespace spectra {
 
         if (!uv.empty()) {
             CHECK_EQ(nVertices, uv.size());
-            this->uv = point2BufferCache->LookupOrAdd(uv, alloc);
+            this->uv = bufferCache.Lookup(pstd::span<const Point2f>(uv.data(), uv.size()), alloc);
         }
         if (!n.empty()) {
             CHECK_EQ(nVertices, n.size());
@@ -30,17 +30,17 @@ namespace spectra {
                 nn = renderFromObject(nn);
                 if (reverseOrientation) nn = -nn;
             }
-            this->n = normal3BufferCache->LookupOrAdd(n, alloc);
+            this->n = bufferCache.Lookup(pstd::span<const Normal3f>(n.data(), n.size()), alloc);
         }
         if (!s.empty()) {
             CHECK_EQ(nVertices, s.size());
             for (Vector3f& ss : s) ss = renderFromObject(ss);
-            this->s = vector3BufferCache->LookupOrAdd(s, alloc);
+            this->s = bufferCache.Lookup(pstd::span<const Vector3f>(s.data(), s.size()), alloc);
         }
 
         if (!faceIndices.empty()) {
             CHECK_EQ(nTriangles, faceIndices.size());
-            this->faceIndices = intBufferCache->LookupOrAdd(faceIndices, alloc);
+            this->faceIndices = bufferCache.Lookup(pstd::span<const int>(faceIndices.data(), faceIndices.size()), alloc);
         }
 
         // Make sure that we don't have too much stuff to be using integers to
@@ -124,7 +124,7 @@ namespace spectra {
         return true;
     }
 
-    BilinearPatchMesh::BilinearPatchMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> indices, std::vector<Point3f> P, std::vector<Normal3f> N, std::vector<Point2f> UV, std::vector<int> fIndices, PiecewiseConstant2D* imageDist, Allocator alloc) : reverseOrientation(reverseOrientation), transformSwapsHandedness(renderFromObject.SwapsHandedness()), nPatches(indices.size() / 4), nVertices(P.size()), imageDistribution(imageDist) {
+    BilinearPatchMesh::BilinearPatchMesh(const Transform& renderFromObject, bool reverseOrientation, std::vector<int> indices, std::vector<Point3f> P, std::vector<Normal3f> N, std::vector<Point2f> UV, std::vector<int> fIndices, PiecewiseConstant2D* imageDist, MeshBufferCache& bufferCache, Allocator alloc) : reverseOrientation(reverseOrientation), transformSwapsHandedness(renderFromObject.SwapsHandedness()), nPatches(indices.size() / 4), nVertices(P.size()), imageDistribution(imageDist) {
         CHECK_EQ((indices.size() % 4), 0);
 
         // Make sure that we don't have too much stuff to be using integers to
@@ -132,16 +132,16 @@ namespace spectra {
         CHECK_LE(P.size(), std::numeric_limits<int>::max());
         CHECK_LE(indices.size(), std::numeric_limits<int>::max());
 
-        vertexIndices = intBufferCache->LookupOrAdd(indices, alloc);
+        vertexIndices = bufferCache.Lookup(pstd::span<const int>(indices.data(), indices.size()), alloc);
 
         // Transform mesh vertices to rendering space
         for (Point3f& p : P) p = renderFromObject(p);
-        p = point3BufferCache->LookupOrAdd(P, alloc);
+        p = bufferCache.Lookup(pstd::span<const Point3f>(P.data(), P.size()), alloc);
 
         // Copy _UV_ and _N_ vertex data, if present
         if (!UV.empty()) {
             CHECK_EQ(nVertices, UV.size());
-            uv = point2BufferCache->LookupOrAdd(UV, alloc);
+            uv = bufferCache.Lookup(pstd::span<const Point2f>(UV.data(), UV.size()), alloc);
         }
         if (!N.empty()) {
             CHECK_EQ(nVertices, N.size());
@@ -149,12 +149,12 @@ namespace spectra {
                 n = renderFromObject(n);
                 if (reverseOrientation) n = -n;
             }
-            n = normal3BufferCache->LookupOrAdd(N, alloc);
+            n = bufferCache.Lookup(pstd::span<const Normal3f>(N.data(), N.size()), alloc);
         }
 
         if (!fIndices.empty()) {
             CHECK_EQ(nPatches, fIndices.size());
-            faceIndices = intBufferCache->LookupOrAdd(fIndices, alloc);
+            faceIndices = bufferCache.Lookup(pstd::span<const int>(fIndices.data(), fIndices.size()), alloc);
         }
     }
 
@@ -195,7 +195,7 @@ namespace spectra {
 
         if (length != 3 && length != 4) {
             diagnostics::PrintWarning("plymesh: Ignoring face with %i vertices (only triangles and quads "
-                                               "are supported!)",
+                                      "are supported!)",
                 (int) length);
             return 1;
         } else if (value_index < 0) {
@@ -289,12 +289,12 @@ namespace spectra {
         for (int idx : mesh.triIndices)
             if (idx < 0 || idx >= mesh.p.size())
                 throw std::runtime_error(diagnostics::Format("plymesh: Vertex index %i is out of bounds! "
-                                                                      "Valid range is [0..%i)",
+                                                             "Valid range is [0..%i)",
                     idx, int(mesh.p.size())));
         for (int idx : mesh.quadIndices)
             if (idx < 0 || idx >= mesh.p.size())
                 throw std::runtime_error(diagnostics::Format("plymesh: Vertex index %i is out of bounds! "
-                                                                      "Valid range is [0..%i)",
+                                                             "Valid range is [0..%i)",
                     idx, int(mesh.p.size())));
 
         return mesh;

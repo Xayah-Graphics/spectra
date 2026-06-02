@@ -87,14 +87,6 @@ namespace spectra {
     }
 
 
-    pstd::vector<const TriangleMesh*>* Triangle::allMeshes;
-    __device__ pstd::vector<const TriangleMesh*>* allTriangleMeshesGPU;
-
-    void Triangle::Init(Allocator alloc) {
-        allMeshes = alloc.new_object<pstd::vector<const TriangleMesh*>>(alloc);
-        CUDA_CHECK(cudaMemcpyToSymbol((const void*) &allTriangleMeshesGPU, (const void*) &allMeshes, sizeof(allMeshes)));
-    }
-
     // Triangle Functions
     __host__ __device__ pstd::optional<TriangleIntersection> IntersectTriangle(const Ray& ray, Float tMax, Point3f p0, Point3f p1, Point3f p2) {
         // Return no intersection if triangle is degenerate
@@ -192,17 +184,10 @@ namespace spectra {
 
     // Triangle Method Definitions
     pstd::vector<Shape> Triangle::CreateTriangles(const TriangleMesh* mesh, Allocator alloc) {
-        static std::mutex allMeshesLock;
-        allMeshesLock.lock();
-        CHECK_LT(allMeshes->size(), 1 << 31);
-        int meshIndex = int(allMeshes->size());
-        allMeshes->push_back(mesh);
-        allMeshesLock.unlock();
-
         pstd::vector<Shape> tris(mesh->nTriangles, alloc);
         Triangle* t = alloc.allocate_object<Triangle>(mesh->nTriangles);
         for (int i = 0; i < mesh->nTriangles; ++i) {
-            alloc.construct(&t[i], meshIndex, i);
+            alloc.construct(&t[i], mesh, i);
             tris[i] = &t[i];
         }
         return tris;
@@ -260,7 +245,7 @@ namespace spectra {
     }
 
 
-    TriangleMesh* Triangle::CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    TriangleMesh* Triangle::CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, MeshBufferCache& bufferCache, Allocator alloc) {
         std::vector<int> vi      = parameters.GetIntArray("indices");
         std::vector<Point3f> P   = parameters.GetPoint3fArray("P");
         std::vector<Point2f> uvs = parameters.GetPoint2fArray("uv");
@@ -319,7 +304,7 @@ namespace spectra {
             faceIndices = {};
         }
 
-        return alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, std::move(vi), std::move(P), std::move(S), std::move(N), std::move(uvs), std::move(faceIndices), alloc);
+        return alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, std::move(vi), std::move(P), std::move(S), std::move(N), std::move(uvs), std::move(faceIndices), bufferCache, alloc);
     }
 
     // CurveCommon Method Definitions
@@ -679,7 +664,7 @@ namespace spectra {
 
     // BilinearPatch Method Definitions
 
-    BilinearPatchMesh* BilinearPatch::CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    BilinearPatchMesh* BilinearPatch::CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, MeshBufferCache& bufferCache, Allocator alloc) {
         std::vector<int> vertexIndices = parameters.GetIntArray("indices");
         std::vector<Point3f> P         = parameters.GetPoint3fArray("P");
         std::vector<Point2f> uv        = parameters.GetPoint2fArray("uv");
@@ -756,37 +741,22 @@ namespace spectra {
             }
         }
 
-        return alloc.new_object<BilinearPatchMesh>(*renderFromObject, reverseOrientation, std::move(vertexIndices), std::move(P), std::move(N), std::move(uv), std::move(faceIndices), imageDist, alloc);
+        return alloc.new_object<BilinearPatchMesh>(*renderFromObject, reverseOrientation, std::move(vertexIndices), std::move(P), std::move(N), std::move(uv), std::move(faceIndices), imageDist, bufferCache, alloc);
     }
 
     pstd::vector<Shape> BilinearPatch::CreatePatches(const BilinearPatchMesh* mesh, Allocator alloc) {
-        static std::mutex allMeshesLock;
-        allMeshesLock.lock();
-        CHECK_LT(allMeshes->size(), 1 << 31);
-        int meshIndex = int(allMeshes->size());
-        allMeshes->push_back(mesh);
-        allMeshesLock.unlock();
-
         pstd::vector<Shape> blps(mesh->nPatches, alloc);
         BilinearPatch* patches = alloc.allocate_object<BilinearPatch>(mesh->nPatches);
         for (int i = 0; i < mesh->nPatches; ++i) {
-            alloc.construct(&patches[i], mesh, meshIndex, i);
+            alloc.construct(&patches[i], mesh, i);
             blps[i] = &patches[i];
         }
 
         return blps;
     }
 
-    pstd::vector<const BilinearPatchMesh*>* BilinearPatch::allMeshes;
-    __device__ pstd::vector<const BilinearPatchMesh*>* allBilinearMeshesGPU;
-
-    void BilinearPatch::Init(Allocator alloc) {
-        allMeshes = alloc.new_object<pstd::vector<const BilinearPatchMesh*>>(alloc);
-        CUDA_CHECK(cudaMemcpyToSymbol((const void*) &allBilinearMeshesGPU, (const void*) &allMeshes, sizeof(allMeshes)));
-    }
-
     // BilinearPatch Method Definitions
-    BilinearPatch::BilinearPatch(const BilinearPatchMesh* mesh, int meshIndex, int blpIndex) : meshIndex(meshIndex), blpIndex(blpIndex) {
+    BilinearPatch::BilinearPatch(const BilinearPatchMesh* mesh, int blpIndex) : mesh(mesh), blpIndex(blpIndex) {
         // Store area of bilinear patch in _area_
         // Get bilinear patch vertices in _p00_, _p01_, _p10_, and _p11_
         const int* v = &mesh->vertexIndices[4 * blpIndex];
@@ -1086,7 +1056,7 @@ namespace spectra {
     }
 
 
-    pstd::vector<Shape> Shape::Create(const std::string& name, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, const ParameterDictionary& parameters, const std::map<std::string, FloatTexture>& floatTextures, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
+    pstd::vector<Shape> Shape::Create(const std::string& name, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, const ParameterDictionary& parameters, const std::map<std::string, FloatTexture>& floatTextures, const pathtracer::RenderConfig& config, const FileLoc* loc, MeshBufferCache& bufferCache, Allocator alloc) {
         pstd::vector<Shape> shapes(alloc);
         if (name == "sphere") {
             shapes = {Sphere::Create(renderFromObject, objectFromRender, reverseOrientation, parameters, loc, alloc)};
@@ -1097,14 +1067,14 @@ namespace spectra {
         } else if (name == "disk") {
             shapes = {Disk::Create(renderFromObject, objectFromRender, reverseOrientation, parameters, loc, alloc)};
         } else if (name == "bilinearmesh") {
-            BilinearPatchMesh* mesh = BilinearPatch::CreateMesh(renderFromObject, reverseOrientation, parameters, loc, alloc);
+            BilinearPatchMesh* mesh = BilinearPatch::CreateMesh(renderFromObject, reverseOrientation, parameters, loc, bufferCache, alloc);
             shapes                  = BilinearPatch::CreatePatches(mesh, alloc);
         }
         // Create multiple-_Shape_ types
         else if (name == "curve")
             shapes = Curve::Create(renderFromObject, objectFromRender, reverseOrientation, parameters, loc, alloc);
         else if (name == "trianglemesh") {
-            TriangleMesh* mesh = Triangle::CreateMesh(renderFromObject, reverseOrientation, parameters, loc, alloc);
+            TriangleMesh* mesh = Triangle::CreateMesh(renderFromObject, reverseOrientation, parameters, loc, bufferCache, alloc);
             shapes             = Triangle::CreateTriangles(mesh, alloc);
         } else if (name == "plymesh") {
             std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
@@ -1140,12 +1110,12 @@ namespace spectra {
             }
 
             if (!plyMesh.triIndices.empty()) {
-                TriangleMesh* mesh = alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, plyMesh.triIndices, plyMesh.p, std::vector<Vector3f>(), plyMesh.n, plyMesh.uv, plyMesh.faceIndices, alloc);
+                TriangleMesh* mesh = alloc.new_object<TriangleMesh>(*renderFromObject, reverseOrientation, plyMesh.triIndices, plyMesh.p, std::vector<Vector3f>(), plyMesh.n, plyMesh.uv, plyMesh.faceIndices, bufferCache, alloc);
                 shapes             = Triangle::CreateTriangles(mesh, alloc);
             }
 
             if (!plyMesh.quadIndices.empty()) {
-                BilinearPatchMesh* mesh      = alloc.new_object<BilinearPatchMesh>(*renderFromObject, reverseOrientation, plyMesh.quadIndices, plyMesh.p, plyMesh.n, plyMesh.uv, plyMesh.faceIndices, nullptr /* image dist */, alloc);
+                BilinearPatchMesh* mesh      = alloc.new_object<BilinearPatchMesh>(*renderFromObject, reverseOrientation, plyMesh.quadIndices, plyMesh.p, plyMesh.n, plyMesh.uv, plyMesh.faceIndices, nullptr /* image dist */, bufferCache, alloc);
                 pstd::vector<Shape> quadMesh = BilinearPatch::CreatePatches(mesh, alloc);
                 shapes.insert(shapes.end(), quadMesh.begin(), quadMesh.end());
             }
@@ -1162,7 +1132,7 @@ namespace spectra {
             // don't actually use this for now...
             std::string scheme = parameters.GetOneString("scheme", "loop");
 
-            TriangleMesh* mesh = LoopSubdivide(renderFromObject, reverseOrientation, nLevels, vertexIndices, P, alloc);
+            TriangleMesh* mesh = LoopSubdivide(renderFromObject, reverseOrientation, nLevels, vertexIndices, P, bufferCache, alloc);
 
             shapes = Triangle::CreateTriangles(mesh, alloc);
         } else

@@ -4807,6 +4807,30 @@ namespace spectra {
             std::map<std::string, Spectrum> namedSpectra;
         } // namespace
 
+        __host__ __device__ const DenselySampledSpectrum& X() {
+#if defined(__CUDA_ARCH__)
+            return *xGPU;
+#else
+            return *x;
+#endif
+        }
+
+        __host__ __device__ const DenselySampledSpectrum& Y() {
+#if defined(__CUDA_ARCH__)
+            return *yGPU;
+#else
+            return *y;
+#endif
+        }
+
+        __host__ __device__ const DenselySampledSpectrum& Z() {
+#if defined(__CUDA_ARCH__)
+            return *zGPU;
+#else
+            return *z;
+#endif
+        }
+
         void Init(Allocator alloc) {
             PiecewiseLinearSpectrum xpls(CIE_lambda, CIE_X);
             x = alloc.new_object<DenselySampledSpectrum>(&xpls, alloc);
@@ -4901,6 +4925,18 @@ namespace spectra {
                 {"sony_ilce_7rm3_r", PiecewiseLinearSpectrum::FromInterleaved(sony_ilce_7rm3_r, false, alloc)}, {"sony_ilce_7rm3_g", PiecewiseLinearSpectrum::FromInterleaved(sony_ilce_7rm3_g, false, alloc)}, {"sony_ilce_7rm3_b", PiecewiseLinearSpectrum::FromInterleaved(sony_ilce_7rm3_b, false, alloc)},
 
                 {"sony_ilce_9_r", PiecewiseLinearSpectrum::FromInterleaved(sony_ilce_9_r, false, alloc)}, {"sony_ilce_9_g", PiecewiseLinearSpectrum::FromInterleaved(sony_ilce_9_g, false, alloc)}, {"sony_ilce_9_b", PiecewiseLinearSpectrum::FromInterleaved(sony_ilce_9_b, false, alloc)}};
+        }
+
+        void Reset() {
+            x = nullptr;
+            y = nullptr;
+            z = nullptr;
+            namedSpectra.clear();
+
+            DenselySampledSpectrum* nullSpectrum = nullptr;
+            CUDA_CHECK(cudaMemcpyToSymbol(xGPU, &nullSpectrum, sizeof(nullSpectrum)));
+            CUDA_CHECK(cudaMemcpyToSymbol(yGPU, &nullSpectrum, sizeof(nullSpectrum)));
+            CUDA_CHECK(cudaMemcpyToSymbol(zGPU, &nullSpectrum, sizeof(nullSpectrum)));
         }
     } // namespace Spectra
 

@@ -252,7 +252,7 @@ namespace spectra {
     }
 
     PixelSensor* PixelSensor::CreateDefault(Allocator alloc) {
-        return Create(ParameterDictionary(), RGBColorSpace::sRGB, 1.0, nullptr, alloc);
+        return Create(ParameterDictionary(), RGBColorSpace::SRGB(), 1.0, nullptr, alloc);
     }
 
     // Swatch reflectances are taken from Danny Pascale's Macbeth chart measurements

@@ -325,7 +325,6 @@ set(SPECTRA_GPU_CORE_SOURCE
 )
 set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/bluenoise.cu
-        spectra/pathtracer/util/buffercache.cu
         spectra/pathtracer/util/color.cu
         spectra/pathtracer/util/colorspace.cu
         spectra/pathtracer/util/file.cu

@@ -67,10 +67,10 @@ namespace spectra::pathtracer {
 
         [[nodiscard]] const RGBColorSpace* ToPathtracerColorSpace(scene::ColorSpace colorSpace) {
             switch (colorSpace) {
-            case scene::ColorSpace::sRGB: return RGBColorSpace::sRGB;
-            case scene::ColorSpace::DCI_P3: return RGBColorSpace::DCI_P3;
-            case scene::ColorSpace::Rec2020: return RGBColorSpace::Rec2020;
-            case scene::ColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1;
+            case scene::ColorSpace::sRGB: return RGBColorSpace::SRGB();
+            case scene::ColorSpace::DCI_P3: return RGBColorSpace::DCI_P3();
+            case scene::ColorSpace::Rec2020: return RGBColorSpace::Rec2020();
+            case scene::ColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1();
             }
             throw std::runtime_error("Unknown Spectra scene color space.");
         }
@@ -383,7 +383,7 @@ namespace spectra::pathtracer {
                 };
 
                 Medium lightMedium = this->FindMedium(entity.medium, &entity.loc);
-                auto create        = [this, entity, lightMedium]() { return Light::Create(entity.name, entity.parameters, entity.renderFromObject, this->compiled.camera.GetCameraTransform(), lightMedium, &entity.loc, this->compiled.threadAllocators.Get()); };
+                auto create        = [this, entity, lightMedium]() { return Light::Create(entity.name, entity.parameters, entity.renderFromObject, this->compiled.camera.GetCameraTransform(), lightMedium, &entity.loc, this->compiled.lightSpectrumCache, this->compiled.threadAllocators.Get()); };
 
                 std::lock_guard<std::mutex> lock(this->lightMutex);
                 this->lightJobs.push_back(RunAsync(create));
@@ -476,7 +476,7 @@ namespace spectra::pathtracer {
                     }
 
                     TextureParameterDictionary textureParameters(&entity.parameters, &this->compiled.textures);
-                    Material createdMaterial       = Material::Create(entity.name, textureParameters, normalMap, this->compiled.materials, &entity.loc, alloc);
+                    Material createdMaterial       = Material::Create(entity.name, textureParameters, normalMap, this->compiled.materials, this->compiled.measuredBxDFData, &entity.loc, alloc);
                     this->compiled.materials[name] = createdMaterial;
                 }
             }
@@ -547,12 +547,12 @@ namespace spectra::pathtracer {
 
                     if (!materialIter->second) throw std::runtime_error(diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
 
-                    pstd::vector<Shape> shapeObjects = Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender, shape.reverseOrientation, shape.parameters, this->compiled.textures.floatTextures, this->renderConfig, &shape.loc, alloc);
+                    pstd::vector<Shape> shapeObjects = Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender, shape.reverseOrientation, shape.parameters, this->compiled.textures.floatTextures, this->renderConfig, &shape.loc, this->compiled.meshBufferCache, alloc);
                     FloatTexture alphaTexture        = getAlphaTexture(shape.parameters, &shape.loc);
                     MediumInterface mediumInterface(this->FindMedium(shape.insideMedium, &shape.loc), this->FindMedium(shape.outsideMedium, &shape.loc));
                     pstd::vector<Light>* shapeLights = new pstd::vector<Light>(alloc);
                     for (Shape shapeObject : shapeObjects) {
-                        Light areaLight = Light::CreateArea(shape.areaLight->name, shape.areaLight->parameters, *shape.renderFromObject, mediumInterface, shapeObject, alphaTexture, &shape.areaLight->loc, alloc);
+                        Light areaLight = Light::CreateArea(shape.areaLight->name, shape.areaLight->parameters, *shape.renderFromObject, mediumInterface, shapeObject, alphaTexture, &shape.areaLight->loc, this->compiled.lightSpectrumCache, alloc);
                         if (areaLight) {
                             lights.push_back(areaLight);
                             shapeLights->push_back(areaLight);
@@ -597,7 +597,7 @@ namespace spectra::pathtracer {
         };
     } // namespace
 
-    WavefrontScene::WavefrontScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireMemoryResource(memoryResource)); }) {}
+    WavefrontScene::WavefrontScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireMemoryResource(memoryResource))), lightSpectrumCache(Allocator(RequireMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireMemoryResource(memoryResource)); }) {}
 
     std::unique_ptr<WavefrontScene> CreateWavefrontScene(const scene::Scene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
         std::unique_ptr<WavefrontScene> compiled = std::make_unique<WavefrontScene>(memoryResource);

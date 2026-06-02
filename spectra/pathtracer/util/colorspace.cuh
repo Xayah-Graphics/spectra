@@ -19,12 +19,16 @@ namespace spectra {
         __host__ __device__ RGBSigmoidPolynomial ToRGBCoeffs(RGB rgb) const;
 
         static void Init(Allocator alloc);
+        static void Reset();
 
         // RGBColorSpace Public Members
         Point2f r, g, b, w;
         DenselySampledSpectrum illuminant;
         SquareMatrix<3> XYZFromRGB, RGBFromXYZ;
-        static const RGBColorSpace *sRGB, *DCI_P3, *Rec2020, *ACES2065_1;
+        __host__ __device__ static const RGBColorSpace* SRGB();
+        __host__ __device__ static const RGBColorSpace* DCI_P3();
+        __host__ __device__ static const RGBColorSpace* Rec2020();
+        __host__ __device__ static const RGBColorSpace* ACES2065_1();
 
         __host__ __device__ bool operator==(const RGBColorSpace& cs) const {
             return (r == cs.r && g == cs.g && b == cs.b && w == cs.w && rgbToSpectrumTable == cs.rgbToSpectrumTable);
@@ -53,19 +57,8 @@ namespace spectra {
     private:
         // RGBColorSpace Private Members
         const RGBToSpectrumTable* rgbToSpectrumTable;
+        static const RGBColorSpace *srgb, *dciP3, *rec2020, *aces2065_1;
     };
-
-#if defined(__CUDA_ARCH__)
-    extern __device__ const RGBColorSpace* RGBColorSpace_sRGB;
-    extern __device__ const RGBColorSpace* RGBColorSpace_DCI_P3;
-    extern __device__ const RGBColorSpace* RGBColorSpace_Rec2020;
-    extern __device__ const RGBColorSpace* RGBColorSpace_ACES2065_1;
-#else
-    extern const RGBColorSpace* RGBColorSpace_sRGB;
-    extern const RGBColorSpace* RGBColorSpace_DCI_P3;
-    extern const RGBColorSpace* RGBColorSpace_Rec2020;
-    extern const RGBColorSpace* RGBColorSpace_ACES2065_1;
-#endif
 
     SquareMatrix<3> ConvertRGBColorSpace(const RGBColorSpace& from, const RGBColorSpace& to);
 } // namespace spectra

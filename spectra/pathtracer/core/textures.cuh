@@ -742,13 +742,8 @@ namespace spectra {
         __host__ __device__ SampledSpectrum Evaluate(TextureEvalContext ctx, SampledWavelengths lambda) const {
             CHECK(ctx.faceIndex >= 0 && ctx.faceIndex < faceValues.size());
 
-            RGB rgb = faceValues[ctx.faceIndex];
-            const RGBColorSpace* sRGB =
-#if defined(__CUDA_ARCH__)
-                RGBColorSpace_sRGB;
-#else
-                RGBColorSpace::sRGB;
-#endif
+            RGB rgb                   = faceValues[ctx.faceIndex];
+            const RGBColorSpace* sRGB = RGBColorSpace::SRGB();
             if (spectrumType == SpectrumType::Unbounded)
                 return RGBUnboundedSpectrum(*sRGB, rgb).Sample(lambda);
             else if (spectrumType == SpectrumType::Albedo)

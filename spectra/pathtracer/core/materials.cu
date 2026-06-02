@@ -78,7 +78,7 @@ namespace spectra {
         // resolve MixMaterials in the closest hit shader...
         if (!BasicTextureEvaluator().CanEvaluate({amount}, {}))
             throw std::runtime_error(diagnostics::Format(loc, "The GPU renderer currently only supports basic textures "
-                                                                       "for its \"amount\" parameter."));
+                                                              "for its \"amount\" parameter."));
 
         return alloc.new_object<MixMaterial>(materials, amount);
     }
@@ -95,25 +95,25 @@ namespace spectra {
             if (reflectance) diagnostics::PrintWarning(loc, R"(Ignoring "reflectance" parameter since "sigma_a" was provided.)");
             if (eumelanin)
                 diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"sigma_a\" was "
-                                                        "provided.");
+                                               "provided.");
             if (pheomelanin)
                 diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"sigma_a\" was "
-                                                        "provided.");
+                                               "provided.");
         } else if (reflectance) {
             if (sigma_a) diagnostics::PrintWarning(loc, R"(Ignoring "sigma_a" parameter since "reflectance" was provided.)");
             if (eumelanin)
                 diagnostics::PrintWarning(loc, "Ignoring \"eumelanin\" parameter since \"reflectance\" was "
-                                                        "provided.");
+                                               "provided.");
             if (pheomelanin)
                 diagnostics::PrintWarning(loc, "Ignoring \"pheomelanin\" parameter since \"reflectance\" was "
-                                                        "provided.");
+                                               "provided.");
         } else if (eumelanin || pheomelanin) {
             if (sigma_a)
                 diagnostics::PrintWarning(loc, "Ignoring \"sigma_a\" parameter since "
-                                                        "\"eumelanin\"/\"pheomelanin\" was provided.");
+                                               "\"eumelanin\"/\"pheomelanin\" was provided.");
             if (reflectance)
                 diagnostics::PrintWarning(loc, "Ignoring \"reflectance\" parameter since "
-                                                        "\"eumelanin\"/\"pheomelanin\" was provided.");
+                                               "\"eumelanin\"/\"pheomelanin\" was provided.");
         } else {
             // Default: brown-ish hair.
             sigma_a = alloc.new_object<SpectrumConstantTexture>(alloc.new_object<RGBUnboundedSpectrum>(HairBxDF::SigmaAFromConcentration(1.3, 0.)));
@@ -146,7 +146,7 @@ namespace spectra {
 
         if (reflectance && (eta || k))
             throw std::runtime_error(diagnostics::Format(loc, "For the conductor material, both \"reflectance\" "
-                                                                       "and \"eta\" and \"k\" can't be provided."));
+                                                              "and \"eta\" and \"k\" can't be provided."));
         if (!reflectance) {
             if (!eta) eta = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-eta"));
             if (!k) k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
@@ -300,7 +300,7 @@ namespace spectra {
 
         if (reflectance && (conductorEta || k))
             throw std::runtime_error(diagnostics::Format(loc, "For the coated conductor material, both \"reflectance\" "
-                                                                       "and \"eta\" and \"k\" can't be provided."));
+                                                              "and \"eta\" and \"k\" can't be provided."));
         if (!reflectance) {
             if (!conductorEta) conductorEta = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-eta"));
             if (!k) k = alloc.new_object<SpectrumConstantTexture>(GetNamedSpectrum("metal-Cu-k"));
@@ -352,8 +352,8 @@ namespace spectra {
                     mfp          = parameters.GetSpectrumTexture("mfp", one, SpectrumType::Unbounded, alloc);
                 } else {
                     // 4. nothing specified -- use defaults
-                    RGBUnboundedSpectrum* defaultSigma_a = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB, RGB(.0011f, .0024f, .014f));
-                    RGBUnboundedSpectrum* defaultSigma_s = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB, RGB(2.55f, 3.21f, 3.77f));
+                    RGBUnboundedSpectrum* defaultSigma_a = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::SRGB(), RGB(.0011f, .0024f, .014f));
+                    RGBUnboundedSpectrum* defaultSigma_s = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::SRGB(), RGB(2.55f, 3.21f, 3.77f));
                     sigma_a                              = alloc.new_object<SpectrumConstantTexture>(defaultSigma_a);
                     sigma_s                              = alloc.new_object<SpectrumConstantTexture>(defaultSigma_s);
                 }
@@ -389,12 +389,12 @@ namespace spectra {
         return alloc.new_object<DiffuseTransmissionMaterial>(reflectance, transmittance, displacement, normalMap, scale);
     }
 
-    MeasuredMaterial::MeasuredMaterial(const std::string& filename, FloatTexture displacement, Image* normalMap, Allocator alloc) : displacement(displacement), normalMap(normalMap) {
-        brdf = MeasuredBxDF::BRDFDataFromFile(filename, alloc);
+    MeasuredMaterial::MeasuredMaterial(const std::string& filename, FloatTexture displacement, Image* normalMap, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, Allocator alloc) : displacement(displacement), normalMap(normalMap) {
+        brdf = MeasuredBxDF::BRDFDataFromFile(filename, measuredBxDFData, alloc);
     }
 
 
-    MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc) {
+    MeasuredMaterial* MeasuredMaterial::Create(const TextureParameterDictionary& parameters, Image* normalMap, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc) {
         std::string filename = ResolveFilename(parameters.GetOneString("filename", ""));
         if (filename.empty()) {
             throw std::runtime_error(diagnostics::Format("Filename must be provided for MeasuredMaterial"));
@@ -402,12 +402,12 @@ namespace spectra {
         }
         FloatTexture displacement = parameters.GetFloatTextureOrNull("displacement", alloc);
 
-        return alloc.new_object<MeasuredMaterial>(filename, displacement, normalMap, alloc);
+        return alloc.new_object<MeasuredMaterial>(filename, displacement, normalMap, measuredBxDFData, alloc);
     }
 
 
     Material Material::Create(const std::string& name, const TextureParameterDictionary& parameters, Image* normalMap,
-        /*const */ std::map<std::string, Material>& namedMaterials, const FileLoc* loc, Allocator alloc) {
+        /*const */ std::map<std::string, Material>& namedMaterials, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc) {
         Material material;
         if (name.empty() || name == "none") {
             diagnostics::PrintWarning(loc, "Material \"%s\" is deprecated; use \"interface\" instead.", name.c_str());
@@ -431,7 +431,7 @@ namespace spectra {
         else if (name == "conductor")
             material = ConductorMaterial::Create(parameters, normalMap, loc, alloc);
         else if (name == "measured")
-            material = MeasuredMaterial::Create(parameters, normalMap, loc, alloc);
+            material = MeasuredMaterial::Create(parameters, normalMap, measuredBxDFData, loc, alloc);
         else if (name == "subsurface")
             material = SubsurfaceMaterial::Create(parameters, normalMap, loc, alloc);
         else if (name == "mix") {
@@ -446,7 +446,7 @@ namespace spectra {
 
                 if (materials[i] == nullptr)
                     throw std::runtime_error(diagnostics::Format("%s: an \"interface\" material cannot be used as an element of "
-                                                                          "the \"mix\" material.",
+                                                                 "the \"mix\" material.",
                         materialNames[i]));
             }
             material = MixMaterial::Create(materials, parameters, loc, alloc);

@@ -65,7 +65,7 @@ namespace spectra {
 
     const RGBColorSpace* ImageMetadata::GetColorSpace() const {
         if (colorSpace && *colorSpace) return *colorSpace;
-        return RGBColorSpace::sRGB;
+        return RGBColorSpace::SRGB();
     }
 
     template <typename F>
@@ -767,7 +767,7 @@ namespace spectra {
                 if (!desc)
                     // Still go for it with 3 channels.
                     diagnostics::PrintWarning("%s: image has 3 channels but they are not R, G, and B. Image may be "
-                                                       "garbled.",
+                                              "garbled.",
                         name);
                 else
                     // Reorder them as RGB.
@@ -780,7 +780,7 @@ namespace spectra {
                 if (!desc)
                     // Still go for it.
                     diagnostics::PrintWarning("%s: image has 4 channels but they are not R, G, B, and A. Image may be "
-                                                       "garbled.",
+                                              "garbled.",
                         name);
                 else
                     // Reorder them as RGBA.
@@ -792,7 +792,7 @@ namespace spectra {
                 ImageChannelDesc desc = outImage.GetChannelDesc({"R", "G", "B"});
                 if (!desc) {
                     throw std::runtime_error(diagnostics::Format("%s: multi-channel image does not have R, G, and B. Unable to write to "
-                                                                          "this format.",
+                                                                 "this format.",
                         name));
                     return false;
                 } else {
@@ -811,9 +811,9 @@ namespace spectra {
         CHECK(outImage.NChannels() == 1 || outImage.NChannels() == 3 || outImage.NChannels() == 4);
 
         ImageMetadata outMetadata = metadata;
-        if (outImage.NChannels() != 1 && *metadata.GetColorSpace() != *RGBColorSpace::sRGB) {
+        if (outImage.NChannels() != 1 && *metadata.GetColorSpace() != *RGBColorSpace::SRGB()) {
             diagnostics::PrintWarning("%s: converting pixel colors to sRGB to match output image format.", name);
-            SquareMatrix<3> m        = ConvertRGBColorSpace(*metadata.GetColorSpace(), *RGBColorSpace::sRGB);
+            SquareMatrix<3> m        = ConvertRGBColorSpace(*metadata.GetColorSpace(), *RGBColorSpace::SRGB());
             ImageChannelDesc rgbDesc = outImage.GetChannelDesc({"R", "G", "B"});
             // May not have RGB for weird non-RGB 3 channel images...
             if (rgbDesc) {
@@ -823,7 +823,7 @@ namespace spectra {
                         RGB rgb                     = Mul<RGB>(m, channels);
                         outImage.SetChannels({x, y}, rgbDesc, {rgb.r, rgb.g, rgb.b});
                     }
-                outMetadata.colorSpace = RGBColorSpace::sRGB;
+                outMetadata.colorSpace = RGBColorSpace::SRGB();
             }
         }
 
@@ -922,10 +922,10 @@ namespace spectra {
                 const RGBColorSpace* cs = RGBColorSpace::Lookup(Point2f(c.red.x, c.red.y), Point2f(c.green.x, c.green.y), Point2f(c.blue.x, c.blue.y), Point2f(c.white.x, c.white.y));
                 if (!cs) {
                     diagnostics::PrintWarning("Couldn't find supported color space that matches "
-                                                       "chromaticities: "
-                                                       "r (%f, %f) g (%f, %f) b (%f, %f), w (%f, %f). Using sRGB.",
+                                              "chromaticities: "
+                                              "r (%f, %f) g (%f, %f) b (%f, %f), w (%f, %f). Using sRGB.",
                         c.red.x, c.red.y, c.green.x, c.green.y, c.blue.x, c.blue.y, c.white.x, c.white.y);
-                    metadata.colorSpace = RGBColorSpace::sRGB;
+                    metadata.colorSpace = RGBColorSpace::SRGB();
                 } else
                     metadata.colorSpace = cs;
             }
@@ -1010,7 +1010,7 @@ namespace spectra {
             // in EXR files if it finds primaries.  So, we don't write them in
             // that case in the interests of nicer looking images on the
             // screen.
-            if (*metadata.GetColorSpace() != *RGBColorSpace::sRGB) {
+            if (*metadata.GetColorSpace() != *RGBColorSpace::SRGB()) {
                 const RGBColorSpace& cs = *metadata.GetColorSpace();
                 Imf::Chromaticities chromaticities(Imath::V2f(cs.r.x, cs.r.y), Imath::V2f(cs.g.x, cs.g.y), Imath::V2f(cs.b.x, cs.b.y), Imath::V2f(cs.w.x, cs.w.y));
                 header.insert("chromaticities", Imf::ChromaticitiesAttribute(chromaticities));
@@ -1078,7 +1078,7 @@ namespace spectra {
                 if (error != 0) throw std::runtime_error(diagnostics::Format("%s: %s", name, lodepng_error_text(error)));
 
                 ImageMetadata metadata;
-                metadata.colorSpace = RGBColorSpace::sRGB;
+                metadata.colorSpace = RGBColorSpace::SRGB();
                 if (state.info_png.color.bitdepth == 16) {
                     if (hasAlpha) {
                         image        = Image(PixelFormat::Half, Point2i(width, height), {"R", "G", "B", "A"});
@@ -1388,7 +1388,7 @@ namespace spectra {
             for (unsigned int i = 0; i < nFloats; ++i) rgb32[i] *= std::abs(scale);
 
         fclose(fp);
-        metadata.colorSpace = RGBColorSpace::sRGB;
+        metadata.colorSpace = RGBColorSpace::SRGB();
         if (nChannels == 1)
             return ImageAndMetadata{Image(std::move(rgb32), {width, height}, {"Y"}), metadata};
         else
@@ -1431,7 +1431,7 @@ namespace spectra {
         CHECK(pixels != nullptr); // qoi failure
 
         ImageMetadata metadata;
-        metadata.colorSpace = RGBColorSpace::sRGB;
+        metadata.colorSpace = RGBColorSpace::SRGB();
 
         std::vector<std::string> channelNames{"R", "G", "B"};
         if (desc.channels == 4)

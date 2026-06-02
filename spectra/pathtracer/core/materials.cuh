@@ -1,6 +1,7 @@
 #ifndef SPECTRA_PATHTRACER_CORE_MATERIALS_H
 #define SPECTRA_PATHTRACER_CORE_MATERIALS_H
 
+#include <map>
 #include <memory>
 #include <spectra/pathtracer/base/bssrdf.cuh>
 #include <spectra/pathtracer/base/material.cuh>
@@ -707,7 +708,7 @@ namespace spectra {
             return MeasuredBxDF(brdf, lambda);
         }
 
-        MeasuredMaterial(const std::string& filename, FloatTexture displacement, Image* normalMap, Allocator alloc);
+        MeasuredMaterial(const std::string& filename, FloatTexture displacement, Image* normalMap, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, Allocator alloc);
 
         static const char* Name() {
             return "MeasuredMaterial";
@@ -726,7 +727,7 @@ namespace spectra {
             return normalMap;
         }
 
-        static MeasuredMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, const FileLoc* loc, Allocator alloc);
+        static MeasuredMaterial* Create(const TextureParameterDictionary& parameters, Image* normalMap, std::map<std::string, MeasuredBxDFData*>& measuredBxDFData, const FileLoc* loc, Allocator alloc);
 
         template <typename TextureEvaluator>
         __host__ __device__ void GetBSSRDF(TextureEvaluator texEval, MaterialEvalContext ctx, SampledWavelengths& lambda, void*) const {}

@@ -81,8 +81,8 @@ namespace spectra {
 
         for (MeasuredSS& mss : SubsurfaceParameterTable) {
             if (name == mss.name) {
-                *sigma_a = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB, mss.sigma_a);
-                *sigma_s = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::sRGB, mss.sigma_prime_s);
+                *sigma_a = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::SRGB(), mss.sigma_a);
+                *sigma_s = alloc.new_object<RGBUnboundedSpectrum>(*RGBColorSpace::SRGB(), mss.sigma_prime_s);
                 return true;
             }
         }
@@ -194,7 +194,7 @@ namespace spectra {
         else {
             if (LeScale.size() != nx * ny * nz)
                 throw std::runtime_error(diagnostics::Format("Expected %d x %d %d = %d values for \"Lescale\" but were "
-                                                                      "given %d.",
+                                                             "given %d.",
                     nx, ny, nz, nx * ny * nz, LeScale.size()));
             for (int i = 0; i < nx * ny * nz; ++i) LeScale[i] *= LeNorm;
             LeGrid = SampledGrid<Float>(LeScale, nx, ny, nz, alloc);

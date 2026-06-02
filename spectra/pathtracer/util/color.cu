@@ -113,6 +113,13 @@ namespace spectra {
         ACES2065_1 = alloc.new_object<RGBToSpectrumTable>(ACES2065_1ToSpectrumTableScalePtr, ACES2065_1ToSpectrumTableDataPtr);
     }
 
+    void RGBToSpectrumTable::Reset() {
+        sRGB       = nullptr;
+        DCI_P3     = nullptr;
+        Rec2020    = nullptr;
+        ACES2065_1 = nullptr;
+    }
+
 
     // ColorEncoding Method Definitions
     __host__ __device__ void sRGBColorEncoding::FromLinear(pstd::span<const Float> vin, pstd::span<uint8_t> vout) const {
@@ -132,6 +139,11 @@ namespace spectra {
     void ColorEncoding::Init(Allocator alloc) {
         Linear = alloc.new_object<LinearColorEncoding>();
         sRGB   = alloc.new_object<sRGBColorEncoding>();
+    }
+
+    void ColorEncoding::Reset() {
+        Linear = nullptr;
+        sRGB   = nullptr;
     }
 
 

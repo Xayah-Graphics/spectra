@@ -14,6 +14,8 @@
 #include <spectra/pathtracer/core/cameras.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
+#include <spectra/pathtracer/util/buffercache.cuh>
+#include <spectra/pathtracer/util/containers.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
 #include <spectra/pathtracer/util/pstd.cuh>
 #include <string>
@@ -22,6 +24,10 @@
 namespace spectra::scene {
     struct Scene;
 } // namespace spectra::scene
+
+namespace spectra {
+    struct MeasuredBxDFData;
+} // namespace spectra
 
 namespace spectra::pathtracer {
     struct WavefrontSceneEntity {
@@ -89,7 +95,7 @@ namespace spectra::pathtracer {
 
         WavefrontSceneEntity integrator{};
         WavefrontSceneEntity accelerator{};
-        const RGBColorSpace* filmColorSpace{RGBColorSpace::sRGB};
+        const RGBColorSpace* filmColorSpace{nullptr};
         std::vector<WavefrontShapeSceneEntity> shapes{};
         std::vector<WavefrontInstanceSceneEntity> instances{};
         std::map<std::string, WavefrontInstanceDefinitionSceneEntity> instanceDefinitions{};
@@ -104,6 +110,9 @@ namespace spectra::pathtracer {
         Sampler sampler{};
         Camera camera{};
         bool haveMedia{false};
+        MeshBufferCache meshBufferCache{};
+        InternCache<DenselySampledSpectrum> lightSpectrumCache;
+        std::map<std::string, spectra::MeasuredBxDFData*> measuredBxDFData{};
         ThreadLocal<Allocator> threadAllocators;
     };
 

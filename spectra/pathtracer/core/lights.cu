@@ -10,7 +10,6 @@
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/core/shapes.cuh>
-#include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 #include <spectra/pathtracer/util/containers.cuh>
@@ -55,18 +54,9 @@ namespace spectra {
     LightBase::LightBase(LightType type, const Transform& renderFromLight, const MediumInterface& mediumInterface) : type(type), mediumInterface(mediumInterface), renderFromLight(renderFromLight) {}
 
 
-    InternCache<DenselySampledSpectrum>* LightBase::spectrumCache;
-
-    const DenselySampledSpectrum* LightBase::LookupSpectrum(Spectrum s) {
-        // Initialize _spectrumCache_ on first call
-        static std::mutex mutex;
-        mutex.lock();
-        if (!spectrumCache) spectrumCache = new InternCache<DenselySampledSpectrum>(Allocator(&CUDATrackedMemoryResource::singleton));
-        mutex.unlock();
-
-        // Return unique _DenselySampledSpectrum_ from intern cache for _s_
+    const DenselySampledSpectrum* LightBase::LookupSpectrum(Spectrum s, InternCache<DenselySampledSpectrum>& spectrumCache) {
         auto create = [](Allocator alloc, const DenselySampledSpectrum& s) { return alloc.new_object<DenselySampledSpectrum>(s, alloc); };
-        return spectrumCache->Lookup(DenselySampledSpectrum(s), create);
+        return spectrumCache.Lookup(DenselySampledSpectrum(s), create);
     }
 
 
@@ -157,7 +147,7 @@ namespace spectra {
     }
 
 
-    PointLight* PointLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    PointLight* PointLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) {
         Spectrum I = parameters.GetOneSpectrum("I", &colorSpace->illuminant, SpectrumType::Illuminant, alloc);
         Float sc   = parameters.GetOneFloat("scale", 1);
 
@@ -173,7 +163,7 @@ namespace spectra {
         Transform tf = Translate(Vector3f(from.x, from.y, from.z));
         Transform finalRenderFromLight(renderFromLight * tf);
 
-        return alloc.new_object<PointLight>(finalRenderFromLight, medium, I, sc);
+        return alloc.new_object<PointLight>(finalRenderFromLight, medium, I, sc, spectrumCache);
     }
 
     // DistantLight Method Definitions
@@ -200,7 +190,7 @@ namespace spectra {
     }
 
 
-    DistantLight* DistantLight::Create(const Transform& renderFromLight, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    DistantLight* DistantLight::Create(const Transform& renderFromLight, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) {
         Spectrum L = parameters.GetOneSpectrum("L", &colorSpace->illuminant, SpectrumType::Illuminant, alloc);
         Float sc   = parameters.GetOneFloat("scale", 1);
 
@@ -223,7 +213,7 @@ namespace spectra {
         Float E_v = parameters.GetOneFloat("illuminance", -1);
         if (E_v > 0) sc *= E_v;
 
-        return alloc.new_object<DistantLight>(finalRenderFromLight, L, sc);
+        return alloc.new_object<DistantLight>(finalRenderFromLight, L, sc, spectrumCache);
     }
 
     // ProjectionLight Method Definitions
@@ -378,7 +368,7 @@ namespace spectra {
         ImageChannelDesc channelDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(diagnostics::Format(loc, "Image provided to \"projection\" light must have R, G, "
-                                                                       "and B channels."));
+                                                              "and B channels."));
         Image image = imageAndMetadata.image.SelectChannels(channelDesc, alloc);
 
         scale /= SpectrumToPhotometric(&colorSpace->illuminant);
@@ -421,7 +411,7 @@ namespace spectra {
     }
 
     // GoniometricLight Method Definitions
-    GoniometricLight::GoniometricLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Iemit, Float scale, Image im, Allocator alloc) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), Iemit(LookupSpectrum(Iemit)), scale(scale), image(std::move(im)), distrib(alloc) {
+    GoniometricLight::GoniometricLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Iemit, Float scale, Image im, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), Iemit(LookupSpectrum(Iemit, spectrumCache)), scale(scale), image(std::move(im)), distrib(alloc) {
         CHECK_EQ(1, image.NChannels());
         CHECK_EQ(image.Resolution().x, image.Resolution().y);
         // Compute sampling distribution for _GoniometricLight_
@@ -477,7 +467,7 @@ namespace spectra {
     }
 
 
-    GoniometricLight* GoniometricLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    GoniometricLight* GoniometricLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) {
         Spectrum I = parameters.GetOneSpectrum("I", &colorSpace->illuminant, SpectrumType::Illuminant, alloc);
         Float sc   = parameters.GetOneFloat("scale", 1);
 
@@ -498,7 +488,7 @@ namespace spectra {
 
             if (imageAndMetadata.image.Resolution().x != imageAndMetadata.image.Resolution().y)
                 throw std::runtime_error(diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
-                                                                      "this is an equal-area environment map.",
+                                                             "this is an equal-area environment map.",
                     texname, imageAndMetadata.image.Resolution().x, imageAndMetadata.image.Resolution().y));
 
             ImageChannelDesc rgbDesc = imageAndMetadata.image.GetChannelDesc({"R", "G", "B"});
@@ -507,7 +497,7 @@ namespace spectra {
             if (rgbDesc) {
                 if (yDesc)
                     throw std::runtime_error(diagnostics::Format("%s: has both \"R\", \"G\", and \"B\" or \"Y\" "
-                                                                          "channels.",
+                                                                 "channels.",
                         texname));
                 image = Image(imageAndMetadata.image.Format(), imageAndMetadata.image.Resolution(), {"Y"}, imageAndMetadata.image.Encoding(), alloc);
                 for (int y = 0; y < image.Resolution().y; ++y)
@@ -536,11 +526,11 @@ namespace spectra {
         Transform t(swapYZ);
         Transform finalRenderFromLight = renderFromLight * t;
 
-        return alloc.new_object<GoniometricLight>(finalRenderFromLight, medium, I, sc, std::move(image), alloc);
+        return alloc.new_object<GoniometricLight>(finalRenderFromLight, medium, I, sc, std::move(image), spectrumCache, alloc);
     }
 
     // DiffuseAreaLight Method Definitions
-    DiffuseAreaLight::DiffuseAreaLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Le, Float scale, const Shape shape, FloatTexture alpha, Image im, const RGBColorSpace* imageColorSpace, bool twoSided)
+    DiffuseAreaLight::DiffuseAreaLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Le, Float scale, const Shape shape, FloatTexture alpha, Image im, const RGBColorSpace* imageColorSpace, bool twoSided, InternCache<DenselySampledSpectrum>& spectrumCache)
         : LightBase(
               [](FloatTexture alpha) {
                   // Special case handling for area lights with constant zero-valued alpha
@@ -558,12 +548,12 @@ namespace spectra {
                   return LightType::Area;
               }(alpha),
               renderFromLight, mediumInterface),
-          shape(shape), alpha(type == LightType::Area ? alpha : nullptr), area(shape.Area()), twoSided(twoSided), Lemit(LookupSpectrum(Le)), scale(scale), image(std::move(im)), imageColorSpace(imageColorSpace) {
+          shape(shape), alpha(type == LightType::Area ? alpha : nullptr), area(shape.Area()), twoSided(twoSided), Lemit(LookupSpectrum(Le, spectrumCache)), scale(scale), image(std::move(im)), imageColorSpace(imageColorSpace) {
         if (image) {
             ImageChannelDesc desc = image.GetChannelDesc({"R", "G", "B"});
             if (!desc)
                 throw std::runtime_error(diagnostics::Format("Image used for DiffuseAreaLight doesn't have R, G, B "
-                                                                      "channels."));
+                                                             "channels."));
             CHECK_EQ(3, desc.size());
             CHECK(desc.IsIdentity());
             CHECK(imageColorSpace);
@@ -575,9 +565,9 @@ namespace spectra {
         // for Triangles or bilinear patches, since this doesn't matter for them.
         if (renderFromLight.HasScale() && !shape.Is<Triangle>() && !shape.Is<BilinearPatch>())
             diagnostics::PrintWarning("Scaling detected in rendering to light space transformation! "
-                                               "The system has numerous assumptions, implicit and explicit, "
-                                               "that this transform will have no scale factors in it. "
-                                               "Proceed at your own risk; your image may have errors.");
+                                      "The system has numerous assumptions, implicit and explicit, "
+                                      "that this transform will have no scale factors in it. "
+                                      "Proceed at your own risk; your image may have errors.");
     }
 
     __host__ __device__ pstd::optional<LightLiSample> DiffuseAreaLight::SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const {
@@ -682,7 +672,7 @@ namespace spectra {
     }
 
 
-    DiffuseAreaLight* DiffuseAreaLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc, const Shape shape, FloatTexture alphaTex) {
+    DiffuseAreaLight* DiffuseAreaLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc, const Shape shape, FloatTexture alphaTex) {
         Spectrum L    = parameters.GetOneSpectrum("L", nullptr, SpectrumType::Illuminant, alloc);
         Float scale   = parameters.GetOneFloat("scale", 1);
         bool twoSided = parameters.GetOneBool("twosided", false);
@@ -741,11 +731,11 @@ namespace spectra {
             scale *= phi_v / k_e;
         }
 
-        return alloc.new_object<DiffuseAreaLight>(renderFromLight, medium, L, scale, shape, alphaTex, std::move(image), imageColorSpace, twoSided);
+        return alloc.new_object<DiffuseAreaLight>(renderFromLight, medium, L, scale, shape, alphaTex, std::move(image), imageColorSpace, twoSided, spectrumCache);
     }
 
     // UniformInfiniteLight Method Definitions
-    UniformInfiniteLight::UniformInfiniteLight(const Transform& renderFromLight, Spectrum Lemit, Float scale) : LightBase(LightType::Infinite, renderFromLight, MediumInterface()), Lemit(LookupSpectrum(Lemit)), scale(scale) {}
+    UniformInfiniteLight::UniformInfiniteLight(const Transform& renderFromLight, Spectrum Lemit, Float scale, InternCache<DenselySampledSpectrum>& spectrumCache) : LightBase(LightType::Infinite, renderFromLight, MediumInterface()), Lemit(LookupSpectrum(Lemit, spectrumCache)), scale(scale) {}
 
     __host__ __device__ SampledSpectrum UniformInfiniteLight::Le(const Ray& ray, const SampledWavelengths& lambda) const {
         return scale * Lemit->Sample(lambda);
@@ -798,13 +788,13 @@ namespace spectra {
         ImageChannelDesc channelDesc = image.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(diagnostics::Format("%s: image used for ImageInfiniteLight doesn't have R, G, B "
-                                                                  "channels.",
+                                                         "channels.",
                 filename));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
         if (image.Resolution().x != image.Resolution().y)
             throw std::runtime_error(diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
-                                                                  "this is an equal area environment map.",
+                                                         "this is an equal area environment map.",
                 filename, image.Resolution().x, image.Resolution().y));
         Array2D<Float> d = image.GetSamplingDistribution();
         Bounds2f domain  = Bounds2f(Point2f(0, 0), Point2f(1, 1));
@@ -879,14 +869,14 @@ namespace spectra {
         ImageChannelDesc channelDesc = equalAreaImage.GetChannelDesc({"R", "G", "B"});
         if (!channelDesc)
             throw std::runtime_error(diagnostics::Format("%s: image used for PortalImageInfiniteLight doesn't have R, "
-                                                                  "G, B channels.",
+                                                         "G, B channels.",
                 filename));
         CHECK_EQ(3, channelDesc.size());
         CHECK(channelDesc.IsIdentity());
 
         if (equalAreaImage.Resolution().x != equalAreaImage.Resolution().y)
             throw std::runtime_error(diagnostics::Format("%s: image resolution (%d, %d) is non-square. It's unlikely "
-                                                                  "this is an equal area environment map.",
+                                                         "this is an equal area environment map.",
                 filename, equalAreaImage.Resolution().x, equalAreaImage.Resolution().y));
 
         if (p.size() != 4) throw std::runtime_error(diagnostics::Format("Expected 4 vertices for infinite light portal but given %d", p.size()));
@@ -1051,7 +1041,7 @@ namespace spectra {
 
 
     // SpotLight Method Definitions
-    SpotLight::SpotLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Iemit, Float scale, Float totalWidth, Float falloffStart) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), Iemit(LookupSpectrum(Iemit)), scale(scale), cosFalloffEnd(std::cos(Radians(totalWidth))), cosFalloffStart(std::cos(Radians(falloffStart))) {
+    SpotLight::SpotLight(const Transform& renderFromLight, const MediumInterface& mediumInterface, Spectrum Iemit, Float scale, Float totalWidth, Float falloffStart, InternCache<DenselySampledSpectrum>& spectrumCache) : LightBase(LightType::DeltaPosition, renderFromLight, mediumInterface), Iemit(LookupSpectrum(Iemit, spectrumCache)), scale(scale), cosFalloffEnd(std::cos(Radians(totalWidth))), cosFalloffStart(std::cos(Radians(falloffStart))) {
         CHECK_LE(falloffStart, totalWidth);
     }
 
@@ -1118,7 +1108,7 @@ namespace spectra {
     }
 
 
-    SpotLight* SpotLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    SpotLight* SpotLight::Create(const Transform& renderFromLight, Medium medium, const ParameterDictionary& parameters, const RGBColorSpace* colorSpace, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) {
         Spectrum I = parameters.GetOneSpectrum("I", &colorSpace->illuminant, SpectrumType::Illuminant, alloc);
         Float sc   = parameters.GetOneFloat("scale", 1);
 
@@ -1142,7 +1132,7 @@ namespace spectra {
             sc *= phi_v / k_e;
         }
 
-        return alloc.new_object<SpotLight>(finalRenderFromLight, medium, I, sc, coneangle, coneangle - conedelta);
+        return alloc.new_object<SpotLight>(finalRenderFromLight, medium, I, sc, coneangle, coneangle - conedelta, spectrumCache);
     }
 
     SampledSpectrum Light::Phi(SampledWavelengths lambda) const {
@@ -1176,18 +1166,18 @@ namespace spectra {
         return Dispatch(pdf);
     }
 
-    Light Light::Create(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const CameraTransform& cameraTransform, Medium outsideMedium, const FileLoc* loc, Allocator alloc) {
+    Light Light::Create(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const CameraTransform& cameraTransform, Medium outsideMedium, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) {
         Light light = nullptr;
         if (name == "point")
-            light = PointLight::Create(renderFromLight, outsideMedium, parameters, parameters.ColorSpace(), loc, alloc);
+            light = PointLight::Create(renderFromLight, outsideMedium, parameters, parameters.ColorSpace(), loc, spectrumCache, alloc);
         else if (name == "spot")
-            light = SpotLight::Create(renderFromLight, outsideMedium, parameters, parameters.ColorSpace(), loc, alloc);
+            light = SpotLight::Create(renderFromLight, outsideMedium, parameters, parameters.ColorSpace(), loc, spectrumCache, alloc);
         else if (name == "goniometric")
-            light = GoniometricLight::Create(renderFromLight, outsideMedium, parameters, parameters.ColorSpace(), loc, alloc);
+            light = GoniometricLight::Create(renderFromLight, outsideMedium, parameters, parameters.ColorSpace(), loc, spectrumCache, alloc);
         else if (name == "projection")
             light = ProjectionLight::Create(renderFromLight, outsideMedium, parameters, loc, alloc);
         else if (name == "distant")
-            light = DistantLight::Create(renderFromLight, parameters, parameters.ColorSpace(), loc, alloc);
+            light = DistantLight::Create(renderFromLight, parameters, parameters.ColorSpace(), loc, spectrumCache, alloc);
         else if (name == "infinite") {
             const RGBColorSpace* colorSpace = parameters.ColorSpace();
             std::vector<Spectrum> L         = parameters.GetSpectrumArray("L", SpectrumType::Illuminant, alloc);
@@ -1208,11 +1198,11 @@ namespace spectra {
                 }
 
                 // Default: color space's std illuminant
-                light = alloc.new_object<UniformInfiniteLight>(renderFromLight, &colorSpace->illuminant, scale);
+                light = alloc.new_object<UniformInfiniteLight>(renderFromLight, &colorSpace->illuminant, scale, spectrumCache);
             } else if (!L.empty() && portal.empty()) {
                 if (!filename.empty())
                     throw std::runtime_error(diagnostics::Format(loc, "Can't specify both emission \"L\" and "
-                                                                               "\"filename\" with ImageInfiniteLight"));
+                                                                      "\"filename\" with ImageInfiniteLight"));
 
                 // Scale the light spectrum to be equivalent to 1 nit
                 scale /= SpectrumToPhotometric(L[0]);
@@ -1225,7 +1215,7 @@ namespace spectra {
                     scale *= E_v / k_e;
                 }
 
-                light = alloc.new_object<UniformInfiniteLight>(renderFromLight, L[0], scale);
+                light = alloc.new_object<UniformInfiniteLight>(renderFromLight, L[0], scale, spectrumCache);
             } else {
                 // Either an image was provided or it's "L" with a portal.
                 ImageAndMetadata imageAndMetadata;
@@ -1239,13 +1229,13 @@ namespace spectra {
                     // there for the sun, so here we go...
                     if (!L[0].Is<RGBIlluminantSpectrum>())
                         diagnostics::PrintWarning(loc, "Converting non-RGB \"L\" parameter to RGB so that a "
-                                                                "portal light can be used.");
+                                                       "portal light can be used.");
                     XYZ xyz = SpectrumToXYZ(L[0]);
-                    RGB rgb = RGBColorSpace::sRGB->ToRGB(xyz);
+                    RGB rgb = RGBColorSpace::SRGB()->ToRGB(xyz);
 
                     int res                              = 1; // happily, this all just works.
                     imageAndMetadata.image               = Image(PixelFormat::Float, {res, res}, {"R", "G", "B"});
-                    imageAndMetadata.metadata.colorSpace = RGBColorSpace::sRGB;
+                    imageAndMetadata.metadata.colorSpace = RGBColorSpace::SRGB();
                     for (int y = 0; y < res; ++y)
                         for (int x = 0; x < res; ++x)
                             for (int c = 0; c < 3; ++c) imageAndMetadata.image.SetChannel({x, y}, c, rgb[c]);
@@ -1322,10 +1312,10 @@ namespace spectra {
         return light;
     }
 
-    Light Light::CreateArea(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const MediumInterface& mediumInterface, const Shape shape, FloatTexture alpha, const FileLoc* loc, Allocator alloc) {
+    Light Light::CreateArea(const std::string& name, const ParameterDictionary& parameters, const Transform& renderFromLight, const MediumInterface& mediumInterface, const Shape shape, FloatTexture alpha, const FileLoc* loc, InternCache<DenselySampledSpectrum>& spectrumCache, Allocator alloc) {
         Light area = nullptr;
         if (name == "diffuse")
-            area = DiffuseAreaLight::Create(renderFromLight, mediumInterface.outside, parameters, parameters.ColorSpace(), loc, alloc, shape, alpha);
+            area = DiffuseAreaLight::Create(renderFromLight, mediumInterface.outside, parameters, parameters.ColorSpace(), loc, spectrumCache, alloc, shape, alpha);
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: area light type unknown.", name));
 

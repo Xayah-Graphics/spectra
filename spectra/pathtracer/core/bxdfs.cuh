@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <spectra/pathtracer/base/bxdf.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
 #include <spectra/pathtracer/core/kernel_config.cuh>
@@ -19,6 +20,8 @@
 #include <string>
 
 namespace spectra {
+    struct MeasuredBxDFData;
+
     // DiffuseBxDF Definition
     class DiffuseBxDF {
     public:
@@ -837,7 +840,7 @@ namespace spectra {
         MeasuredBxDF() = default;
         __host__ __device__ MeasuredBxDF(const MeasuredBxDFData* brdf, const SampledWavelengths& lambda) : brdf(brdf), lambda(lambda) {}
 
-        static MeasuredBxDFData* BRDFDataFromFile(const std::string& filename, Allocator alloc);
+        static MeasuredBxDFData* BRDFDataFromFile(const std::string& filename, std::map<std::string, MeasuredBxDFData*>& cache, Allocator alloc);
 
         __host__ __device__ SampledSpectrum f(Vector3f wo, Vector3f wi, TransportMode mode) const;
 

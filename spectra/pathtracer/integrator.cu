@@ -28,7 +28,6 @@
 #include <spectra/pathtracer/integrator.cuh>
 #include <spectra/pathtracer/optix/aggregate.cuh>
 #include <spectra/pathtracer/util/bluenoise.cuh>
-#include <spectra/pathtracer/util/buffercache.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 #include <spectra/pathtracer/util/containers.cuh>
@@ -61,23 +60,38 @@ namespace spectra::pathtracer::detail {
     int InitializeGpuRuntimeState(std::optional<int> cudaDevice) {
         return GPUInit(cudaDevice);
     }
-
-    void InitializeStaticRuntimeData() {
-        pstd::pmr::monotonic_buffer_resource* buffer_resource = new pstd::pmr::monotonic_buffer_resource(1024 * 1024, &CUDATrackedMemoryResource::singleton);
-        Allocator alloc(buffer_resource);
-
-        ColorEncoding::Init(alloc);
-        Spectra::Init(alloc);
-        RGBToSpectrumTable::Init(alloc);
-        RGBColorSpace::Init(alloc);
-        Triangle::Init(alloc);
-        BilinearPatch::Init(alloc);
-
-        InitBufferCaches();
-    }
 } // namespace spectra::pathtracer::detail
 
 namespace spectra::pathtracer {
+    class PathtracerRuntimeResources {
+    public:
+        PathtracerRuntimeResources() : bufferResource(std::make_unique<pstd::pmr::monotonic_buffer_resource>(1024 * 1024, &CUDATrackedMemoryResource::singleton)), alloc(bufferResource.get()) {
+            ColorEncoding::Init(alloc);
+            Spectra::Init(alloc);
+            RGBToSpectrumTable::Init(alloc);
+            RGBColorSpace::Init(alloc);
+        }
+
+        ~PathtracerRuntimeResources() noexcept {
+            try {
+                RGBColorSpace::Reset();
+                RGBToSpectrumTable::Reset();
+                Spectra::Reset();
+                ColorEncoding::Reset();
+            } catch (...) {
+            }
+        }
+
+        PathtracerRuntimeResources(const PathtracerRuntimeResources&)                = delete;
+        PathtracerRuntimeResources(PathtracerRuntimeResources&&) noexcept            = delete;
+        PathtracerRuntimeResources& operator=(const PathtracerRuntimeResources&)     = delete;
+        PathtracerRuntimeResources& operator=(PathtracerRuntimeResources&&) noexcept = delete;
+
+    private:
+        std::unique_ptr<pstd::pmr::monotonic_buffer_resource> bufferResource;
+        Allocator alloc;
+    };
+
 #ifdef SPECTRA_IS_WINDOWS
     static void report_windows_exception(const char* message) {
         std::fprintf(stderr, "Spectra: %s\n", message);
@@ -116,7 +130,7 @@ namespace spectra::pathtracer {
         this->cudaDevice = detail::InitializeGpuRuntimeState(runtimeConfig.cuda_device);
         ParallelInit(runtimeConfig.thread_count, this->cudaDevice);
 
-        detail::InitializeStaticRuntimeData();
+        this->resources = std::make_unique<PathtracerRuntimeResources>();
 
         detail::runtime_initialized = true;
         this->initialized           = true;
@@ -131,6 +145,10 @@ namespace spectra::pathtracer {
             ParallelCleanup();
         } catch (...) {
         }
+
+        this->resources.reset();
+        detail::runtime_initialized = false;
+        this->initialized           = false;
     }
 
     void GpuRuntime::UploadKernelConfig(const KernelConfig& config) {

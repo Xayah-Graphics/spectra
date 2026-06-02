@@ -608,36 +608,11 @@ namespace spectra {
     // Spectral Data Declarations
     namespace Spectra {
         void Init(Allocator alloc);
+        void Reset();
 
-        __host__ __device__ inline const DenselySampledSpectrum& X() {
-#if defined(__CUDA_ARCH__)
-            extern __device__ DenselySampledSpectrum* xGPU;
-            return *xGPU;
-#else
-            extern DenselySampledSpectrum* x;
-            return *x;
-#endif
-        }
-
-        __host__ __device__ inline const DenselySampledSpectrum& Y() {
-#if defined(__CUDA_ARCH__)
-            extern __device__ DenselySampledSpectrum* yGPU;
-            return *yGPU;
-#else
-            extern DenselySampledSpectrum* y;
-            return *y;
-#endif
-        }
-
-        __host__ __device__ inline const DenselySampledSpectrum& Z() {
-#if defined(__CUDA_ARCH__)
-            extern __device__ DenselySampledSpectrum* zGPU;
-            return *zGPU;
-#else
-            extern DenselySampledSpectrum* z;
-            return *z;
-#endif
-        }
+        __host__ __device__ const DenselySampledSpectrum& X();
+        __host__ __device__ const DenselySampledSpectrum& Y();
+        __host__ __device__ const DenselySampledSpectrum& Z();
     } // namespace Spectra
 
     // Spectral Function Declarations
@@ -647,11 +622,6 @@ namespace spectra {
 
     __host__ __device__ Float InnerProduct(Spectrum f, Spectrum g);
 
-    namespace Spectra {
-        __host__ __device__ inline const DenselySampledSpectrum& X();
-        __host__ __device__ inline const DenselySampledSpectrum& Y();
-        __host__ __device__ inline const DenselySampledSpectrum& Z();
-    } // namespace Spectra
 } // namespace spectra
 
 namespace std {

@@ -369,6 +369,7 @@ namespace spectra {
         __host__ __device__ RGBSigmoidPolynomial operator()(RGB rgb) const;
 
         static void Init(Allocator alloc);
+        static void Reset();
 
         static const RGBToSpectrumTable* sRGB;
         static const RGBToSpectrumTable* DCI_P3;
@@ -402,6 +403,7 @@ namespace spectra {
         static ColorEncoding sRGB;
 
         static void Init(Allocator alloc);
+        static void Reset();
     };
 
     class LinearColorEncoding {

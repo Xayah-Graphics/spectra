@@ -663,11 +663,6 @@ namespace spectra {
     // Cylinder Inline Methods
     inline Cylinder::Cylinder(const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, Float radius, Float zMin, Float zMax, Float phiMax) : renderFromObject(renderFromObject), objectFromRender(objectFromRender), reverseOrientation(reverseOrientation), transformSwapsHandedness(renderFromObject->SwapsHandedness()), radius(radius), zMin(std::min(zMin, zMax)), zMax(std::max(zMin, zMax)), phiMax(Radians(Clamp(phiMax, 0, 360))) {}
 
-    // Triangle Declarations
-#if defined(__CUDACC__)
-    extern __device__ pstd::vector<const TriangleMesh*>* allTriangleMeshesGPU;
-#endif
-
     // TriangleIntersection Definition
     struct TriangleIntersection {
         Float b0, b1, b2;
@@ -685,9 +680,7 @@ namespace spectra {
 
         Triangle() = default;
 
-        Triangle(int meshIndex, int triIndex) : meshIndex(meshIndex), triIndex(triIndex) {}
-
-        static void Init(Allocator alloc);
+        Triangle(const TriangleMesh* mesh, int triIndex) : mesh(mesh), triIndex(triIndex) {}
 
         __host__ __device__ Bounds3f Bounds() const;
 
@@ -706,7 +699,7 @@ namespace spectra {
         __host__ __device__ DirectionCone NormalBounds() const;
 
 
-        static TriangleMesh* CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static TriangleMesh* CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, MeshBufferCache& bufferCache, Allocator alloc);
 
         __host__ __device__ Float SolidAngle(Point3f p) const {
             // Get triangle vertices in _p0_, _p1_, and _p2_
@@ -971,16 +964,12 @@ namespace spectra {
     private:
         // Triangle Private Methods
         __host__ __device__ const TriangleMesh* GetMesh() const {
-#if defined(__CUDA_ARCH__)
-            return (*allTriangleMeshesGPU)[meshIndex];
-#else
-            return (*allMeshes)[meshIndex];
-#endif
+            return mesh;
         }
 
         // Triangle Private Members
-        int meshIndex = -1, triIndex = -1;
-        static pstd::vector<const TriangleMesh*>* allMeshes;
+        const TriangleMesh* mesh                      = nullptr;
+        int triIndex                                  = -1;
         static constexpr Float MinSphericalSampleArea = 3e-4;
         static constexpr Float MaxSphericalSampleArea = 6.22;
     };
@@ -1037,11 +1026,6 @@ namespace spectra {
         const CurveCommon* common;
         Float uMin, uMax;
     };
-
-    // BilinearPatch Declarations
-#if defined(__CUDACC__)
-    extern __device__ pstd::vector<const BilinearPatchMesh*>* allBilinearMeshesGPU;
-#endif
 
     // BilinearIntersection Definition
     struct BilinearIntersection {
@@ -1112,11 +1096,9 @@ namespace spectra {
     class BilinearPatch {
     public:
         // BilinearPatch Public Methods
-        BilinearPatch(const BilinearPatchMesh* mesh, int meshIndex, int blpIndex);
+        BilinearPatch(const BilinearPatchMesh* mesh, int blpIndex);
 
-        static void Init(Allocator alloc);
-
-        static BilinearPatchMesh* CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static BilinearPatchMesh* CreateMesh(const Transform* renderFromObject, bool reverseOrientation, const ParameterDictionary& parameters, const FileLoc* loc, MeshBufferCache& bufferCache, Allocator alloc);
 
         static pstd::vector<Shape> CreatePatches(const BilinearPatchMesh* mesh, Allocator alloc);
 
@@ -1240,11 +1222,7 @@ namespace spectra {
     private:
         // BilinearPatch Private Methods
         __host__ __device__ const BilinearPatchMesh* GetMesh() const {
-#if defined(__CUDA_ARCH__)
-            return (*allBilinearMeshesGPU)[meshIndex];
-#else
-            return (*allMeshes)[meshIndex];
-#endif
+            return mesh;
         }
 
         __host__ __device__ bool IsRectangle(const BilinearPatchMesh* mesh) const {
@@ -1267,8 +1245,8 @@ namespace spectra {
         }
 
         // BilinearPatch Private Members
-        int meshIndex, blpIndex;
-        static pstd::vector<const BilinearPatchMesh*>* allMeshes;
+        const BilinearPatchMesh* mesh;
+        int blpIndex;
         Float area;
         static constexpr Float MinSphericalSampleArea = 1e-4;
     };
