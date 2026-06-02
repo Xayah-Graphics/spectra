@@ -5,8 +5,8 @@
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/film.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/util/file.cuh>
 #include <spectra/pathtracer/util/image.cuh>
 #include <spectra/pathtracer/util/lowdiscrepancy.cuh>
@@ -44,16 +44,16 @@ namespace spectra {
     }
 
     // CameraTransform Method Definitions
-    CameraTransform::CameraTransform(const AnimatedTransform& worldFromCamera) {
-        switch (Options->renderingSpace) {
-        case RenderingCoordinateSystem::Camera:
+    CameraTransform::CameraTransform(const AnimatedTransform& worldFromCamera, const pathtracer::RenderingSpace renderingSpace) {
+        switch (renderingSpace) {
+        case pathtracer::RenderingSpace::Camera:
             {
                 // Compute _worldFromRender_ for camera-space rendering
                 Float tMid      = (worldFromCamera.startTime + worldFromCamera.endTime) / 2;
                 worldFromRender = worldFromCamera.Interpolate(tMid);
                 break;
             }
-        case RenderingCoordinateSystem::CameraWorld:
+        case pathtracer::RenderingSpace::CameraWorld:
             {
                 // Compute _worldFromRender_ for camera-world space rendering
                 Float tMid      = (worldFromCamera.startTime + worldFromCamera.endTime) / 2;
@@ -61,7 +61,7 @@ namespace spectra {
                 worldFromRender = Translate(Vector3f(pCamera));
                 break;
             }
-        case RenderingCoordinateSystem::World:
+        case pathtracer::RenderingSpace::World:
             {
                 // Compute _worldFromRender_ for world-space rendering
                 worldFromRender = Transform();
@@ -107,10 +107,10 @@ namespace spectra {
     CameraBase::CameraBase(CameraBaseParameters p) : cameraTransform(p.cameraTransform), shutterOpen(p.shutterOpen), shutterClose(p.shutterClose), film(p.film), medium(p.medium) {
         if (cameraTransform.CameraFromRenderHasScale())
             diagnostics::PrintWarning("Scaling detected in rendering space to camera space transformation!\n"
-                                               "The system has numerous assumptions, implicit and explicit,\n"
-                                               "that this transform will have no scale factors in it.\n"
-                                               "Proceed at your own risk; your image may have errors or\n"
-                                               "the system may crash as a result of this.");
+                                      "The system has numerous assumptions, implicit and explicit,\n"
+                                      "that this transform will have no scale factors in it.\n"
+                                      "Proceed at your own risk; your image may have errors or\n"
+                                      "the system may crash as a result of this.");
     }
 
     __host__ __device__ pstd::optional<CameraRayDifferential> CameraBase::GenerateRayDifferential(Camera camera, CameraSample sample, SampledWavelengths& lambda) {
@@ -603,7 +603,7 @@ namespace spectra {
                 setApertureDiameter /= 1000;
                 if (setApertureDiameter > apertureDiameter)
                     diagnostics::PrintWarning("Aperture diameter %f is greater than maximum possible %f. "
-                                                       "Clamping it.",
+                                              "Clamping it.",
                         setApertureDiameter, apertureDiameter);
                 else
                     apertureDiameter = setApertureDiameter;
@@ -697,14 +697,14 @@ namespace spectra {
         Ray rFilm;
         if (!TraceLensesFromScene(rScene, &rFilm))
             throw std::runtime_error(diagnostics::Format("Unable to trace ray from scene to film for thick lens "
-                                                                  "approximation. Is aperture stop extremely small?"));
+                                                         "approximation. Is aperture stop extremely small?"));
         ComputeCardinalPoints(rScene, rFilm, &pz[0], &fz[0]);
 
         // Compute cardinal points for scene side of lens system
         rFilm = Ray(Point3f(x, 0, LensRearZ() - 1), Vector3f(0, 0, 1));
         if (TraceLensesFromFilm(rFilm, &rScene) == 0)
             throw std::runtime_error(diagnostics::Format("Unable to trace ray from film to scene for thick lens "
-                                                                  "approximation. Is aperture stop extremely small?"));
+                                                         "approximation. Is aperture stop extremely small?"));
         ComputeCardinalPoints(rFilm, rScene, &pz[1], &fz[1]);
     }
 
@@ -717,7 +717,7 @@ namespace spectra {
         Float c = (pz[1] - z - pz[0]) * (pz[1] - z - 4 * f - pz[0]);
         if (c <= 0)
             throw std::runtime_error(diagnostics::Format("Coefficient must be positive. It looks focusDistance %f "
-                                                                  " is too short for a given lenses configuration",
+                                                         " is too short for a given lenses configuration",
                 focusDistance));
         Float delta = (pz[1] - z + pz[0] - std::sqrt(c)) / 2;
 
@@ -1187,7 +1187,7 @@ namespace spectra {
                     ImageChannelDesc rgbDesc = apertureImage.GetChannelDesc({"R", "G", "B"});
                     if (!rgbDesc)
                         throw std::runtime_error(diagnostics::Format("%s: didn't find R, G, B channels to average for "
-                                                                              "aperture image.",
+                                                                     "aperture image.",
                             apertureName));
 
                     Image mono(PixelFormat::Float, apertureImage.Resolution(), {"Y"}, nullptr, alloc);

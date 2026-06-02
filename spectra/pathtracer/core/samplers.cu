@@ -2,8 +2,8 @@
 #include <spectra/pathtracer/core/cameras.cuh>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/util/string.cuh>
 #include <string>
@@ -65,10 +65,10 @@ namespace spectra {
     }
 
 
-    HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc) {
+    HaltonSampler* HaltonSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        if (config.pixel_samples) nsamp = *config.pixel_samples;
+        int seed = parameters.GetOneInt("seed", config.seed);
 
         RandomizeStrategy randomizer;
         std::string s = parameters.GetOneString("randomization", "permutedigits");
@@ -95,10 +95,10 @@ namespace spectra {
         return alloc.new_object<PaddedSobolSampler>(*this);
     }
 
-    PaddedSobolSampler* PaddedSobolSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    PaddedSobolSampler* PaddedSobolSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        if (config.pixel_samples) nsamp = *config.pixel_samples;
+        int seed = parameters.GetOneInt("seed", config.seed);
 
         RandomizeStrategy randomizer;
         std::string s = parameters.GetOneString("randomization", "fastowen");
@@ -122,10 +122,10 @@ namespace spectra {
     }
 
 
-    ZSobolSampler* ZSobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc) {
+    ZSobolSampler* ZSobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        if (config.pixel_samples) nsamp = *config.pixel_samples;
+        int seed = parameters.GetOneInt("seed", config.seed);
 
         RandomizeStrategy randomizer;
         std::string s = parameters.GetOneString("randomization", "fastowen");
@@ -147,7 +147,7 @@ namespace spectra {
     PMJ02BNSampler::PMJ02BNSampler(int samplesPerPixel, int seed, Allocator alloc) : samplesPerPixel(samplesPerPixel), seed(seed) {
         if (!IsPowerOf4(samplesPerPixel))
             diagnostics::PrintWarning("PMJ02BNSampler results are best with power-of-4 samples per "
-                                               "pixel (1, 4, 16, 64, ...)");
+                                      "pixel (1, 4, 16, 64, ...)");
         // Get sorted pmj02bn samples for pixel samples
         if (samplesPerPixel > nPMJ02bnSamples) throw std::runtime_error(diagnostics::Format("PMJ02BNSampler only supports up to %d samples per pixel", nPMJ02bnSamples));
         // Compute _pixelTileSize_ for pmj02bn pixel samples and allocate _pixelSamples_
@@ -175,10 +175,10 @@ namespace spectra {
         for (int c : nStored) DCHECK_EQ(c, samplesPerPixel);
     }
 
-    PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    PMJ02BNSampler* PMJ02BNSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        if (config.pixel_samples) nsamp = *config.pixel_samples;
+        int seed = parameters.GetOneInt("seed", config.seed);
         return alloc.new_object<PMJ02BNSampler>(nsamp, seed, alloc);
     }
 
@@ -191,18 +191,18 @@ namespace spectra {
         return alloc.new_object<IndependentSampler>(*this);
     }
 
-    IndependentSampler* IndependentSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    IndependentSampler* IndependentSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int ns = parameters.GetOneInt("pixelsamples", 4);
-        if (Options->pixelSamples) ns = *Options->pixelSamples;
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        if (config.pixel_samples) ns = *config.pixel_samples;
+        int seed = parameters.GetOneInt("seed", config.seed);
         return alloc.new_object<IndependentSampler>(ns, seed);
     }
 
     // SobolSampler Method Definitions
 
-    SobolSampler* SobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc) {
+    SobolSampler* SobolSampler::Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         int nsamp = parameters.GetOneInt("pixelsamples", 16);
-        if (Options->pixelSamples) nsamp = *Options->pixelSamples;
+        if (config.pixel_samples) nsamp = *config.pixel_samples;
 
         RandomizeStrategy randomizer;
         std::string s = parameters.GetOneString("randomization", "fastowen");
@@ -217,7 +217,7 @@ namespace spectra {
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: unknown randomization strategy given to SobolSampler", s));
 
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        int seed = parameters.GetOneInt("seed", config.seed);
 
         return alloc.new_object<SobolSampler>(nsamp, fullResolution, randomizer, seed);
     }
@@ -228,12 +228,12 @@ namespace spectra {
         return alloc.new_object<StratifiedSampler>(*this);
     }
 
-    StratifiedSampler* StratifiedSampler::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {
+    StratifiedSampler* StratifiedSampler::Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         bool jitter  = parameters.GetOneBool("jitter", true);
         int xSamples = parameters.GetOneInt("xsamples", 4);
         int ySamples = parameters.GetOneInt("ysamples", 4);
-        if (Options->pixelSamples) {
-            int nSamples = *Options->pixelSamples;
+        if (config.pixel_samples) {
+            int nSamples = *config.pixel_samples;
             int div      = std::sqrt(nSamples);
             while (nSamples % div) {
                 CHECK_GT(div, 0);
@@ -243,7 +243,7 @@ namespace spectra {
             ySamples = nSamples / xSamples;
             CHECK_EQ(nSamples, xSamples * ySamples);
         }
-        int seed = parameters.GetOneInt("seed", Options->seed);
+        int seed = parameters.GetOneInt("seed", config.seed);
 
         return alloc.new_object<StratifiedSampler>(xSamples, ySamples, jitter, seed);
     }
@@ -342,22 +342,22 @@ namespace spectra {
     }
 
     // Sampler Method Definitions
-    Sampler Sampler::Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullRes, const FileLoc* loc, Allocator alloc) {
+    Sampler Sampler::Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullRes, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         Sampler sampler = nullptr;
-        if (name == "zsobol") sampler = ZSobolSampler::Create(parameters, fullRes, loc, alloc);
+        if (name == "zsobol") sampler = ZSobolSampler::Create(parameters, fullRes, config, loc, alloc);
         // Create remainder of _Sampler_ types
         else if (name == "paddedsobol")
-            sampler = PaddedSobolSampler::Create(parameters, loc, alloc);
+            sampler = PaddedSobolSampler::Create(parameters, config, loc, alloc);
         else if (name == "halton")
-            sampler = HaltonSampler::Create(parameters, fullRes, loc, alloc);
+            sampler = HaltonSampler::Create(parameters, fullRes, config, loc, alloc);
         else if (name == "sobol")
-            sampler = SobolSampler::Create(parameters, fullRes, loc, alloc);
+            sampler = SobolSampler::Create(parameters, fullRes, config, loc, alloc);
         else if (name == "pmj02bn")
-            sampler = PMJ02BNSampler::Create(parameters, loc, alloc);
+            sampler = PMJ02BNSampler::Create(parameters, config, loc, alloc);
         else if (name == "independent")
-            sampler = IndependentSampler::Create(parameters, loc, alloc);
+            sampler = IndependentSampler::Create(parameters, config, loc, alloc);
         else if (name == "stratified")
-            sampler = StratifiedSampler::Create(parameters, loc, alloc);
+            sampler = StratifiedSampler::Create(parameters, config, loc, alloc);
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: sampler type unknown.", name));
         if (!sampler) throw std::runtime_error(diagnostics::Format(loc, "%s: unable to create sampler.", name));

@@ -1,6 +1,5 @@
 #include <cstdio>
 #include <spectra/pathtracer/core/diagnostics.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/check.cuh>
 #include <string>
@@ -16,7 +15,7 @@
 #endif
 
 namespace spectra {
-    void GPUInit() {
+    int GPUInit(std::optional<int> cudaDevice) {
         cudaFree(nullptr);
 
         int driverVersion;
@@ -51,17 +50,17 @@ namespace spectra {
         }
 
 #ifdef SPECTRA_IS_WINDOWS
-        if (nDevices > 1)
+        if (nDevices > 1 && !cudaDevice.has_value())
             throw std::runtime_error(diagnostics::Format("Found multiple GPUs.\n"
-                                                                  "On Windows, this unfortunately causes a significant slowdown with "
-                                                                  "Spectra.\n"
-                                                                  "Please select a single GPU and use the --gpu-device command line "
-                                                                  "option to specify it.\n"
-                                                                  "Found devices:\n%s",
+                                                         "On Windows, this unfortunately causes a significant slowdown with "
+                                                         "Spectra.\n"
+                                                         "Please select a single GPU and use the --gpu-device command line "
+                                                         "option to specify it.\n"
+                                                         "Found devices:\n%s",
                 devices));
 #endif
 
-        int device = Options->gpuDevice ? *Options->gpuDevice : 0;
+        int device = cudaDevice.value_or(0);
 #ifdef NVTX
         nvtxNameCuDevice(device, "__device__");
 #endif
@@ -86,11 +85,11 @@ namespace spectra {
         nvtxNameOsThread(syscall(SYS_gettid), "MAIN_THREAD");
 #endif
 #endif // NVTX
+        return device;
     }
 
-    void GPUThreadInit() {
-        int device = Options->gpuDevice ? *Options->gpuDevice : 0;
-        CUDA_CHECK(cudaSetDevice(device));
+    void GPUThreadInit(const int cudaDevice) {
+        CUDA_CHECK(cudaSetDevice(cudaDevice));
     }
 
     void GPURegisterThread(const char* name) {

@@ -18,7 +18,8 @@ module;
 #include <spectra/pathtracer/base/film.cuh>
 #include <spectra/pathtracer/base/sampler.cuh>
 #include <spectra/pathtracer/core/cameras.cuh>
-#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/integrator.cuh>
@@ -134,7 +135,7 @@ namespace xayah::pathtracer {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
-        RenderPipeline(const spectra::scene::Scene& scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        RenderPipeline(const spectra::scene::Scene& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
         ~RenderPipeline() noexcept;
 
         RenderPipeline(const RenderPipeline& other)                = delete;
@@ -378,7 +379,7 @@ namespace {
     void destroy_pathtracer_resources_noexcept(xayah::pathtracer::RenderPipeline& pathtracer) noexcept {
         try {
             if (pathtracer.device != nullptr) pathtracer.device->waitIdle();
-            if (spectra::Options != nullptr) spectra::GPUWait();
+            if (pathtracer.integrator != nullptr) spectra::GPUWait();
             if (pathtracer.integrator != nullptr) pathtracer.integrator->ReleaseAggregate();
         } catch (...) {
         }
@@ -388,19 +389,18 @@ namespace {
 } // namespace
 
 namespace xayah::pathtracer {
-    RenderPipeline::RenderPipeline(const spectra::scene::Scene& scene, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    RenderPipeline::RenderPipeline(const spectra::scene::Scene& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         try {
             RenderPipeline& pathtracer = *this;
             if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
             if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
             if (frame_count == 0) throw std::runtime_error("Spectra pathtracer requires at least one frame in flight");
-            if (spectra::Options == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer before Spectra pathtracer runtime is initialized");
 
             pathtracer.physical_device = &physical_device;
             pathtracer.device          = &device;
             pathtracer.frame_count     = frame_count;
 
-            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene, spectra::Point2i{resolution[0], resolution[1]});
+            pathtracer.integrator = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(&spectra::CUDATrackedMemoryResource::singleton, scene, render_config, spectra::Point2i{resolution[0], resolution[1]});
             pathtracer.integrator->PrefetchGPUAllocations();
             pathtracer.pixel_bounds = pathtracer.integrator->film.PixelBounds();
             pathtracer.resolution   = pathtracer.pixel_bounds.Diagonal();
@@ -576,7 +576,7 @@ namespace xayah::pathtracer {
 
     void RenderPipeline::record_copy(const vk::raii::CommandBuffer& command_buffer) {
         RenderPipeline& pathtracer                    = *this;
-        FrameResource& frame          = pathtracer.frames.at(pathtracer.active_frame_index);
+        FrameResource& frame                          = pathtracer.frames.at(pathtracer.active_frame_index);
         const vk::PipelineStageFlags2 src_image_stage = frame.image_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader;
         const vk::AccessFlags2 src_image_access       = frame.image_layout == vk::ImageLayout::eUndefined ? vk::AccessFlagBits2::eNone : vk::AccessFlagBits2::eShaderSampledRead;
         transition_image_layout(command_buffer, *frame.image, frame.image_layout, vk::ImageLayout::eTransferDstOptimal, vk::ImageAspectFlagBits::eColor, src_image_stage, src_image_access, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
@@ -923,6 +923,8 @@ namespace xayah {
 
         spectra::scene::Scene scene{};
         std::optional<spectra::scene::SceneInfo> scene_info{};
+        spectra::pathtracer::RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
+        spectra::pathtracer::RenderConfig render_config{.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld};
         std::array<int, 2> scene_film_resolution{0, 0};
         spectra::Transform scene_camera_from_world{};
         int scene_sampler_sample_count{0};
@@ -1073,12 +1075,9 @@ namespace xayah {
         this->update_host(spectra.physical_device(), spectra.device(), spectra.frame_count(), spectra.swapchain_extent());
         this->attached = true;
         try {
-            spectra::SpectraOptions options{};
-            options.nThreads       = 30;
-            options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
-            this->gpu_runtime      = std::make_unique<spectra::pathtracer::GpuRuntime>(options);
-            this->scene            = spectra::scene::BuildScene(this->scene_name);
-            this->scene_info       = spectra::scene::DescribeScene(this->scene);
+            this->gpu_runtime = std::make_unique<spectra::pathtracer::GpuRuntime>(this->runtime_config);
+            this->scene       = spectra::scene::BuildScene(this->scene_name);
+            this->scene_info  = spectra::scene::DescribeScene(this->scene);
             this->register_panels(spectra);
             spectra.set_window_detail(this->window_detail());
         } catch (...) {
@@ -1105,9 +1104,9 @@ namespace xayah {
         SpectraFrameResult result{};
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
-            result.close_requested                                                   = this->process_camera_input();
+            result.close_requested                                            = this->process_camera_input();
             const pathtracer::RenderPipeline::RenderFrameResult render_result = this->render_pipeline->render_frame(frame.frame_index, this->camera.moving_from_camera);
-            result.completion_semaphore                                              = this->render_pipeline->active_cuda_complete_semaphore();
+            result.completion_semaphore                                       = this->render_pipeline->active_cuda_complete_semaphore();
             this->update_frame_statistics(frame.frame_index, frame.image_index, render_result.rendered_sample, render_result.reset_accumulation, render_result.sample_pixels);
         } else {
             this->update_frame_statistics(frame.frame_index, frame.image_index, false, false, 0);
@@ -1150,11 +1149,8 @@ namespace xayah {
         try {
             if (this->gpu_runtime == nullptr) throw std::runtime_error("Spectra pathtracer runtime is not initialized");
             if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available");
-            spectra::SpectraOptions options{};
-            options.nThreads       = 30;
-            options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
-            this->gpu_runtime->ResetOptions(options);
-            this->render_pipeline            = std::make_unique<pathtracer::RenderPipeline>(this->scene, resolution, *this->physical_device, *this->device, this->frame_count);
+            this->gpu_runtime->UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(this->render_config));
+            this->render_pipeline            = std::make_unique<pathtracer::RenderPipeline>(this->scene, this->render_config, resolution, *this->physical_device, *this->device, this->frame_count);
             this->scene_film_resolution      = this->render_pipeline->film_resolution();
             this->scene_sampler_sample_count = this->render_pipeline->sampler_sample_count();
             this->scene_camera_from_world    = this->render_pipeline->camera_from_world_transform();
@@ -1260,19 +1256,19 @@ namespace xayah {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active Spectra pathtracer session");
         const float initial_move_scale = this->render_pipeline->camera_initial_move_scale();
         if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
-        this->camera.camera_from_world                      = this->scene_camera_from_world;
+        this->camera.camera_from_world               = this->scene_camera_from_world;
         const pathtracer::InteractiveCameraPose pose = pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
-        this->camera.initialized                            = true;
-        this->camera.input_enabled                          = false;
-        this->camera.speed                                  = initial_move_scale * 60.0f;
-        this->camera.fov_degrees                            = pathtracer::interactive_camera_fov_degrees(this->active_scene_info());
-        this->camera.basis_handedness                       = pose.basis_handedness;
-        this->camera.eye                                    = pose.eye;
-        this->camera.center                                 = pose.center;
-        this->camera.up                                     = pose.up;
-        this->camera.mouse_position                         = {0.0f, 0.0f};
-        this->camera.mouse_position_known                   = false;
-        this->camera.moving_from_camera                     = spectra::Transform{};
+        this->camera.initialized                     = true;
+        this->camera.input_enabled                   = false;
+        this->camera.speed                           = initial_move_scale * 60.0f;
+        this->camera.fov_degrees                     = pathtracer::interactive_camera_fov_degrees(this->active_scene_info());
+        this->camera.basis_handedness                = pose.basis_handedness;
+        this->camera.eye                             = pose.eye;
+        this->camera.center                          = pose.center;
+        this->camera.up                              = pose.up;
+        this->camera.mouse_position                  = {0.0f, 0.0f};
+        this->camera.mouse_position_known            = false;
+        this->camera.moving_from_camera              = spectra::Transform{};
     }
 
     void SpectraPathtracer::Impl::set_camera_speed(const float speed) {
@@ -1284,12 +1280,12 @@ namespace xayah {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
         const pathtracer::InteractiveCameraPose pose = pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
-        this->camera.eye                                    = pose.eye;
-        this->camera.center                                 = pose.center;
-        this->camera.up                                     = pose.up;
-        this->camera.basis_handedness                       = pose.basis_handedness;
-        this->camera.mouse_position_known                   = false;
-        this->camera.moving_from_camera                     = spectra::Transform{};
+        this->camera.eye                             = pose.eye;
+        this->camera.center                          = pose.center;
+        this->camera.up                              = pose.up;
+        this->camera.basis_handedness                = pose.basis_handedness;
+        this->camera.mouse_position_known            = false;
+        this->camera.moving_from_camera              = spectra::Transform{};
         this->request_pathtracer_accumulation_reset();
     }
 

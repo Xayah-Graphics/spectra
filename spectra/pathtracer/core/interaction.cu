@@ -2,9 +2,9 @@
 #include <spectra/pathtracer/base/camera.cuh>
 #include <spectra/pathtracer/core/cameras.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/lights.cuh>
 #include <spectra/pathtracer/core/materials.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/util/check.cuh>
@@ -14,7 +14,7 @@
 namespace spectra {
     // SurfaceInteraction Method Definitions
     __host__ __device__ void SurfaceInteraction::ComputeDifferentials(const RayDifferential& ray, Camera camera, int samplesPerPixel) {
-        if (GetOptions().disableTextureFiltering) {
+        if (pathtracer::CurrentKernelConfig().disable_texture_filtering) {
             dudx = dudy = dvdx = dvdy = 0;
             dpdx = dpdy = Vector3f(0, 0, 0);
             return;

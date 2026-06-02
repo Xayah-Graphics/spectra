@@ -1,4 +1,3 @@
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 

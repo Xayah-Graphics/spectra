@@ -6,8 +6,8 @@
 #include <limits>
 #include <spectra/pathtracer/base/bxdf.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/media.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/math.cuh>
 #include <spectra/pathtracer/util/memory.cuh>
@@ -399,7 +399,7 @@ namespace spectra {
             if (SameHemisphere(wo, wi)) f = nSamples * enterInterface.f(wo, wi, mode);
 
             // Declare _RNG_ for layered BSDF evaluation
-            RNG rng(Hash(GetOptions().seed, wo), Hash(wi));
+            RNG rng(Hash(pathtracer::CurrentKernelConfig().seed, wo), Hash(wi));
             auto r = [&rng]() { return std::min<Float>(rng.Uniform<Float>(), OneMinusEpsilon); };
 
             for (int s = 0; s < nSamples; ++s) {
@@ -536,7 +536,7 @@ namespace spectra {
             bool specularPath = bs->IsSpecular();
 
             // Declare _RNG_ for layered BSDF sampling
-            RNG rng(Hash(GetOptions().seed, wo), Hash(uc, u));
+            RNG rng(Hash(pathtracer::CurrentKernelConfig().seed, wo), Hash(uc, u));
             auto r = [&rng]() { return std::min<Float>(rng.Uniform<Float>(), OneMinusEpsilon); };
 
             // Declare common variables for layered BSDF sampling
@@ -628,7 +628,7 @@ namespace spectra {
             }
 
             // Declare _RNG_ for layered PDF evaluation
-            RNG rng(Hash(GetOptions().seed, wi), Hash(wo));
+            RNG rng(Hash(pathtracer::CurrentKernelConfig().seed, wi), Hash(wo));
             auto r = [&rng]() { return std::min<Float>(rng.Uniform<Float>(), OneMinusEpsilon); };
 
             // Update _pdfSum_ for reflection at the entrance layer

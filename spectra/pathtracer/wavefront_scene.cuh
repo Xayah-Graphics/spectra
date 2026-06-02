@@ -13,6 +13,7 @@
 #include <spectra/pathtracer/base/shape.cuh>
 #include <spectra/pathtracer/core/cameras.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
 #include <spectra/pathtracer/util/pstd.cuh>
 #include <string>
@@ -106,7 +107,7 @@ namespace spectra::pathtracer {
         ThreadLocal<Allocator> threadAllocators;
     };
 
-    [[nodiscard]] std::unique_ptr<WavefrontScene> CreateWavefrontScene(const scene::Scene& scene, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
+    [[nodiscard]] std::unique_ptr<WavefrontScene> CreateWavefrontScene(const scene::Scene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
 } // namespace spectra::pathtracer
 
 #endif // SPECTRA_PATHTRACER_WAVEFRONT_SCENE_H

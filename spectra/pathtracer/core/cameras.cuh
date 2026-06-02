@@ -7,6 +7,7 @@
 #include <spectra/pathtracer/base/film.cuh>
 #include <spectra/pathtracer/core/film.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/ray.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/util/float.cuh>
@@ -22,7 +23,7 @@ namespace spectra {
     public:
         // CameraTransform Public Methods
         CameraTransform() = default;
-        explicit CameraTransform(const AnimatedTransform& worldFromCamera);
+        CameraTransform(const AnimatedTransform& worldFromCamera, pathtracer::RenderingSpace renderingSpace);
 
         __host__ __device__ Point3f RenderFromCamera(Point3f p, Float time) const {
             return renderFromCamera(p, time);
@@ -159,7 +160,7 @@ namespace spectra {
             Point3f px = xRay(tx), py = yRay(ty);
 
             // Estimate $\dpdx$ and $\dpdy$ in tangent plane at intersection point
-            Float sppScale = GetOptions().disablePixelJitter ? 1 : std::max<Float>(.125, 1 / std::sqrt((Float) samplesPerPixel));
+            Float sppScale = pathtracer::CurrentKernelConfig().disable_pixel_jitter ? 1 : std::max<Float>(.125, 1 / std::sqrt((Float) samplesPerPixel));
             *dpdx          = sppScale * RenderFromCamera(DownZFromCamera.ApplyInverse(px - pDownZ), time);
             *dpdy          = sppScale * RenderFromCamera(DownZFromCamera.ApplyInverse(py - pDownZ), time);
         }

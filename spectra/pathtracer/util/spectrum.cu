@@ -6,7 +6,6 @@
 #include <cmath>
 #include <map>
 #include <spectra/pathtracer/core/diagnostics.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
@@ -97,8 +96,8 @@ namespace spectra {
             for (size_t i = 0; i < vals.size() / 2; ++i) {
                 if (i > 0 && vals[2 * i] <= lambda.back()) {
                     diagnostics::PrintWarning("%s: spectrum file invalid: at %d'th entry, "
-                                                       "wavelengths aren't "
-                                                       "increasing: %f >= %f.",
+                                              "wavelengths aren't "
+                                              "increasing: %f >= %f.",
                         fn, int(i), lambda.back(), vals[2 * i]);
                     return {};
                 }

@@ -9,7 +9,8 @@
 #include <spectra/pathtracer/base/light.cuh>
 #include <spectra/pathtracer/base/lightsampler.cuh>
 #include <spectra/pathtracer/base/sampler.cuh>
-#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/parallel.cuh>
@@ -28,7 +29,7 @@ namespace spectra::optix {
 namespace spectra::pathtracer {
     class GpuRuntime {
     public:
-        explicit GpuRuntime(const SpectraOptions& options);
+        explicit GpuRuntime(const RuntimeConfig& config);
         ~GpuRuntime() noexcept;
 
         GpuRuntime(const GpuRuntime&)                = delete;
@@ -36,16 +37,17 @@ namespace spectra::pathtracer {
         GpuRuntime& operator=(const GpuRuntime&)     = delete;
         GpuRuntime& operator=(GpuRuntime&&) noexcept = delete;
 
-        void ResetOptions(const SpectraOptions& options);
+        void UploadKernelConfig(const KernelConfig& config);
         void WaitGpuNoexcept() const noexcept;
 
     private:
         bool initialized{false};
+        int cudaDevice{};
     };
 
     class WavefrontPathtracer {
     public:
-        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, std::optional<Point2i> filmResolutionOverride = {});
+        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, const RenderConfig& config, std::optional<Point2i> filmResolutionOverride = {});
         __host__ __device__ ~WavefrontPathtracer();
 
         Float Render();
@@ -102,6 +104,7 @@ namespace spectra::pathtracer {
         pstd::array<bool, Material::NumTags()> haveUniversalEvalMaterial;
 
         pstd::pmr::memory_resource* memoryResource;
+        RenderConfig renderConfig;
 
         Filter filter;
         Film film;

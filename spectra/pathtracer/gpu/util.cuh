@@ -4,6 +4,7 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <map>
+#include <optional>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/float.cuh>
@@ -95,8 +96,8 @@ namespace spectra {
     // GPU Synchronization Function Declarations
     void GPUWait();
 
-    void GPUInit();
-    void GPUThreadInit();
+    [[nodiscard]] int GPUInit(std::optional<int> cudaDevice);
+    void GPUThreadInit(int cudaDevice);
 
     void GPUMemset(void* ptr, int byte, size_t bytes);
 

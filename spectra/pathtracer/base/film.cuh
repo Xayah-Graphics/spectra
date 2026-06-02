@@ -19,6 +19,10 @@ namespace spectra {
     struct FileLoc;
     struct ImageMetadata;
 
+    namespace pathtracer {
+        struct RenderConfig;
+    } // namespace pathtracer
+
     class VisibleSurface;
     class RGBFilm;
     class GBufferFilm;
@@ -57,7 +61,7 @@ namespace spectra {
 
         using TaggedPointer::TaggedPointer;
 
-        static Film Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const FileLoc* loc, Allocator alloc);
+        static Film Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
 
         __host__ __device__ void ResetPixel(Point2i p);

@@ -18,6 +18,7 @@
 #include <vector>
 
 namespace spectra::pathtracer {
+    struct RenderConfig;
     class WavefrontScene;
     struct WavefrontShapeSceneEntity;
 } // namespace spectra::pathtracer
@@ -25,7 +26,7 @@ namespace spectra::pathtracer {
 namespace spectra::optix {
     class SpectraOptiXAggregate {
     public:
-        SpectraOptiXAggregate(const pathtracer::WavefrontScene& scene, CUDATrackedMemoryResource* memoryResource);
+        SpectraOptiXAggregate(const pathtracer::WavefrontScene& scene, const pathtracer::RenderConfig& config, CUDATrackedMemoryResource* memoryResource);
         ~SpectraOptiXAggregate();
 
         Bounds3f Bounds() const {
@@ -43,7 +44,7 @@ namespace spectra::optix {
         // WAR: The enclosing parent function ("PreparePLYMeshes") for an
         // extended __device__ lambda cannot have private or protected access
         // within its class, so it's public...
-        static std::map<int, TriQuadMesh> PreparePLYMeshes(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures);
+        static std::map<int, TriQuadMesh> PreparePLYMeshes(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures, Float displacementEdgeScale);
 
     private:
         struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) HitgroupRecord {
@@ -94,9 +95,9 @@ namespace spectra::optix {
 
         static BilinearPatchMesh* diceCurveToBLP(const pathtracer::WavefrontShapeSceneEntity& shape, int nDiceU, int nDiceV, Allocator alloc);
 
-        static BVH buildBVHForBLPs(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
+        static BVH buildBVHForBLPs(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
 
-        static BVH buildBVHForQuadrics(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
+        static BVH buildBVHForQuadrics(const std::vector<pathtracer::WavefrontShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<cudaStream_t>& threadCUDAStreams);
 
         int addHGRecords(const BVH& bvh);
 

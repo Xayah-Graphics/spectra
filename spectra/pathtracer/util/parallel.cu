@@ -24,12 +24,12 @@ namespace spectra {
     ThreadPool* ParallelJob::threadPool;
 
     // ThreadPool Method Definitions
-    ThreadPool::ThreadPool(int nThreads) {
+    ThreadPool::ThreadPool(const int nThreads, const int cudaDevice) : cudaDevice(cudaDevice) {
         for (int i = 0; i < nThreads - 1; ++i) threads.push_back(std::thread(&ThreadPool::Worker, this));
     }
 
     void ThreadPool::Worker() {
-        GPUThreadInit();
+        GPUThreadInit(this->cudaDevice);
 
         std::unique_lock<std::mutex> lock(mutex);
         while (!shutdownThreads) WorkOrWait(&lock, false);
@@ -250,18 +250,14 @@ namespace spectra {
 
     ///////////////////////////////////////////////////////////////////////////
 
-    int AvailableCores() {
-        return std::max<int>(1, std::thread::hardware_concurrency());
-    }
-
     int RunningThreads() {
         return ParallelJob::threadPool ? (1 + ParallelJob::threadPool->size()) : 1;
     }
 
-    void ParallelInit(int nThreads) {
+    void ParallelInit(int nThreads, const int cudaDevice) {
         CHECK(!ParallelJob::threadPool);
-        if (nThreads <= 0) nThreads = AvailableCores();
-        ParallelJob::threadPool = new ThreadPool(nThreads);
+        CHECK_GT(nThreads, 0);
+        ParallelJob::threadPool = new ThreadPool(nThreads, cudaDevice);
     }
 
     void ParallelCleanup() {

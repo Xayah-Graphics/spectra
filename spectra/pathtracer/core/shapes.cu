@@ -1,8 +1,8 @@
 #include <algorithm>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/core/shapes.cuh>
 #include <spectra/pathtracer/core/textures.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
@@ -270,7 +270,7 @@ namespace spectra {
                 vi = {0, 1, 2};
             else {
                 throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
-                                                                           "triangle mesh."));
+                                                                  "triangle mesh."));
                 return {};
             }
         } else if ((vi.size() % 3) != 0u) {
@@ -284,20 +284,20 @@ namespace spectra {
 
         if (!uvs.empty() && uvs.size() != P.size()) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of \"uv\"s for triangle mesh must match \"P\"s. "
-                                                                       "Discarding uvs."));
+                                                              "Discarding uvs."));
             uvs = {};
         }
 
         std::vector<Vector3f> S = parameters.GetVector3fArray("S");
         if (!S.empty() && S.size() != P.size()) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of \"S\"s for triangle mesh must match \"P\"s. "
-                                                                       "Discarding \"S\"s."));
+                                                              "Discarding \"S\"s."));
             S = {};
         }
         std::vector<Normal3f> N = parameters.GetNormal3fArray("N");
         if (!N.empty() && N.size() != P.size()) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of \"N\"s for triangle mesh must match \"P\"s. "
-                                                                       "Discarding \"N\"s."));
+                                                              "Discarding \"N\"s."));
             N = {};
         }
 
@@ -623,7 +623,7 @@ namespace spectra {
             }
         } else if (type == CurveType::Ribbon) {
             throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
-                                                                       "curves."));
+                                                              "curves."));
             return {};
         }
 
@@ -633,7 +633,7 @@ namespace spectra {
 
         if (type == CurveType::Ribbon && n.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
-                                                                       "curves."));
+                                                              "curves."));
             return {};
         }
 
@@ -690,7 +690,7 @@ namespace spectra {
                 vertexIndices = {0, 1, 2, 3};
             else {
                 throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" must be provided with "
-                                                                           "bilinear patch mesh shape."));
+                                                                  "bilinear patch mesh shape."));
                 return {};
             }
         } else if ((vertexIndices.size() % 4) != 0u) {
@@ -699,20 +699,20 @@ namespace spectra {
 
         if (P.empty()) {
             throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" must be provided with bilinear "
-                                                                       "patch mesh shape."));
+                                                              "patch mesh shape."));
             return {};
         }
 
         if (!uv.empty() && uv.size() != P.size()) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of \"uv\"s for bilinear patch mesh must match \"P\"s. "
-                                                                       "Discarding uvs."));
+                                                              "Discarding uvs."));
             uv = {};
         }
 
         std::vector<Normal3f> N = parameters.GetNormal3fArray("N");
         if (!N.empty() && N.size() != P.size()) {
             throw std::runtime_error(diagnostics::Format(loc, "Number of \"N\"s for bilinear patch mesh must match \"P\"s. "
-                                                                       "Discarding \"N\"s."));
+                                                              "Discarding \"N\"s."));
             N = {};
         }
 
@@ -744,7 +744,7 @@ namespace spectra {
         if (!filename.empty()) {
             if (!uv.empty())
                 throw std::runtime_error(diagnostics::Format(loc, "\"emissionfilename\" is currently ignored for bilinear patches "
-                                                                           "if \"uv\" coordinates have been provided--sorry!"));
+                                                                  "if \"uv\" coordinates have been provided--sorry!"));
             else {
                 ImageAndMetadata im = Image::Read(filename, alloc);
                 // Account for v inversion in DiffuseAreaLight lookup, which in turn is there
@@ -1086,7 +1086,7 @@ namespace spectra {
     }
 
 
-    pstd::vector<Shape> Shape::Create(const std::string& name, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, const ParameterDictionary& parameters, const std::map<std::string, FloatTexture>& floatTextures, const FileLoc* loc, Allocator alloc) {
+    pstd::vector<Shape> Shape::Create(const std::string& name, const Transform* renderFromObject, const Transform* objectFromRender, bool reverseOrientation, const ParameterDictionary& parameters, const std::map<std::string, FloatTexture>& floatTextures, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         pstd::vector<Shape> shapes(alloc);
         if (name == "sphere") {
             shapes = {Sphere::Create(renderFromObject, objectFromRender, reverseOrientation, parameters, loc, alloc)};
@@ -1111,7 +1111,7 @@ namespace spectra {
             TriQuadMesh plyMesh  = TriQuadMesh::ReadPLY(filename);
 
             Float edgeLength = parameters.GetOneFloat("edgelength", 1.f);
-            edgeLength *= Options->displacementEdgeScale;
+            edgeLength *= config.displacement_edge_scale;
 
             std::string displacementTexName = parameters.GetTexture("displacement");
             if (!displacementTexName.empty()) {
@@ -1154,7 +1154,7 @@ namespace spectra {
             std::vector<int> vertexIndices = parameters.GetIntArray("indices");
             if (vertexIndices.empty())
                 throw std::runtime_error(diagnostics::Format(loc, "Vertex indices \"indices\" not provided for "
-                                                                           "LoopSubdiv shape."));
+                                                                  "LoopSubdiv shape."));
 
             std::vector<Point3f> P = parameters.GetPoint3fArray("P");
             if (P.empty()) throw std::runtime_error(diagnostics::Format(loc, "Vertex positions \"P\" not provided for LoopSubdiv shape."));

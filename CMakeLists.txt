@@ -312,12 +312,12 @@ set(SPECTRA_GPU_CORE_SOURCE
         spectra/pathtracer/core/film.cu
         spectra/pathtracer/core/filters.cu
         spectra/pathtracer/core/interaction.cu
+        spectra/pathtracer/core/kernel_config.cu
         spectra/pathtracer/core/lights.cu
         spectra/pathtracer/core/lightsamplers.cu
         spectra/pathtracer/core/materials.cu
         spectra/pathtracer/core/media_host.cu
         spectra/pathtracer/core/media.cu
-        spectra/pathtracer/core/options.cu
         spectra/pathtracer/core/paramdict.cu
         spectra/pathtracer/core/samplers.cu
         spectra/pathtracer/core/shapes.cu

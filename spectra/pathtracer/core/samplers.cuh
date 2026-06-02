@@ -7,7 +7,8 @@
 #include <spectra/pathtracer/base/sampler.cuh>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
-#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/util/bluenoise.cuh>
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/float.cuh>
@@ -33,7 +34,7 @@ namespace spectra {
             return "HaltonSampler";
         }
 
-        static HaltonSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
+        static HaltonSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ int SamplesPerPixel() const {
             return samplesPerPixel;
@@ -128,7 +129,7 @@ namespace spectra {
             return "PaddedSobolSampler";
         }
 
-        static PaddedSobolSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static PaddedSobolSampler* Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         PaddedSobolSampler(int samplesPerPixel, RandomizeStrategy randomizer, int seed = 0) : samplesPerPixel(samplesPerPixel), randomize(randomizer), seed(seed) {
             if (!IsPowerOf2(samplesPerPixel)) diagnostics::PrintWarning("Sobol samplers with non power-of-two sample counts (%d) are suboptimal.", samplesPerPixel);
@@ -211,7 +212,7 @@ namespace spectra {
             return "ZSobolSampler";
         }
 
-        static ZSobolSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
+        static ZSobolSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ int SamplesPerPixel() const {
             return 1 << log2SamplesPerPixel;
@@ -310,7 +311,7 @@ namespace spectra {
             return "PMJ02BNSampler";
         }
 
-        static PMJ02BNSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static PMJ02BNSampler* Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ int SamplesPerPixel() const {
             return samplesPerPixel;
@@ -376,7 +377,7 @@ namespace spectra {
         // IndependentSampler Public Methods
         IndependentSampler(int samplesPerPixel, int seed = 0) : samplesPerPixel(samplesPerPixel), seed(seed) {}
 
-        static IndependentSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static IndependentSampler* Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
         __host__ __device__ static constexpr const char* Name() {
             return "IndependentSampler";
         }
@@ -417,7 +418,7 @@ namespace spectra {
         SobolSampler(int samplesPerPixel, Point2i fullResolution, RandomizeStrategy randomize, int seed = 0) : samplesPerPixel(samplesPerPixel), seed(seed), randomize(randomize) {
             if (!IsPowerOf2(samplesPerPixel))
                 diagnostics::PrintWarning("Non power-of-two sample count %d will perform suboptimally with the "
-                                                   "SobolSampler.",
+                                          "SobolSampler.",
                     samplesPerPixel);
             scale = RoundUpPow2(std::max(fullResolution.x, fullResolution.y));
         }
@@ -426,7 +427,7 @@ namespace spectra {
             return "SobolSampler";
         }
 
-        static SobolSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
+        static SobolSampler* Create(const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ int SamplesPerPixel() const {
             return samplesPerPixel;
@@ -494,7 +495,7 @@ namespace spectra {
         // StratifiedSampler Public Methods
         StratifiedSampler(int xPixelSamples, int yPixelSamples, bool jitter, int seed = 0) : xPixelSamples(xPixelSamples), yPixelSamples(yPixelSamples), seed(seed), jitter(jitter) {}
 
-        static StratifiedSampler* Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc);
+        static StratifiedSampler* Create(const ParameterDictionary& parameters, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
         __host__ __device__ static constexpr const char* Name() {
             return "StratifiedSampler";
         }
@@ -552,7 +553,7 @@ namespace spectra {
     class MLTSampler {
     public:
         // MLTSampler Public Methods
-        MLTSampler(int mutationsPerPixel, int rngSequenceIndex, Float sigma, Float largeStepProbability, int streamCount) : mutationsPerPixel(mutationsPerPixel), rng(MixBits(rngSequenceIndex) ^ MixBits(Options->seed)), sigma(sigma), largeStepProbability(largeStepProbability), streamCount(streamCount) {}
+        MLTSampler(int mutationsPerPixel, int rngSequenceIndex, Float sigma, Float largeStepProbability, int streamCount) : mutationsPerPixel(mutationsPerPixel), rng(MixBits(rngSequenceIndex) ^ MixBits(pathtracer::CurrentKernelConfig().seed)), sigma(sigma), largeStepProbability(largeStepProbability), streamCount(streamCount) {}
 
         __host__ __device__ void StartIteration();
 
@@ -661,7 +662,7 @@ namespace spectra {
         cs.pLens        = sampler.Get2D();
         cs.filterWeight = fs.weight;
 
-        if (GetOptions().disablePixelJitter) {
+        if (pathtracer::CurrentKernelConfig().disable_pixel_jitter) {
             cs.pFilm        = pPixel + Vector2f(0.5f, 0.5f);
             cs.time         = 0.5f;
             cs.pLens        = Point2f(0.5f, 0.5f);

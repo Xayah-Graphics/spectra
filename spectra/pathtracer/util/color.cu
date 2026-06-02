@@ -3,7 +3,6 @@
 #include <iterator>
 #include <mutex>
 #include <spectra/pathtracer/core/diagnostics.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/spectrum.cuh>

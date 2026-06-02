@@ -10,8 +10,8 @@
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/film.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/util/bluenoise.cuh>
 #include <spectra/pathtracer/util/check.cuh>
 #include <spectra/pathtracer/util/color.cuh>
@@ -107,16 +107,16 @@ namespace spectra {
     }
 
     // FilmBaseParameters Method Definitions
-    FilmBaseParameters::FilmBaseParameters(const ParameterDictionary& parameters, Filter filter, const PixelSensor* sensor, const FileLoc* loc) : filter(filter), sensor(sensor) {
+    FilmBaseParameters::FilmBaseParameters(const ParameterDictionary& parameters, Filter filter, const PixelSensor* sensor, const pathtracer::RenderConfig& config, const FileLoc* loc) : filter(filter), sensor(sensor) {
         filename = parameters.GetOneString("filename", "");
-        if (!Options->imageFile.empty()) {
+        if (!config.output_file.empty()) {
             if (!filename.empty())
                 diagnostics::PrintWarning(loc,
                     "Output filename supplied on command line, \"%s\" will "
                     "override "
                     "filename provided in scene description file, \"%s\".",
-                    Options->imageFile, filename);
-            filename = Options->imageFile;
+                    config.output_file, filename);
+            filename = config.output_file;
         } else if (filename.empty())
             filename = "spectra.exr";
 
@@ -124,16 +124,16 @@ namespace spectra {
 
         pixelBounds         = Bounds2i(Point2i(0, 0), fullResolution);
         std::vector<int> pb = parameters.GetIntArray("pixelbounds");
-        if (Options->pixelBounds) {
-            Bounds2i newBounds = *Options->pixelBounds;
+        if (config.pixel_bounds) {
+            Bounds2i newBounds = *config.pixel_bounds;
             if (Intersect(newBounds, pixelBounds) != newBounds)
                 diagnostics::PrintWarning(loc, "Supplied pixel bounds extend beyond image "
-                                                        "resolution. Clamping.");
+                                               "resolution. Clamping.");
             pixelBounds = Intersect(newBounds, pixelBounds);
 
             if (!pb.empty())
                 diagnostics::PrintWarning(loc, "Both pixel bounds and crop window were specified. Using the "
-                                                        "crop window.");
+                                               "crop window.");
         } else if (!pb.empty()) {
             if (pb.size() != 4)
                 throw std::runtime_error(diagnostics::Format(loc, "%d values supplied for \"pixelbounds\". Expected 4.", int(pb.size())));
@@ -141,14 +141,14 @@ namespace spectra {
                 Bounds2i newBounds = Bounds2i({pb[0], pb[2]}, {pb[1], pb[3]});
                 if (Intersect(newBounds, pixelBounds) != newBounds)
                     diagnostics::PrintWarning(loc, "Supplied pixel bounds extend beyond image "
-                                                            "resolution. Clamping.");
+                                                   "resolution. Clamping.");
                 pixelBounds = Intersect(newBounds, pixelBounds);
             }
         }
 
         std::vector<Float> cr = parameters.GetFloatArray("cropwindow");
-        if (Options->cropWindow) {
-            Bounds2f crop = *Options->cropWindow;
+        if (config.crop_window) {
+            Bounds2f crop = *config.crop_window;
             if (Intersect(crop, Bounds2f(Point2f(0, 0), Point2f(1, 1))) != crop) {
                 throw std::runtime_error(diagnostics::Format(loc,
                     "Film crop window [%f, %f] - [%f, %f] is not in [0,1] range; did you "
@@ -162,19 +162,19 @@ namespace spectra {
 
             if (!cr.empty())
                 diagnostics::PrintWarning(loc, "Crop window supplied on command line will override "
-                                                        "crop window specified with Film.");
-            if (Options->pixelBounds || !pb.empty())
+                                               "crop window specified with Film.");
+            if (config.pixel_bounds || !pb.empty())
                 diagnostics::PrintWarning(loc, "Both pixel bounds and crop window were specified. Using the "
-                                                        "crop window.");
+                                               "crop window.");
         } else if (!cr.empty()) {
-            if (Options->pixelBounds)
+            if (config.pixel_bounds)
                 diagnostics::PrintWarning(loc, "Ignoring \"cropwindow\" since pixel bounds were specified "
-                                                        "on the command line.");
+                                               "on the command line.");
             else if (cr.size() == 4) {
                 if (!pb.empty())
                     diagnostics::PrintWarning(loc, "Both pixel bounds and crop window were "
-                                                            "specified. Using the "
-                                                            "crop window.");
+                                                   "specified. Using the "
+                                                   "crop window.");
 
                 Bounds2f crop;
                 crop.pMin.x = Clamp(std::min(cr[0], cr[1]), 0.f, 1.f);
@@ -353,12 +353,12 @@ namespace spectra {
     }
 
 
-    RGBFilm* RGBFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    RGBFilm* RGBFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
         bool writeFP16          = parameters.GetOneBool("savefp16", true);
 
         PixelSensor* sensor = PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
-        FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
+        FilmBaseParameters filmBaseParameters(parameters, filter, sensor, config, loc);
 
         return alloc.new_object<RGBFilm>(filmBaseParameters, colorSpace, maxComponentValue, writeFP16, alloc);
     }
@@ -503,13 +503,13 @@ namespace spectra {
     }
 
 
-    GBufferFilm* GBufferFilm::Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    GBufferFilm* GBufferFilm::Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
         bool writeFP16          = parameters.GetOneBool("savefp16", true);
 
         PixelSensor* sensor = PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
 
-        FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
+        FilmBaseParameters filmBaseParameters(parameters, filter, sensor, config, loc);
 
         if (!HasExtension(filmBaseParameters.filename, "exr")) throw std::runtime_error(diagnostics::Format(loc, "%s: EXR is the only format supported by the GBufferFilm.", filmBaseParameters.filename));
 
@@ -691,9 +691,9 @@ namespace spectra {
     }
 
 
-    SpectralFilm* SpectralFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc) {
+    SpectralFilm* SpectralFilm::Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         PixelSensor* sensor = PixelSensor::Create(parameters, colorSpace, exposureTime, loc, alloc);
-        FilmBaseParameters filmBaseParameters(parameters, filter, sensor, loc);
+        FilmBaseParameters filmBaseParameters(parameters, filter, sensor, config, loc);
         bool writeFP16 = parameters.GetOneBool("savefp16", true);
 
         if (!HasExtension(filmBaseParameters.filename, "exr")) throw std::runtime_error(diagnostics::Format(loc, "%s: EXR is the only output format supported by the SpectralFilm.", filmBaseParameters.filename));
@@ -703,9 +703,9 @@ namespace spectra {
         Float lambdaMax = parameters.GetOneFloat("lambdamax", Lambda_max);
         if (lambdaMin < Lambda_min || lambdaMax > Lambda_max)
             throw std::runtime_error(diagnostics::Format("Spectra must be recompiled to render wavelengths "
-                                                                  "beyond the [%f,%f] range ([%f,%f] was specified). Please "
-                                                                  "update Lambda_min and/or Lambda_max as necessary in "
-                                                                  "spectra/pathtracer/util/spectrum.cuh and recompile.",
+                                                         "beyond the [%f,%f] range ([%f,%f] was specified). Please "
+                                                         "update Lambda_min and/or Lambda_max as necessary in "
+                                                         "spectra/pathtracer/util/spectrum.cuh and recompile.",
                 Lambda_min, Lambda_max, lambdaMin, lambdaMax));
 
         Float maxComponentValue = parameters.GetOneFloat("maxcomponentvalue", Infinity);
@@ -713,14 +713,14 @@ namespace spectra {
         return alloc.new_object<SpectralFilm>(filmBaseParameters, lambdaMin, lambdaMax, nBuckets, colorSpace, maxComponentValue, writeFP16, alloc);
     }
 
-    Film Film::Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const FileLoc* loc, Allocator alloc) {
+    Film Film::Create(const std::string& name, const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc) {
         Film film;
         if (name == "rgb")
-            film = RGBFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), loc, alloc);
+            film = RGBFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), config, loc, alloc);
         else if (name == "gbuffer")
-            film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter, parameters.ColorSpace(), loc, alloc);
+            film = GBufferFilm::Create(parameters, exposureTime, cameraTransform, filter, parameters.ColorSpace(), config, loc, alloc);
         else if (name == "spectral")
-            film = SpectralFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), loc, alloc);
+            film = SpectralFilm::Create(parameters, exposureTime, filter, parameters.ColorSpace(), config, loc, alloc);
         else
             throw std::runtime_error(diagnostics::Format(loc, "%s: film type unknown.", name));
 

@@ -16,6 +16,7 @@
 #include <spectra/pathtracer/core/materials.cuh>
 #include <spectra/pathtracer/core/media.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/core/textures.cuh>
 #include <spectra/pathtracer/util/color.cuh>
@@ -102,7 +103,7 @@ namespace spectra::pathtracer {
 
         class WavefrontSceneCompiler {
         public:
-            WavefrontSceneCompiler(const scene::Scene& sourceScene, WavefrontScene& compiledScene, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
+            WavefrontSceneCompiler(const scene::Scene& sourceScene, WavefrontScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
 
             void Compile() {
                 this->SetRenderSettings(this->source.renderSettings);
@@ -250,7 +251,7 @@ namespace spectra::pathtracer {
                     .name            = std::move(cameraEntity.name),
                     .loc             = cameraEntity.loc,
                     .parameters      = std::move(cameraEntity.parameters),
-                    .cameraTransform = CameraTransform(AnimatedTransform(worldFromCamera, 0.0f, worldFromCamera, 1.0f)),
+                    .cameraTransform = CameraTransform(AnimatedTransform(worldFromCamera, 0.0f, worldFromCamera, 1.0f), this->renderConfig.rendering_space),
                     .medium          = settings.camera.medium,
                 };
 
@@ -263,13 +264,13 @@ namespace spectra::pathtracer {
                 Float exposureTime = this->cameraEntity.parameters.GetOneFloat("shutterclose", 1.0f) - this->cameraEntity.parameters.GetOneFloat("shutteropen", 0.0f);
                 if (exposureTime <= 0.0f) throw std::runtime_error(diagnostics::Format(&this->cameraEntity.loc, "The specified camera shutter times imply that the shutter does not open. A black image will result."));
 
-                this->compiled.film = Film::Create(filmEntity.name, filmEntity.parameters, exposureTime, this->cameraEntity.cameraTransform, this->compiled.filter, &filmEntity.loc, alloc);
+                this->compiled.film = Film::Create(filmEntity.name, filmEntity.parameters, exposureTime, this->cameraEntity.cameraTransform, this->compiled.filter, this->renderConfig, &filmEntity.loc, alloc);
             }
 
             [[nodiscard]] Sampler CreateSampler() const {
                 Allocator alloc = this->compiled.threadAllocators.Get();
                 Point2i res     = this->compiled.film.FullResolution();
-                return Sampler::Create(this->samplerEntity.name, this->samplerEntity.parameters, res, &this->samplerEntity.loc, alloc);
+                return Sampler::Create(this->samplerEntity.name, this->samplerEntity.parameters, res, this->renderConfig, &this->samplerEntity.loc, alloc);
             }
 
             [[nodiscard]] Camera CreateCamera() const {
@@ -546,7 +547,7 @@ namespace spectra::pathtracer {
 
                     if (!materialIter->second) throw std::runtime_error(diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
 
-                    pstd::vector<Shape> shapeObjects = Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender, shape.reverseOrientation, shape.parameters, this->compiled.textures.floatTextures, &shape.loc, alloc);
+                    pstd::vector<Shape> shapeObjects = Shape::Create(shape.name, shape.renderFromObject, shape.objectFromRender, shape.reverseOrientation, shape.parameters, this->compiled.textures.floatTextures, this->renderConfig, &shape.loc, alloc);
                     FloatTexture alphaTexture        = getAlphaTexture(shape.parameters, &shape.loc);
                     MediumInterface mediumInterface(this->FindMedium(shape.insideMedium, &shape.loc), this->FindMedium(shape.outsideMedium, &shape.loc));
                     pstd::vector<Light>* shapeLights = new pstd::vector<Light>(alloc);
@@ -567,6 +568,7 @@ namespace spectra::pathtracer {
 
             const scene::Scene& source;
             WavefrontScene& compiled;
+            const RenderConfig& renderConfig;
             std::optional<Point2i> filmResolutionOverride{};
             FileLoc location{};
             bool renderSettingsReady{false};
@@ -597,9 +599,9 @@ namespace spectra::pathtracer {
 
     WavefrontScene::WavefrontScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireMemoryResource(memoryResource)); }) {}
 
-    std::unique_ptr<WavefrontScene> CreateWavefrontScene(const scene::Scene& scene, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
+    std::unique_ptr<WavefrontScene> CreateWavefrontScene(const scene::Scene& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
         std::unique_ptr<WavefrontScene> compiled = std::make_unique<WavefrontScene>(memoryResource);
-        WavefrontSceneCompiler compiler(scene, *compiled, filmResolutionOverride);
+        WavefrontSceneCompiler compiler(scene, *compiled, config, filmResolutionOverride);
         compiler.Compile();
         return compiled;
     }

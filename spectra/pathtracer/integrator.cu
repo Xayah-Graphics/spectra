@@ -16,11 +16,11 @@
 #include <spectra/pathtracer/core/film.cuh>
 #include <spectra/pathtracer/core/filters.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/lights.cuh>
 #include <spectra/pathtracer/core/lightsamplers.cuh>
 #include <spectra/pathtracer/core/materials.cuh>
 #include <spectra/pathtracer/core/media.cuh>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/core/shapes.cuh>
 #include <spectra/pathtracer/core/textures.cuh>
@@ -58,13 +58,8 @@
 namespace spectra::pathtracer::detail {
     static bool runtime_initialized = false;
 
-    void InitializeGpuRuntimeState() {
-        GPUInit();
-        CopyOptionsToGPU();
-    }
-
-    void CopyRuntimeOptionsToGPU() {
-        CopyOptionsToGPU();
+    int InitializeGpuRuntimeState(std::optional<int> cudaDevice) {
+        return GPUInit(cudaDevice);
     }
 
     void InitializeStaticRuntimeData() {
@@ -101,27 +96,26 @@ namespace spectra::pathtracer {
     }
 #endif // SPECTRA_IS_WINDOWS
 
-    GpuRuntime::GpuRuntime(const SpectraOptions& options) {
+    GpuRuntime::GpuRuntime(const RuntimeConfig& config) {
         if (detail::runtime_initialized) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime cannot initialize more than once per process"));
-        if (Options != nullptr) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime cannot initialize while runtime options are active"));
+        if (config.thread_count <= 0) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime thread count must be positive."));
+        if (config.cuda_device.has_value() && *config.cuda_device < 0) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime CUDA device must be non-negative."));
 
-        Options = new SpectraOptions(options);
-
-        Imf::setGlobalThreadCount(options.nThreads ? options.nThreads : AvailableCores());
+        RuntimeConfig runtimeConfig = config;
+        Imf::setGlobalThreadCount(runtimeConfig.thread_count);
 
 #ifdef SPECTRA_IS_WINDOWS
         SetUnhandledExceptionFilter(handle_windows_exception);
-        if (Options->gpuDevice && !std::getenv("CUDA_VISIBLE_DEVICES")) {
-            std::string env = "CUDA_VISIBLE_DEVICES=" + std::to_string(*Options->gpuDevice);
+        if (runtimeConfig.cuda_device.has_value() && !std::getenv("CUDA_VISIBLE_DEVICES")) {
+            std::string env = "CUDA_VISIBLE_DEVICES=" + std::to_string(*runtimeConfig.cuda_device);
             _putenv(env.c_str());
-            *Options->gpuDevice = 0;
+            runtimeConfig.cuda_device = 0;
         }
 #endif // SPECTRA_IS_WINDOWS
 
-        const int thread_count = Options->nThreads != 0 ? Options->nThreads : AvailableCores();
-        ParallelInit(thread_count);
+        this->cudaDevice = detail::InitializeGpuRuntimeState(runtimeConfig.cuda_device);
+        ParallelInit(runtimeConfig.thread_count, this->cudaDevice);
 
-        detail::InitializeGpuRuntimeState();
         detail::InitializeStaticRuntimeData();
 
         detail::runtime_initialized = true;
@@ -135,22 +129,18 @@ namespace spectra::pathtracer {
             this->WaitGpuNoexcept();
 
             ParallelCleanup();
-            delete Options;
-            Options = nullptr;
         } catch (...) {
         }
     }
 
-    void GpuRuntime::ResetOptions(const SpectraOptions& options) {
+    void GpuRuntime::UploadKernelConfig(const KernelConfig& config) {
         if (!this->initialized) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime is not initialized."));
-        if (Options == nullptr) throw std::runtime_error(diagnostics::Format("Spectra global options are unavailable."));
-        *Options = options;
-        detail::CopyRuntimeOptionsToGPU();
+        spectra::pathtracer::UploadKernelConfig(config);
     }
 
     void GpuRuntime::WaitGpuNoexcept() const noexcept {
         try {
-            if (Options != nullptr) GPUWait();
+            if (this->initialized) GPUWait();
         } catch (...) {
         }
     }
@@ -190,8 +180,8 @@ namespace spectra::pathtracer {
             // This is a somewhat odd place for this check, but it's convenient...
             if (!m.CanEvaluateTextures(BasicTextureEvaluator()))
                 throw std::runtime_error(diagnostics::Format("\"mix\" material has a texture that can't be evaluated with the "
-                                                                      "BasicTextureEvaluator, which is all that is currently supported "
-                                                                      "in the Spectra pathtracer."));
+                                                             "BasicTextureEvaluator, which is all that is currently supported "
+                                                             "in the Spectra pathtracer."));
 
             updateMaterialNeeds(mix->GetMaterial(0), haveBasicEvalMaterial, haveUniversalEvalMaterial, haveSubsurface, haveMedia);
             updateMaterialNeeds(mix->GetMaterial(1), haveBasicEvalMaterial, haveUniversalEvalMaterial, haveSubsurface, haveMedia);
@@ -207,12 +197,12 @@ namespace spectra::pathtracer {
             (*haveUniversalEvalMaterial)[m.Tag()] = true;
     }
 
-    WavefrontPathtracer::WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, std::optional<Point2i> filmResolutionOverride) : memoryResource(memoryResource) {
+    WavefrontPathtracer::WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, const scene::Scene& scene, const RenderConfig& config, std::optional<Point2i> filmResolutionOverride) : memoryResource(memoryResource), renderConfig(config) {
         ThreadLocal<Allocator> threadAllocators([memoryResource]() { return Allocator(memoryResource); });
 
         Allocator alloc = threadAllocators.Get();
 
-        std::unique_ptr<WavefrontScene> wavefrontScene = CreateWavefrontScene(scene, memoryResource, filmResolutionOverride);
+        std::unique_ptr<WavefrontScene> wavefrontScene = CreateWavefrontScene(scene, this->renderConfig, memoryResource, filmResolutionOverride);
 
         // "haveMedia" is a bit of a misnomer in that determines both whether
         // queues are allocated for the medium sampling kernels, and they are
@@ -237,7 +227,7 @@ namespace spectra::pathtracer {
 
         CUDATrackedMemoryResource* mr = dynamic_cast<CUDATrackedMemoryResource*>(memoryResource);
         SPECTRA_CHECK(mr);
-        aggregate = new optix::SpectraOptiXAggregate(*wavefrontScene, mr);
+        aggregate = new optix::SpectraOptiXAggregate(*wavefrontScene, this->renderConfig, mr);
 
         // Preprocess the light sources
         for (Light light : wavefrontScene->allLights) light.Preprocess(aggregate->Bounds());
@@ -310,7 +300,7 @@ namespace spectra::pathtracer {
         // Loop over sample indices and evaluate pixel samples
         int firstSampleIndex = 0, lastSampleIndex = samplesPerPixel;
         int totalSamples = lastSampleIndex - firstSampleIndex;
-        if (!Options->quiet) {
+        if (!this->renderConfig.quiet) {
             Vector2i resolution = pixelBounds.Diagonal();
             std::fprintf(stdout, "Rendering %d samples at %dx%d\n", totalSamples, resolution.x, resolution.y);
             std::fflush(stdout);
@@ -320,7 +310,7 @@ namespace spectra::pathtracer {
         for (int sampleIndex = firstSampleIndex; sampleIndex < lastSampleIndex; ++sampleIndex) {
             RenderSample(pixelBounds, Transform{}, sampleIndex);
 
-            if (!Options->quiet) {
+            if (!this->renderConfig.quiet) {
                 std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
                 bool lastSample                           = sampleIndex + 1 == lastSampleIndex;
                 if (lastSample || now - lastProgressReport >= std::chrono::seconds(1)) {
@@ -335,7 +325,7 @@ namespace spectra::pathtracer {
 
         GPUWait();
         Float seconds = Float(std::chrono::duration<double>(std::chrono::steady_clock::now() - renderStart).count());
-        if (!Options->quiet) {
+        if (!this->renderConfig.quiet) {
             std::fprintf(stdout, "Rendering completed in %.1fs\n", seconds);
             std::fflush(stdout);
         }
@@ -526,7 +516,7 @@ namespace spectra::pathtracer {
 
             // Sample wavelengths for ray path
             Float lu = pixelSampler.Get1D();
-            if (GetOptions().disableWavelengthJitter) lu = 0.5f;
+            if (CurrentKernelConfig().disable_wavelength_jitter) lu = 0.5f;
             SampledWavelengths lambda = film.SampleWavelengths(lu);
 
             // Generate _CameraSample_ and corresponding ray
@@ -632,7 +622,7 @@ namespace spectra::pathtracer {
             // Compute differentials for position and $(u,v)$ at intersection point
             Vector3f dpdx, dpdy;
             Float dudx = 0, dudy = 0, dvdx = 0, dvdy = 0;
-            if (!GetOptions().disableTextureFiltering) {
+            if (!CurrentKernelConfig().disable_texture_filtering) {
                 Point3f pc  = movingFromCamera.ApplyInverse(Point3f(w.pi));
                 Normal3f nc = movingFromCamera.ApplyInverse(w.n);
                 camera.Approximate_dp_dxy(pc, nc, w.time, samplesPerPixel, &dpdx, &dpdy);

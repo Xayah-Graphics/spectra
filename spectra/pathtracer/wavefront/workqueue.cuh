@@ -2,7 +2,6 @@
 #define SPECTRA_PATHTRACER_WAVEFRONT_WORKQUEUE_H
 
 #include <atomic>
-#include <spectra/pathtracer/core/options.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/memory.cuh>

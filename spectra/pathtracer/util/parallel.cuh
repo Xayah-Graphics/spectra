@@ -20,10 +20,9 @@
 
 namespace spectra {
     // Parallel Function Declarations
-    void ParallelInit(int nThreads = -1);
+    void ParallelInit(int nThreads, int cudaDevice);
     void ParallelCleanup();
 
-    int AvailableCores();
     int RunningThreads();
 
     // ThreadLocal Definition
@@ -279,7 +278,7 @@ namespace spectra {
     class ThreadPool {
     public:
         // ThreadPool Public Methods
-        explicit ThreadPool(int nThreads);
+        ThreadPool(int nThreads, int cudaDevice);
 
         ~ThreadPool();
 
@@ -304,6 +303,7 @@ namespace spectra {
 
         // ThreadPool Private Members
         std::vector<std::thread> threads;
+        int cudaDevice{};
         mutable std::mutex mutex;
         bool shutdownThreads = false;
         bool disabled        = false;

@@ -11,6 +11,7 @@
 #include <spectra/pathtracer/base/camera.cuh>
 #include <spectra/pathtracer/base/film.cuh>
 #include <spectra/pathtracer/core/bsdf.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 #include <spectra/pathtracer/util/float.cuh>
@@ -127,7 +128,7 @@ namespace spectra {
 
     // FilmBaseParameters Definition
     struct FilmBaseParameters {
-        FilmBaseParameters(const ParameterDictionary& parameters, Filter filter, const PixelSensor* sensor, const FileLoc* loc);
+        FilmBaseParameters(const ParameterDictionary& parameters, Filter filter, const PixelSensor* sensor, const pathtracer::RenderConfig& config, const FileLoc* loc);
 
         FilmBaseParameters(Point2i fullResolution, Bounds2i pixelBounds, Filter filter, Float diagonal, const PixelSensor* sensor, std::string filename) : fullResolution(fullResolution), pixelBounds(pixelBounds), filter(filter), diagonal(diagonal), sensor(sensor), filename(filename) {}
 
@@ -232,7 +233,7 @@ namespace spectra {
 
         RGBFilm(FilmBaseParameters p, const RGBColorSpace* colorSpace, Float maxComponentValue = Infinity, bool writeFP16 = true, Allocator alloc = {});
 
-        static RGBFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static RGBFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda);
 
@@ -273,7 +274,7 @@ namespace spectra {
         // GBufferFilm Public Methods
         GBufferFilm(FilmBaseParameters p, const AnimatedTransform& outputFromRender, bool applyInverse, const RGBColorSpace* colorSpace, Float maxComponentValue = Infinity, bool writeFP16 = true, Allocator alloc = {});
 
-        static GBufferFilm* Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static GBufferFilm* Create(const ParameterDictionary& parameters, Float exposureTime, const CameraTransform& cameraTransform, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ void AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight);
 
@@ -394,7 +395,7 @@ namespace spectra {
 
         SpectralFilm(FilmBaseParameters p, Float lambdaMin, Float lambdaMax, int nBuckets, const RGBColorSpace* colorSpace, Float maxComponentValue = Infinity, bool writeFP16 = true, Allocator alloc = {});
 
-        static SpectralFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const FileLoc* loc, Allocator alloc);
+        static SpectralFilm* Create(const ParameterDictionary& parameters, Float exposureTime, Filter filter, const RGBColorSpace* colorSpace, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ void AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda);
 

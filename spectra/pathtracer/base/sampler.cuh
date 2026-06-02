@@ -12,6 +12,10 @@ namespace spectra {
     class ParameterDictionary;
     struct FileLoc;
 
+    namespace pathtracer {
+        struct RenderConfig;
+    } // namespace pathtracer
+
     // CameraSample Definition
     struct CameraSample {
         Point2f pFilm;
@@ -40,7 +44,7 @@ namespace spectra {
         // Sampler Interface
         using TaggedPointer::TaggedPointer;
 
-        static Sampler Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullResolution, const FileLoc* loc, Allocator alloc);
+        static Sampler Create(const std::string& name, const ParameterDictionary& parameters, Point2i fullResolution, const pathtracer::RenderConfig& config, const FileLoc* loc, Allocator alloc);
 
         __host__ __device__ int SamplesPerPixel() const;
 

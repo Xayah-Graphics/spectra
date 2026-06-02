@@ -3,7 +3,8 @@
 #include <cuda_runtime_api.h>
 #include <exception>
 #include <optional>
-#include <spectra/pathtracer/core/options.cuh>
+#include <spectra/pathtracer/core/kernel_config.cuh>
+#include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/integrator.cuh>
 #include <spectra/pathtracer/util/float.cuh>
@@ -76,23 +77,24 @@ int main(int argc, char* argv[]) {
         const std::vector<std::string> arguments = command_line_arguments(argc, argv);
         if (arguments.empty()) throw UsageError("missing scene name");
 
-        spectra::SpectraOptions options;
-        options.renderingSpace = spectra::RenderingCoordinateSystem::CameraWorld;
+        spectra::pathtracer::RuntimeConfig runtime_config{};
+        spectra::pathtracer::RenderConfig render_config{};
+        render_config.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld;
 
         std::optional<std::string> scene_name;
 
         for (std::size_t index = 0; index < arguments.size(); ++index) {
             const std::string& argument = arguments[index];
             if (argument == "--outfile") {
-                options.imageFile = require_value(arguments, index, argument);
+                render_config.output_file = require_value(arguments, index, argument);
             } else if (argument == "--spp") {
-                options.pixelSamples = parse_int(require_value(arguments, index, argument), argument);
+                render_config.pixel_samples = parse_int(require_value(arguments, index, argument), argument);
             } else if (argument == "--seed") {
-                options.seed = parse_int(require_value(arguments, index, argument), argument);
+                render_config.seed = parse_int(require_value(arguments, index, argument), argument);
             } else if (argument == "--gpu-device") {
-                options.gpuDevice = parse_int(require_value(arguments, index, argument), argument);
+                runtime_config.cuda_device = parse_int(require_value(arguments, index, argument), argument);
             } else if (argument == "--quiet") {
-                options.quiet = true;
+                render_config.quiet = true;
             } else if (argument == "--help" || argument == "-h") {
                 print_usage({});
                 return 0;
@@ -105,14 +107,15 @@ int main(int argc, char* argv[]) {
         }
 
         if (!scene_name.has_value()) throw UsageError("missing scene name");
-        if (options.pixelSamples && *options.pixelSamples <= 0) throw UsageError("--spp must be positive");
-        if (options.gpuDevice && *options.gpuDevice < 0) throw UsageError("--gpu-device must be non-negative");
+        if (render_config.pixel_samples.has_value() && *render_config.pixel_samples <= 0) throw UsageError("--spp must be positive");
+        if (runtime_config.cuda_device.has_value() && *runtime_config.cuda_device < 0) throw UsageError("--gpu-device must be non-negative");
 
-        spectra::pathtracer::GpuRuntime runtime(options);
+        spectra::pathtracer::GpuRuntime runtime(runtime_config);
+        runtime.UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(render_config));
 
         spectra::scene::Scene scene = spectra::scene::BuildScene(*scene_name);
 
-        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, scene);
+        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, scene, render_config);
 
         spectra::Float seconds = pathtracer.Render();
 
