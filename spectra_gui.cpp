@@ -591,7 +591,7 @@ namespace spectra::app {
 
 int main(const int argc, char**) {
     try {
-        if (argc != 1) throw std::runtime_error("usage: spectra");
+        if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
         std::shared_ptr<spectra::scene::SceneLibrary> scene_library = std::make_shared<spectra::scene::SceneLibrary>();
         spectra::app::RegisterRendererSceneTargets(*scene_library);

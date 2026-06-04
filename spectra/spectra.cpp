@@ -22,7 +22,6 @@ module;
 
 module spectra;
 
-import spectra.contract;
 import std;
 
 namespace {

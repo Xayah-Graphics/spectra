@@ -5,8 +5,8 @@ module;
 
 module spectra.scene.library;
 
+import spectra;
 import spectra.scene.pbrt;
-import spectra.contract;
 import std;
 
 namespace {

@@ -1,7 +1,7 @@
 export module spectra.scene.library;
 
 export import spectra.scene.pbrt;
-export import spectra.contract;
+import spectra;
 import std;
 
 export namespace spectra::scene {

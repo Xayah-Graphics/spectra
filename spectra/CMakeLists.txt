@@ -32,7 +32,6 @@ target_sources(
         spectra_core
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        spectra_contract.ixx
         spectra.ixx
         PRIVATE
         spectra.cpp

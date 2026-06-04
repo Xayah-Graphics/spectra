@@ -233,8 +233,8 @@ namespace {
     };
 
     void print_usage(std::string_view message) {
-        if (!message.empty()) std::fprintf(stderr, "spectra_gpu: %.*s\n\n", static_cast<int>(message.size()), message.data());
-        std::fprintf(stderr, "usage: spectra_gpu <scene-name> [--outfile <file.exr>] [--spp <n>] [--seed <n>] [--gpu-device <index>] [--quiet]\n");
+        if (!message.empty()) std::fprintf(stderr, "spectra_cli: %.*s\n\n", static_cast<int>(message.size()), message.data());
+        std::fprintf(stderr, "usage: spectra_cli <scene-name> [--outfile <file.exr>] [--spp <n>] [--seed <n>] [--gpu-device <index>] [--quiet]\n");
     }
 
     [[nodiscard]] const std::string& require_value(const std::vector<std::string>& arguments, std::size_t& index, std::string_view option) {
@@ -289,7 +289,7 @@ int main(int argc, char* argv[]) {
             } else if (!argument.empty() && argument[0] == '-') {
                 throw UsageError("unknown argument \"" + argument + "\"");
             } else {
-                if (scene_name.has_value()) throw UsageError("spectra_gpu accepts exactly one scene name");
+                if (scene_name.has_value()) throw UsageError("spectra_cli accepts exactly one scene name");
                 scene_name = argument;
             }
         }
@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
         spectra::scene::SceneWorkspace scene_workspace                      = spectra::scene::BuildPbrtScene(*scene_name);
         std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot = scene_workspace.snapshot();
         spectra::pathtracer::SceneSnapshot pathtracer_scene                = spectra::app::ToPathtracerScene(*scene_snapshot);
-        spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_gpu scene");
+        spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_cli scene");
         std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(pathtracer_scene, render_config, &scene_memory_scope);
         spectra::pathtracer::WavefrontPathtracer pathtracer(&scene_memory_scope, *compiled_scene, render_config);
 
