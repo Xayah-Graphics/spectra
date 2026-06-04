@@ -51,21 +51,21 @@ namespace {
     [[nodiscard]] std::string source_location_text(const spectra::scene::SceneSourceLocation& source) {
         return std::format("{}:{}:{}", source.filename, source.line, source.column);
     }
+
+    constexpr std::string_view initial_scene_id = "pbrt-book/book.pbrt";
+    constexpr std::size_t scene_background_worker_count = 30;
 } // namespace
 
 namespace xayah {
     SpectraSceneSession::SpectraSceneSession() : workspace(std::make_shared<spectra::scene::SceneWorkspace>()) {
         this->scene_catalog = spectra::scene::DiscoverSceneCatalog();
-        std::optional<std::size_t> active_scene_index{};
-        for (std::size_t scene_index = 0; scene_index < this->scene_catalog.entries.size(); ++scene_index) {
-            if (this->scene_catalog.entries[scene_index].state == spectra::scene::SceneCatalogEntryState::Pending) spectra::scene::ValidateSceneCatalogEntry(this->scene_catalog.entries[scene_index]);
-            if (this->scene_catalog.entries[scene_index].state == spectra::scene::SceneCatalogEntryState::Ready && this->scene_catalog.entries[scene_index].document != nullptr) {
-                active_scene_index = scene_index;
-                break;
-            }
-        }
-        if (!active_scene_index.has_value()) throw std::runtime_error("Spectra scene catalog does not contain a parseable scene");
-        this->active_scene_index           = *active_scene_index;
+        this->scene_catalog_validation_claimed.assign(this->scene_catalog.entries.size(), false);
+        const std::string initial_scene_id_string{initial_scene_id};
+        const auto active_scene_iter = std::ranges::find_if(this->scene_catalog.entries, [&initial_scene_id_string](const spectra::scene::SceneCatalogEntry& entry) { return entry.id == initial_scene_id_string; });
+        if (active_scene_iter == this->scene_catalog.entries.end()) throw std::runtime_error(std::format("Spectra scene catalog does not contain required initial scene \"{}\"", initial_scene_id));
+        if (active_scene_iter->state == spectra::scene::SceneCatalogEntryState::Pending) spectra::scene::ValidateSceneCatalogEntry(*active_scene_iter);
+        if (active_scene_iter->state != spectra::scene::SceneCatalogEntryState::Ready || active_scene_iter->document == nullptr) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not parseable", initial_scene_id));
+        this->active_scene_index           = static_cast<std::size_t>(std::distance(this->scene_catalog.entries.begin(), active_scene_iter));
         this->scene_library.selected_index = this->active_scene_index;
         *this->workspace                   = spectra::scene::SceneWorkspace{*this->scene_catalog.entries[this->active_scene_index].document};
         this->refresh_scene_catalog_counts();
@@ -76,10 +76,15 @@ namespace xayah {
     }
 
     void SpectraSceneSession::detach() noexcept {
-        if (this->scene_catalog_validator.joinable()) {
-            this->scene_catalog_validator.request_stop();
-            this->scene_catalog_validator.join();
+        for (std::jthread& worker : this->scene_background_workers) worker.request_stop();
+        this->scene_background_condition.notify_all();
+        for (std::jthread& worker : this->scene_background_workers) {
+            if (worker.joinable()) worker.join();
         }
+        this->scene_background_workers.clear();
+        this->translation_requests.clear();
+        this->translation_requests_in_progress.clear();
+        this->scene_catalog_validation_claimed.clear();
         this->attached = false;
     }
 
@@ -111,6 +116,21 @@ namespace xayah {
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
             this->ensure_translation_target_exists(renderer_name);
+        }
+        {
+            spectra::scene::SceneCatalogEntry entry{};
+            {
+                std::scoped_lock lock{this->scene_catalog_mutex};
+                if (this->active_scene_index >= this->scene_catalog.entries.size()) throw std::runtime_error("Spectra active scene index is out of range while selecting the initial renderer scene");
+                entry = this->scene_catalog.entries[this->active_scene_index];
+            }
+            if (entry.state == spectra::scene::SceneCatalogEntryState::Ready && entry.document != nullptr) {
+                const spectra::scene::SceneTranslationReport report = this->analyze_document(renderer_name, *entry.document);
+                if (report.supported) {
+                    this->set_active_renderer(renderer_name);
+                    return;
+                }
+            }
         }
         for (std::size_t scene_index = 0; scene_index < this->scene_catalog.entries.size(); ++scene_index) {
             spectra::scene::SceneCatalogEntry entry{};
@@ -180,36 +200,92 @@ namespace xayah {
             .draw           = [this] { this->draw_scene_library_window(); },
         });
         this->attached = true;
-        this->start_scene_catalog_validation();
+        this->start_scene_background_workers();
     }
 
-    void SpectraSceneSession::start_scene_catalog_validation() {
-        if (this->scene_catalog_validator.joinable()) throw std::runtime_error("Spectra scene catalog validator is already running");
-        this->scene_catalog_validator = std::jthread{[this](const std::stop_token stop_token) { this->validate_scene_catalog(stop_token); }};
+    void SpectraSceneSession::start_scene_background_workers() {
+        if (!this->scene_background_workers.empty()) throw std::runtime_error("Spectra scene background workers are already running");
+        {
+            std::scoped_lock lock{this->scene_catalog_mutex};
+            this->scene_catalog_validation_claimed.assign(this->scene_catalog.entries.size(), false);
+        }
+        this->scene_background_workers.reserve(scene_background_worker_count);
+        for (std::size_t worker_index = 0; worker_index < scene_background_worker_count; ++worker_index) {
+            this->scene_background_workers.emplace_back([this](const std::stop_token stop_token) { this->run_scene_background_worker(stop_token); });
+        }
+        this->scene_background_condition.notify_all();
     }
 
-    void SpectraSceneSession::validate_scene_catalog(const std::stop_token stop_token) {
+    void SpectraSceneSession::run_scene_background_worker(const std::stop_token stop_token) {
         while (!stop_token.stop_requested()) {
-            std::optional<std::size_t> pending_index{};
-            spectra::scene::SceneCatalogEntry pending_entry{};
+            std::optional<std::size_t> validation_index{};
+            spectra::scene::SceneCatalogEntry validation_entry{};
+            std::optional<TranslationRequest> translation_request{};
+            std::function<spectra::scene::SceneTranslationReport(const spectra::scene::SceneSnapshot&)> analyze{};
             {
-                std::scoped_lock lock{this->scene_catalog_mutex};
-                const auto iter = std::ranges::find_if(this->scene_catalog.entries, [](const spectra::scene::SceneCatalogEntry& entry) { return entry.state == spectra::scene::SceneCatalogEntryState::Pending; });
-                if (iter == this->scene_catalog.entries.end()) return;
-                pending_index = static_cast<std::size_t>(std::distance(this->scene_catalog.entries.begin(), iter));
-                pending_entry = *iter;
+                std::unique_lock lock{this->scene_catalog_mutex};
+                if (!this->scene_background_condition.wait(lock, stop_token, [this] { return this->has_scene_background_work_locked(); })) return;
+                validation_index = this->next_catalog_validation_index_locked();
+                if (validation_index.has_value()) {
+                    this->scene_catalog_validation_claimed[*validation_index] = true;
+                    validation_entry = this->scene_catalog.entries[*validation_index];
+                } else {
+                    translation_request = std::move(this->translation_requests.front());
+                    this->translation_requests.pop_front();
+                    this->translation_requests_in_progress.push_back(translation_request->key);
+                    for (const spectra::scene::SceneTranslationTarget& target : this->translation_targets) {
+                        if (target.rendererName != translation_request->key.rendererName) continue;
+                        analyze = target.analyze;
+                        break;
+                    }
+                    if (!analyze) throw std::runtime_error(std::format("Renderer \"{}\" has no scene translator", translation_request->key.rendererName));
+                }
             }
 
-            spectra::scene::ValidateSceneCatalogEntry(pending_entry);
-            if (stop_token.stop_requested()) return;
+            if (validation_index.has_value()) {
+                spectra::scene::ValidateSceneCatalogEntry(validation_entry);
+                if (stop_token.stop_requested()) return;
+                {
+                    std::scoped_lock lock{this->scene_catalog_mutex};
+                    if (*validation_index >= this->scene_catalog.entries.size()) throw std::runtime_error("Spectra scene catalog validation index is out of range");
+                    if (this->scene_catalog.entries[*validation_index].id != validation_entry.id) throw std::runtime_error("Spectra scene catalog changed while validating");
+                    this->scene_catalog.entries[*validation_index] = std::move(validation_entry);
+                    this->scene_catalog_validation_claimed[*validation_index] = false;
+                    this->clear_translation_cache_for_scene(this->scene_catalog.entries[*validation_index].id);
+                    this->refresh_scene_catalog_counts();
+                }
+                this->scene_background_condition.notify_all();
+                continue;
+            }
+
+            spectra::scene::SceneTranslationReport report{.target = translation_request->key.rendererName};
+            try {
+                report = analyze(*translation_request->document);
+                if (report.target.empty()) report.target = translation_request->key.rendererName;
+            } catch (const std::exception& error) {
+                report.supported = false;
+                report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
+                    .source  = spectra::scene::SceneSourceLocation{.filename = translation_request->document->source, .line = 1, .column = 1},
+                    .message = error.what(),
+                });
+            }
 
             {
                 std::scoped_lock lock{this->scene_catalog_mutex};
-                if (*pending_index >= this->scene_catalog.entries.size()) throw std::runtime_error("Spectra scene catalog validation index is out of range");
-                if (this->scene_catalog.entries[*pending_index].id != pending_entry.id) throw std::runtime_error("Spectra scene catalog changed while validating");
-                this->scene_catalog.entries[*pending_index] = std::move(pending_entry);
-                this->clear_translation_cache_for_scene(this->scene_catalog.entries[*pending_index].id);
-                this->refresh_scene_catalog_counts();
+                std::erase_if(this->translation_requests_in_progress, [this, &translation_request](const TranslationRequestKey& key) { return this->translation_request_key_matches(key, translation_request->key); });
+                bool catalog_entry_still_matches = false;
+                if (translation_request->sceneIndex < this->scene_catalog.entries.size()) {
+                    const spectra::scene::SceneCatalogEntry& entry = this->scene_catalog.entries[translation_request->sceneIndex];
+                    catalog_entry_still_matches                    = entry.document != nullptr && entry.document->name == translation_request->key.sceneId && entry.document->revision == translation_request->key.revision;
+                }
+                if (catalog_entry_still_matches && !this->has_translation_cache_entry_locked(translation_request->key)) {
+                    this->translation_cache.push_back(TranslationCacheEntry{
+                        .rendererName = translation_request->key.rendererName,
+                        .sceneId      = translation_request->key.sceneId,
+                        .revision     = translation_request->key.revision,
+                        .report       = std::move(report),
+                    });
+                }
             }
         }
     }
@@ -237,6 +313,45 @@ namespace xayah {
         throw std::runtime_error(std::format("Renderer \"{}\" has no scene translator", renderer_name));
     }
 
+    bool SpectraSceneSession::has_scene_background_work_locked() const {
+        if (!this->translation_requests.empty()) return true;
+        return this->next_catalog_validation_index_locked().has_value();
+    }
+
+    std::optional<std::size_t> SpectraSceneSession::next_catalog_validation_index_locked() const {
+        if (this->scene_catalog_validation_claimed.size() != this->scene_catalog.entries.size()) throw std::runtime_error("Spectra scene catalog validation claim table is out of sync");
+        for (std::size_t scene_index = 0; scene_index < this->scene_catalog.entries.size(); ++scene_index) {
+            if (this->scene_catalog.entries[scene_index].state != spectra::scene::SceneCatalogEntryState::Pending) continue;
+            if (this->scene_catalog_validation_claimed[scene_index]) continue;
+            return scene_index;
+        }
+        return {};
+    }
+
+    bool SpectraSceneSession::translation_request_key_matches(const TranslationRequestKey& lhs, const TranslationRequestKey& rhs) {
+        return lhs.rendererName == rhs.rendererName && lhs.sceneId == rhs.sceneId && lhs.revision == rhs.revision;
+    }
+
+    bool SpectraSceneSession::has_translation_cache_entry_locked(const TranslationRequestKey& key) const {
+        for (const TranslationCacheEntry& cache_entry : this->translation_cache) {
+            const TranslationRequestKey cache_key{
+                .rendererName = cache_entry.rendererName,
+                .sceneId      = cache_entry.sceneId,
+                .revision     = cache_entry.revision,
+            };
+            if (translation_request_key_matches(cache_key, key)) return true;
+        }
+        return false;
+    }
+
+    bool SpectraSceneSession::has_translation_request_locked(const TranslationRequestKey& key) const {
+        for (const TranslationRequest& request : this->translation_requests)
+            if (translation_request_key_matches(request.key, key)) return true;
+        for (const TranslationRequestKey& request_key : this->translation_requests_in_progress)
+            if (translation_request_key_matches(request_key, key)) return true;
+        return false;
+    }
+
     spectra::scene::SceneTranslationReport SpectraSceneSession::analyze_document(const std::string_view renderer_name, const spectra::scene::SceneSnapshot& document) {
         std::function<spectra::scene::SceneTranslationReport(const spectra::scene::SceneSnapshot&)> analyze{};
         {
@@ -258,6 +373,9 @@ namespace xayah {
 
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
+            for (TranslationCacheEntry& cache_entry : this->translation_cache) {
+                if (cache_entry.rendererName == renderer_name && cache_entry.sceneId == document.name && cache_entry.revision == document.revision) return cache_entry.report;
+            }
             this->translation_cache.push_back(TranslationCacheEntry{
                 .rendererName = std::string{renderer_name},
                 .sceneId      = document.name,
@@ -283,22 +401,44 @@ namespace xayah {
         };
     }
 
-    SpectraSceneSession::DisplayState SpectraSceneSession::display_state(const spectra::scene::SceneCatalogEntry& entry, const std::optional<spectra::scene::SceneTranslationReport>& report) const {
+    SpectraSceneSession::DisplayState SpectraSceneSession::display_state(const spectra::scene::SceneCatalogEntry& entry, const std::optional<spectra::scene::SceneTranslationReport>& report, const bool renderer_report_required) const {
         if (entry.state == spectra::scene::SceneCatalogEntryState::Pending) return DisplayState::Checking;
         if (entry.state == spectra::scene::SceneCatalogEntryState::Invalid) return DisplayState::Invalid;
         if (entry.state != spectra::scene::SceneCatalogEntryState::Ready) throw std::runtime_error("Unknown Spectra scene catalog entry state");
+        if (renderer_report_required && !report.has_value()) return DisplayState::Checking;
         if (report.has_value() && !report->supported) return DisplayState::Unsupported;
         return DisplayState::Ready;
     }
 
-    std::optional<spectra::scene::SceneTranslationReport> SpectraSceneSession::cached_entry_report(const spectra::scene::SceneCatalogEntry& entry) {
-        std::string renderer_name{};
+    std::optional<spectra::scene::SceneTranslationReport> SpectraSceneSession::cached_entry_report(const std::string_view renderer_name, const spectra::scene::SceneCatalogEntry& entry) const {
+        if (renderer_name.empty() || entry.state != spectra::scene::SceneCatalogEntryState::Ready || entry.document == nullptr) return {};
+        std::scoped_lock lock{this->scene_catalog_mutex};
+        for (const TranslationCacheEntry& cache_entry : this->translation_cache) {
+            if (cache_entry.rendererName == renderer_name && cache_entry.sceneId == entry.document->name && cache_entry.revision == entry.document->revision) return cache_entry.report;
+        }
+        return {};
+    }
+
+    void SpectraSceneSession::request_entry_report_analysis(const std::string_view renderer_name, const std::size_t scene_index, const spectra::scene::SceneCatalogEntry& entry) {
+        if (renderer_name.empty() || entry.state != spectra::scene::SceneCatalogEntryState::Ready || entry.document == nullptr) return;
+        TranslationRequest request{
+            .key =
+                TranslationRequestKey{
+                    .rendererName = std::string{renderer_name},
+                    .sceneId      = entry.document->name,
+                    .revision     = entry.document->revision,
+                },
+            .sceneIndex = scene_index,
+            .document   = entry.document,
+        };
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
-            renderer_name = this->active_renderer;
+            this->ensure_translation_target_exists(renderer_name);
+            if (this->has_translation_cache_entry_locked(request.key)) return;
+            if (this->has_translation_request_locked(request.key)) return;
+            this->translation_requests.push_back(std::move(request));
         }
-        if (renderer_name.empty() || entry.state != spectra::scene::SceneCatalogEntryState::Ready || entry.document == nullptr) return {};
-        return this->analyze_document(renderer_name, *entry.document);
+        this->scene_background_condition.notify_one();
     }
 
     void SpectraSceneSession::commit_document(const std::size_t scene_index, const spectra::scene::SceneSnapshot& document) {
@@ -396,10 +536,11 @@ namespace xayah {
             ImGui::TableHeadersRow();
             for (std::size_t scene_index = 0; scene_index < catalog_snapshot.entries.size(); ++scene_index) {
                 const spectra::scene::SceneCatalogEntry& entry = catalog_snapshot.entries[scene_index];
-                const std::optional<spectra::scene::SceneTranslationReport> report = this->cached_entry_report(entry);
-                const DisplayState state                                          = this->display_state(entry, report);
-                if (!display_filter_matches(state, filter_snapshot)) continue;
                 if (!contains_case_insensitive(entry.id, search_text) && !contains_case_insensitive(entry.displayName, search_text) && !contains_case_insensitive(entry.group, search_text)) continue;
+                std::optional<spectra::scene::SceneTranslationReport> report = this->cached_entry_report(active_renderer_snapshot, entry);
+                if (!active_renderer_snapshot.empty() && entry.state == spectra::scene::SceneCatalogEntryState::Ready && entry.document != nullptr && !report.has_value()) this->request_entry_report_analysis(active_renderer_snapshot, scene_index, entry);
+                const DisplayState state = this->display_state(entry, report, !active_renderer_snapshot.empty());
+                if (!display_filter_matches(state, filter_snapshot)) continue;
 
                 const bool selected = scene_index == selected_scene_index_snapshot;
                 const bool active   = scene_index == active_scene_index_snapshot;
@@ -428,8 +569,9 @@ namespace xayah {
 
         if (selected_scene_index_snapshot >= catalog_snapshot.entries.size()) return;
         const spectra::scene::SceneCatalogEntry& selected_entry = catalog_snapshot.entries[selected_scene_index_snapshot];
-        const std::optional<spectra::scene::SceneTranslationReport> selected_report = this->cached_entry_report(selected_entry);
-        const DisplayState selected_state                                           = this->display_state(selected_entry, selected_report);
+        std::optional<spectra::scene::SceneTranslationReport> selected_report = this->cached_entry_report(active_renderer_snapshot, selected_entry);
+        if (!active_renderer_snapshot.empty() && selected_entry.state == spectra::scene::SceneCatalogEntryState::Ready && selected_entry.document != nullptr && !selected_report.has_value()) this->request_entry_report_analysis(active_renderer_snapshot, selected_scene_index_snapshot, selected_entry);
+        const DisplayState selected_state = this->display_state(selected_entry, selected_report, !active_renderer_snapshot.empty());
         ImGui::SeparatorText("Selected");
         ImGui::TextUnformatted(selected_entry.displayName.c_str());
         ImGui::TextDisabled("%s", selected_entry.id.c_str());

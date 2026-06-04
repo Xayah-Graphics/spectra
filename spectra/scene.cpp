@@ -1162,12 +1162,112 @@ namespace spectra::scene {
             return begin->string();
         }
 
-        [[nodiscard]] bool ContainsWorldBegin(const std::filesystem::path& path) {
-            PbrtTokenStream stream(path);
-            while (std::optional<Token> token = stream.Next()) {
-                if (token->kind == TokenKind::Word && token->text == "WorldBegin") return true;
+        class WorldBeginScanner {
+        public:
+            [[nodiscard]] bool Feed(const std::string_view text) {
+                for (const char character : text) {
+                    if (this->found) return true;
+                    if (this->inComment) {
+                        if (character == '\n' || character == '\r') this->inComment = false;
+                        continue;
+                    }
+                    if (this->inQuotedString) {
+                        if (this->escaped) {
+                            this->escaped = false;
+                            continue;
+                        }
+                        if (character == '\\') {
+                            this->escaped = true;
+                            continue;
+                        }
+                        if (character == '"') this->inQuotedString = false;
+                        continue;
+                    }
+                    if (character == '#') {
+                        if (this->FinishToken()) return true;
+                        this->inComment = true;
+                        continue;
+                    }
+                    if (character == '"') {
+                        if (this->FinishToken()) return true;
+                        this->inQuotedString = true;
+                        continue;
+                    }
+                    if (std::isspace(static_cast<unsigned char>(character)) || character == '[' || character == ']') {
+                        if (this->FinishToken()) return true;
+                        continue;
+                    }
+                    this->token.push_back(character);
+                }
+                return this->found;
             }
-            return false;
+
+            [[nodiscard]] bool Finish() {
+                return this->FinishToken();
+            }
+
+        private:
+            [[nodiscard]] bool FinishToken() {
+                if (this->token == "WorldBegin") {
+                    this->found = true;
+                    return true;
+                }
+                this->token.clear();
+                return false;
+            }
+
+            bool found{false};
+            bool inComment{false};
+            bool inQuotedString{false};
+            bool escaped{false};
+            std::string token{};
+        };
+
+        [[nodiscard]] bool ContainsWorldBeginPlainFile(const std::filesystem::path& path) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) throw std::runtime_error(std::format("{}: unable to open PBRT scene file", path.string()));
+
+            WorldBeginScanner scanner{};
+            std::array<char, 1 << 15> buffer{};
+            while (input) {
+                input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                const std::streamsize count = input.gcount();
+                if (count > 0 && scanner.Feed(std::string_view{buffer.data(), static_cast<std::size_t>(count)})) return true;
+            }
+            if (input.bad()) throw std::runtime_error(std::format("{}: PBRT scene file read failed", path.string()));
+            return scanner.Finish();
+        }
+
+        [[nodiscard]] bool ContainsWorldBeginGzipFile(const std::filesystem::path& path) {
+            gzFile file = gzopen(path.string().c_str(), "rb");
+            if (file == nullptr) throw std::runtime_error(std::format("{}: unable to open gzip PBRT scene file", path.string()));
+
+            WorldBeginScanner scanner{};
+            std::array<char, 1 << 15> buffer{};
+            while (true) {
+                const int count = gzread(file, buffer.data(), static_cast<unsigned int>(buffer.size()));
+                if (count < 0) {
+                    int errorNumber = 0;
+                    const char* message = gzerror(file, &errorNumber);
+                    gzclose(file);
+                    throw std::runtime_error(std::format("{}: gzip read failed: {}", path.string(), message == nullptr ? "unknown zlib error" : message));
+                }
+                if (count == 0) break;
+                if (scanner.Feed(std::string_view{buffer.data(), static_cast<std::size_t>(count)})) {
+                    const int closeStatus = gzclose(file);
+                    if (closeStatus != Z_OK) throw std::runtime_error(std::format("{}: gzip close failed", path.string()));
+                    return true;
+                }
+            }
+
+            const int closeStatus = gzclose(file);
+            if (closeStatus != Z_OK) throw std::runtime_error(std::format("{}: gzip close failed", path.string()));
+            return scanner.Finish();
+        }
+
+        [[nodiscard]] bool ContainsWorldBegin(const std::filesystem::path& path) {
+            if (HasExtension(path, ".gz")) return ContainsWorldBeginGzipFile(path);
+            return ContainsWorldBeginPlainFile(path);
         }
 
         void RefreshCatalogCounts(SceneCatalog* catalog) {
