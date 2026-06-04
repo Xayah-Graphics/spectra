@@ -196,6 +196,40 @@ export extern "C++" {
             std::string message{};
         };
 
+        enum class SceneProbeFeatureCategory {
+            PixelFilter,
+            Film,
+            Camera,
+            Sampler,
+            Integrator,
+            Accelerator,
+            Material,
+            Texture,
+            Medium,
+            Light,
+            AreaLight,
+            Shape,
+            LightSampler,
+            Option,
+            AnimatedTransform,
+        };
+
+        struct SceneProbeFeature {
+            SceneProbeFeatureCategory category{SceneProbeFeatureCategory::Option};
+            std::string type{};
+            std::string kind{};
+            SceneSourceLocation source{};
+        };
+
+        struct SceneProbeReport {
+            SceneRevision revision{};
+            std::string name{};
+            std::string title{};
+            std::string source{};
+            std::vector<SceneProbeFeature> features{};
+            std::vector<SceneDiagnostic> diagnostics{};
+        };
+
         struct SceneTranslationReport {
             std::string target{};
             bool supported{true};
@@ -204,6 +238,7 @@ export extern "C++" {
 
         struct SceneTranslationTarget {
             std::string rendererName{};
+            std::function<SceneTranslationReport(const SceneProbeReport&)> probe{};
             std::function<SceneTranslationReport(const SceneSnapshot&)> analyze{};
         };
 

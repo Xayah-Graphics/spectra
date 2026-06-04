@@ -121,6 +121,10 @@ namespace spectra::pathtracer {
             if (!ContainsName(supported, entity.type)) AddDiagnostic(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
         }
 
+        void ValidateProbeFeatureType(spectra::scene::SceneTranslationReport* report, const spectra::scene::SceneProbeFeature& feature, const std::set<std::string>& supported, const std::string_view kind) {
+            if (!ContainsName(supported, feature.type)) AddDiagnostic(report, feature.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, feature.type));
+        }
+
         void AppendParameterValues(ParsedParameter* parsedParameter, const spectra::scene::SceneParameter& parameter) {
             if (const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values)) {
                 for (float value : *values) parsedParameter->AddFloat(value);
@@ -685,6 +689,57 @@ namespace spectra::pathtracer {
             std::set<std::string> objectDefinitionNames{};
         };
     } // namespace
+
+    spectra::scene::SceneTranslationReport AnalyzePathtracerSceneProbe(const spectra::scene::SceneProbeReport& probe) {
+        static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
+        static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
+        static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
+        static const std::set<std::string> supportedSamplers{"zsobol", "paddedsobol", "halton", "sobol", "pmj02bn", "independent", "stratified"};
+        static const std::set<std::string> supportedIntegrators{"path", "volpath"};
+        static const std::set<std::string> supportedAccelerators{"bvh"};
+        static const std::set<std::string> supportedMaterials{"none", "interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
+        static const std::set<std::string> supportedTextures{"constant", "scale", "mix", "directionmix", "bilerp", "imagemap", "checkerboard", "dots", "fbm", "wrinkled", "windy", "marble", "ptex"};
+        static const std::set<std::string> supportedMedia{"homogeneous", "uniformgrid", "rgbgrid", "cloud", "nanovdb"};
+        static const std::set<std::string> supportedLights{"point", "spot", "goniometric", "projection", "distant", "infinite"};
+        static const std::set<std::string> supportedAreaLights{"diffuse"};
+        static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
+        static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
+
+        spectra::scene::SceneTranslationReport report{.target = "Spectra Pathtracer"};
+        for (const spectra::scene::SceneProbeFeature& feature : probe.features) {
+            switch (feature.category) {
+            case spectra::scene::SceneProbeFeatureCategory::PixelFilter: ValidateProbeFeatureType(&report, feature, supportedFilters, "pixel filter"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Film: ValidateProbeFeatureType(&report, feature, supportedFilms, "film"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Camera: ValidateProbeFeatureType(&report, feature, supportedCameras, "camera"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Sampler: ValidateProbeFeatureType(&report, feature, supportedSamplers, "sampler"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Integrator: ValidateProbeFeatureType(&report, feature, supportedIntegrators, "integrator"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Accelerator: ValidateProbeFeatureType(&report, feature, supportedAccelerators, "accelerator"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Material: ValidateProbeFeatureType(&report, feature, supportedMaterials, "material"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Texture:
+                if (feature.kind != "float" && feature.kind != "spectrum") AddDiagnostic(&report, feature.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", feature.kind));
+                ValidateProbeFeatureType(&report, feature, supportedTextures, "texture");
+                if (feature.kind == "float" && feature.type == "marble") AddDiagnostic(&report, feature.source, "\"marble\" is only a spectrum texture in the GPU pathtracer");
+                if (feature.kind == "spectrum" && (feature.type == "fbm" || feature.type == "wrinkled" || feature.type == "windy")) AddDiagnostic(&report, feature.source, std::format("\"{}\" is only a float texture in the GPU pathtracer", feature.type));
+                break;
+            case spectra::scene::SceneProbeFeatureCategory::Medium: ValidateProbeFeatureType(&report, feature, supportedMedia, "medium"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Light: ValidateProbeFeatureType(&report, feature, supportedLights, "light"); break;
+            case spectra::scene::SceneProbeFeatureCategory::AreaLight: ValidateProbeFeatureType(&report, feature, supportedAreaLights, "area light"); break;
+            case spectra::scene::SceneProbeFeatureCategory::Shape:
+                if (feature.type != "objectinstance") ValidateProbeFeatureType(&report, feature, supportedShapes, "shape");
+                break;
+            case spectra::scene::SceneProbeFeatureCategory::LightSampler:
+                if (!feature.type.empty() && !ContainsName(supportedLightSamplers, feature.type)) AddDiagnostic(&report, feature.source, std::format("GPU pathtracer does not support light sampler \"{}\"", feature.type));
+                break;
+            case spectra::scene::SceneProbeFeatureCategory::Option:
+                AddDiagnostic(&report, feature.source, std::format("PBRT Option \"{}\" is represented by the scene probe but is not wired into the current pathtracer runtime", feature.type));
+                break;
+            case spectra::scene::SceneProbeFeatureCategory::AnimatedTransform:
+                AddDiagnostic(&report, feature.source, std::format("{} uses animated transforms, which are represented by the scene probe but are not supported by the current GPU pathtracer", feature.type));
+                break;
+            }
+        }
+        return report;
+    }
 
     spectra::scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const spectra::scene::SceneSnapshot& scene) {
         static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};

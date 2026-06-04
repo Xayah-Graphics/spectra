@@ -42,6 +42,15 @@ namespace {
 } // namespace
 
 namespace spectra::rasterizer {
+    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_rasterizer_scene_probe(const spectra::scene::SceneProbeReport& probe) {
+        spectra::scene::SceneTranslationReport report{.target = std::string{RasterizerRenderer::target_name()}, .supported = false};
+        report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
+            .source  = spectra::scene::SceneSourceLocation{.filename = probe.source, .line = 1, .column = 1},
+            .message = "Rasterizer backend does not currently provide PBRT scene rasterization translation",
+        });
+        return report;
+    }
+
     [[nodiscard]] spectra::scene::SceneTranslationReport analyze_rasterizer_scene(const spectra::scene::SceneSnapshot& document) {
         spectra::scene::SceneTranslationReport report{.target = std::string{RasterizerRenderer::target_name()}, .supported = false};
         if (document.name.empty()) {
@@ -127,6 +136,7 @@ namespace spectra::rasterizer {
     spectra::scene::SceneTranslationTarget RasterizerRenderer::translation_target() {
         return spectra::scene::SceneTranslationTarget{
             .rendererName = std::string{RasterizerRenderer::target_name()},
+            .probe        = [](const spectra::scene::SceneProbeReport& probe) { return analyze_rasterizer_scene_probe(probe); },
             .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_rasterizer_scene(document); },
         };
     }

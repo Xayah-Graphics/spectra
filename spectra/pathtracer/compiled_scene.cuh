@@ -22,6 +22,7 @@
 #include <vector>
 
 namespace spectra::scene {
+    struct SceneProbeReport;
     struct SceneTranslationReport;
     struct SceneSnapshot;
 } // namespace spectra::scene
@@ -117,6 +118,7 @@ namespace spectra::pathtracer {
         ThreadLocal<Allocator> threadAllocators;
     };
 
+    [[nodiscard]] spectra::scene::SceneTranslationReport AnalyzePathtracerSceneProbe(const spectra::scene::SceneProbeReport& probe);
     [[nodiscard]] spectra::scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const spectra::scene::SceneSnapshot& scene);
     [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const spectra::scene::SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
 } // namespace spectra::pathtracer

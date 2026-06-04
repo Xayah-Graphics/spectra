@@ -939,6 +939,12 @@ namespace spectra::pathtracer {
 
 
 namespace spectra::pathtracer {
+    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_pathtracer_scene_probe(const spectra::scene::SceneProbeReport& probe) {
+        spectra::scene::SceneTranslationReport report = AnalyzePathtracerSceneProbe(probe);
+        if (report.target.empty()) report.target = std::string{PathtracerRenderer::target_name()};
+        return report;
+    }
+
     [[nodiscard]] spectra::scene::SceneTranslationReport analyze_pathtracer_scene(const spectra::scene::SceneSnapshot& document) {
         spectra::scene::SceneTranslationReport report = AnalyzePathtracerSceneSupport(document);
         if (report.target.empty()) report.target = std::string{PathtracerRenderer::target_name()};
@@ -1095,6 +1101,7 @@ namespace spectra::pathtracer {
     spectra::scene::SceneTranslationTarget PathtracerRenderer::translation_target() {
         return spectra::scene::SceneTranslationTarget{
             .rendererName = std::string{PathtracerRenderer::target_name()},
+            .probe        = [](const spectra::scene::SceneProbeReport& probe) { return analyze_pathtracer_scene_probe(probe); },
             .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_pathtracer_scene(document); },
         };
     }
@@ -1176,10 +1183,6 @@ namespace spectra::pathtracer {
     }
 
     void PathtracerRenderer::Impl::detach_noexcept() noexcept {
-        try {
-            if (this->attached && this->device != nullptr) this->device->waitIdle();
-        } catch (...) {
-        }
         this->unload_pathtracer_noexcept();
         this->unload_scene_noexcept();
         this->gpu_runtime.reset();

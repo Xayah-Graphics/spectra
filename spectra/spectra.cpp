@@ -341,12 +341,13 @@ namespace spectra {
     }
 
     Spectra::~Spectra() noexcept {
+        this->detach_renderers_noexcept();
+
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
         }
 
-        this->detach_renderers_noexcept();
         this->destroy_imgui();
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
