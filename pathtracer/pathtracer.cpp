@@ -993,13 +993,12 @@ namespace spectra::pathtracer {
         void synchronize_scene_workspace();
 
         void draw_viewport_window();
-        void draw_camera_window();
-        void draw_scene_browser_window();
-        void draw_settings_window();
-        void draw_inspector_window();
-        void draw_environment_window();
-        void draw_tonemapper_window();
-        void draw_statistics_window();
+        void draw_pathtracer_window();
+        void draw_render_tab();
+        void draw_camera_tab();
+        void draw_scene_tab();
+        void draw_tone_mapping_tab();
+        void draw_performance_tab();
 
         void unload_scene_noexcept() noexcept;
         void create_pathtracer_for_resolution(const std::array<int, 2>& resolution);
@@ -1697,7 +1696,33 @@ namespace spectra::pathtracer {
         ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     }
 
-    void PathtracerRenderer::Impl::draw_camera_window() {
+    void PathtracerRenderer::Impl::draw_pathtracer_window() {
+        if (ImGui::BeginTabBar("SpectraPathtracerTabs")) {
+            if (ImGui::BeginTabItem("Render")) {
+                this->draw_render_tab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Camera")) {
+                this->draw_camera_tab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Scene")) {
+                this->draw_scene_tab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Performance")) {
+                this->draw_performance_tab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Tone Mapping")) {
+                this->draw_tone_mapping_tab();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    }
+
+    void PathtracerRenderer::Impl::draw_camera_tab() {
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         if (ImGui::BeginTable("SpectraCameraControls", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
@@ -1730,7 +1755,7 @@ namespace spectra::pathtracer {
         }
     }
 
-    void PathtracerRenderer::Impl::draw_scene_browser_window() {
+    void PathtracerRenderer::Impl::draw_scene_tab() {
         if (!this->scene_info.has_value()) {
             ImGui::TextDisabled("No active Spectra scene");
             return;
@@ -1778,7 +1803,7 @@ namespace spectra::pathtracer {
         }
     }
 
-    void PathtracerRenderer::Impl::draw_settings_window() {
+    void PathtracerRenderer::Impl::draw_render_tab() {
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
         if (this->render_pipeline == nullptr) {
             ImGui::TextDisabled("No active render pipeline");
@@ -1855,88 +1880,7 @@ namespace spectra::pathtracer {
         }
     }
 
-    void PathtracerRenderer::Impl::draw_inspector_window() {
-        if (!this->scene_info.has_value()) {
-            ImGui::TextDisabled("No active Spectra scene");
-            return;
-        }
-
-        const SceneInfo& scene   = this->active_scene_info();
-        constexpr ImGuiTableFlags table_flags    = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
-        const PathtracerStatus pathtracer_status = this->pathtracer_status();
-        const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
-
-        ImGui::SeparatorText("Path Tracer");
-        if (ImGui::BeginTable("SpectraInspectorPathTracerState", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("State", pathtracer_status.state);
-            draw_statistics_row("External Completion", pathtracer_status.uses_external_completion ? "Yes" : "No");
-            ImGui::EndTable();
-        }
-
-        ImGui::SeparatorText("Scene");
-        if (ImGui::BeginTable("SpectraInspectorScene", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Scene", std::string(scene.title));
-            draw_statistics_row("Name", std::string(scene.name));
-            draw_statistics_row("Camera", std::string(scene.camera));
-            draw_statistics_row("Film Resolution", resolution_text(this->scene_film_resolution));
-            draw_statistics_row("Sampler SPP", positive_int_text(this->scene_sampler_sample_count));
-            draw_statistics_row("Viewport", viewport_resolution);
-            draw_statistics_row("Swapchain", std::format("{} x {}", this->swapchain_extent.width, this->swapchain_extent.height));
-            ImGui::EndTable();
-        }
-
-        ImGui::SeparatorText("Resources");
-        if (ImGui::BeginTable("SpectraInspectorResources", 2, table_flags)) {
-            ImGui::TableSetupColumn("Resource", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Shapes", std::format("{}", scene.shape_count));
-            draw_statistics_row("Materials", std::format("{}", scene.material_count));
-            draw_statistics_row("Textures", std::format("{}", scene.texture_count));
-            draw_statistics_row("Media", std::format("{}", scene.medium_count));
-            draw_statistics_row("Lights", std::format("{}", scene.light_count));
-            draw_statistics_row("Object Definitions", std::format("{}", scene.object_definition_count));
-            draw_statistics_row("Object Instances", std::format("{}", scene.object_instance_count));
-            ImGui::EndTable();
-        }
-
-        if (this->render_pipeline != nullptr) {
-            ImGui::SeparatorText("Path Tracer");
-            if (ImGui::BeginTable("SpectraInspectorPathTracer", 2, table_flags)) {
-                ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_statistics_row("Sample", std::format("{} / {}", this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count()));
-                draw_statistics_row("Completion", std::format("{:.1f}%", this->render_pipeline->completion_ratio() * 100.0f));
-                draw_statistics_row("Exposure", std::format("{:.3f}", this->render_pipeline->current_exposure()));
-                ImGui::EndTable();
-            }
-        }
-    }
-
-    void PathtracerRenderer::Impl::draw_environment_window() {
-        if (!this->scene_info.has_value()) {
-            ImGui::TextDisabled("No active Spectra pathtracer scene");
-            return;
-        }
-
-        const SceneInfo& scene = this->active_scene_info();
-        constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
-        ImGui::SeparatorText("Summary");
-        if (ImGui::BeginTable("SpectraEnvironmentSummary", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Lights", std::format("{}", scene.light_count));
-            draw_statistics_row("Area Lights", std::format("{}", scene.area_light_count));
-            draw_statistics_row("Infinite Lights", std::format("{}", scene.infinite_light_count));
-            draw_statistics_row("Media", std::format("{}", scene.medium_count));
-            ImGui::EndTable();
-        }
-    }
-
-    void PathtracerRenderer::Impl::draw_tonemapper_window() {
+    void PathtracerRenderer::Impl::draw_tone_mapping_tab() {
         if (this->render_pipeline == nullptr) {
             ImGui::TextDisabled("No active render pipeline");
             return;
@@ -1959,7 +1903,7 @@ namespace spectra::pathtracer {
         }
     }
 
-    void PathtracerRenderer::Impl::draw_statistics_window() {
+    void PathtracerRenderer::Impl::draw_performance_tab() {
         constexpr ImGuiTableFlags table_flags    = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
@@ -2054,66 +1998,13 @@ namespace spectra::pathtracer {
             .draw                = [this] { this->draw_viewport_window(); },
         });
         host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.camera",
-            .title          = "Camera",
-            .icon           = ICON_MS_PHOTO_CAMERA,
-            .shortcut_label = "F1",
-            .shortcut_key   = ImGuiKey_F1,
-            .dock_slot      = PathtracerDockSlot::Left,
-            .draw           = [this] { this->draw_camera_window(); },
-        });
-        host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.scene_browser",
-            .title          = "Scene Summary",
-            .icon           = ICON_MS_ACCOUNT_TREE,
-            .shortcut_label = "F9",
-            .shortcut_key   = ImGuiKey_F9,
-            .dock_slot      = PathtracerDockSlot::Right,
-            .draw           = [this] { this->draw_scene_browser_window(); },
-        });
-        host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.settings",
-            .title          = "Settings",
+            .id             = "pathtracer.panel",
+            .title          = "Pathtracer",
             .icon           = ICON_MS_SETTINGS,
             .shortcut_label = "F3",
             .shortcut_key   = ImGuiKey_F3,
-            .dock_slot      = PathtracerDockSlot::Left,
-            .draw           = [this] { this->draw_settings_window(); },
-        });
-        host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.inspector",
-            .title          = "Inspector",
-            .icon           = ICON_MS_LIST_ALT,
-            .shortcut_label = "F4",
-            .shortcut_key   = ImGuiKey_F4,
-            .dock_slot      = PathtracerDockSlot::RightBottom,
-            .draw           = [this] { this->draw_inspector_window(); },
-        });
-        host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.environment",
-            .title          = "Environment",
-            .icon           = ICON_MS_PUBLIC,
-            .shortcut_label = "F5",
-            .shortcut_key   = ImGuiKey_F5,
-            .dock_slot      = PathtracerDockSlot::LeftBottom,
-            .draw           = [this] { this->draw_environment_window(); },
-        });
-        host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.tonemapper",
-            .title          = "Tonemapper",
-            .icon           = ICON_MS_TONALITY,
-            .shortcut_label = "F6",
-            .shortcut_key   = ImGuiKey_F6,
-            .dock_slot      = PathtracerDockSlot::LeftBottom,
-            .draw           = [this] { this->draw_tonemapper_window(); },
-        });
-        host.register_panel(PathtracerPanel{
-            .id              = "pathtracer.statistics",
-            .title           = "Statistics",
-            .icon            = ICON_MS_ANALYTICS,
-            .dock_slot       = PathtracerDockSlot::Bottom,
-            .show_in_toolbar = false,
-            .draw            = [this] { this->draw_statistics_window(); },
+            .dock_slot      = PathtracerDockSlot::Right,
+            .draw           = [this] { this->draw_pathtracer_window(); },
         });
     }
 } // namespace spectra::pathtracer

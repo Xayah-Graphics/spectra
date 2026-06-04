@@ -623,14 +623,16 @@ namespace spectra::scene {
         }
 
         int filter = filter_snapshot;
-        ImGui::RadioButton("All", &filter, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Candidate", &filter, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Unsupported", &filter, 2);
-        ImGui::RadioButton("Invalid", &filter, 3);
-        ImGui::SameLine();
-        ImGui::RadioButton("Checking", &filter, 4);
+        constexpr std::array<const char*, 5> filter_labels{"All", "Candidate", "Unsupported", "Invalid", "Checking"};
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##SpectraSceneFilter", filter_labels.at(static_cast<std::size_t>(filter)))) {
+            for (std::size_t filter_index = 0; filter_index < filter_labels.size(); ++filter_index) {
+                const bool selected = filter == static_cast<int>(filter_index);
+                if (ImGui::Selectable(filter_labels[filter_index], selected)) filter = static_cast<int>(filter_index);
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
         if (filter != filter_snapshot) {
             std::scoped_lock lock{this->scene_catalog_mutex};
             this->scene_library.filter = filter;
@@ -644,7 +646,7 @@ namespace spectra::scene {
             ImGui::TableSetupColumn("Scene", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 120.0f);
             ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 105.0f);
-            ImGui::TableSetupColumn("Renderer", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn("Integrator", ImGuiTableColumnFlags_WidthFixed, 110.0f);
             ImGui::TableHeadersRow();
             for (std::size_t scene_index = 0; scene_index < catalog_snapshot.entries.size(); ++scene_index) {
                 const PbrtSceneCatalogEntry& entry = catalog_snapshot.entries[scene_index];
@@ -737,27 +739,29 @@ namespace spectra::scene {
         }
 
         if (selected_report.has_value() && !selected_report->diagnostics.empty()) {
-            ImGui::SeparatorText("Translation");
-            if (ImGui::BeginChild("SpectraSceneLibraryTranslation", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
-                for (const SceneDiagnostic& diagnostic : selected_report->diagnostics) {
-                    ImGui::TextColored(display_state_color(DisplayState::Unsupported), "%s", source_location_text(diagnostic.source).c_str());
-                    ImGui::TextWrapped("%s", diagnostic.message.c_str());
-                    ImGui::Spacing();
+            if (ImGui::CollapsingHeader("Translation", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::BeginChild("SpectraSceneLibraryTranslation", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
+                    for (const SceneDiagnostic& diagnostic : selected_report->diagnostics) {
+                        ImGui::TextColored(display_state_color(DisplayState::Unsupported), "%s", source_location_text(diagnostic.source).c_str());
+                        ImGui::TextWrapped("%s", diagnostic.message.c_str());
+                        ImGui::Spacing();
+                    }
                 }
+                ImGui::EndChild();
             }
-            ImGui::EndChild();
         }
 
         if (!selected_entry.issues.empty()) {
-            ImGui::SeparatorText("Probe Issues");
-            if (ImGui::BeginChild("SpectraSceneLibraryIssues", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
-                for (const SceneDiagnostic& issue : selected_entry.issues) {
-                    ImGui::TextColored(display_state_color(DisplayState::Invalid), "%s", source_location_text(issue.source).c_str());
-                    ImGui::TextWrapped("%s", issue.message.c_str());
-                    ImGui::Spacing();
+            if (ImGui::CollapsingHeader("Probe Issues", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::BeginChild("SpectraSceneLibraryIssues", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
+                    for (const SceneDiagnostic& issue : selected_entry.issues) {
+                        ImGui::TextColored(display_state_color(DisplayState::Invalid), "%s", source_location_text(issue.source).c_str());
+                        ImGui::TextWrapped("%s", issue.message.c_str());
+                        ImGui::Spacing();
+                    }
                 }
+                ImGui::EndChild();
             }
-            ImGui::EndChild();
         }
     }
 } // namespace spectra::scene

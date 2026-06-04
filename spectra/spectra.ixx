@@ -31,6 +31,7 @@ export namespace spectra {
         std::string id{};
         std::string title{};
         std::string icon{};
+        std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
         SpectraDockSlot dock_slot{SpectraDockSlot::Floating};
@@ -64,6 +65,7 @@ export namespace spectra {
         std::string{std::move(panel.id)};
         std::string{std::move(panel.title)};
         std::string{std::move(panel.icon)};
+        std::string{std::move(panel.owner_renderer)};
         std::string{std::move(panel.shortcut_label)};
         static_cast<ImGuiKey>(panel.shortcut_key);
         static_cast<std::underlying_type_t<SpectraDockSlot>>(panel.dock_slot);
@@ -177,11 +179,12 @@ export namespace spectra {
         void record_frame(FrameState& frame);
         void end_frame(FrameState& frame);
 
-        void draw_main_menu();
-        void draw_menu_toolbar();
+        void draw_command_bar();
         void draw_dockspace();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
+        [[nodiscard]] std::string_view active_renderer_name() const;
+        [[nodiscard]] bool panel_belongs_to_active_renderer(const SpectraPanel& panel) const;
         [[nodiscard]] SpectraRendererAvailability renderer_availability(std::string_view renderer_name);
 
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
@@ -254,6 +257,7 @@ export namespace spectra {
             .id                  = std::string{std::move(panel.id)},
             .title               = std::string{std::move(panel.title)},
             .icon                = std::string{std::move(panel.icon)},
+            .owner_renderer      = std::string{std::move(panel.owner_renderer)},
             .shortcut_label      = std::string{std::move(panel.shortcut_label)},
             .shortcut_key        = static_cast<ImGuiKey>(panel.shortcut_key),
             .dock_slot           = static_cast<SpectraDockSlot>(static_cast<std::underlying_type_t<SpectraDockSlot>>(panel.dock_slot)),

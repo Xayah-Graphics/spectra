@@ -37,6 +37,14 @@ namespace {
         }
         throw std::runtime_error("No matching Vulkan memory type for Spectra rasterizer viewport");
     }
+
+    void draw_status_row(const char* label, const std::string_view value) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(value.data(), value.data() + value.size());
+    }
 } // namespace
 
 namespace spectra::rasterizer {
@@ -65,7 +73,7 @@ namespace spectra::rasterizer {
         void destroy_imgui_descriptor_noexcept() noexcept;
 
         void draw_viewport_window();
-        void draw_settings_window();
+        void draw_rasterizer_window();
 
         const vk::raii::PhysicalDevice* physical_device{};
         const vk::raii::Device* device{};
@@ -149,27 +157,26 @@ namespace spectra::rasterizer {
     void RasterizerRenderer::Impl::register_panels(RasterizerHostView& host) {
         host.register_panel(RasterizerPanel{
             .id                  = "rasterizer.viewport",
-            .title               = "Rasterizer",
+            .title               = "Rasterizer Viewport",
             .icon                = ICON_MS_GRID_VIEW,
             .shortcut_label      = "F7",
             .shortcut_key        = ImGuiKey_F7,
             .dock_slot           = RasterizerDockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
-            .visible             = false,
+            .closable            = false,
             .show_in_toolbar     = true,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
         host.register_panel(RasterizerPanel{
-            .id              = "rasterizer.settings",
-            .title           = "Rasterizer Settings",
+            .id              = "rasterizer.panel",
+            .title           = "Rasterizer",
             .icon            = ICON_MS_TUNE,
             .shortcut_label  = "F8",
             .shortcut_key    = ImGuiKey_F8,
             .dock_slot       = RasterizerDockSlot::Right,
-            .visible         = false,
             .show_in_toolbar = true,
-            .draw            = [this] { this->draw_settings_window(); },
+            .draw            = [this] { this->draw_rasterizer_window(); },
         });
     }
 
@@ -338,7 +345,17 @@ namespace spectra::rasterizer {
         ImGui::Image(reinterpret_cast<ImTextureID>(this->viewport.imgui_descriptor), available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
     }
 
-    void RasterizerRenderer::Impl::draw_settings_window() {
-        ImGui::TextUnformatted("Rasterizer scene translation is not implemented.");
+    void RasterizerRenderer::Impl::draw_rasterizer_window() {
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        ImGui::SeparatorText("Status");
+        if (ImGui::BeginTable("SpectraRasterizerStatus", 2, table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_status_row("Renderer", "Development");
+            draw_status_row("Scene Translation", "Not implemented");
+            draw_status_row("Viewport", std::format("{} x {}", this->viewport.extent.width, this->viewport.extent.height));
+            draw_status_row("Swapchain", std::format("{} x {}", this->swapchain_extent.width, this->swapchain_extent.height));
+            ImGui::EndTable();
+        }
     }
 } // namespace spectra::rasterizer

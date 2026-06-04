@@ -141,6 +141,11 @@ namespace {
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
 
+    [[nodiscard]] float command_bar_height() {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        return ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
+    }
+
 } // namespace
 
 namespace spectra {
@@ -172,6 +177,7 @@ namespace spectra {
         const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
         if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available for the active scene", this->renderers[renderer_index].name) : availability.detail);
         this->active_renderer_index = renderer_index;
+        this->dock_layout_initialized = false;
         if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers[renderer_index].name);
     }
 
@@ -204,6 +210,16 @@ namespace spectra {
         SpectraRendererAvailability availability = this->renderer_availability_callback(renderer_name);
         if (!availability.available && availability.detail.empty()) availability.detail = std::format("Renderer \"{}\" is not available for the active scene", renderer_name);
         return availability;
+    }
+
+    std::string_view Spectra::active_renderer_name() const {
+        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        return this->renderers[this->active_renderer_index].name;
+    }
+
+    bool Spectra::panel_belongs_to_active_renderer(const SpectraPanel& panel) const {
+        return panel.owner_renderer.empty() || panel.owner_renderer == this->active_renderer_name();
     }
 
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
@@ -563,7 +579,7 @@ namespace spectra {
     }
 
     void Spectra::record_frame(FrameState& frame) {
-        this->draw_main_menu();
+        this->draw_command_bar();
         this->draw_dockspace();
         this->draw_registered_panels();
 
@@ -674,44 +690,30 @@ namespace spectra {
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
     }
 
-    void Spectra::draw_main_menu() {
+    void Spectra::draw_command_bar() {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
             for (SpectraPanel& panel : this->panels) {
+                if (!this->panel_belongs_to_active_renderer(panel)) continue;
                 if (panel.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(panel.shortcut_key, false)) panel.visible = !panel.visible;
             }
         }
 
-        if (!ImGui::BeginMainMenuBar()) return;
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem(ICON_MS_CLOSE " Exit", "Esc")) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Windows")) {
-            for (SpectraPanel& panel : this->panels) {
-                if (!panel.show_in_menu) continue;
-                const std::string label = panel.icon.empty() ? panel.title : panel.icon + " " + panel.title;
-                const char* shortcut    = panel.shortcut_label.empty() ? nullptr : panel.shortcut_label.c_str();
-                ImGui::MenuItem(label.c_str(), shortcut, &panel.visible);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Renderer")) {
-            for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
-                const bool selected = renderer_index == this->active_renderer_index;
-                const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
-                ImGui::BeginDisabled(!availability.available);
-                if (ImGui::MenuItem(this->renderers[renderer_index].name.c_str(), nullptr, selected)) this->activate_renderer(renderer_index);
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !availability.detail.empty()) ImGui::SetTooltip("%s", availability.detail.c_str());
-            }
-            ImGui::EndMenu();
-        }
-        this->draw_menu_toolbar();
-        ImGui::EndMainMenuBar();
-    }
+        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(main_viewport->WorkPos);
+        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, command_bar_height()});
 
-    void Spectra::draw_menu_toolbar() {
+        constexpr ImGuiWindowFlags command_bar_flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        const bool began = ImGui::Begin("SpectraCommandBar", nullptr, command_bar_flags);
+        if (!began) {
+            ImGui::End();
+            return;
+        }
+
+        ImGui::TextUnformatted("Spectra");
         ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
@@ -729,18 +731,16 @@ namespace spectra {
 
         std::vector<SpectraPanel*> toolbar_panels{};
         for (SpectraPanel& panel : this->panels) {
-            if (panel.show_in_toolbar) toolbar_panels.push_back(&panel);
+            if (panel.show_in_toolbar && this->panel_belongs_to_active_renderer(panel)) toolbar_panels.push_back(&panel);
         }
-        if (toolbar_panels.empty()) return;
 
         const float button_size  = ImGui::GetFrameHeight();
-        const float total_width  = 2.0f + static_cast<float>(toolbar_panels.size()) * button_size + static_cast<float>(toolbar_panels.size() + 1) * 4.0f;
+        const float total_width  = static_cast<float>(toolbar_panels.size() + 1) * button_size + static_cast<float>(toolbar_panels.size() + 2) * 4.0f + 2.0f;
         const float window_width = ImGui::GetWindowWidth();
-        if (window_width <= total_width + 520.0f) return;
-
-        ImGui::SameLine(window_width - total_width - 16.0f);
+        if (window_width > total_width + ImGui::GetCursorPosX() + 24.0f) ImGui::SameLine(window_width - total_width - ImGui::GetStyle().WindowPadding.x);
+        else ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, 4.0f);
         for (SpectraPanel* panel : toolbar_panels) {
             const char* label = panel->icon.empty() ? panel->title.c_str() : panel->icon.c_str();
             ImGui::PushStyleColor(ImGuiCol_Button, panel->visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
@@ -750,25 +750,44 @@ namespace spectra {
             if (ImGui::IsItemHovered() && panel->shortcut_label.empty()) ImGui::SetTooltip("Toggle %s Window", panel->title.c_str());
             ImGui::SameLine(0.0f, 4.0f);
         }
+        if (ImGui::Button(ICON_MS_CLOSE, ImVec2{button_size, button_size})) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit (Esc)");
+        ImGui::End();
     }
 
     void Spectra::draw_dockspace() {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        if (main_viewport->WorkSize.x <= 640.0f || main_viewport->WorkSize.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
+        const float bar_height = command_bar_height();
+        const ImVec2 dock_pos{main_viewport->WorkPos.x, main_viewport->WorkPos.y + bar_height};
+        const ImVec2 dock_size{main_viewport->WorkSize.x, std::max(1.0f, main_viewport->WorkSize.y - bar_height)};
+        if (dock_size.x <= 640.0f || dock_size.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
 
         constexpr ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
-        const ImVec4 dockspace_window_background     = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{dockspace_window_background.x, dockspace_window_background.y, dockspace_window_background.z, 0.0f});
-        const ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, main_viewport, dockspace_flags);
-        ImGui::PopStyleColor();
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(dock_pos);
+        ImGui::SetNextWindowSize(dock_size);
+        constexpr ImGuiWindowFlags dockspace_window_flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBackground;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
+        const bool began = ImGui::Begin("SpectraDockspaceHost", nullptr, dockspace_window_flags);
+        ImGui::PopStyleVar(3);
+        if (!began) {
+            ImGui::End();
+            return;
+        }
+        const ImGuiID dockspace_id = ImGui::GetID("SpectraDockspace");
+        ImGui::DockSpace(dockspace_id, ImVec2{0.0f, 0.0f}, dockspace_flags);
+        ImGui::End();
         if (dockspace_id == 0) throw std::runtime_error("Failed to create Spectra dockspace");
         if (this->dock_layout_initialized) return;
 
         ImGui::DockBuilderRemoveNode(dockspace_id);
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace | dockspace_flags);
-        ImGui::DockBuilderSetNodePos(dockspace_id, main_viewport->WorkPos);
-        ImGui::DockBuilderSetNodeSize(dockspace_id, main_viewport->WorkSize);
+        ImGui::DockBuilderSetNodePos(dockspace_id, dock_pos);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, dock_size);
 
         ImGuiID center_id = dockspace_id;
         ImGuiID left_id   = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.30f, nullptr, &center_id);
@@ -781,6 +800,7 @@ namespace spectra {
         if (left_bottom_id == 0 || right_bottom_id == 0 || left_id == 0 || right_id == 0) throw std::runtime_error("Failed to build Spectra side panels");
 
         for (const SpectraPanel& panel : this->panels) {
+            if (!this->panel_belongs_to_active_renderer(panel)) continue;
             switch (panel.dock_slot) {
             case SpectraDockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
             case SpectraDockSlot::Left: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_id); break;
@@ -800,6 +820,7 @@ namespace spectra {
 
     void Spectra::draw_registered_panels() {
         for (SpectraPanel& panel : this->panels) {
+            if (!this->panel_belongs_to_active_renderer(panel)) continue;
             if (!panel.visible) continue;
             if (panel.zero_window_padding) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
             bool open        = panel.visible;
