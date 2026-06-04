@@ -220,7 +220,7 @@ export extern "C++" {
             std::filesystem::path relativePath{};
             std::filesystem::path sourcePath{};
             SceneCatalogEntryState state{SceneCatalogEntryState::Pending};
-            std::shared_ptr<const SceneSnapshot> document{};
+            SceneRevision revision{};
             std::optional<SceneInfo> info{};
             std::vector<SceneDiagnostic> issues{};
         };
@@ -235,9 +235,10 @@ export extern "C++" {
 
         [[nodiscard]] SceneInfo DescribeScene(const SceneSnapshot& scene);
         [[nodiscard]] SceneCatalog DiscoverSceneCatalog();
+        [[nodiscard]] SceneSnapshot ParseSceneCatalogEntry(const SceneCatalogEntry& entry);
+        [[nodiscard]] SceneSnapshot ParseSceneCatalogEntry(const SceneCatalogEntry& entry, std::stop_token stop_token);
         void ValidateSceneCatalogEntry(SceneCatalogEntry& entry);
         void ValidateSceneCatalogEntry(SceneCatalogEntry& entry, std::stop_token stop_token);
-        [[nodiscard]] SceneWorkspace BuildScene(const SceneCatalogEntry& entry);
         [[nodiscard]] SceneWorkspace BuildScene(std::string_view name);
     } // namespace spectra::scene
 }

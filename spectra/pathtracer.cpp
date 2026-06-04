@@ -33,7 +33,6 @@ module;
 module xayah.spectra.pathtracer;
 
 import std;
-import xayah.spectra.pathtracer.scene;
 
 namespace {
     constexpr int interactive_default_pixel_samples = 256;
@@ -938,6 +937,12 @@ namespace xayah::pathtracer {
 
 
 namespace xayah {
+    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_pathtracer_scene(const spectra::scene::SceneSnapshot& document) {
+        spectra::scene::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneSupport(document);
+        if (report.target.empty()) report.target = std::string{SpectraPathtracer::target_name()};
+        return report;
+    }
+
     class SpectraPathtracer::Impl {
     public:
         explicit Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
@@ -1014,7 +1019,7 @@ namespace xayah {
         std::uint32_t frame_count{};
         vk::Extent2D swapchain_extent{};
         bool attached{false};
-        std::unique_ptr<PathtracerScene> scene_provider{};
+        std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace{};
 
         struct {
             bool viewport_known{false};
@@ -1081,8 +1086,15 @@ namespace xayah {
 
     SpectraPathtracer& SpectraPathtracer::operator=(SpectraPathtracer&& other) noexcept = default;
 
+    std::string_view SpectraPathtracer::target_name() {
+        return "Spectra Pathtracer";
+    }
+
     spectra::scene::SceneTranslationTarget SpectraPathtracer::translation_target() {
-        return PathtracerSceneTranslator::translation_target();
+        return spectra::scene::SceneTranslationTarget{
+            .rendererName = std::string{SpectraPathtracer::target_name()},
+            .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_pathtracer_scene(document); },
+        };
     }
 
     std::string_view SpectraPathtracer::name() const {
@@ -1143,8 +1155,16 @@ namespace xayah {
         return this->sum / static_cast<float>(this->count);
     }
 
-    SpectraPathtracer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : scene_provider(std::make_unique<PathtracerScene>(std::move(source_workspace))) {
-        if (this->scene_provider == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene provider");
+    SpectraPathtracer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
+        if (this->source_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene workspace");
+        const std::shared_ptr<const spectra::scene::SceneSnapshot> source_document = this->source_workspace->snapshot();
+        if (source_document == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
+        const spectra::scene::SceneTranslationReport report = analyze_pathtracer_scene(*source_document);
+        if (!report.supported) {
+            std::string message = std::format("{} cannot translate scene \"{}\"", SpectraPathtracer::target_name(), source_document->name);
+            if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
+            throw std::runtime_error(message);
+        }
     }
 
     SpectraPathtracer::Impl::~Impl() noexcept = default;
@@ -1188,14 +1208,20 @@ namespace xayah {
     }
 
     void SpectraPathtracer::Impl::synchronize_scene_workspace() {
-        this->scene_provider->synchronize();
-        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->scene_provider->snapshot();
-        if (next_snapshot == nullptr) throw std::runtime_error("Spectra pathtracer scene provider returned an empty scene snapshot");
+        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
+        if (next_snapshot == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
 
         if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
 
+        const spectra::scene::SceneTranslationReport report = analyze_pathtracer_scene(*next_snapshot);
+        if (!report.supported) {
+            std::string message = std::format("{} cannot translate scene \"{}\"", SpectraPathtracer::target_name(), next_snapshot->name);
+            if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
+            throw std::runtime_error(message);
+        }
+
         const spectra::scene::SceneRevision previous_revision = this->scene_snapshot == nullptr ? spectra::scene::SceneRevision{} : this->scene_snapshot->revision;
-        const spectra::scene::SceneEditBatch edit_batch       = this->scene_provider->changes_since(previous_revision);
+        const spectra::scene::SceneEditBatch edit_batch       = this->source_workspace->changes_since(previous_revision);
         spectra::scene::SceneInfo next_info                   = spectra::scene::DescribeScene(*next_snapshot);
 
         if (edit_batch.dirty != spectra::scene::SceneDirtyFlags::None && this->render_pipeline != nullptr) {

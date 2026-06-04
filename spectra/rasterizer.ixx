@@ -14,7 +14,7 @@ module;
 export module xayah.spectra.rasterizer;
 
 import std;
-export import xayah.spectra.rasterizer.scene;
+export import spectra.scene;
 
 export namespace xayah {
     enum class RasterizerDockSlot {
@@ -124,6 +124,7 @@ export namespace xayah {
         SpectraRasterizer& operator=(const SpectraRasterizer& other) = delete;
         SpectraRasterizer& operator=(SpectraRasterizer&& other) noexcept;
 
+        [[nodiscard]] static std::string_view target_name();
         [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 

@@ -1447,44 +1447,43 @@ namespace spectra::scene {
         ValidateSceneCatalogEntry(entry, std::stop_token{});
     }
 
+    SceneSnapshot ParseSceneCatalogEntry(const SceneCatalogEntry& entry) {
+        return ParseSceneCatalogEntry(entry, std::stop_token{});
+    }
+
+    SceneSnapshot ParseSceneCatalogEntry(const SceneCatalogEntry& entry, const std::stop_token stopToken) {
+        CheckSceneStop(&stopToken);
+        PbrtSceneBuilder builder(entry.sourcePath, &stopToken);
+        SceneSnapshot scene = builder.Parse();
+        scene.name          = entry.id;
+        scene.title         = entry.displayName;
+        if (scene.revision.value == 0) scene.revision = SceneRevision{1};
+        return scene;
+    }
+
     void ValidateSceneCatalogEntry(SceneCatalogEntry& entry, const std::stop_token stopToken) {
         entry.state = SceneCatalogEntryState::Pending;
-        entry.document.reset();
+        entry.revision = SceneRevision{};
         entry.info.reset();
         entry.issues.clear();
         try {
-            CheckSceneStop(&stopToken);
-            PbrtSceneBuilder builder(entry.sourcePath, &stopToken);
-            SceneSnapshot scene = builder.Parse();
-            scene.name          = entry.id;
-            scene.title         = entry.displayName;
-            if (scene.revision.value == 0) scene.revision = SceneRevision{1};
-
-            entry.document = std::make_shared<SceneSnapshot>(std::move(scene));
-            entry.info     = DescribeScene(*entry.document);
-            entry.state    = SceneCatalogEntryState::Ready;
+            SceneSnapshot scene = ParseSceneCatalogEntry(entry, stopToken);
+            entry.revision     = scene.revision;
+            entry.info         = DescribeScene(scene);
+            entry.state        = SceneCatalogEntryState::Ready;
         } catch (const SceneOperationCancelled&) {
             entry.state = SceneCatalogEntryState::Pending;
-            entry.document.reset();
+            entry.revision = SceneRevision{};
             entry.info.reset();
             entry.issues.clear();
         } catch (const std::exception& error) {
             entry.state = SceneCatalogEntryState::Invalid;
+            entry.revision = SceneRevision{};
             entry.issues.push_back(SceneDiagnostic{
                 .source  = SceneSourceLocation{.filename = entry.sourcePath.string(), .line = 1, .column = 1},
                 .message = error.what(),
             });
         }
-    }
-
-    SceneWorkspace BuildScene(const SceneCatalogEntry& entry) {
-        if (entry.state != SceneCatalogEntryState::Ready) throw std::runtime_error(std::format("Cannot build disabled Spectra scene \"{}\"", entry.id));
-        if (entry.document != nullptr) return SceneWorkspace{*entry.document};
-        PbrtSceneBuilder builder(entry.sourcePath);
-        SceneSnapshot scene = builder.Parse();
-        scene.name          = entry.id;
-        scene.title         = entry.displayName;
-        return SceneWorkspace{std::move(scene)};
     }
 
     SceneWorkspace BuildScene(const std::string_view name) {

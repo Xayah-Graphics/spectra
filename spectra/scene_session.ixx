@@ -5,9 +5,6 @@ export import xayah.spectra;
 import std;
 
 export namespace xayah {
-    template <typename Host>
-    concept SpectraSceneSessionHost = SpectraSceneHost<Host>;
-
     class SpectraSceneSession final {
     public:
         enum class DisplayState {
@@ -25,24 +22,12 @@ export namespace xayah {
         SpectraSceneSession& operator=(const SpectraSceneSession& other)     = delete;
         SpectraSceneSession& operator=(SpectraSceneSession&& other) noexcept = delete;
 
-        template <SpectraSceneSessionHost Host>
+        template <SpectraSceneHost Host>
         void attach(Host& host) {
             this->attach_panel_host([&host](SpectraPanel panel) { host.register_panel(std::move(panel)); });
         }
 
-        template <typename Host>
-        void before_imgui_shutdown(Host&) noexcept {
-            this->before_imgui_shutdown();
-        }
-
-        template <typename Host>
-        void after_imgui_created(Host&) {
-            this->after_imgui_created();
-        }
-
         void detach() noexcept;
-        void before_imgui_shutdown() noexcept;
-        void after_imgui_created();
 
         [[nodiscard]] std::shared_ptr<spectra::scene::SceneWorkspace> document_workspace() const;
         void register_translation_target(spectra::scene::SceneTranslationTarget target);
@@ -67,7 +52,7 @@ export namespace xayah {
         struct TranslationRequest {
             TranslationRequestKey key{};
             std::size_t sceneIndex{};
-            std::shared_ptr<const spectra::scene::SceneSnapshot> document{};
+            spectra::scene::SceneCatalogEntry entry{};
         };
 
         enum class BackgroundTaskKind {
@@ -97,6 +82,8 @@ export namespace xayah {
 
         void attach_panel_host(std::move_only_function<void(SpectraPanel)> register_panel);
         void start_scene_background_workers();
+        void stop_scene_background_workers_noexcept() noexcept;
+        void stop_scene_background_workers_if_idle() noexcept;
         void run_scene_background_worker(std::stop_token stop_token, std::size_t worker_index);
         void refresh_scene_catalog_counts();
         void clear_translation_cache_for_scene(std::string_view scene_id);
@@ -122,7 +109,7 @@ export namespace xayah {
         [[nodiscard]] DisplayState display_state(const spectra::scene::SceneCatalogEntry& entry, const std::optional<spectra::scene::SceneTranslationReport>& report, bool renderer_report_required) const;
         [[nodiscard]] std::optional<spectra::scene::SceneTranslationReport> cached_entry_report(std::string_view renderer_name, const spectra::scene::SceneCatalogEntry& entry) const;
         void request_entry_report_analysis(std::string_view renderer_name, std::size_t scene_index, const spectra::scene::SceneCatalogEntry& entry);
-        void commit_document(std::size_t scene_index, const spectra::scene::SceneSnapshot& document);
+        void commit_document(std::size_t scene_index, spectra::scene::SceneSnapshot document);
         void load_scene(std::size_t scene_index);
         void draw_scene_library_window();
 

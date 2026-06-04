@@ -9,7 +9,6 @@ module;
 module xayah.spectra.rasterizer;
 
 import std;
-import xayah.spectra.rasterizer.scene;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -41,6 +40,22 @@ namespace {
 } // namespace
 
 namespace xayah {
+    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_rasterizer_scene(const spectra::scene::SceneSnapshot& document) {
+        spectra::scene::SceneTranslationReport report{.target = std::string{SpectraRasterizer::target_name()}, .supported = false};
+        if (document.name.empty()) {
+            report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
+                .source  = spectra::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
+                .message = "Rasterizer scene translation requires a named scene document",
+            });
+        } else {
+            report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
+                .source  = spectra::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
+                .message = "Rasterizer backend does not currently provide PBRT scene rasterization translation",
+            });
+        }
+        return report;
+    }
+
     class SpectraRasterizer::Impl {
     public:
         explicit Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
@@ -74,7 +89,7 @@ namespace xayah {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool imgui_ready{false};
-        std::unique_ptr<RasterizerScene> scene_provider{};
+        std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace{};
 
         std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot{};
         std::optional<spectra::scene::SceneInfo> scene_info{};
@@ -103,8 +118,15 @@ namespace xayah {
 
     SpectraRasterizer& SpectraRasterizer::operator=(SpectraRasterizer&& other) noexcept = default;
 
+    std::string_view SpectraRasterizer::target_name() {
+        return "Spectra Rasterizer";
+    }
+
     spectra::scene::SceneTranslationTarget SpectraRasterizer::translation_target() {
-        return RasterizerSceneTranslator::translation_target();
+        return spectra::scene::SceneTranslationTarget{
+            .rendererName = std::string{SpectraRasterizer::target_name()},
+            .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_rasterizer_scene(document); },
+        };
     }
 
     std::string_view SpectraRasterizer::name() const {
@@ -135,8 +157,8 @@ namespace xayah {
         this->impl->record_frame(command_buffer);
     }
 
-    SpectraRasterizer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : scene_provider(std::make_unique<RasterizerScene>(std::move(source_workspace))) {
-        if (this->scene_provider == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene provider");
+    SpectraRasterizer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
+        if (this->source_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
     }
 
     SpectraRasterizer::Impl::~Impl() noexcept = default;
@@ -182,12 +204,17 @@ namespace xayah {
     }
 
     void SpectraRasterizer::Impl::synchronize_scene_workspace() {
-        this->scene_provider->synchronize();
-        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->scene_provider->snapshot();
-        if (next_snapshot == nullptr) throw std::runtime_error("Spectra rasterizer scene provider returned an empty scene snapshot");
+        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
+        if (next_snapshot == nullptr) throw std::runtime_error("Spectra rasterizer source scene workspace returned an empty scene snapshot");
         if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
+        const spectra::scene::SceneTranslationReport report = analyze_rasterizer_scene(*next_snapshot);
+        if (!report.supported) {
+            std::string message = std::format("{} cannot translate scene \"{}\"", SpectraRasterizer::target_name(), next_snapshot->name);
+            if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
+            throw std::runtime_error(message);
+        }
         this->scene_snapshot = std::move(next_snapshot);
-        this->scene_info     = this->scene_provider->info();
+        this->scene_info     = spectra::scene::DescribeScene(*this->scene_snapshot);
     }
 
     std::string SpectraRasterizer::Impl::window_detail() const {

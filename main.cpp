@@ -11,7 +11,7 @@ int main(const int argc, char**) {
         std::shared_ptr<xayah::SpectraSceneSession> scene_session = std::make_shared<xayah::SpectraSceneSession>();
         scene_session->register_translation_target(xayah::SpectraPathtracer::translation_target());
         scene_session->register_translation_target(xayah::SpectraRasterizer::translation_target());
-        scene_session->load_first_supported_scene(xayah::PathtracerSceneTranslator::target_name());
+        scene_session->load_first_supported_scene(xayah::SpectraPathtracer::target_name());
 
         std::shared_ptr<spectra::scene::SceneWorkspace> document_workspace = scene_session->document_workspace();
         xayah::Spectra spectra{"Spectra"};

@@ -14,7 +14,7 @@ module;
 export module xayah.spectra.pathtracer;
 
 import std;
-export import xayah.spectra.pathtracer.scene;
+export import spectra.scene;
 
 export namespace xayah {
     enum class PathtracerDockSlot {
@@ -124,6 +124,7 @@ export namespace xayah {
         SpectraPathtracer& operator=(const SpectraPathtracer& other) = delete;
         SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept;
 
+        [[nodiscard]] static std::string_view target_name();
         [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 
