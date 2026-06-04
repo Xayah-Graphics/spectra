@@ -178,6 +178,7 @@ namespace spectra {
         if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available for the active scene", this->renderers[renderer_index].name) : availability.detail);
         this->active_renderer_index = renderer_index;
         this->dock_layout_initialized = false;
+        this->sync_active_sidebar_tab();
         if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers[renderer_index].name);
     }
 
@@ -191,6 +192,35 @@ namespace spectra {
         }
         this->panels.push_back(std::move(panel));
         this->dock_layout_initialized = false;
+    }
+
+    void Spectra::store_sidebar_tab(SpectraSidebarTab tab) {
+        if (tab.id.empty()) throw std::runtime_error("Spectra sidebar tab id must not be empty");
+        if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
+        if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
+        for (const SpectraSidebarTab& existing_tab : this->sidebar_tabs) {
+            if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
+            if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
+        }
+        if (this->active_sidebar_tab_id.empty()) {
+            this->active_sidebar_tab_id             = tab.id;
+            this->sidebar_tab_selection_requested = true;
+        }
+        this->sidebar_tabs.push_back(std::move(tab));
+        this->dock_layout_initialized = false;
+    }
+
+    void Spectra::store_toolbar_action(SpectraToolbarAction action) {
+        if (action.id.empty()) throw std::runtime_error("Spectra toolbar action id must not be empty");
+        if (action.title.empty()) throw std::runtime_error("Spectra toolbar action title must not be empty");
+        if (action.icon.empty()) throw std::runtime_error("Spectra toolbar action icon must not be empty");
+        if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
+        if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
+        for (const SpectraToolbarAction& existing_action : this->toolbar_actions) {
+            if (existing_action.id == action.id) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action id: "} + action.id);
+            if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
+        }
+        this->toolbar_actions.push_back(std::move(action));
     }
 
     void Spectra::set_window_detail(std::string detail) {
@@ -220,6 +250,30 @@ namespace spectra {
 
     bool Spectra::panel_belongs_to_active_renderer(const SpectraPanel& panel) const {
         return panel.owner_renderer.empty() || panel.owner_renderer == this->active_renderer_name();
+    }
+
+    bool Spectra::sidebar_tab_belongs_to_active_renderer(const SpectraSidebarTab& tab) const {
+        return tab.owner_renderer.empty() || tab.owner_renderer == this->active_renderer_name();
+    }
+
+    bool Spectra::toolbar_action_belongs_to_active_renderer(const SpectraToolbarAction& action) const {
+        return action.owner_renderer.empty() || action.owner_renderer == this->active_renderer_name();
+    }
+
+    void Spectra::sync_active_sidebar_tab() {
+        for (const SpectraSidebarTab& tab : this->sidebar_tabs) {
+            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
+            if (tab.id == this->active_sidebar_tab_id) return;
+        }
+        for (const SpectraSidebarTab& tab : this->sidebar_tabs) {
+            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
+            this->active_sidebar_tab_id = tab.id;
+            this->sidebar_visible       = true;
+            this->sidebar_tab_selection_requested = true;
+            return;
+        }
+        this->active_sidebar_tab_id.clear();
+        this->sidebar_visible = false;
     }
 
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
@@ -581,6 +635,7 @@ namespace spectra {
     void Spectra::record_frame(FrameState& frame) {
         this->draw_command_bar();
         this->draw_dockspace();
+        this->draw_sidebar();
         this->draw_registered_panels();
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
@@ -697,7 +752,22 @@ namespace spectra {
                 if (!this->panel_belongs_to_active_renderer(panel)) continue;
                 if (panel.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(panel.shortcut_key, false)) panel.visible = !panel.visible;
             }
+            this->sync_active_sidebar_tab();
+            for (SpectraSidebarTab& tab : this->sidebar_tabs) {
+                if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
+                if (tab.shortcut_key == ImGuiKey_None || !ImGui::IsKeyPressed(tab.shortcut_key, false)) continue;
+                const bool selected = this->sidebar_visible && tab.id == this->active_sidebar_tab_id;
+                this->active_sidebar_tab_id = tab.id;
+                this->sidebar_visible       = !selected;
+                this->sidebar_tab_selection_requested = true;
+                this->dock_layout_initialized = false;
+            }
+            for (SpectraToolbarAction& action : this->toolbar_actions) {
+                if (!this->toolbar_action_belongs_to_active_renderer(action)) continue;
+                if (action.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(action.shortcut_key, false)) action.trigger();
+            }
         }
+        this->sync_active_sidebar_tab();
 
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
@@ -729,29 +799,56 @@ namespace spectra {
             if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 4.0f);
         }
 
-        std::vector<SpectraPanel*> toolbar_panels{};
-        for (SpectraPanel& panel : this->panels) {
-            if (panel.show_in_toolbar && this->panel_belongs_to_active_renderer(panel)) toolbar_panels.push_back(&panel);
+        std::vector<SpectraSidebarTab*> visible_tabs{};
+        for (SpectraSidebarTab& tab : this->sidebar_tabs) {
+            if (this->sidebar_tab_belongs_to_active_renderer(tab)) visible_tabs.push_back(&tab);
         }
 
-        const float button_size  = ImGui::GetFrameHeight();
-        const float total_width  = static_cast<float>(toolbar_panels.size() + 1) * button_size + static_cast<float>(toolbar_panels.size() + 2) * 4.0f + 2.0f;
+        std::vector<SpectraToolbarAction*> visible_actions{};
+        for (SpectraToolbarAction& action : this->toolbar_actions) {
+            if (this->toolbar_action_belongs_to_active_renderer(action)) visible_actions.push_back(&action);
+        }
+
+        if (visible_tabs.empty() && visible_actions.empty()) {
+            ImGui::End();
+            return;
+        }
+
+        const std::size_t button_count = visible_tabs.size() + visible_actions.size();
+        const float button_size        = ImGui::GetFrameHeight();
+        const float total_width        = static_cast<float>(button_count) * button_size + static_cast<float>(button_count + 1) * 4.0f + 2.0f;
         const float window_width = ImGui::GetWindowWidth();
         if (window_width > total_width + ImGui::GetCursorPosX() + 24.0f) ImGui::SameLine(window_width - total_width - ImGui::GetStyle().WindowPadding.x);
         else ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 4.0f);
-        for (SpectraPanel* panel : toolbar_panels) {
-            const char* label = panel->icon.empty() ? panel->title.c_str() : panel->icon.c_str();
-            ImGui::PushStyleColor(ImGuiCol_Button, panel->visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
-            if (ImGui::Button(label, ImVec2{button_size, button_size})) panel->visible = !panel->visible;
+        std::size_t button_index = 0;
+        for (SpectraSidebarTab* tab : visible_tabs) {
+            const bool selected = this->sidebar_visible && tab->id == this->active_sidebar_tab_id;
+            const char* label   = tab->icon.empty() ? tab->title.c_str() : tab->icon.c_str();
+            ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+            if (ImGui::Button(label, ImVec2{button_size, button_size})) {
+                this->active_sidebar_tab_id = tab->id;
+                this->sidebar_visible       = !selected;
+                this->sidebar_tab_selection_requested = true;
+                this->dock_layout_initialized = false;
+            }
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered() && !panel->shortcut_label.empty()) ImGui::SetTooltip("Toggle %s Window (%s)", panel->title.c_str(), panel->shortcut_label.c_str());
-            if (ImGui::IsItemHovered() && panel->shortcut_label.empty()) ImGui::SetTooltip("Toggle %s Window", panel->title.c_str());
-            ImGui::SameLine(0.0f, 4.0f);
+            if (ImGui::IsItemHovered() && !tab->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", tab->title.c_str(), tab->shortcut_label.c_str());
+            if (ImGui::IsItemHovered() && tab->shortcut_label.empty()) ImGui::SetTooltip("%s", tab->title.c_str());
+            ++button_index;
+            if (button_index < button_count) ImGui::SameLine(0.0f, 4.0f);
         }
-        if (ImGui::Button(ICON_MS_CLOSE, ImVec2{button_size, button_size})) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit (Esc)");
+        for (SpectraToolbarAction* action : visible_actions) {
+            const bool active = action->active();
+            ImGui::PushStyleColor(ImGuiCol_Button, active ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+            if (ImGui::Button(action->icon.c_str(), ImVec2{button_size, button_size})) action->trigger();
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered() && !action->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", action->title.c_str(), action->shortcut_label.c_str());
+            if (ImGui::IsItemHovered() && action->shortcut_label.empty()) ImGui::SetTooltip("%s", action->title.c_str());
+            ++button_index;
+            if (button_index < button_count) ImGui::SameLine(0.0f, 4.0f);
+        }
         ImGui::End();
     }
 
@@ -790,32 +887,66 @@ namespace spectra {
         ImGui::DockBuilderSetNodeSize(dockspace_id, dock_size);
 
         ImGuiID center_id = dockspace_id;
-        ImGuiID left_id   = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.30f, nullptr, &center_id);
-        ImGuiID right_id  = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.27f, nullptr, &center_id);
-        ImGuiID bottom_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.30f, nullptr, &center_id);
-        if (left_id == 0 || right_id == 0 || bottom_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra dock layout");
-
-        ImGuiID left_bottom_id  = ImGui::DockBuilderSplitNode(left_id, ImGuiDir_Down, 0.30f, nullptr, &left_id);
-        ImGuiID right_bottom_id = ImGui::DockBuilderSplitNode(right_id, ImGuiDir_Down, 0.45f, nullptr, &right_id);
-        if (left_bottom_id == 0 || right_bottom_id == 0 || left_id == 0 || right_id == 0) throw std::runtime_error("Failed to build Spectra side panels");
+        ImGuiID right_id  = 0;
+        this->sync_active_sidebar_tab();
+        if (this->sidebar_visible && !this->active_sidebar_tab_id.empty()) {
+            right_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.28f, nullptr, &center_id);
+            if (right_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra sidebar dock layout");
+            ImGui::DockBuilderDockWindow("Sidebar", right_id);
+        }
 
         for (const SpectraPanel& panel : this->panels) {
             if (!this->panel_belongs_to_active_renderer(panel)) continue;
             switch (panel.dock_slot) {
             case SpectraDockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
-            case SpectraDockSlot::Left: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_id); break;
-            case SpectraDockSlot::LeftBottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), left_bottom_id); break;
-            case SpectraDockSlot::Right: ImGui::DockBuilderDockWindow(panel.title.c_str(), right_id); break;
-            case SpectraDockSlot::RightBottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), right_bottom_id); break;
-            case SpectraDockSlot::Bottom: ImGui::DockBuilderDockWindow(panel.title.c_str(), bottom_id); break;
+            case SpectraDockSlot::Left:
+            case SpectraDockSlot::LeftBottom:
+            case SpectraDockSlot::Right:
+            case SpectraDockSlot::RightBottom:
+            case SpectraDockSlot::Bottom: throw std::runtime_error("Spectra non-center dock panels are obsolete; use sidebar tabs instead");
             case SpectraDockSlot::Floating: break;
             }
         }
-        ImGuiDockNode* central_node = ImGui::DockBuilderGetCentralNode(dockspace_id);
-        if (central_node == nullptr) throw std::runtime_error("Failed to find Spectra central dock node");
-        central_node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+        const auto hide_tab_bar = [](const ImGuiID node_id) {
+            ImGuiDockNode* node = ImGui::DockBuilderGetNode(node_id);
+            if (node == nullptr) throw std::runtime_error("Failed to find Spectra dock node");
+            node->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;
+        };
+        hide_tab_bar(center_id);
+        if (right_id != 0) hide_tab_bar(right_id);
         ImGui::DockBuilderFinish(dockspace_id);
         this->dock_layout_initialized = true;
+    }
+
+    void Spectra::draw_sidebar() {
+        this->sync_active_sidebar_tab();
+        if (!this->sidebar_visible || this->active_sidebar_tab_id.empty()) return;
+
+        std::vector<SpectraSidebarTab*> visible_tabs{};
+        for (SpectraSidebarTab& tab : this->sidebar_tabs) {
+            if (this->sidebar_tab_belongs_to_active_renderer(tab)) visible_tabs.push_back(&tab);
+        }
+        if (visible_tabs.empty()) return;
+
+        const bool began = ImGui::Begin("Sidebar", nullptr, ImGuiWindowFlags_NoCollapse);
+        if (!began) {
+            ImGui::End();
+            return;
+        }
+        if (ImGui::BeginTabBar("SpectraSidebarTabs")) {
+            for (SpectraSidebarTab* tab : visible_tabs) {
+                const ImGuiTabItemFlags tab_flags = this->sidebar_tab_selection_requested && tab->id == this->active_sidebar_tab_id ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                const std::string label = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
+                if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
+                    this->active_sidebar_tab_id = tab->id;
+                    tab->draw();
+                    ImGui::EndTabItem();
+                }
+            }
+            this->sidebar_tab_selection_requested = false;
+            ImGui::EndTabBar();
+        }
+        ImGui::End();
     }
 
     void Spectra::draw_registered_panels() {

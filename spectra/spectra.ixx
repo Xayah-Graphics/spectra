@@ -38,10 +38,29 @@ export namespace spectra {
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
-        bool show_in_menu{true};
-        bool show_in_toolbar{true};
         bool zero_window_padding{false};
         std::move_only_function<void()> draw{};
+    };
+
+    struct SpectraSidebarTab {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string owner_renderer{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<void()> draw{};
+    };
+
+    struct SpectraToolbarAction {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string owner_renderer{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<bool()> active{};
+        std::move_only_function<void()> trigger{};
     };
 
     struct SpectraFrameInfo {
@@ -72,10 +91,31 @@ export namespace spectra {
         static_cast<ImGuiWindowFlags>(panel.window_flags);
         { panel.visible } -> std::convertible_to<bool>;
         { panel.closable } -> std::convertible_to<bool>;
-        { panel.show_in_menu } -> std::convertible_to<bool>;
-        { panel.show_in_toolbar } -> std::convertible_to<bool>;
         { panel.zero_window_padding } -> std::convertible_to<bool>;
         std::move_only_function<void()>{std::move(panel.draw)};
+    };
+
+    template <typename Tab>
+    concept SpectraSidebarTabLike = requires(Tab tab) {
+        std::string{std::move(tab.id)};
+        std::string{std::move(tab.title)};
+        std::string{std::move(tab.icon)};
+        std::string{std::move(tab.owner_renderer)};
+        std::string{std::move(tab.shortcut_label)};
+        static_cast<ImGuiKey>(tab.shortcut_key);
+        std::move_only_function<void()>{std::move(tab.draw)};
+    };
+
+    template <typename Action>
+    concept SpectraToolbarActionLike = requires(Action action) {
+        std::string{std::move(action.id)};
+        std::string{std::move(action.title)};
+        std::string{std::move(action.icon)};
+        std::string{std::move(action.owner_renderer)};
+        std::string{std::move(action.shortcut_label)};
+        static_cast<ImGuiKey>(action.shortcut_key);
+        std::move_only_function<bool()>{std::move(action.active)};
+        std::move_only_function<void()>{std::move(action.trigger)};
     };
 
     template <typename Frame>
@@ -92,8 +132,8 @@ export namespace spectra {
     };
 
     template <typename Host>
-    concept SpectraSceneHost = requires(Host& host, SpectraPanel panel) {
-        { host.register_panel(std::move(panel)) } -> std::same_as<void>;
+    concept SpectraSceneHost = requires(Host& host, SpectraSidebarTab tab) {
+        { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
     };
 
     template <typename Renderer, typename Host>
@@ -130,6 +170,12 @@ export namespace spectra {
         template <typename Panel>
             requires SpectraPanelLike<Panel>
         void register_panel(Panel panel);
+        template <typename Tab>
+            requires SpectraSidebarTabLike<Tab>
+        void register_sidebar_tab(Tab tab);
+        template <typename Action>
+            requires SpectraToolbarActionLike<Action>
+        void register_toolbar_action(Action action);
         void set_window_detail(std::string detail);
         void set_renderer_availability_callback(std::move_only_function<SpectraRendererAvailability(std::string_view)> callback);
         void set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback);
@@ -168,6 +214,8 @@ export namespace spectra {
 
         void register_renderer(RegisteredRenderer renderer);
         void store_panel(SpectraPanel panel);
+        void store_sidebar_tab(SpectraSidebarTab tab);
+        void store_toolbar_action(SpectraToolbarAction action);
 
         void create_imgui();
         void notify_renderers_before_imgui_shutdown() noexcept;
@@ -181,10 +229,14 @@ export namespace spectra {
 
         void draw_command_bar();
         void draw_dockspace();
+        void draw_sidebar();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
         [[nodiscard]] std::string_view active_renderer_name() const;
         [[nodiscard]] bool panel_belongs_to_active_renderer(const SpectraPanel& panel) const;
+        [[nodiscard]] bool sidebar_tab_belongs_to_active_renderer(const SpectraSidebarTab& tab) const;
+        [[nodiscard]] bool toolbar_action_belongs_to_active_renderer(const SpectraToolbarAction& action) const;
+        void sync_active_sidebar_tab();
         [[nodiscard]] SpectraRendererAvailability renderer_availability(std::string_view renderer_name);
 
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
@@ -243,8 +295,13 @@ export namespace spectra {
 
         bool dock_layout_initialized{false};
         bool imgui_shutdown_notified{false};
+        bool sidebar_visible{true};
+        bool sidebar_tab_selection_requested{false};
         std::size_t active_renderer_index{0};
+        std::string active_sidebar_tab_id{};
         std::vector<SpectraPanel> panels{};
+        std::vector<SpectraSidebarTab> sidebar_tabs{};
+        std::vector<SpectraToolbarAction> toolbar_actions{};
         std::vector<RegisteredRenderer> renderers{};
         std::move_only_function<SpectraRendererAvailability(std::string_view)> renderer_availability_callback{};
         std::move_only_function<void(std::string_view)> renderer_activation_callback{};
@@ -264,10 +321,37 @@ export namespace spectra {
             .window_flags        = static_cast<ImGuiWindowFlags>(panel.window_flags),
             .visible             = static_cast<bool>(panel.visible),
             .closable            = static_cast<bool>(panel.closable),
-            .show_in_menu        = static_cast<bool>(panel.show_in_menu),
-            .show_in_toolbar     = static_cast<bool>(panel.show_in_toolbar),
             .zero_window_padding = static_cast<bool>(panel.zero_window_padding),
             .draw                = std::move(panel.draw),
+        });
+    }
+
+    template <typename Tab>
+        requires SpectraSidebarTabLike<Tab>
+    void Spectra::register_sidebar_tab(Tab tab) {
+        this->store_sidebar_tab(SpectraSidebarTab{
+            .id             = std::string{std::move(tab.id)},
+            .title          = std::string{std::move(tab.title)},
+            .icon           = std::string{std::move(tab.icon)},
+            .owner_renderer = std::string{std::move(tab.owner_renderer)},
+            .shortcut_label = std::string{std::move(tab.shortcut_label)},
+            .shortcut_key   = static_cast<ImGuiKey>(tab.shortcut_key),
+            .draw           = std::move(tab.draw),
+        });
+    }
+
+    template <typename Action>
+        requires SpectraToolbarActionLike<Action>
+    void Spectra::register_toolbar_action(Action action) {
+        this->store_toolbar_action(SpectraToolbarAction{
+            .id             = std::string{std::move(action.id)},
+            .title          = std::string{std::move(action.title)},
+            .icon           = std::string{std::move(action.icon)},
+            .owner_renderer = std::string{std::move(action.owner_renderer)},
+            .shortcut_label = std::string{std::move(action.shortcut_label)},
+            .shortcut_key   = static_cast<ImGuiKey>(action.shortcut_key),
+            .active         = std::move(action.active),
+            .trigger        = std::move(action.trigger),
         });
     }
 

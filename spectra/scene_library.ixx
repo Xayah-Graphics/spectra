@@ -25,7 +25,7 @@ export namespace spectra::scene {
 
         template <SpectraSceneHost Host>
         void attach(Host& host) {
-            this->attach_panel_host([&host](SpectraPanel panel) { host.register_panel(std::move(panel)); });
+            this->attach_sidebar_host([&host](SpectraSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); });
         }
 
         void detach() noexcept;
@@ -63,7 +63,7 @@ export namespace spectra::scene {
             SceneProbeReport probe{};
         };
 
-        void attach_panel_host(std::move_only_function<void(SpectraPanel)> register_panel);
+        void attach_sidebar_host(std::move_only_function<void(SpectraSidebarTab)> register_tab);
         void start_scene_background_workers();
         void stop_scene_background_workers_noexcept() noexcept;
         void stop_scene_background_workers_if_idle() noexcept;

@@ -423,10 +423,27 @@ export namespace spectra::pathtracer {
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
-        bool show_in_menu{true};
-        bool show_in_toolbar{true};
         bool zero_window_padding{false};
         std::move_only_function<void()> draw{};
+    };
+
+    struct PathtracerSidebarTab {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<void()> draw{};
+    };
+
+    struct PathtracerToolbarAction {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<bool()> active{};
+        std::move_only_function<void()> trigger{};
     };
 
     struct PathtracerFrameInfo {
@@ -447,19 +464,21 @@ export namespace spectra::pathtracer {
     };
 
     template <typename Host>
-    concept PathtracerHost = requires(Host& host, PathtracerPanel panel, std::string detail) {
+    concept PathtracerHost = requires(Host& host, PathtracerPanel panel, PathtracerSidebarTab tab, PathtracerToolbarAction action, std::string detail) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
         { host.swapchain_extent() } -> std::same_as<vk::Extent2D>;
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
+        { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
+        { host.register_toolbar_action(std::move(action)) } -> std::same_as<void>;
         { host.set_window_detail(std::move(detail)) } -> std::same_as<void>;
     };
 
     class PathtracerHostView {
     public:
         template <PathtracerHost Host>
-        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](PathtracerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), registerToolbarActionCallback([&host](PathtracerToolbarAction action) { host.register_toolbar_action(std::move(action)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
         PathtracerHostView(const PathtracerHostView& other)                = delete;
         PathtracerHostView(PathtracerHostView&& other) noexcept            = default;
@@ -487,6 +506,14 @@ export namespace spectra::pathtracer {
             this->registerPanelCallback(std::move(panel));
         }
 
+        void register_sidebar_tab(PathtracerSidebarTab tab) {
+            this->registerSidebarTabCallback(std::move(tab));
+        }
+
+        void register_toolbar_action(PathtracerToolbarAction action) {
+            this->registerToolbarActionCallback(std::move(action));
+        }
+
         void set_window_detail(std::string detail) {
             this->setWindowDetailCallback(std::move(detail));
         }
@@ -497,6 +524,8 @@ export namespace spectra::pathtracer {
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
         std::move_only_function<void(PathtracerPanel)> registerPanelCallback{};
+        std::move_only_function<void(PathtracerSidebarTab)> registerSidebarTabCallback{};
+        std::move_only_function<void(PathtracerToolbarAction)> registerToolbarActionCallback{};
         std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 

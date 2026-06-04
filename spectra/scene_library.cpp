@@ -217,18 +217,15 @@ namespace spectra::scene {
         }
     }
 
-    void SceneLibrary::attach_panel_host(std::move_only_function<void(SpectraPanel)> register_panel) {
+    void SceneLibrary::attach_sidebar_host(std::move_only_function<void(SpectraSidebarTab)> register_tab) {
         if (this->attached) throw std::runtime_error("Spectra scene session is already attached");
-        if (!register_panel) throw std::runtime_error("Spectra scene session requires a panel registration callback");
-        register_panel(SpectraPanel{
+        if (!register_tab) throw std::runtime_error("Spectra scene session requires a sidebar tab registration callback");
+        register_tab(SpectraSidebarTab{
             .id             = "scene.library",
-            .title          = "Scene Library",
+            .title          = "Scenes",
             .icon           = ICON_MS_FOLDER_OPEN,
             .shortcut_label = "F2",
             .shortcut_key   = ImGuiKey_F2,
-            .dock_slot      = SpectraDockSlot::Left,
-            .closable       = false,
-            .show_in_menu   = false,
             .draw           = [this] { this->draw_scene_library_window(); },
         });
         this->attached = true;

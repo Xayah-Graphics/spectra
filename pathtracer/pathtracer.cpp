@@ -993,12 +993,11 @@ namespace spectra::pathtracer {
         void synchronize_scene_workspace();
 
         void draw_viewport_window();
-        void draw_pathtracer_window();
         void draw_render_tab();
         void draw_camera_tab();
         void draw_scene_tab();
         void draw_tone_mapping_tab();
-        void draw_performance_tab();
+        void draw_performance_overlay();
 
         void unload_scene_noexcept() noexcept;
         void create_pathtracer_for_resolution(const std::array<int, 2>& resolution);
@@ -1026,6 +1025,7 @@ namespace spectra::pathtracer {
         std::uint32_t frame_count{};
         vk::Extent2D swapchain_extent{};
         bool attached{false};
+        bool performance_overlay_visible{true};
         std::shared_ptr<SceneWorkspace> source_workspace{};
 
         struct {
@@ -1694,32 +1694,7 @@ namespace spectra::pathtracer {
             ImGui::SetCursorScreenPos(viewport_position);
         }
         ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-    }
-
-    void PathtracerRenderer::Impl::draw_pathtracer_window() {
-        if (ImGui::BeginTabBar("SpectraPathtracerTabs")) {
-            if (ImGui::BeginTabItem("Render")) {
-                this->draw_render_tab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Camera")) {
-                this->draw_camera_tab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Scene")) {
-                this->draw_scene_tab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Performance")) {
-                this->draw_performance_tab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Tone Mapping")) {
-                this->draw_tone_mapping_tab();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
+        this->draw_performance_overlay();
     }
 
     void PathtracerRenderer::Impl::draw_camera_tab() {
@@ -1903,86 +1878,54 @@ namespace spectra::pathtracer {
         }
     }
 
-    void PathtracerRenderer::Impl::draw_performance_tab() {
-        constexpr ImGuiTableFlags table_flags    = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
-        const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
-        const PathtracerStatus pathtracer_status = this->pathtracer_status();
+    void PathtracerRenderer::Impl::draw_performance_overlay() {
+        if (!this->performance_overlay_visible || !this->ui.viewport_known) return;
 
-        ImGui::SeparatorText("Runtime");
-        if (ImGui::BeginTable("SpectraRuntimeStatistics", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Path Tracer State", pathtracer_status.state);
-            draw_statistics_row("External Completion", pathtracer_status.uses_external_completion ? "Yes" : "No");
-            draw_statistics_row("Scene", !this->scene_info.has_value() ? "No Scene" : std::string(this->active_scene_info().title));
-            draw_statistics_row("Frame ID", std::format("{}", this->statistics.current_frame_id));
-            draw_statistics_row("Frame Slot", std::format("{}", this->statistics.active_frame_index));
-            draw_statistics_row("Swapchain Image", std::format("{}", this->statistics.active_swapchain_image_index));
-            draw_statistics_row("Frames In Flight", std::format("{}", this->frame_count));
-            draw_statistics_row("Swapchain Resolution", std::format("{} x {}", this->swapchain_extent.width, this->swapchain_extent.height));
-            draw_statistics_row("Viewport Resolution", viewport_resolution);
-            ImGui::EndTable();
+        const ImVec2 overlay_position{this->ui.viewport_position[0] + 12.0f, this->ui.viewport_position[1] + 12.0f};
+        ImGui::SetNextWindowPos(overlay_position, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.35f);
+        constexpr ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
+        const bool began = ImGui::Begin("PathtracerPerformanceOverlay", nullptr, overlay_flags);
+        if (!began) {
+            ImGui::End();
+            return;
         }
 
-        ImGui::SeparatorText("Performance");
-        if (ImGui::BeginTable("SpectraPerformanceStatistics", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Frame Time", std::format("{:.3f} ms", this->statistics.last_frame_milliseconds));
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingFixedFit;
+        const PathtracerStatus status         = this->pathtracer_status();
+        const std::string scene_title         = this->scene_info.has_value() ? std::string{this->active_scene_info().title} : "No Scene";
+        const std::string viewport_resolution = resolution_text(this->ui.viewport_framebuffer_size);
+        const std::string render_resolution   = this->render_resolution_sync.pathtracer_created ? resolution_text(this->render_resolution_sync.active_resolution) : "Pending";
+
+        if (ImGui::BeginTable("SpectraPathtracerPerformanceOverlayStats", 2, table_flags)) {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            draw_statistics_row("Scene", scene_title);
+            draw_statistics_row("State", status.state);
+            if (this->render_pipeline != nullptr) {
+                draw_statistics_row("Sample", std::format("{} / {}", this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count()));
+                draw_statistics_row("Progress", std::format("{:.1f}%", this->render_pipeline->completion_ratio() * 100.0f));
+            } else {
+                draw_statistics_row("Sample", "No Pipeline");
+                draw_statistics_row("Progress", "Pending");
+            }
+            draw_statistics_row("Viewport", viewport_resolution);
+            draw_statistics_row("Render", render_resolution);
+            draw_statistics_row("Frame", std::format("{:.3f} ms", this->statistics.last_frame_milliseconds));
             if (this->statistics.frame_milliseconds.has_value()) {
                 const float average_frame_milliseconds = this->statistics.frame_milliseconds.average();
                 if (!(average_frame_milliseconds > 0.0f)) throw std::runtime_error("Average frame time must be positive after statistics are collected");
-                draw_statistics_row("Frame Time Avg", std::format("{:.3f} ms over {} frames", average_frame_milliseconds, this->statistics.frame_milliseconds.count));
                 draw_statistics_row("FPS Avg", std::format("{:.1f}", 1000.0f / average_frame_milliseconds));
             } else {
-                draw_statistics_row("Frame Time Avg", "Collecting");
                 draw_statistics_row("FPS Avg", "Collecting");
             }
-            ImGui::EndTable();
-        }
-
-        if (!this->scene_info.has_value()) {
-            ImGui::TextDisabled("No active Spectra pathtracer scene");
-            return;
-        }
-
-        if (this->render_pipeline == nullptr) {
-            ImGui::TextDisabled("No active render pipeline");
-            return;
-        }
-
-        const std::array<int, 2> film_resolution = this->scene_film_resolution;
-        const int current_sample                 = this->render_pipeline->current_sample();
-        const int target_sample                  = this->render_pipeline->target_sample_count();
-        const float completion_ratio             = this->render_pipeline->completion_ratio();
-        const float completion_percent           = completion_ratio * 100.0f;
-        const bool sampling_completed            = current_sample >= target_sample;
-        const std::string sampling_state         = sampling_completed ? "Completed" : "Sampling";
-
-        ImGui::SeparatorText("Path Tracer");
-        if (ImGui::BeginTable("SpectraPathTracerStatistics", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("State", sampling_state);
-            draw_statistics_row("Sample", std::format("{} / {}", current_sample, target_sample));
-            draw_statistics_row("Completion", std::format("{:.1f}%", completion_percent));
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Progress");
-            ImGui::TableSetColumnIndex(1);
-            const std::string progress_label = std::format("{:.1f}%", completion_percent);
-            ImGui::ProgressBar(completion_ratio, ImVec2{-1.0f, 0.0f}, progress_label.c_str());
-
-            draw_statistics_row("Film Resolution", resolution_text(film_resolution));
             if (this->statistics.throughput_mspp.has_value())
-                draw_statistics_row("Throughput Avg", std::format("{:.2f} MSPP/s over {} sample frames", this->statistics.throughput_mspp.average(), this->statistics.throughput_mspp.count));
+                draw_statistics_row("Throughput", std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()));
             else
-                draw_statistics_row("Throughput Avg", sampling_completed ? "Completed" : "Collecting");
-            draw_statistics_row("Last Sample Throughput", this->statistics.has_throughput ? std::format("{:.2f} MSPP/s", this->statistics.last_valid_throughput_mspp) : "No sample yet");
-            draw_statistics_row("Current Frame Work", this->statistics.last_frame_rendered_sample ? "Rendered sample" : "No Spectra pathtracer sample");
+                draw_statistics_row("Throughput", "Collecting");
             ImGui::EndTable();
         }
+        ImGui::End();
     }
 
     void PathtracerRenderer::Impl::register_panels(PathtracerHostView& host) {
@@ -1992,19 +1935,49 @@ namespace spectra::pathtracer {
             .dock_slot           = PathtracerDockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
             .closable            = false,
-            .show_in_menu        = false,
-            .show_in_toolbar     = false,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_panel(PathtracerPanel{
-            .id             = "pathtracer.panel",
-            .title          = "Pathtracer",
+        host.register_sidebar_tab(PathtracerSidebarTab{
+            .id             = "pathtracer.render",
+            .title          = "Render",
             .icon           = ICON_MS_SETTINGS,
             .shortcut_label = "F3",
             .shortcut_key   = ImGuiKey_F3,
-            .dock_slot      = PathtracerDockSlot::Right,
-            .draw           = [this] { this->draw_pathtracer_window(); },
+            .draw           = [this] { this->draw_render_tab(); },
+        });
+        host.register_sidebar_tab(PathtracerSidebarTab{
+            .id             = "pathtracer.camera",
+            .title          = "Camera",
+            .icon           = ICON_MS_PHOTO_CAMERA,
+            .shortcut_label = "F4",
+            .shortcut_key   = ImGuiKey_F4,
+            .draw           = [this] { this->draw_camera_tab(); },
+        });
+        host.register_sidebar_tab(PathtracerSidebarTab{
+            .id             = "pathtracer.scene",
+            .title          = "Scene Info",
+            .icon           = ICON_MS_ACCOUNT_TREE,
+            .shortcut_label = "F5",
+            .shortcut_key   = ImGuiKey_F5,
+            .draw           = [this] { this->draw_scene_tab(); },
+        });
+        host.register_sidebar_tab(PathtracerSidebarTab{
+            .id             = "pathtracer.tone",
+            .title          = "Tone",
+            .icon           = ICON_MS_TONALITY,
+            .shortcut_label = "F6",
+            .shortcut_key   = ImGuiKey_F6,
+            .draw           = [this] { this->draw_tone_mapping_tab(); },
+        });
+        host.register_toolbar_action(PathtracerToolbarAction{
+            .id             = "pathtracer.performance_overlay",
+            .title          = "Performance Overlay",
+            .icon           = ICON_MS_ANALYTICS,
+            .shortcut_label = "F9",
+            .shortcut_key   = ImGuiKey_F9,
+            .active         = [this] { return this->performance_overlay_visible; },
+            .trigger        = [this] { this->performance_overlay_visible = !this->performance_overlay_visible; },
         });
     }
 } // namespace spectra::pathtracer

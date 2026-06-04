@@ -36,9 +36,16 @@ export namespace spectra::rasterizer {
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
-        bool show_in_menu{true};
-        bool show_in_toolbar{true};
         bool zero_window_padding{false};
+        std::move_only_function<void()> draw{};
+    };
+
+    struct RasterizerSidebarTab {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
         std::move_only_function<void()> draw{};
     };
 
@@ -60,19 +67,20 @@ export namespace spectra::rasterizer {
     };
 
     template <typename Host>
-    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, std::string detail) {
+    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, RasterizerSidebarTab tab, std::string detail) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
         { host.swapchain_extent() } -> std::same_as<vk::Extent2D>;
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
+        { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
         { host.set_window_detail(std::move(detail)) } -> std::same_as<void>;
     };
 
     class RasterizerHostView {
     public:
         template <RasterizerHost Host>
-        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](RasterizerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
         RasterizerHostView(const RasterizerHostView& other)                = delete;
         RasterizerHostView(RasterizerHostView&& other) noexcept            = default;
@@ -100,6 +108,10 @@ export namespace spectra::rasterizer {
             this->registerPanelCallback(std::move(panel));
         }
 
+        void register_sidebar_tab(RasterizerSidebarTab tab) {
+            this->registerSidebarTabCallback(std::move(tab));
+        }
+
         void set_window_detail(std::string detail) {
             this->setWindowDetailCallback(std::move(detail));
         }
@@ -110,6 +122,7 @@ export namespace spectra::rasterizer {
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
         std::move_only_function<void(RasterizerPanel)> registerPanelCallback{};
+        std::move_only_function<void(RasterizerSidebarTab)> registerSidebarTabCallback{};
         std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 

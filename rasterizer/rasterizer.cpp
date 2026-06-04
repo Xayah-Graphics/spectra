@@ -164,19 +164,16 @@ namespace spectra::rasterizer {
             .dock_slot           = RasterizerDockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
             .closable            = false,
-            .show_in_toolbar     = true,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_panel(RasterizerPanel{
-            .id              = "rasterizer.panel",
-            .title           = "Rasterizer",
-            .icon            = ICON_MS_TUNE,
-            .shortcut_label  = "F8",
-            .shortcut_key    = ImGuiKey_F8,
-            .dock_slot       = RasterizerDockSlot::Right,
-            .show_in_toolbar = true,
-            .draw            = [this] { this->draw_rasterizer_window(); },
+        host.register_sidebar_tab(RasterizerSidebarTab{
+            .id             = "rasterizer.panel",
+            .title          = "Rasterizer",
+            .icon           = ICON_MS_TUNE,
+            .shortcut_label = "F8",
+            .shortcut_key   = ImGuiKey_F8,
+            .draw           = [this] { this->draw_rasterizer_window(); },
         });
     }
 

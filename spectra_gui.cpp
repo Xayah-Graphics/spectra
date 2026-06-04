@@ -322,10 +322,33 @@ namespace spectra::app {
             .window_flags        = panel.window_flags,
             .visible             = panel.visible,
             .closable            = panel.closable,
-            .show_in_menu        = panel.show_in_menu,
-            .show_in_toolbar     = panel.show_in_toolbar,
             .zero_window_padding = panel.zero_window_padding,
             .draw                = std::move(panel.draw),
+        };
+    }
+
+    [[nodiscard]] SpectraSidebarTab ToSpectraSidebarTab(pathtracer::PathtracerSidebarTab tab) {
+        return SpectraSidebarTab{
+            .id             = std::move(tab.id),
+            .title          = std::move(tab.title),
+            .icon           = std::move(tab.icon),
+            .owner_renderer = std::string{pathtracer::PathtracerRenderer::target_name()},
+            .shortcut_label = std::move(tab.shortcut_label),
+            .shortcut_key   = tab.shortcut_key,
+            .draw           = std::move(tab.draw),
+        };
+    }
+
+    [[nodiscard]] SpectraToolbarAction ToSpectraToolbarAction(pathtracer::PathtracerToolbarAction action) {
+        return SpectraToolbarAction{
+            .id             = std::move(action.id),
+            .title          = std::move(action.title),
+            .icon           = std::move(action.icon),
+            .owner_renderer = std::string{pathtracer::PathtracerRenderer::target_name()},
+            .shortcut_label = std::move(action.shortcut_label),
+            .shortcut_key   = action.shortcut_key,
+            .active         = std::move(action.active),
+            .trigger        = std::move(action.trigger),
         };
     }
 
@@ -341,10 +364,20 @@ namespace spectra::app {
             .window_flags        = panel.window_flags,
             .visible             = panel.visible,
             .closable            = panel.closable,
-            .show_in_menu        = panel.show_in_menu,
-            .show_in_toolbar     = panel.show_in_toolbar,
             .zero_window_padding = panel.zero_window_padding,
             .draw                = std::move(panel.draw),
+        };
+    }
+
+    [[nodiscard]] SpectraSidebarTab ToSpectraSidebarTab(rasterizer::RasterizerSidebarTab tab) {
+        return SpectraSidebarTab{
+            .id             = std::move(tab.id),
+            .title          = std::move(tab.title),
+            .icon           = std::move(tab.icon),
+            .owner_renderer = std::string{rasterizer::RasterizerRenderer::target_name()},
+            .shortcut_label = std::move(tab.shortcut_label),
+            .shortcut_key   = tab.shortcut_key,
+            .draw           = std::move(tab.draw),
         };
     }
 
@@ -370,6 +403,14 @@ namespace spectra::app {
 
         void register_panel(pathtracer::PathtracerPanel panel) const {
             this->host->register_panel(ToSpectraPanel(std::move(panel)));
+        }
+
+        void register_sidebar_tab(pathtracer::PathtracerSidebarTab tab) const {
+            this->host->register_sidebar_tab(ToSpectraSidebarTab(std::move(tab)));
+        }
+
+        void register_toolbar_action(pathtracer::PathtracerToolbarAction action) const {
+            this->host->register_toolbar_action(ToSpectraToolbarAction(std::move(action)));
         }
 
         void set_window_detail(std::string detail) const {
@@ -402,6 +443,10 @@ namespace spectra::app {
 
         void register_panel(rasterizer::RasterizerPanel panel) const {
             this->host->register_panel(ToSpectraPanel(std::move(panel)));
+        }
+
+        void register_sidebar_tab(rasterizer::RasterizerSidebarTab tab) const {
+            this->host->register_sidebar_tab(ToSpectraSidebarTab(std::move(tab)));
         }
 
         void set_window_detail(std::string detail) const {
