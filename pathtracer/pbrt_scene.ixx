@@ -1,9 +1,9 @@
-export module spectra.scene.pbrt;
+export module spectra.pathtracer.pbrt;
 
-export import spectra.scene;
+export import spectra.pathtracer;
 import std;
 
-export namespace spectra::scene {
+export namespace spectra::pathtracer {
     enum class PbrtSceneCatalogEntryState {
         Pending,
         Candidate,
@@ -40,4 +40,4 @@ export namespace spectra::scene {
     void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry);
     void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
     [[nodiscard]] SceneWorkspace BuildPbrtScene(std::string_view name);
-} // namespace spectra::scene
+} // namespace spectra::pathtracer

@@ -45,12 +45,21 @@ namespace {
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(value.data(), value.data() + value.size());
     }
+
+    [[nodiscard]] const char* timeline_mode_text(const spectra::rasterizer::SimulationTimelineMode mode) {
+        switch (mode) {
+        case spectra::rasterizer::SimulationTimelineMode::Live: return "Live";
+        case spectra::rasterizer::SimulationTimelineMode::Record: return "Record";
+        case spectra::rasterizer::SimulationTimelineMode::Playback: return "Playback";
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer timeline mode");
+    }
 } // namespace
 
 namespace spectra::rasterizer {
     class RasterizerRenderer::Impl {
     public:
-        Impl();
+        explicit Impl(std::shared_ptr<SceneWorkspace> scene_workspace);
         ~Impl() noexcept;
 
         [[nodiscard]] std::string_view name() const;
@@ -80,6 +89,7 @@ namespace spectra::rasterizer {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool imgui_ready{false};
+        std::shared_ptr<SceneWorkspace> scene_workspace{};
 
         struct {
             vk::Extent2D requested_extent{};
@@ -97,7 +107,7 @@ namespace spectra::rasterizer {
         } viewport;
     };
 
-    RasterizerRenderer::RasterizerRenderer() : impl(std::make_unique<Impl>()) {}
+    RasterizerRenderer::RasterizerRenderer(std::shared_ptr<SceneWorkspace> scene_workspace) : impl(std::make_unique<Impl>(std::move(scene_workspace))) {}
 
     RasterizerRenderer::~RasterizerRenderer() noexcept = default;
 
@@ -137,7 +147,10 @@ namespace spectra::rasterizer {
         this->impl->record_frame(command_buffer);
     }
 
-    RasterizerRenderer::Impl::Impl() = default;
+    RasterizerRenderer::Impl::Impl(std::shared_ptr<SceneWorkspace> scene_workspace) : scene_workspace(std::move(scene_workspace)) {
+        if (this->scene_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
+        if (!this->scene_workspace->loaded()) throw std::runtime_error("Spectra rasterizer requires a loaded scene workspace");
+    }
 
     RasterizerRenderer::Impl::~Impl() noexcept = default;
 
@@ -180,7 +193,8 @@ namespace spectra::rasterizer {
     std::string RasterizerRenderer::Impl::window_detail() const {
         const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->swapchain_extent.width;
         const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->swapchain_extent.height;
-        return std::format("Spectra Rasterizer | {}x{}", width, height);
+        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+        return std::format("{} | {}x{}", scene->title.empty() ? scene->name : scene->title, width, height);
     }
 
     void RasterizerRenderer::Impl::create_viewport_resources(const vk::Extent2D extent) {
@@ -344,6 +358,8 @@ namespace spectra::rasterizer {
 
     void RasterizerRenderer::Impl::draw_rasterizer_window() {
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
+        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+        const SimulationTimeline timeline = this->scene_workspace->timeline();
         ImGui::TextUnformatted("Rasterizer");
         ImGui::SameLine();
         ImGui::TextDisabled("Development");
@@ -352,9 +368,26 @@ namespace spectra::rasterizer {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_status_row("Renderer", "Development");
-            draw_status_row("Scene Translation", "Not implemented");
+            draw_status_row("Scene", scene->title.empty() ? scene->name : scene->title);
+            draw_status_row("Timeline", timeline_mode_text(timeline.mode));
+            draw_status_row("Frame", std::format("{} / {:.3f}s", timeline.cursor.frameIndex, timeline.cursor.timeSeconds));
             draw_status_row("Viewport", std::format("{} x {}", this->viewport.extent.width, this->viewport.extent.height));
             draw_status_row("Swapchain", std::format("{} x {}", this->swapchain_extent.width, this->swapchain_extent.height));
+            ImGui::EndTable();
+        }
+
+        ImGui::SeparatorText("Scene");
+        if (ImGui::BeginTable("SpectraRasterizerScene", 2, table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_status_row("Materials", std::format("{}", scene->materials.size()));
+            draw_status_row("Lights", std::format("{}", scene->lights.size()));
+            draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
+            draw_status_row("Particle Sets", std::format("{}", scene->particleSets.size()));
+            draw_status_row("Volumes", std::format("{}", scene->volumes.size()));
+            draw_status_row("Cloths", std::format("{}", scene->cloths.size()));
+            draw_status_row("Rigid Bodies", std::format("{}", scene->rigidBodies.size()));
+            draw_status_row("Colliders", std::format("{}", scene->colliders.size()));
             ImGui::EndTable();
         }
     }

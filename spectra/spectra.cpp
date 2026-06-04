@@ -221,7 +221,7 @@ namespace spectra {
     void Spectra::activate_renderer(const std::size_t renderer_index) {
         if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
         const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
-        if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available for the active scene", this->renderers[renderer_index].name) : availability.detail);
+        if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available", this->renderers[renderer_index].name) : availability.detail);
         this->active_renderer_index = renderer_index;
         this->dock_layout_initialized = false;
         this->sync_active_sidebar_tab();
@@ -284,7 +284,7 @@ namespace spectra {
     SpectraRendererAvailability Spectra::renderer_availability(const std::string_view renderer_name) {
         if (!this->renderer_availability_callback) return SpectraRendererAvailability{};
         SpectraRendererAvailability availability = this->renderer_availability_callback(renderer_name);
-        if (!availability.available && availability.detail.empty()) availability.detail = std::format("Renderer \"{}\" is not available for the active scene", renderer_name);
+        if (!availability.available && availability.detail.empty()) availability.detail = std::format("Renderer \"{}\" is not available", renderer_name);
         return availability;
     }
 

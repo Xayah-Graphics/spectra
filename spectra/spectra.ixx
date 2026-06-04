@@ -131,11 +131,6 @@ export namespace spectra {
         std::optional<std::string>{std::move(result.window_detail)};
     };
 
-    template <typename Host>
-    concept SpectraSceneHost = requires(Host& host, SpectraSidebarTab tab) {
-        { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
-    };
-
     template <typename Renderer, typename Host>
     concept SpectraRendererForHost = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, const std::remove_cvref_t<Renderer>& constRenderer, Host& host, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& commandBuffer) {
         { constRenderer.name() } -> std::convertible_to<std::string_view>;

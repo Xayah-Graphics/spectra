@@ -316,6 +316,8 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         pathtracer.ixx
+        pbrt_scene.ixx
+        pbrt_scene_library.ixx
         PRIVATE
         ${SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES}
         ${SPECTRA_PATHTRACER_SOA_GENERATED}
@@ -325,13 +327,15 @@ target_sources(
         ${SPECTRA_ROOT_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${SPECTRA_ROOT_DIR}/vendor/pbrt/rply/rply.cpp
         pathtracer.cpp
+        pbrt_scene.cpp
+        pbrt_scene_library.cpp
         compiled_scene.cpp
         optix/aggregate.cu
         integrator.cu
 )
 add_dependencies(spectra_pathtracer spectra_pathtracer_soa_generated)
 target_compile_definitions(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_compile_definitions(spectra_pathtracer PRIVATE "SPECTRA_PROJECT_SCENE_ROOT=\"${SPECTRA_PROJECT_SCENE_ROOT}\"" IMGUI_DEFINE_MATH_OPERATORS)
+target_compile_definitions(spectra_pathtracer PRIVATE "SPECTRA_PBRT_SCENE_ROOT=\"${SPECTRA_PBRT_SCENE_ROOT}\"" IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_INCLUDE_DIRS} PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
 target_compile_options(
         spectra_pathtracer
@@ -360,3 +364,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif ()
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 set_property(TARGET spectra_pathtracer PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+
+add_executable(spectra_pathtracer_cli pathtracer_cli.cpp)
+add_executable(spectra::pathtracer_cli ALIAS spectra_pathtracer_cli)
+target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer Threads::Threads)
+set_property(TARGET spectra_pathtracer_cli PROPERTY CXX_MODULE_STD ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
+endif ()

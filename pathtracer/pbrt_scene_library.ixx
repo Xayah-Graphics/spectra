@@ -1,11 +1,10 @@
-export module spectra.scene.library;
+export module spectra.pathtracer.pbrt.library;
 
-export import spectra.scene.pbrt;
-import spectra;
+export import spectra.pathtracer.pbrt;
 import std;
 
-export namespace spectra::scene {
-    class SceneLibrary final {
+export namespace spectra::pathtracer {
+    class PbrtSceneLibrary final {
     public:
         enum class DisplayState {
             Checking,
@@ -15,44 +14,37 @@ export namespace spectra::scene {
             Invalid,
         };
 
-        SceneLibrary();
-        ~SceneLibrary() noexcept;
+        PbrtSceneLibrary();
+        ~PbrtSceneLibrary() noexcept;
 
-        SceneLibrary(const SceneLibrary& other)                = delete;
-        SceneLibrary(SceneLibrary&& other) noexcept            = delete;
-        SceneLibrary& operator=(const SceneLibrary& other)     = delete;
-        SceneLibrary& operator=(SceneLibrary&& other) noexcept = delete;
+        PbrtSceneLibrary(const PbrtSceneLibrary& other)                = delete;
+        PbrtSceneLibrary(PbrtSceneLibrary&& other) noexcept            = delete;
+        PbrtSceneLibrary& operator=(const PbrtSceneLibrary& other)     = delete;
+        PbrtSceneLibrary& operator=(PbrtSceneLibrary&& other) noexcept = delete;
 
-        template <SpectraSceneHost Host>
+        template <PathtracerHost Host>
         void attach(Host& host) {
-            this->attach_sidebar_host([&host](SpectraSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); });
+            this->attach_sidebar_host([&host](PathtracerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); });
         }
 
         void detach() noexcept;
 
-        [[nodiscard]] std::shared_ptr<SceneWorkspace> document_workspace() const;
-        void register_translation_target(SceneTranslationTarget target);
-        void set_active_renderer(std::string_view renderer_name);
-        void load_first_supported_scene(std::string_view renderer_name);
-        [[nodiscard]] SpectraRendererAvailability renderer_availability(std::string_view renderer_name);
+        [[nodiscard]] std::shared_ptr<SceneWorkspace> scene_workspace() const;
 
     private:
         struct ProbeTranslationCacheEntry {
-            std::string rendererName{};
             std::string sceneId{};
             SceneRevision revision{};
             SceneTranslationReport report{};
         };
 
         struct DocumentTranslationCacheEntry {
-            std::string rendererName{};
             std::string sceneId{};
             SceneRevision revision{};
             SceneTranslationReport report{};
         };
 
         struct TranslationRequestKey {
-            std::string rendererName{};
             std::string sceneId{};
             SceneRevision revision{};
         };
@@ -63,25 +55,23 @@ export namespace spectra::scene {
             SceneProbeReport probe{};
         };
 
-        void attach_sidebar_host(std::move_only_function<void(SpectraSidebarTab)> register_tab);
+        void attach_sidebar_host(std::move_only_function<void(PathtracerSidebarTab)> register_tab);
         void start_scene_background_workers();
         void stop_scene_background_workers_noexcept() noexcept;
         void stop_scene_background_workers_if_idle() noexcept;
         void run_scene_background_worker(std::stop_token stop_token);
         void refresh_scene_catalog_counts();
         void clear_scene_translation_caches(std::string_view scene_id);
-        void ensure_translation_target_exists(std::string_view renderer_name) const;
         [[nodiscard]] bool has_scene_background_work_locked() const;
         [[nodiscard]] std::optional<std::size_t> next_catalog_probe_index_locked() const;
         [[nodiscard]] static bool translation_request_key_matches(const TranslationRequestKey& lhs, const TranslationRequestKey& rhs);
         [[nodiscard]] bool has_probe_translation_cache_entry_locked(const TranslationRequestKey& key) const;
         [[nodiscard]] bool has_translation_request_locked(const TranslationRequestKey& key) const;
-        [[nodiscard]] SceneTranslationReport analyze_probe(std::string_view renderer_name, const SceneProbeReport& probe);
-        [[nodiscard]] SceneTranslationReport analyze_document(std::string_view renderer_name, const SceneSnapshot& document);
-        [[nodiscard]] SpectraRendererAvailability availability_from_report(std::string_view renderer_name, const SceneTranslationReport& report) const;
-        [[nodiscard]] DisplayState display_state(const PbrtSceneCatalogEntry& entry, const std::optional<SceneTranslationReport>& report, bool renderer_report_required, bool loaded) const;
-        [[nodiscard]] std::optional<SceneTranslationReport> cached_entry_report(std::string_view renderer_name, const PbrtSceneCatalogEntry& entry) const;
-        void request_entry_report_analysis(std::string_view renderer_name, std::size_t scene_index, const PbrtSceneCatalogEntry& entry);
+        [[nodiscard]] SceneTranslationReport analyze_probe(const SceneProbeReport& probe);
+        [[nodiscard]] SceneTranslationReport analyze_document(const SceneSnapshot& document);
+        [[nodiscard]] DisplayState display_state(const PbrtSceneCatalogEntry& entry, const std::optional<SceneTranslationReport>& report, bool loaded) const;
+        [[nodiscard]] std::optional<SceneTranslationReport> cached_entry_report(const PbrtSceneCatalogEntry& entry) const;
+        void request_entry_report_analysis(std::size_t scene_index, const PbrtSceneCatalogEntry& entry);
         void commit_document(std::size_t scene_index, SceneSnapshot document);
         void load_scene(std::size_t scene_index);
         void draw_scene_library_window();
@@ -91,12 +81,10 @@ export namespace spectra::scene {
         std::condition_variable_any scene_background_condition{};
         PbrtSceneCatalog scene_catalog{};
         std::vector<bool> scene_catalog_probe_claimed{};
-        std::vector<SceneTranslationTarget> translation_targets{};
         std::vector<ProbeTranslationCacheEntry> probe_translation_cache{};
         std::vector<DocumentTranslationCacheEntry> document_translation_cache{};
         std::deque<TranslationRequest> translation_requests{};
         std::vector<TranslationRequestKey> translation_requests_in_progress{};
-        std::string active_renderer{};
         std::size_t active_scene_index{};
         bool attached{false};
         struct {
@@ -107,4 +95,4 @@ export namespace spectra::scene {
         } scene_library;
         std::vector<std::jthread> scene_background_workers{};
     };
-} // namespace spectra::scene
+} // namespace spectra::pathtracer

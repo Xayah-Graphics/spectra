@@ -16,6 +16,336 @@ export module spectra.rasterizer;
 import std;
 
 export namespace spectra::rasterizer {
+    struct SceneRevision {
+        std::uint64_t value{};
+
+        friend auto operator<=>(const SceneRevision&, const SceneRevision&) = default;
+    };
+
+    enum class SceneDirtyFlags : std::uint32_t {
+        None            = 0,
+        Document        = 1u << 0u,
+        Timeline        = 1u << 1u,
+        Frame           = 1u << 2u,
+        RenderResources = 1u << 3u,
+    };
+
+    [[nodiscard]] constexpr SceneDirtyFlags operator|(const SceneDirtyFlags lhs, const SceneDirtyFlags rhs) {
+        return static_cast<SceneDirtyFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
+    }
+
+    [[nodiscard]] constexpr bool HasSceneDirtyFlag(const SceneDirtyFlags flags, const SceneDirtyFlags flag) {
+        return (static_cast<std::uint32_t>(flags) & static_cast<std::uint32_t>(flag)) != 0u;
+    }
+
+    struct SceneSourceLocation {
+        std::string filename{};
+        int line{1};
+        int column{1};
+    };
+
+    struct SceneVector2 {
+        float x{};
+        float y{};
+    };
+
+    struct SceneVector3 {
+        float x{};
+        float y{};
+        float z{};
+    };
+
+    struct SceneVector4 {
+        float x{};
+        float y{};
+        float z{};
+        float w{1.0f};
+    };
+
+    struct SceneQuaternion {
+        float x{};
+        float y{};
+        float z{};
+        float w{1.0f};
+    };
+
+    struct SceneTransform {
+        SceneVector3 position{};
+        SceneQuaternion rotation{};
+        SceneVector3 scale{1.0f, 1.0f, 1.0f};
+    };
+
+    struct SceneMaterial {
+        std::string name{};
+        SceneVector4 baseColor{0.8f, 0.8f, 0.8f, 1.0f};
+        SceneVector3 emissionColor{};
+        float emissionStrength{};
+        float roughness{0.5f};
+        float metallic{};
+    };
+
+    enum class SceneLightKind {
+        Directional,
+        Point,
+        Spot,
+        Area,
+        Environment,
+    };
+
+    struct SceneLight {
+        std::string name{};
+        SceneLightKind kind{SceneLightKind::Directional};
+        SceneTransform transform{};
+        SceneVector3 color{1.0f, 1.0f, 1.0f};
+        float intensity{1.0f};
+        float coneAngleDegrees{45.0f};
+        SceneSourceLocation source{};
+    };
+
+    struct SceneMesh {
+        std::string name{};
+        std::vector<SceneVector3> positions{};
+        std::vector<SceneVector3> normals{};
+        std::vector<SceneVector2> texcoords{};
+        std::vector<std::uint32_t> indices{};
+        std::string materialName{};
+        SceneTransform transform{};
+        bool dynamic{false};
+        SceneSourceLocation source{};
+    };
+
+    struct SceneParticleSet {
+        std::string name{};
+        std::vector<SceneVector3> positions{};
+        std::vector<SceneVector3> velocities{};
+        std::vector<float> radii{};
+        std::string materialName{};
+        SceneTransform transform{};
+        float mass{1.0f};
+        bool dynamic{true};
+        SceneSourceLocation source{};
+    };
+
+    enum class SceneVolumeKind {
+        LiquidLevelSet,
+        GasDensity,
+        GasTemperature,
+        GasVelocity,
+    };
+
+    struct SceneVolumeGrid {
+        std::string name{};
+        SceneVolumeKind kind{SceneVolumeKind::GasDensity};
+        std::array<std::uint32_t, 3> dimensions{};
+        SceneVector3 origin{};
+        SceneVector3 voxelSize{1.0f, 1.0f, 1.0f};
+        std::vector<std::string> channelNames{};
+        std::string materialName{};
+        bool dynamic{true};
+        SceneSourceLocation source{};
+    };
+
+    struct SceneCloth {
+        std::string name{};
+        std::string meshName{};
+        std::string materialName{};
+        SceneTransform transform{};
+        float massPerArea{1.0f};
+        float stretchStiffness{1.0f};
+        float bendStiffness{0.2f};
+        bool dynamic{true};
+        SceneSourceLocation source{};
+    };
+
+    struct SceneRigidBody {
+        std::string name{};
+        std::string meshName{};
+        std::string materialName{};
+        SceneTransform transform{};
+        SceneVector3 linearVelocity{};
+        SceneVector3 angularVelocity{};
+        float mass{1.0f};
+        bool staticBody{false};
+        SceneSourceLocation source{};
+    };
+
+    struct SceneCollider {
+        std::string name{};
+        std::string meshName{};
+        SceneTransform transform{};
+        float friction{0.5f};
+        float restitution{0.1f};
+        SceneSourceLocation source{};
+    };
+
+    struct SceneDocument {
+        SceneRevision revision{};
+        std::string name{};
+        std::string title{};
+        std::string source{};
+        SceneVector3 gravity{0.0f, -9.8f, 0.0f};
+        double framesPerSecond{24.0};
+        std::vector<SceneMaterial> materials{};
+        std::vector<SceneLight> lights{};
+        std::vector<SceneMesh> meshes{};
+        std::vector<SceneParticleSet> particleSets{};
+        std::vector<SceneVolumeGrid> volumes{};
+        std::vector<SceneCloth> cloths{};
+        std::vector<SceneRigidBody> rigidBodies{};
+        std::vector<SceneCollider> colliders{};
+    };
+
+    enum class SimulationTimelineMode {
+        Live,
+        Record,
+        Playback,
+    };
+
+    struct FrameCursor {
+        std::uint64_t frameIndex{};
+        double timeSeconds{};
+    };
+
+    struct SceneFrameSnapshot {
+        SceneRevision revision{};
+        FrameCursor cursor{};
+        std::vector<SceneMesh> meshes{};
+        std::vector<SceneParticleSet> particleSets{};
+        std::vector<SceneVolumeGrid> volumes{};
+        std::vector<SceneCloth> cloths{};
+        std::vector<SceneRigidBody> rigidBodies{};
+    };
+
+    struct SimulationTimeline {
+        SimulationTimelineMode mode{SimulationTimelineMode::Playback};
+        double framesPerSecond{24.0};
+        FrameCursor cursor{};
+        std::optional<SceneFrameSnapshot> currentFrame{};
+    };
+
+    struct SceneEditBatch {
+        SceneRevision beforeRevision{};
+        SceneRevision afterRevision{};
+        SceneDirtyFlags dirty{SceneDirtyFlags::None};
+    };
+
+    class SceneEditBuilder {
+    public:
+        void replaceDocument(SceneDocument document) {
+            this->documentReplacement = std::move(document);
+            this->dirty               = this->dirty | SceneDirtyFlags::Document | SceneDirtyFlags::RenderResources;
+        }
+
+        void replaceTimeline(SimulationTimeline timeline) {
+            this->timelineReplacement = std::move(timeline);
+            this->dirty               = this->dirty | SceneDirtyFlags::Timeline;
+        }
+
+        void replaceFrame(SceneFrameSnapshot frame) {
+            this->frameReplacement = std::move(frame);
+            this->dirty            = this->dirty | SceneDirtyFlags::Frame | SceneDirtyFlags::RenderResources;
+        }
+
+    private:
+        std::optional<SceneDocument> documentReplacement{};
+        std::optional<SimulationTimeline> timelineReplacement{};
+        std::optional<SceneFrameSnapshot> frameReplacement{};
+        SceneDirtyFlags dirty{SceneDirtyFlags::None};
+
+        friend class SceneWorkspace;
+    };
+
+    class SceneWorkspace {
+    public:
+        SceneWorkspace() = default;
+
+        explicit SceneWorkspace(SceneDocument document) {
+            if (document.revision.value == 0) document.revision = SceneRevision{1};
+            this->currentRevision = document.revision;
+            this->currentDocument = std::make_shared<SceneDocument>(std::move(document));
+            this->currentTimeline.framesPerSecond = this->currentDocument->framesPerSecond;
+        }
+
+        [[nodiscard]] bool loaded() const {
+            return this->currentDocument != nullptr;
+        }
+
+        [[nodiscard]] SceneRevision revision() const {
+            if (this->currentDocument == nullptr) throw std::runtime_error("Rasterizer scene workspace does not contain a loaded document");
+            return this->currentRevision;
+        }
+
+        [[nodiscard]] std::shared_ptr<const SceneDocument> document() const {
+            if (this->currentDocument == nullptr) throw std::runtime_error("Rasterizer scene workspace does not contain a loaded document");
+            return this->currentDocument;
+        }
+
+        [[nodiscard]] SimulationTimeline timeline() const {
+            if (this->currentDocument == nullptr) throw std::runtime_error("Rasterizer scene workspace does not contain a loaded document");
+            return this->currentTimeline;
+        }
+
+        [[nodiscard]] std::optional<SceneFrameSnapshot> frame() const {
+            if (this->currentDocument == nullptr) throw std::runtime_error("Rasterizer scene workspace does not contain a loaded document");
+            return this->currentTimeline.currentFrame;
+        }
+
+        [[nodiscard]] SceneEditBatch commit(SceneEditBuilder edit) {
+            if (this->currentDocument == nullptr) throw std::runtime_error("Cannot edit an unloaded rasterizer scene workspace");
+            if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit an empty rasterizer scene edit");
+
+            const SceneRevision beforeRevision = this->currentRevision;
+            this->currentRevision              = SceneRevision{beforeRevision.value + 1};
+            if (edit.documentReplacement.has_value()) {
+                SceneDocument next = std::move(*edit.documentReplacement);
+                next.revision      = this->currentRevision;
+                this->currentDocument = std::make_shared<SceneDocument>(std::move(next));
+            }
+            if (edit.timelineReplacement.has_value()) this->currentTimeline = std::move(*edit.timelineReplacement);
+            if (edit.frameReplacement.has_value()) {
+                edit.frameReplacement->revision = this->currentRevision;
+                this->currentTimeline.cursor = edit.frameReplacement->cursor;
+                this->currentTimeline.currentFrame = std::move(*edit.frameReplacement);
+            }
+
+            SceneEditBatch batch{
+                .beforeRevision = beforeRevision,
+                .afterRevision  = this->currentRevision,
+                .dirty          = edit.dirty,
+            };
+            this->lastEdit = batch;
+            return batch;
+        }
+
+        [[nodiscard]] SceneEditBatch changes_since(const SceneRevision revision) const {
+            if (this->currentDocument == nullptr) throw std::runtime_error("Cannot query rasterizer scene changes from an unloaded workspace");
+            if (revision == this->currentRevision) {
+                return SceneEditBatch{
+                    .beforeRevision = revision,
+                    .afterRevision  = revision,
+                    .dirty          = SceneDirtyFlags::None,
+                };
+            }
+            if (revision.value == 0) return this->fullEdit(revision);
+            if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
+            throw std::runtime_error("Rasterizer scene edit history for the requested revision is unavailable");
+        }
+
+    private:
+        [[nodiscard]] SceneEditBatch fullEdit(SceneRevision before) const {
+            return SceneEditBatch{
+                .beforeRevision = before,
+                .afterRevision  = this->currentRevision,
+                .dirty          = SceneDirtyFlags::Document | SceneDirtyFlags::Timeline | SceneDirtyFlags::Frame | SceneDirtyFlags::RenderResources,
+            };
+        }
+
+        SceneRevision currentRevision{};
+        std::shared_ptr<const SceneDocument> currentDocument{};
+        SimulationTimeline currentTimeline{};
+        std::optional<SceneEditBatch> lastEdit{};
+    };
+
     enum class RasterizerDockSlot {
         Center,
         Left,
@@ -128,7 +458,7 @@ export namespace spectra::rasterizer {
 
     class RasterizerRenderer final {
     public:
-        RasterizerRenderer();
+        explicit RasterizerRenderer(std::shared_ptr<SceneWorkspace> scene_workspace);
         ~RasterizerRenderer() noexcept;
 
         RasterizerRenderer(const RasterizerRenderer& other) = delete;

@@ -1,19 +1,18 @@
 module;
 
-#ifndef SPECTRA_PROJECT_SCENE_ROOT
-#error "SPECTRA_PROJECT_SCENE_ROOT must point to the project-local scene directory."
+#ifndef SPECTRA_PBRT_SCENE_ROOT
+#error "SPECTRA_PBRT_SCENE_ROOT must point to the project-local PBRT scene directory."
 #endif
 
 #include <zlib.h>
 
-module spectra.scene.pbrt;
+module spectra.pathtracer.pbrt;
 
-import spectra.scene;
 
 import std;
 
 
-namespace spectra::scene {
+namespace spectra::pathtracer {
     namespace {
         constexpr char DefaultMaterialName[] = "__pbrt_default_material";
 
@@ -298,6 +297,50 @@ namespace spectra::scene {
             throw ParseError(token.source, std::format("\"{}\" is not a Boolean value", token.text));
         }
 
+        struct Point3 {
+            float x{};
+            float y{};
+            float z{};
+        };
+
+        struct Vector3 {
+            float x{};
+            float y{};
+            float z{};
+        };
+
+        [[nodiscard]] Vector3 operator-(const Point3& a, const Point3& b) {
+            return Vector3{a.x - b.x, a.y - b.y, a.z - b.z};
+        }
+
+        [[nodiscard]] Vector3 Cross(const Vector3& a, const Vector3& b) {
+            return Vector3{
+                a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x,
+            };
+        }
+
+        [[nodiscard]] float Length(const Vector3& vector) {
+            return std::sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
+        }
+
+        [[nodiscard]] Vector3 Normalize(const Vector3& vector) {
+            const float length = Length(vector);
+            if (!(length > 0.0f)) throw std::runtime_error("Cannot normalize a zero-length PBRT scene vector");
+            return Vector3{vector.x / length, vector.y / length, vector.z / length};
+        }
+
+        [[nodiscard]] std::array<float, 16> MultiplyMatrix(const std::array<float, 16>& a, const std::array<float, 16>& b) {
+            std::array<float, 16> result{};
+            for (std::size_t row = 0; row < 4; ++row) {
+                for (std::size_t column = 0; column < 4; ++column) {
+                    for (std::size_t index = 0; index < 4; ++index) result[row * 4 + column] += a[row * 4 + index] * b[index * 4 + column];
+                }
+            }
+            return result;
+        }
+
         [[nodiscard]] std::array<float, 16> TransposeMatrix(const std::array<float, 16>& matrix) {
             return {
                 matrix[0],
@@ -355,15 +398,191 @@ namespace spectra::scene {
             return inverse;
         }
 
-        [[nodiscard]] spectra::math::Transform TransformFromPbrtMatrix(const std::array<float, 16>& pbrtMatrix, const SceneSourceLocation& source) {
+        [[nodiscard]] SceneTransform Multiply(const SceneTransform& a, const SceneTransform& b) {
+            return SceneTransform{
+                .matrix  = MultiplyMatrix(a.matrix, b.matrix),
+                .inverse = MultiplyMatrix(b.inverse, a.inverse),
+            };
+        }
+
+        [[nodiscard]] SceneTransform Inverse(const SceneTransform& transform) {
+            return SceneTransform{
+                .matrix  = transform.inverse,
+                .inverse = transform.matrix,
+            };
+        }
+
+        [[nodiscard]] SceneTransform Translate(const Vector3& delta) {
+            return SceneTransform{
+                .matrix =
+                    {
+                        1.0f,
+                        0.0f,
+                        0.0f,
+                        delta.x,
+                        0.0f,
+                        1.0f,
+                        0.0f,
+                        delta.y,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                        delta.z,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                    },
+                .inverse =
+                    {
+                        1.0f,
+                        0.0f,
+                        0.0f,
+                        -delta.x,
+                        0.0f,
+                        1.0f,
+                        0.0f,
+                        -delta.y,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                        -delta.z,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                    },
+            };
+        }
+
+        [[nodiscard]] SceneTransform Scale(float x, float y, float z) {
+            return SceneTransform{
+                .matrix =
+                    {
+                        x,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        y,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        z,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                    },
+                .inverse =
+                    {
+                        1.0f / x,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f / y,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f / z,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                    },
+            };
+        }
+
+        [[nodiscard]] SceneTransform Rotate(float degrees, Vector3 axis) {
+            constexpr float radiansPerDegree = 0.017453292519943295769f;
+            axis                             = Normalize(axis);
+            const float sinTheta             = std::sin(degrees * radiansPerDegree);
+            const float cosTheta             = std::cos(degrees * radiansPerDegree);
+            const float oneMinusCosTheta     = 1.0f - cosTheta;
+            const std::array<float, 16> matrix{
+                axis.x * axis.x + (1.0f - axis.x * axis.x) * cosTheta,
+                axis.x * axis.y * oneMinusCosTheta - axis.z * sinTheta,
+                axis.x * axis.z * oneMinusCosTheta + axis.y * sinTheta,
+                0.0f,
+                axis.x * axis.y * oneMinusCosTheta + axis.z * sinTheta,
+                axis.y * axis.y + (1.0f - axis.y * axis.y) * cosTheta,
+                axis.y * axis.z * oneMinusCosTheta - axis.x * sinTheta,
+                0.0f,
+                axis.x * axis.z * oneMinusCosTheta - axis.y * sinTheta,
+                axis.y * axis.z * oneMinusCosTheta + axis.x * sinTheta,
+                axis.z * axis.z + (1.0f - axis.z * axis.z) * cosTheta,
+                0.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f,
+            };
+            return SceneTransform{
+                .matrix  = matrix,
+                .inverse = TransposeMatrix(matrix),
+            };
+        }
+
+        [[nodiscard]] SceneTransform LookAt(const Point3& position, const Point3& look, const Vector3& up) {
+            const Vector3 direction = Normalize(look - position);
+            const Vector3 right     = Normalize(Cross(Normalize(up), direction));
+            const Vector3 newUp     = Cross(direction, right);
+            const std::array<float, 16> worldFromCamera{
+                right.x,
+                newUp.x,
+                direction.x,
+                position.x,
+                right.y,
+                newUp.y,
+                direction.y,
+                position.y,
+                right.z,
+                newUp.z,
+                direction.z,
+                position.z,
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f,
+            };
+            const std::array<float, 16> cameraFromWorld{
+                right.x,
+                right.y,
+                right.z,
+                -(right.x * position.x + right.y * position.y + right.z * position.z),
+                newUp.x,
+                newUp.y,
+                newUp.z,
+                -(newUp.x * position.x + newUp.y * position.y + newUp.z * position.z),
+                direction.x,
+                direction.y,
+                direction.z,
+                -(direction.x * position.x + direction.y * position.y + direction.z * position.z),
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f,
+            };
+            return SceneTransform{
+                .matrix  = cameraFromWorld,
+                .inverse = worldFromCamera,
+            };
+        }
+
+        [[nodiscard]] SceneTransform TransformFromPbrtMatrix(const std::array<float, 16>& pbrtMatrix, const SceneSourceLocation& source) {
             const std::array<float, 16> matrix = TransposeMatrix(pbrtMatrix);
-            return spectra::math::Transform{
+            return SceneTransform{
                 .matrix  = matrix,
                 .inverse = InverseMatrix(matrix, source),
             };
         }
 
-        [[nodiscard]] bool TransformDiffers(const spectra::math::Transform& left, const spectra::math::Transform& right) {
+        [[nodiscard]] bool TransformDiffers(const SceneTransform& left, const SceneTransform& right) {
             return left.matrix != right.matrix || left.inverse != right.inverse;
         }
 
@@ -371,13 +590,13 @@ namespace spectra::scene {
             transform->animated = TransformDiffers(transform->start, transform->end);
         }
 
-        void ApplyTransform(SceneTransformSet* transform, const spectra::math::Transform& value, const bool startActive, const bool endActive) {
-            if (startActive) transform->start = spectra::math::Multiply(transform->start, value);
-            if (endActive) transform->end = spectra::math::Multiply(transform->end, value);
+        void ApplyTransform(SceneTransformSet* transform, const SceneTransform& value, const bool startActive, const bool endActive) {
+            if (startActive) transform->start = Multiply(transform->start, value);
+            if (endActive) transform->end = Multiply(transform->end, value);
             RefreshAnimatedFlag(transform);
         }
 
-        void SetTransform(SceneTransformSet* transform, const spectra::math::Transform& value, const bool startActive, const bool endActive) {
+        void SetTransform(SceneTransformSet* transform, const SceneTransform& value, const bool startActive, const bool endActive) {
             if (startActive) transform->start = value;
             if (endActive) transform->end = value;
             RefreshAnimatedFlag(transform);
@@ -655,7 +874,7 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "Identity") {
-                    this->SetActiveTransform(spectra::math::Transform{});
+                    this->SetActiveTransform(SceneTransform{});
                     return;
                 }
                 if (directive.text == "Import") {
@@ -689,7 +908,7 @@ namespace spectra::scene {
                 if (directive.text == "LookAt") {
                     std::array<float, 9> values{};
                     for (float& value : values) value = ParseFloatToken(RequireToken(stream, "LookAt"));
-                    this->ApplyActiveTransform(spectra::math::LookAt(spectra::math::Point3{values[0], values[1], values[2]}, spectra::math::Point3{values[3], values[4], values[5]}, spectra::math::Vector3{values[6], values[7], values[8]}));
+                    this->ApplyActiveTransform(LookAt(Point3{values[0], values[1], values[2]}, Point3{values[3], values[4], values[5]}, Vector3{values[6], values[7], values[8]}));
                     return;
                 }
                 if (directive.text == "MakeNamedMaterial") {
@@ -761,7 +980,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float y = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float z = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    this->ApplyActiveTransform(spectra::math::Rotate(angle, spectra::math::Vector3{x, y, z}));
+                    this->ApplyActiveTransform(Rotate(angle, Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "Sampler") {
@@ -775,7 +994,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Scale"));
                     const float y = ParseFloatToken(RequireToken(stream, "Scale"));
                     const float z = ParseFloatToken(RequireToken(stream, "Scale"));
-                    this->ApplyActiveTransform(spectra::math::Scale(x, y, z));
+                    this->ApplyActiveTransform(Scale(x, y, z));
                     return;
                 }
                 if (directive.text == "Shape") {
@@ -805,7 +1024,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float y = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float z = ParseFloatToken(RequireToken(stream, "Translate"));
-                    this->ApplyActiveTransform(spectra::math::Translate(spectra::math::Vector3{x, y, z}));
+                    this->ApplyActiveTransform(Translate(Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "WorldBegin") {
@@ -837,11 +1056,11 @@ namespace spectra::scene {
                 if (this->currentBlock != BlockState::World) throw ParseError(source, std::format("{} is only valid after WorldBegin", name));
             }
 
-            void ApplyActiveTransform(const spectra::math::Transform& transform) {
+            void ApplyActiveTransform(const SceneTransform& transform) {
                 ApplyTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
             }
 
-            void SetActiveTransform(const spectra::math::Transform& transform) {
+            void SetActiveTransform(const SceneTransform& transform) {
                 SetTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
             }
 
@@ -1217,7 +1436,7 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "Identity") {
-                    this->SetActiveTransform(spectra::math::Transform{});
+                    this->SetActiveTransform(SceneTransform{});
                     return;
                 }
                 if (directive.text == "Import") {
@@ -1243,7 +1462,7 @@ namespace spectra::scene {
                 if (directive.text == "LookAt") {
                     std::array<float, 9> values{};
                     for (float& value : values) value = ParseFloatToken(RequireToken(stream, "LookAt"));
-                    this->ApplyActiveTransform(spectra::math::LookAt(spectra::math::Point3{values[0], values[1], values[2]}, spectra::math::Point3{values[3], values[4], values[5]}, spectra::math::Vector3{values[6], values[7], values[8]}));
+                    this->ApplyActiveTransform(LookAt(Point3{values[0], values[1], values[2]}, Point3{values[3], values[4], values[5]}, Vector3{values[6], values[7], values[8]}));
                     return;
                 }
                 if (directive.text == "MakeNamedMaterial") {
@@ -1309,7 +1528,7 @@ namespace spectra::scene {
                     const float x     = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float y     = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float z     = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    this->ApplyActiveTransform(spectra::math::Rotate(angle, spectra::math::Vector3{x, y, z}));
+                    this->ApplyActiveTransform(Rotate(angle, Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "Sampler") {
@@ -1322,7 +1541,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Scale"));
                     const float y = ParseFloatToken(RequireToken(stream, "Scale"));
                     const float z = ParseFloatToken(RequireToken(stream, "Scale"));
-                    this->ApplyActiveTransform(spectra::math::Scale(x, y, z));
+                    this->ApplyActiveTransform(Scale(x, y, z));
                     return;
                 }
                 if (directive.text == "Shape") {
@@ -1351,7 +1570,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float y = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float z = ParseFloatToken(RequireToken(stream, "Translate"));
-                    this->ApplyActiveTransform(spectra::math::Translate(spectra::math::Vector3{x, y, z}));
+                    this->ApplyActiveTransform(Translate(Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "WorldBegin") {
@@ -1381,11 +1600,11 @@ namespace spectra::scene {
                 if (this->currentBlock != BlockState::World) throw ParseError(source, std::format("{} is only valid after WorldBegin", name));
             }
 
-            void ApplyActiveTransform(const spectra::math::Transform& transform) {
+            void ApplyActiveTransform(const SceneTransform& transform) {
                 ApplyTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
             }
 
-            void SetActiveTransform(const spectra::math::Transform& transform) {
+            void SetActiveTransform(const SceneTransform& transform) {
                 SetTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
             }
 
@@ -1411,8 +1630,8 @@ namespace spectra::scene {
 
             [[nodiscard]] SceneTransformSet WorldFromCameraTransform() const {
                 SceneTransformSet result{
-                    .start     = spectra::math::Inverse(this->graphicsState.transform.start),
-                    .end       = spectra::math::Inverse(this->graphicsState.transform.end),
+                    .start     = Inverse(this->graphicsState.transform.start),
+                    .end       = Inverse(this->graphicsState.transform.end),
                     .startTime = this->graphicsState.transform.startTime,
                     .endTime   = this->graphicsState.transform.endTime,
                 };
@@ -1647,7 +1866,7 @@ namespace spectra::scene {
         };
 
         [[nodiscard]] std::filesystem::path SceneRoot() {
-            return std::filesystem::absolute(std::filesystem::path(SPECTRA_PROJECT_SCENE_ROOT)).lexically_normal();
+            return std::filesystem::absolute(std::filesystem::path(SPECTRA_PBRT_SCENE_ROOT)).lexically_normal();
         }
 
         [[nodiscard]] std::string PathId(std::filesystem::path path) {
@@ -1816,4 +2035,4 @@ namespace spectra::scene {
         if (name == "default") scene.name = "default";
         return SceneWorkspace{std::move(scene)};
     }
-} // namespace spectra::scene
+} // namespace spectra::pathtracer
