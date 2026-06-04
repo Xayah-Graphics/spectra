@@ -864,6 +864,11 @@ namespace spectra::optix {
         if (level <= 2) throw std::runtime_error(diagnostics::Format("OptiX: %s: %s", tag, message));
     }
 
+    static std::mutex& AccelerationBuildMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
     int SpectraOptiXAggregate::addHGRecords(const BVH& bvh) {
         if (bvh.intersectHGRecords.empty()) return -1;
 
@@ -1154,18 +1159,21 @@ namespace spectra::optix {
             int sbtOffset;
         };
         AsyncJob<GAS*>* triJob = RunAsync([&]() {
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
             BVH triangleBVH = buildBVHForTriangles(scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, shapeIndexToAreaLights, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
             int sbtOffset   = addHGRecords(triangleBVH);
             return new GAS{std::move(triangleBVH), sbtOffset};
         });
 
         AsyncJob<GAS*>* blpJob = RunAsync([&]() {
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
             BVH blpBVH            = buildBVHForBLPs(scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
             int bilinearSBTOffset = addHGRecords(blpBVH);
             return new GAS{std::move(blpBVH), bilinearSBTOffset};
         });
 
         AsyncJob<GAS*>* quadricJob = RunAsync([&]() {
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
             BVH quadricBVH       = buildBVHForQuadrics(scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
             int quadricSBTOffset = addHGRecords(quadricBVH);
             return new GAS{std::move(quadricBVH), quadricSBTOffset};
@@ -1197,6 +1205,7 @@ namespace spectra::optix {
 
             Instance inst;
 
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
             std::map<int, TriQuadMesh> meshes = PreparePLYMeshes(def.second.shapes, textures.floatTextures, config.displacement_edge_scale);
 
             BVH triangleBVH = buildBVHForTriangles(def.second.shapes, meshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, {}, scene.meshBufferCache, threadAllocators, threadCUDAStreams);

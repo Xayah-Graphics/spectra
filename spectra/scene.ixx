@@ -80,192 +80,118 @@ export extern "C++" {
         [[nodiscard]] bool HasDirtyFlag(SceneDirtyFlags flags, SceneDirtyFlags flag);
 
         enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
-        enum class TextureKind { Float, Spectrum };
-        enum class FilmKind { Rgb };
-        enum class CameraKind { Perspective };
-        enum class SamplerKind { Halton, ZSobol };
-        enum class IntegratorKind { VolPath };
-        enum class AcceleratorKind { Bvh };
 
-        struct SceneRgb {
-            float r{};
-            float g{};
-            float b{};
-        };
-
-        struct SceneTextureReference {
-            SceneTextureId texture{};
-        };
-
-        struct SceneFloatInput {
-            std::variant<float, SceneTextureReference> value{0.0f};
-        };
-
-        struct SceneSpectrumInput {
-            std::variant<SceneRgb, std::vector<float>, SceneTextureReference> value{SceneRgb{0.5f, 0.5f, 0.5f}};
-        };
-
-        struct SceneFilmSettings {
-            FilmKind kind{FilmKind::Rgb};
+        struct SceneSourceLocation {
             std::string filename{};
-            std::string sensor{};
-            int xResolution{1920};
-            int yResolution{1080};
-            float iso{100.0f};
-            std::optional<float> whiteBalance{};
+            int line{1};
+            int column{1};
+        };
+
+        struct SceneParameter {
+            std::string type{};
+            std::string name{};
+            std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{std::vector<float>{}};
+            bool mayBeUnused{false};
             ColorSpace colorSpace{ColorSpace::sRGB};
+            SceneSourceLocation source{};
         };
 
-        struct SceneCamera {
-            SceneCameraId id{};
-            CameraKind kind{CameraKind::Perspective};
-            math::Transform worldFromCamera{};
-            std::optional<SceneMediumId> medium{};
-            float fovDegrees{60.0f};
-            float shutterOpen{0.0f};
-            float shutterClose{1.0f};
+        struct SceneEntity {
+            std::string type{};
+            std::vector<SceneParameter> parameters{};
+            ColorSpace colorSpace{ColorSpace::sRGB};
+            SceneSourceLocation source{};
         };
 
-        struct SceneSamplerSettings {
-            SamplerKind kind{SamplerKind::ZSobol};
-            int pixelSamples{16};
+        struct SceneTransformSet {
+            math::Transform start{};
+            math::Transform end{};
+            float startTime{0.0f};
+            float endTime{1.0f};
+            bool animated{false};
         };
 
-        struct SceneIntegratorSettings {
-            IntegratorKind kind{IntegratorKind::VolPath};
-            std::optional<int> maxDepth{};
+        struct SceneOption {
+            std::string name{};
+            std::string value{};
+            SceneSourceLocation source{};
         };
 
-        struct SceneAcceleratorSettings {
-            AcceleratorKind kind{AcceleratorKind::Bvh};
+        struct SceneMediumInterface {
+            std::string inside{};
+            std::string outside{};
         };
 
         struct SceneRenderSettings {
-            SceneFilmSettings film{};
-            SceneCamera camera{};
-            SceneSamplerSettings sampler{};
-            SceneIntegratorSettings integrator{};
-            SceneAcceleratorSettings accelerator{};
+            SceneCameraId cameraId{};
+            SceneEntity filter{.type = "gaussian"};
+            SceneEntity film{.type = "rgb"};
+            SceneEntity camera{.type = "perspective"};
+            SceneEntity sampler{.type = "zsobol"};
+            SceneEntity integrator{.type = "volpath"};
+            SceneEntity accelerator{.type = "bvh"};
+            SceneTransformSet cameraTransform{};
+            std::string cameraMedium{};
+            std::vector<SceneOption> options{};
         };
-
-        struct SceneDiffuseMaterial {
-            SceneSpectrumInput reflectance{SceneRgb{0.5f, 0.5f, 0.5f}};
-        };
-
-        struct SceneCoatedDiffuseMaterial {
-            SceneSpectrumInput reflectance{SceneRgb{0.5f, 0.5f, 0.5f}};
-            SceneFloatInput roughness{0.001f};
-            std::optional<SceneFloatInput> displacement{};
-        };
-
-        struct SceneInterfaceMaterial {};
 
         struct SceneMaterial {
             SceneMaterialId id{};
             std::string name{};
-            std::variant<SceneDiffuseMaterial, SceneCoatedDiffuseMaterial, SceneInterfaceMaterial> value{SceneDiffuseMaterial{}};
-        };
-
-        struct SceneImageTexture {
-            std::string filename{};
-            float uScale{1.0f};
-            float vScale{1.0f};
-        };
-
-        struct SceneConstantFloatTexture {
-            float value{};
-        };
-
-        struct SceneScaleFloatTexture {
-            SceneTextureId scale{};
-            SceneTextureId texture{};
+            SceneEntity entity{};
         };
 
         struct SceneTexture {
             SceneTextureId id{};
-            TextureKind kind{TextureKind::Spectrum};
             std::string name{};
-            std::variant<SceneImageTexture, SceneConstantFloatTexture, SceneScaleFloatTexture> value{SceneImageTexture{}};
-            math::Transform worldFromTexture{};
-            ColorSpace colorSpace{ColorSpace::sRGB};
-        };
-
-        struct SceneNanoVdbMedium {
-            std::string filename{};
-            std::vector<float> sigmaS{};
-            std::vector<float> sigmaA{};
-            float leScale{1.0f};
-            float temperatureCutoff{1.0f};
-            float temperatureScale{1.0f};
+            std::string kind{};
+            SceneEntity entity{};
+            SceneTransformSet transform{};
         };
 
         struct SceneMedium {
             SceneMediumId id{};
             std::string name{};
-            std::variant<SceneNanoVdbMedium> value{SceneNanoVdbMedium{}};
-            math::Transform worldFromMedium{};
-            ColorSpace colorSpace{ColorSpace::sRGB};
-        };
-
-        struct SceneInfiniteLight {
-            std::string filename{};
-            float scale{1.0f};
+            SceneEntity entity{};
+            SceneTransformSet transform{};
         };
 
         struct SceneLight {
             SceneLightId id{};
             std::string name{};
-            std::variant<SceneInfiniteLight> value{SceneInfiniteLight{}};
-            math::Transform worldFromLight{};
-            std::optional<SceneMediumId> medium{};
-            ColorSpace colorSpace{ColorSpace::sRGB};
-        };
-
-        struct SceneDiffuseAreaLight {
-            SceneSpectrumInput emission{SceneRgb{1.0f, 1.0f, 1.0f}};
+            SceneEntity entity{};
+            SceneTransformSet transform{};
+            std::string medium{};
         };
 
         struct SceneAreaLight {
-            std::variant<SceneDiffuseAreaLight> value{SceneDiffuseAreaLight{}};
-            ColorSpace colorSpace{ColorSpace::sRGB};
-        };
-
-        struct SceneSphere {
-            float radius{1.0f};
-        };
-
-        struct SceneDisk {
-            float radius{1.0f};
-        };
-
-        struct ScenePlyMesh {
-            std::string filename{};
+            SceneEntity entity{};
         };
 
         struct SceneShape {
             SceneShapeId id{};
             std::string name{};
-            std::variant<SceneSphere, SceneDisk, ScenePlyMesh> value{SceneSphere{}};
-            math::Transform worldFromObject{};
+            SceneEntity entity{};
+            SceneTransformSet transform{};
             bool reverseOrientation{false};
-            SceneMaterialId material{};
+            std::string materialName{};
             std::optional<SceneAreaLight> areaLight{};
-            std::optional<SceneMediumId> insideMedium{};
-            std::optional<SceneMediumId> outsideMedium{};
-            ColorSpace colorSpace{ColorSpace::sRGB};
+            SceneMediumInterface mediumInterface{};
         };
 
         struct SceneObjectDefinition {
             SceneObjectDefinitionId id{};
             std::string name{};
             std::vector<SceneShape> shapes{};
+            SceneSourceLocation source{};
         };
 
         struct SceneObjectInstance {
             SceneObjectInstanceId id{};
             std::string name{};
-            SceneObjectDefinitionId definition{};
-            math::Transform worldFromInstance{};
+            std::string definitionName{};
+            SceneTransformSet transform{};
+            SceneSourceLocation source{};
         };
 
         struct SceneSnapshot {
@@ -347,6 +273,17 @@ export extern "C++" {
             float camera_fov_degrees{};
         };
 
+        struct SceneGpuSupportIssue {
+            SceneSourceLocation source{};
+            std::string message{};
+        };
+
+        struct SceneGpuSupportReport {
+            bool supported{true};
+            std::vector<SceneGpuSupportIssue> issues{};
+        };
+
+        [[nodiscard]] SceneGpuSupportReport ValidateSceneForGpuPathtracer(const SceneSnapshot& scene);
         [[nodiscard]] SceneInfo DescribeScene(const SceneSnapshot& scene);
         [[nodiscard]] SceneWorkspace BuildScene(std::string_view name);
     } // namespace spectra::scene

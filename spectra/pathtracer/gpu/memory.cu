@@ -5,7 +5,18 @@
 #include <spectra/pathtracer/util/check.cuh>
 
 namespace spectra {
+    namespace {
+        std::mutex& CUDAManagedAllocationMutex() {
+            static std::mutex mutex;
+            return mutex;
+        }
+    } // namespace
+
     void* CUDAMemoryResource::do_allocate(size_t size, size_t alignment) {
+        if (size == 0) return nullptr;
+
+        std::lock_guard<std::mutex> lock(CUDAManagedAllocationMutex());
+
         void* ptr;
         CUDA_CHECK(cudaMallocManaged(&ptr, size));
         CHECK_EQ(0, intptr_t(ptr) % alignment);
@@ -13,17 +24,22 @@ namespace spectra {
     }
 
     void CUDAMemoryResource::do_deallocate(void* p, size_t bytes, size_t alignment) {
+        if (!p) return;
+
+        std::lock_guard<std::mutex> lock(CUDAManagedAllocationMutex());
         CUDA_CHECK(cudaFree(p));
     }
 
     void* CUDATrackedMemoryResource::do_allocate(size_t size, size_t alignment) {
         if (size == 0) return nullptr;
 
+        std::lock_guard<std::mutex> lock(CUDAManagedAllocationMutex());
+
         void* ptr;
         CUDA_CHECK(cudaMallocManaged(&ptr, size));
         DCHECK_EQ(0, intptr_t(ptr) % alignment);
 
-        std::lock_guard<std::mutex> lock(mutex);
+        std::lock_guard<std::mutex> allocationLock(mutex);
         allocations[ptr] = size;
         bytesAllocated += size;
 
@@ -33,11 +49,12 @@ namespace spectra {
     void CUDATrackedMemoryResource::do_deallocate(void* p, size_t size, size_t alignment) {
         if (!p) return;
 
-        CUDA_CHECK(cudaFree(p));
+        std::lock_guard<std::mutex> lock(CUDAManagedAllocationMutex());
+        std::lock_guard<std::mutex> allocationLock(mutex);
 
-        std::lock_guard<std::mutex> lock(mutex);
         auto iter = allocations.find(p);
         DCHECK(iter != allocations.end());
+        CUDA_CHECK(cudaFree(p));
         allocations.erase(iter);
         bytesAllocated -= size;
     }

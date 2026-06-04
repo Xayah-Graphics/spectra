@@ -372,7 +372,7 @@ target_sources(
         PRIVATE
         spectra/scene.cpp
 )
-target_link_libraries(spectra_scene PUBLIC spectra::util)
+target_link_libraries(spectra_scene PUBLIC spectra::util PRIVATE ZLIB::ZLIB)
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_PROJECT_SCENE_ROOT=\"${SPECTRA_PROJECT_SCENE_ROOT}\"")
 

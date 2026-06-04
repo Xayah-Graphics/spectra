@@ -257,10 +257,9 @@ namespace spectra::pathtracer {
         lightSampler = LightSampler::Create(lightSamplerName, pathtracerScene.allLights, alloc);
 
         if (pathtracerScene.integrator.name != "path" && pathtracerScene.integrator.name != "volpath")
-            diagnostics::PrintWarning(&pathtracerScene.integrator.loc,
-                "Ignoring specified integrator \"%s\": the Spectra pathtracer "
-                "always uses a \"volpath\" integrator.",
-                pathtracerScene.integrator.name);
+            throw std::runtime_error(diagnostics::Format(&pathtracerScene.integrator.loc,
+                "The Spectra GPU pathtracer only supports \"path\" and \"volpath\" integrators; got \"%s\".",
+                pathtracerScene.integrator.name));
 
         // Integrator parameters
         regularize = pathtracerScene.integrator.parameters.GetOneBool("regularize", false);

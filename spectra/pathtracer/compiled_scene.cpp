@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cuda_runtime_api.h>
+#include <array>
 #include <format>
 #include <map>
 #include <mutex>
@@ -75,15 +76,24 @@ namespace spectra::pathtracer {
             throw std::runtime_error("Unknown Spectra scene color space.");
         }
 
-        struct ParameterSpec {
-            std::string type{};
-            std::string name{};
-            std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{};
-            bool mayBeUnused{false};
-            scene::ColorSpace colorSpace{scene::ColorSpace::sRGB};
-        };
+        [[nodiscard]] FileLoc ToFileLoc(const scene::SceneSourceLocation& source, const std::string& fallback) {
+            FileLoc location(source.filename.empty() ? std::string_view(fallback) : std::string_view(source.filename));
+            location.line   = source.line;
+            location.column = source.column;
+            return location;
+        }
 
-        void AppendParameterValues(ParsedParameter* parsedParameter, const ParameterSpec& parameter) {
+        [[nodiscard]] std::string SourceString(const scene::SceneSourceLocation& source) {
+            return std::format("{}:{}:{}", source.filename, source.line, source.column);
+        }
+
+        [[nodiscard]] std::string FormatGpuSupportReport(const scene::SceneGpuSupportReport& report) {
+            std::string message = "Scene is not supported by the current GPU pathtracer:";
+            for (const scene::SceneGpuSupportIssue& issue : report.issues) message += std::format("\n  {}: {}", SourceString(issue.source), issue.message);
+            return message;
+        }
+
+        void AppendParameterValues(ParsedParameter* parsedParameter, const scene::SceneParameter& parameter) {
             if (const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values)) {
                 for (float value : *values) parsedParameter->AddFloat(value);
                 return;
@@ -100,64 +110,6 @@ namespace spectra::pathtracer {
             for (const std::string& value : values) parsedParameter->AddString(value);
         }
 
-        [[nodiscard]] ParameterSpec FloatParameter(std::string type, std::string name, std::vector<float> values, scene::ColorSpace colorSpace = scene::ColorSpace::sRGB) {
-            return ParameterSpec{
-                .type       = std::move(type),
-                .name       = std::move(name),
-                .values     = std::move(values),
-                .colorSpace = colorSpace,
-            };
-        }
-
-        [[nodiscard]] ParameterSpec IntegerParameter(std::string name, std::vector<int> values) {
-            return ParameterSpec{
-                .type   = "integer",
-                .name   = std::move(name),
-                .values = std::move(values),
-            };
-        }
-
-        [[nodiscard]] ParameterSpec StringParameter(std::string type, std::string name, std::vector<std::string> values, scene::ColorSpace colorSpace = scene::ColorSpace::sRGB) {
-            return ParameterSpec{
-                .type       = std::move(type),
-                .name       = std::move(name),
-                .values     = std::move(values),
-                .colorSpace = colorSpace,
-            };
-        }
-
-        [[nodiscard]] ParameterSpec StringParameter(std::string name, std::vector<std::string> values, scene::ColorSpace colorSpace = scene::ColorSpace::sRGB) {
-            return StringParameter("string", std::move(name), std::move(values), colorSpace);
-        }
-
-        [[nodiscard]] std::string TextureReferenceName(const std::map<scene::SceneTextureId, std::string>& names, scene::SceneTextureId textureId) {
-            std::map<scene::SceneTextureId, std::string>::const_iterator iter = names.find(textureId);
-            if (iter == names.end()) throw std::runtime_error("Spectra scene references an unknown texture id");
-            return iter->second;
-        }
-
-        void AppendFloatInput(std::vector<ParameterSpec>* parameters, std::string name, const scene::SceneFloatInput& input, const std::map<scene::SceneTextureId, std::string>& textureNames, scene::ColorSpace colorSpace = scene::ColorSpace::sRGB) {
-            if (const float* value = std::get_if<float>(&input.value)) {
-                parameters->push_back(FloatParameter("float", std::move(name), std::vector<float>{*value}, colorSpace));
-                return;
-            }
-            const scene::SceneTextureReference& reference = std::get<scene::SceneTextureReference>(input.value);
-            parameters->push_back(StringParameter("texture", std::move(name), std::vector<std::string>{TextureReferenceName(textureNames, reference.texture)}, colorSpace));
-        }
-
-        void AppendSpectrumInput(std::vector<ParameterSpec>* parameters, std::string name, const scene::SceneSpectrumInput& input, const std::map<scene::SceneTextureId, std::string>& textureNames, scene::ColorSpace colorSpace = scene::ColorSpace::sRGB) {
-            if (const scene::SceneRgb* rgb = std::get_if<scene::SceneRgb>(&input.value)) {
-                parameters->push_back(FloatParameter("rgb", std::move(name), std::vector<float>{rgb->r, rgb->g, rgb->b}, colorSpace));
-                return;
-            }
-            if (const std::vector<float>* samples = std::get_if<std::vector<float>>(&input.value)) {
-                parameters->push_back(FloatParameter("spectrum", std::move(name), *samples, colorSpace));
-                return;
-            }
-            const scene::SceneTextureReference& reference = std::get<scene::SceneTextureReference>(input.value);
-            parameters->push_back(StringParameter("texture", std::move(name), std::vector<std::string>{TextureReferenceName(textureNames, reference.texture)}, colorSpace));
-        }
-
         [[nodiscard]] bool IsImageTexture(const std::string& type) {
             return type == "imagemap" || type == "ptex";
         }
@@ -172,6 +124,9 @@ namespace spectra::pathtracer {
             PathtracerSceneCompiler(const scene::SceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
 
             void Compile() {
+                const scene::SceneGpuSupportReport supportReport = scene::ValidateSceneForGpuPathtracer(this->source);
+                if (!supportReport.supported) throw std::runtime_error(FormatGpuSupportReport(supportReport));
+
                 this->RegisterResourceNames();
                 this->SetRenderSettings(this->source.renderSettings);
                 for (const scene::SceneMaterial& material : this->source.materials) this->AddMaterial(material);
@@ -199,12 +154,12 @@ namespace spectra::pathtracer {
             }
 
         private:
-            [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<ParameterSpec>& parameters, scene::ColorSpace colorSpace) const {
+            [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<scene::SceneParameter>& parameters, scene::ColorSpace colorSpace) const {
                 ParsedParameterVector parsedParameters{};
-                for (const ParameterSpec& parameter : parameters) {
+                for (const scene::SceneParameter& parameter : parameters) {
                     if (parameter.type.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty type.", this->source.source));
                     if (parameter.name.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty name.", this->source.source));
-                    ParsedParameter* parsedParameter = new ParsedParameter(this->location);
+                    ParsedParameter* parsedParameter = new ParsedParameter(ToFileLoc(parameter.source, this->source.source));
                     parsedParameter->type            = parameter.type;
                     parsedParameter->name            = parameter.name;
                     parsedParameter->mayBeUnused     = parameter.mayBeUnused;
@@ -216,195 +171,28 @@ namespace spectra::pathtracer {
                 return ParameterDictionary(std::move(parsedParameters), ToPathtracerColorSpace(colorSpace));
             }
 
-            [[nodiscard]] PathtracerSceneEntity MakeEntity(const std::string& type, const std::vector<ParameterSpec>& parameters, scene::ColorSpace colorSpace = scene::ColorSpace::sRGB) const {
-                if (type.empty()) throw std::runtime_error(std::format("{} scene entity has an empty type.", this->source.source));
+            [[nodiscard]] PathtracerSceneEntity MakeEntity(const scene::SceneEntity& entity) const {
+                if (entity.type.empty()) throw std::runtime_error(std::format("{} scene entity has an empty type.", this->source.source));
                 return PathtracerSceneEntity{
-                    .name       = type,
-                    .loc        = this->location,
-                    .parameters = this->MakeParameterDictionary(parameters, colorSpace),
+                    .name       = entity.type,
+                    .loc        = ToFileLoc(entity.source, this->source.source),
+                    .parameters = this->MakeParameterDictionary(entity.parameters, entity.colorSpace),
                 };
             }
 
-            [[nodiscard]] std::string MaterialName(scene::SceneMaterialId id) const {
-                std::map<scene::SceneMaterialId, std::string>::const_iterator iter = this->materialIdToName.find(id);
-                if (iter == this->materialIdToName.end()) throw std::runtime_error(std::format("{} scene references an unknown material id.", this->source.source));
-                return iter->second;
-            }
-
-            [[nodiscard]] std::string MediumName(std::optional<scene::SceneMediumId> id) const {
-                if (!id.has_value()) return "";
-                std::map<scene::SceneMediumId, std::string>::const_iterator iter = this->mediumIdToName.find(*id);
-                if (iter == this->mediumIdToName.end()) throw std::runtime_error(std::format("{} scene references an unknown medium id.", this->source.source));
-                return iter->second;
-            }
-
-            [[nodiscard]] std::string ObjectDefinitionName(scene::SceneObjectDefinitionId id) const {
-                std::map<scene::SceneObjectDefinitionId, std::string>::const_iterator iter = this->objectDefinitionIdToName.find(id);
-                if (iter == this->objectDefinitionIdToName.end()) throw std::runtime_error(std::format("{} scene references an unknown object definition id.", this->source.source));
-                return iter->second;
-            }
-
-            [[nodiscard]] std::string TextureName(scene::SceneTextureId id) const {
-                return TextureReferenceName(this->textureIdToName, id);
-            }
-
-            [[nodiscard]] std::string FilmName(scene::FilmKind kind) const {
-                switch (kind) {
-                case scene::FilmKind::Rgb: return "rgb";
+            void OverrideIntegerParameter(scene::SceneEntity* entity, std::string name, int value) const {
+                for (scene::SceneParameter& parameter : entity->parameters) {
+                    if (parameter.type != "integer" || parameter.name != name) continue;
+                    parameter.values = std::vector<int>{value};
+                    return;
                 }
-                throw std::runtime_error("Unknown Spectra film kind.");
-            }
-
-            [[nodiscard]] std::string SamplerName(scene::SamplerKind kind) const {
-                switch (kind) {
-                case scene::SamplerKind::Halton: return "halton";
-                case scene::SamplerKind::ZSobol: return "zsobol";
-                }
-                throw std::runtime_error("Unknown Spectra sampler kind.");
-            }
-
-            [[nodiscard]] std::string IntegratorName(scene::IntegratorKind kind) const {
-                switch (kind) {
-                case scene::IntegratorKind::VolPath: return "volpath";
-                }
-                throw std::runtime_error("Unknown Spectra integrator kind.");
-            }
-
-            [[nodiscard]] std::string AcceleratorName(scene::AcceleratorKind kind) const {
-                switch (kind) {
-                case scene::AcceleratorKind::Bvh: return "bvh";
-                }
-                throw std::runtime_error("Unknown Spectra accelerator kind.");
-            }
-
-            [[nodiscard]] std::string CameraName(scene::CameraKind kind) const {
-                switch (kind) {
-                case scene::CameraKind::Perspective: return "perspective";
-                }
-                throw std::runtime_error("Unknown Spectra camera kind.");
-            }
-
-            [[nodiscard]] std::string ShapeName(const scene::SceneShape& shape) const {
-                if (std::holds_alternative<scene::SceneSphere>(shape.value)) return "sphere";
-                if (std::holds_alternative<scene::SceneDisk>(shape.value)) return "disk";
-                if (std::holds_alternative<scene::ScenePlyMesh>(shape.value)) return "plymesh";
-                throw std::runtime_error("Unknown Spectra shape kind.");
-            }
-
-            [[nodiscard]] std::string TextureEntityName(const scene::SceneTexture& texture) const {
-                if (std::holds_alternative<scene::SceneImageTexture>(texture.value)) return "imagemap";
-                if (std::holds_alternative<scene::SceneConstantFloatTexture>(texture.value)) return "constant";
-                if (std::holds_alternative<scene::SceneScaleFloatTexture>(texture.value)) return "scale";
-                throw std::runtime_error("Unknown Spectra texture kind.");
-            }
-
-            [[nodiscard]] std::string MaterialEntityName(const scene::SceneMaterial& material) const {
-                if (std::holds_alternative<scene::SceneDiffuseMaterial>(material.value)) return "diffuse";
-                if (std::holds_alternative<scene::SceneCoatedDiffuseMaterial>(material.value)) return "coateddiffuse";
-                if (std::holds_alternative<scene::SceneInterfaceMaterial>(material.value)) return "interface";
-                throw std::runtime_error("Unknown Spectra material kind.");
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> FilmParameters(scene::SceneFilmSettings film) const {
-                if (this->filmResolutionOverride.has_value()) {
-                    if (this->filmResolutionOverride->x <= 0 || this->filmResolutionOverride->y <= 0) throw std::runtime_error("Spectra interactive film resolution must be positive.");
-                    film.xResolution = this->filmResolutionOverride->x;
-                    film.yResolution = this->filmResolutionOverride->y;
-                }
-                std::vector<ParameterSpec> parameters{
-                    StringParameter("filename", std::vector<std::string>{film.filename}, film.colorSpace),
-                    IntegerParameter("xresolution", std::vector<int>{film.xResolution}),
-                    IntegerParameter("yresolution", std::vector<int>{film.yResolution}),
-                };
-                if (!film.sensor.empty()) parameters.push_back(StringParameter("sensor", std::vector<std::string>{film.sensor}, film.colorSpace));
-                parameters.push_back(FloatParameter("float", "iso", std::vector<float>{film.iso}, film.colorSpace));
-                if (film.whiteBalance.has_value()) parameters.push_back(FloatParameter("float", "whitebalance", std::vector<float>{*film.whiteBalance}, film.colorSpace));
-                return parameters;
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> CameraParameters(const scene::SceneCamera& camera) const {
-                return {
-                    FloatParameter("float", "fov", std::vector<float>{camera.fovDegrees}),
-                    FloatParameter("float", "shutteropen", std::vector<float>{camera.shutterOpen}),
-                    FloatParameter("float", "shutterclose", std::vector<float>{camera.shutterClose}),
-                };
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> SamplerParameters(const scene::SceneSamplerSettings& sampler) const {
-                return {IntegerParameter("pixelsamples", std::vector<int>{sampler.pixelSamples})};
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> IntegratorParameters(const scene::SceneIntegratorSettings& integrator) const {
-                if (integrator.maxDepth.has_value()) return {IntegerParameter("maxdepth", std::vector<int>{*integrator.maxDepth})};
-                return {};
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> MaterialParameters(const scene::SceneMaterial& material) const {
-                std::vector<ParameterSpec> parameters{};
-                if (const scene::SceneDiffuseMaterial* diffuse = std::get_if<scene::SceneDiffuseMaterial>(&material.value)) {
-                    AppendSpectrumInput(&parameters, "reflectance", diffuse->reflectance, this->textureIdToName);
-                    return parameters;
-                }
-                if (const scene::SceneCoatedDiffuseMaterial* coatedDiffuse = std::get_if<scene::SceneCoatedDiffuseMaterial>(&material.value)) {
-                    AppendSpectrumInput(&parameters, "reflectance", coatedDiffuse->reflectance, this->textureIdToName);
-                    AppendFloatInput(&parameters, "roughness", coatedDiffuse->roughness, this->textureIdToName);
-                    if (coatedDiffuse->displacement.has_value()) AppendFloatInput(&parameters, "displacement", *coatedDiffuse->displacement, this->textureIdToName);
-                    return parameters;
-                }
-                if (std::holds_alternative<scene::SceneInterfaceMaterial>(material.value)) return {};
-                throw std::runtime_error("Unknown Spectra material kind.");
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> TextureParameters(const scene::SceneTexture& texture) const {
-                if (const scene::SceneImageTexture* image = std::get_if<scene::SceneImageTexture>(&texture.value)) {
-                    return {
-                        StringParameter("filename", std::vector<std::string>{image->filename}, texture.colorSpace),
-                        FloatParameter("float", "uscale", std::vector<float>{image->uScale}, texture.colorSpace),
-                        FloatParameter("float", "vscale", std::vector<float>{image->vScale}, texture.colorSpace),
-                    };
-                }
-                if (const scene::SceneConstantFloatTexture* constant = std::get_if<scene::SceneConstantFloatTexture>(&texture.value)) return {FloatParameter("float", "value", std::vector<float>{constant->value}, texture.colorSpace)};
-                if (const scene::SceneScaleFloatTexture* scale = std::get_if<scene::SceneScaleFloatTexture>(&texture.value)) {
-                    return {
-                        StringParameter("texture", "scale", std::vector<std::string>{this->TextureName(scale->scale)}, texture.colorSpace),
-                        StringParameter("texture", "tex", std::vector<std::string>{this->TextureName(scale->texture)}, texture.colorSpace),
-                    };
-                }
-                throw std::runtime_error("Unknown Spectra texture kind.");
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> MediumParameters(const scene::SceneMedium& medium) const {
-                const scene::SceneNanoVdbMedium& nanovdb = std::get<scene::SceneNanoVdbMedium>(medium.value);
-                return {
-                    StringParameter("filename", std::vector<std::string>{nanovdb.filename}, medium.colorSpace),
-                    FloatParameter("spectrum", "sigma_s", nanovdb.sigmaS, medium.colorSpace),
-                    FloatParameter("spectrum", "sigma_a", nanovdb.sigmaA, medium.colorSpace),
-                    FloatParameter("float", "Lescale", std::vector<float>{nanovdb.leScale}, medium.colorSpace),
-                    FloatParameter("float", "temperaturecutoff", std::vector<float>{nanovdb.temperatureCutoff}, medium.colorSpace),
-                    FloatParameter("float", "temperaturescale", std::vector<float>{nanovdb.temperatureScale}, medium.colorSpace),
-                };
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> LightParameters(const scene::SceneLight& light) const {
-                const scene::SceneInfiniteLight& infinite = std::get<scene::SceneInfiniteLight>(light.value);
-                return {
-                    StringParameter("filename", std::vector<std::string>{infinite.filename}, light.colorSpace),
-                    FloatParameter("float", "scale", std::vector<float>{infinite.scale}, light.colorSpace),
-                };
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> AreaLightParameters(const scene::SceneAreaLight& areaLight) const {
-                const scene::SceneDiffuseAreaLight& diffuse = std::get<scene::SceneDiffuseAreaLight>(areaLight.value);
-                std::vector<ParameterSpec> parameters{};
-                AppendSpectrumInput(&parameters, "L", diffuse.emission, this->textureIdToName, areaLight.colorSpace);
-                return parameters;
-            }
-
-            [[nodiscard]] std::vector<ParameterSpec> ShapeParameters(const scene::SceneShape& shape) const {
-                if (const scene::SceneSphere* sphere = std::get_if<scene::SceneSphere>(&shape.value)) return {FloatParameter("float", "radius", std::vector<float>{sphere->radius}, shape.colorSpace)};
-                if (const scene::SceneDisk* disk = std::get_if<scene::SceneDisk>(&shape.value)) return {FloatParameter("float", "radius", std::vector<float>{disk->radius}, shape.colorSpace)};
-                if (const scene::ScenePlyMesh* plymesh = std::get_if<scene::ScenePlyMesh>(&shape.value)) return {StringParameter("filename", std::vector<std::string>{plymesh->filename}, shape.colorSpace)};
-                throw std::runtime_error("Unknown Spectra shape kind.");
+                entity->parameters.push_back(scene::SceneParameter{
+                    .type       = "integer",
+                    .name       = std::move(name),
+                    .values     = std::vector<int>{value},
+                    .colorSpace = entity->colorSpace,
+                    .source     = entity->source,
+                });
             }
 
             void RequireRenderSettings() const {
@@ -421,18 +209,30 @@ namespace spectra::pathtracer {
                 if (names.find(name) != names.end()) throw std::runtime_error(std::format("{} scene {} \"{}\" is already defined.", this->source.source, kind, name));
             }
 
-            template <typename Id>
-            void RegisterName(std::map<Id, std::string>* names, Id id, std::string_view kind, const std::string& name) {
-                if (id.value == 0) throw std::runtime_error(std::format("{} scene {} \"{}\" must have an assigned id before pathtracer compilation.", this->source.source, kind, name));
-                if (name.empty()) throw std::runtime_error(std::format("{} scene {} name must not be empty.", this->source.source, kind));
-                if (!names->emplace(id, name).second) throw std::runtime_error(std::format("{} scene {} id {} is already registered.", this->source.source, kind, id.value));
+            void ConsumeMatchingTypeParameter(const PathtracerSceneEntity& entity, std::string_view kind) const {
+                const std::string parameterType = entity.parameters.GetOneString("type", "");
+                if (!parameterType.empty() && parameterType != entity.name) throw std::runtime_error(diagnostics::Format(&entity.loc, "%s type parameter \"%s\" does not match entity type \"%s\".", kind, parameterType, entity.name));
+            }
+
+            void RequireMatchingTypeParameter(const PathtracerSceneEntity& entity, std::string_view kind) const {
+                const std::string parameterType = entity.parameters.GetOneString("type", "");
+                if (parameterType.empty()) throw std::runtime_error(diagnostics::Format(&entity.loc, "%s requires \"string type\".", kind));
+                if (parameterType != entity.name) throw std::runtime_error(diagnostics::Format(&entity.loc, "%s type parameter \"%s\" does not match entity type \"%s\".", kind, parameterType, entity.name));
             }
 
             void RegisterResourceNames() {
-                for (const scene::SceneMaterial& material : this->source.materials) this->RegisterName(&this->materialIdToName, material.id, "material", material.name);
-                for (const scene::SceneTexture& texture : this->source.textures) this->RegisterName(&this->textureIdToName, texture.id, "texture", texture.name);
-                for (const scene::SceneMedium& medium : this->source.media) this->RegisterName(&this->mediumIdToName, medium.id, "medium", medium.name);
-                for (const scene::SceneObjectDefinition& definition : this->source.objectDefinitions) this->RegisterName(&this->objectDefinitionIdToName, definition.id, "object definition", definition.name);
+                for (const scene::SceneMaterial& material : this->source.materials) {
+                    this->RequireUniqueName(this->materialNames, "material", material.name);
+                    this->materialNames.insert(material.name);
+                }
+                for (const scene::SceneMedium& medium : this->source.media) {
+                    this->RequireUniqueName(this->mediumNames, "medium", medium.name);
+                    this->mediumNames.insert(medium.name);
+                }
+                for (const scene::SceneObjectDefinition& definition : this->source.objectDefinitions) {
+                    this->RequireUniqueName(this->objectDefinitionNames, "object definition", definition.name);
+                    this->objectDefinitionNames.insert(definition.name);
+                }
             }
 
             [[nodiscard]] Transform RenderFromWorldTransform() const {
@@ -440,16 +240,21 @@ namespace spectra::pathtracer {
                 return this->cameraEntity.cameraTransform.RenderFromWorld();
             }
 
-            [[nodiscard]] Transform RenderFromObjectTransform(const math::Transform& worldFromObject) const {
-                return this->RenderFromWorldTransform() * ToPathtracerTransform(worldFromObject);
+            [[nodiscard]] Transform SceneTransform(const scene::SceneTransformSet& transform, const scene::SceneSourceLocation& source) const {
+                if (transform.animated) throw std::runtime_error(std::format("{}: animated transform reached GPU scene compiler after validation.", SourceString(source)));
+                return ToPathtracerTransform(transform.start);
+            }
+
+            [[nodiscard]] Transform RenderFromObjectTransform(const scene::SceneTransformSet& transform, const scene::SceneSourceLocation& source) const {
+                return this->RenderFromWorldTransform() * this->SceneTransform(transform, source);
             }
 
             [[nodiscard]] PathtracerShapeSceneEntity MakeShapeEntity(const scene::SceneShape& shape) const {
-                const std::string materialName = this->MaterialName(shape.material);
+                const std::string materialName = shape.materialName;
                 this->RequireMaterial(materialName);
-                Transform renderFromObject = this->RenderFromObjectTransform(shape.worldFromObject);
+                Transform renderFromObject = this->RenderFromObjectTransform(shape.transform, shape.entity.source);
                 Allocator allocator        = this->compiled.threadAllocators.Get();
-                PathtracerSceneEntity base = this->MakeEntity(this->ShapeName(shape), this->ShapeParameters(shape), shape.colorSpace);
+                PathtracerSceneEntity base = this->MakeEntity(shape.entity);
                 PathtracerShapeSceneEntity entity{
                     .name               = std::move(base.name),
                     .loc                = base.loc,
@@ -458,11 +263,11 @@ namespace spectra::pathtracer {
                     .objectFromRender   = allocator.new_object<Transform>(Inverse(renderFromObject)),
                     .reverseOrientation = shape.reverseOrientation,
                     .materialName       = materialName,
-                    .insideMedium       = this->MediumName(shape.insideMedium),
-                    .outsideMedium      = this->MediumName(shape.outsideMedium),
+                    .insideMedium       = shape.mediumInterface.inside,
+                    .outsideMedium      = shape.mediumInterface.outside,
                 };
-                if (shape.insideMedium.has_value() || shape.outsideMedium.has_value()) this->compiled.haveMedia = true;
-                if (shape.areaLight.has_value()) entity.areaLight = this->MakeEntity("diffuse", this->AreaLightParameters(*shape.areaLight), shape.areaLight->colorSpace);
+                if (!shape.mediumInterface.inside.empty() || !shape.mediumInterface.outside.empty()) this->compiled.haveMedia = true;
+                if (shape.areaLight.has_value()) entity.areaLight = this->MakeEntity(shape.areaLight->entity);
                 return entity;
             }
 
@@ -475,21 +280,26 @@ namespace spectra::pathtracer {
 
             void SetRenderSettings(const scene::SceneRenderSettings& settings) {
                 if (this->renderSettingsReady) throw std::runtime_error(std::format("{} scene render settings are already configured.", this->source.source));
-                if (settings.camera.fovDegrees <= 0.0f) throw std::runtime_error(std::format("{} scene camera fov must be positive.", this->source.source));
 
-                PathtracerSceneEntity filterEntity = this->MakeEntity("gaussian", {});
-                PathtracerSceneEntity filmEntity   = this->MakeEntity(this->FilmName(settings.film.kind), this->FilmParameters(settings.film), settings.film.colorSpace);
-                this->samplerEntity                = this->MakeEntity(this->SamplerName(settings.sampler.kind), this->SamplerParameters(settings.sampler));
-                this->compiled.integrator          = this->MakeEntity(this->IntegratorName(settings.integrator.kind), this->IntegratorParameters(settings.integrator));
-                this->compiled.accelerator         = this->MakeEntity(this->AcceleratorName(settings.accelerator.kind), {});
-                PathtracerSceneEntity cameraEntity = this->MakeEntity(this->CameraName(settings.camera.kind), this->CameraParameters(settings.camera));
-                const Transform worldFromCamera    = ToPathtracerTransform(settings.camera.worldFromCamera);
+                PathtracerSceneEntity filterEntity = this->MakeEntity(settings.filter);
+                scene::SceneEntity film            = settings.film;
+                if (this->filmResolutionOverride.has_value()) {
+                    if (this->filmResolutionOverride->x <= 0 || this->filmResolutionOverride->y <= 0) throw std::runtime_error("Spectra interactive film resolution must be positive.");
+                    this->OverrideIntegerParameter(&film, "xresolution", this->filmResolutionOverride->x);
+                    this->OverrideIntegerParameter(&film, "yresolution", this->filmResolutionOverride->y);
+                }
+                PathtracerSceneEntity filmEntity   = this->MakeEntity(film);
+                this->samplerEntity                = this->MakeEntity(settings.sampler);
+                this->compiled.integrator          = this->MakeEntity(settings.integrator);
+                this->compiled.accelerator         = this->MakeEntity(settings.accelerator);
+                PathtracerSceneEntity cameraEntity = this->MakeEntity(settings.camera);
+                const Transform worldFromCamera    = this->SceneTransform(settings.cameraTransform, settings.camera.source);
                 this->cameraEntity                 = PathtracerCameraSceneEntity{
                     .name            = std::move(cameraEntity.name),
                     .loc             = cameraEntity.loc,
                     .parameters      = std::move(cameraEntity.parameters),
-                    .cameraTransform = CameraTransform(AnimatedTransform(worldFromCamera, 0.0f, worldFromCamera, 1.0f), this->renderConfig.rendering_space),
-                    .medium          = this->MediumName(settings.camera.medium),
+                    .cameraTransform = CameraTransform(AnimatedTransform(worldFromCamera, settings.cameraTransform.startTime, worldFromCamera, settings.cameraTransform.endTime), this->renderConfig.rendering_space),
+                    .medium          = settings.cameraMedium,
                 };
 
                 this->compiled.filmColorSpace = filmEntity.parameters.ColorSpace();
@@ -517,40 +327,38 @@ namespace spectra::pathtracer {
             }
 
             void AddMaterial(const scene::SceneMaterial& material) {
-                this->RequireUniqueName(this->materialNames, "material", material.name);
-                PathtracerSceneEntity entity = this->MakeEntity(this->MaterialEntityName(material), this->MaterialParameters(material));
+                PathtracerSceneEntity entity = this->MakeEntity(material.entity);
+                this->ConsumeMatchingTypeParameter(entity, "material");
                 std::lock_guard<std::mutex> lock(this->materialMutex);
                 this->StartLoadingNormalMaps(entity.parameters);
                 this->materials.push_back(std::make_pair(material.name, std::move(entity)));
-                this->materialNames.insert(material.name);
             }
 
             void AddTexture(const scene::SceneTexture& texture) {
                 this->RequireRenderSettings();
-                if (texture.kind == scene::TextureKind::Float)
+                if (texture.kind == "float")
                     this->RequireUniqueName(this->floatTextureNames, "float texture", texture.name);
                 else
                     this->RequireUniqueName(this->spectrumTextureNames, "spectrum texture", texture.name);
 
-                const std::string textureEntityName = this->TextureEntityName(texture);
-                PathtracerSceneEntity base          = this->MakeEntity(textureEntityName, this->TextureParameters(texture), texture.colorSpace);
+                PathtracerSceneEntity base = this->MakeEntity(texture.entity);
                 PathtracerTransformedSceneEntity entity{
                     .name             = std::move(base.name),
                     .loc              = base.loc,
                     .parameters       = std::move(base.parameters),
-                    .renderFromObject = this->RenderFromObjectTransform(texture.worldFromTexture),
+                    .renderFromObject = this->RenderFromObjectTransform(texture.transform, texture.entity.source),
                 };
 
                 std::lock_guard<std::mutex> lock(this->textureMutex);
-                if (texture.kind == scene::TextureKind::Float) {
+                if (texture.kind == "float") {
                     this->floatTextureNames.insert(texture.name);
-                    if (!IsImageTexture(textureEntityName)) {
+                    if (!IsImageTexture(entity.name)) {
                         this->serialFloatTextures.push_back(std::make_pair(texture.name, std::move(entity)));
                         return;
                     }
                 } else {
                     this->spectrumTextureNames.insert(texture.name);
-                    if (!IsImageTexture(textureEntityName)) {
+                    if (!IsImageTexture(entity.name)) {
                         this->serialSpectrumTextures.push_back(std::make_pair(texture.name, std::move(entity)));
                         return;
                     }
@@ -561,7 +369,7 @@ namespace spectra::pathtracer {
                 if (!FileExists(filename)) throw std::runtime_error(diagnostics::Format(&entity.loc, "%s: file not found.", filename));
 
                 if (this->loadingTextureFilenames.find(filename) != this->loadingTextureFilenames.end()) {
-                    if (texture.kind == scene::TextureKind::Float)
+                    if (texture.kind == "float")
                         this->serialFloatTextures.push_back(std::make_pair(texture.name, std::move(entity)));
                     else
                         this->serialSpectrumTextures.push_back(std::make_pair(texture.name, std::move(entity)));
@@ -569,7 +377,7 @@ namespace spectra::pathtracer {
                 }
 
                 this->loadingTextureFilenames.insert(filename);
-                if (texture.kind == scene::TextureKind::Float) {
+                if (texture.kind == "float") {
                     auto create = [entity, this]() {
                         Allocator alloc             = this->compiled.threadAllocators.Get();
                         Transform renderFromTexture = entity.renderFromObject;
@@ -591,33 +399,32 @@ namespace spectra::pathtracer {
 
             void AddMedium(const scene::SceneMedium& medium) {
                 this->RequireRenderSettings();
-                this->RequireUniqueName(this->mediumNames, "medium", medium.name);
 
-                PathtracerSceneEntity base = this->MakeEntity("nanovdb", this->MediumParameters(medium), medium.colorSpace);
+                PathtracerSceneEntity base = this->MakeEntity(medium.entity);
+                this->RequireMatchingTypeParameter(base, "medium");
                 PathtracerTransformedSceneEntity entity{
                     .name             = std::move(base.name),
                     .loc              = base.loc,
                     .parameters       = std::move(base.parameters),
-                    .renderFromObject = this->RenderFromObjectTransform(medium.worldFromMedium),
+                    .renderFromObject = this->RenderFromObjectTransform(medium.transform, medium.entity.source),
                 };
 
                 auto create = [entity, this]() { return Medium::Create(entity.name, entity.parameters, entity.renderFromObject, &entity.loc, this->compiled.threadAllocators.Get()); };
 
                 std::lock_guard<std::mutex> lock(this->mediaMutex);
                 this->mediumJobs[medium.name] = RunAsync(create);
-                this->mediumNames.insert(medium.name);
             }
 
             void AddLight(const scene::SceneLight& light) {
                 this->RequireRenderSettings();
 
-                PathtracerSceneEntity base = this->MakeEntity("infinite", this->LightParameters(light), light.colorSpace);
+                PathtracerSceneEntity base = this->MakeEntity(light.entity);
                 PathtracerLightSceneEntity entity{
                     .name             = std::move(base.name),
                     .loc              = base.loc,
                     .parameters       = std::move(base.parameters),
-                    .renderFromObject = this->RenderFromObjectTransform(light.worldFromLight),
-                    .medium           = this->MediumName(light.medium),
+                    .renderFromObject = this->RenderFromObjectTransform(light.transform, light.entity.source),
+                    .medium           = light.medium,
                 };
 
                 Medium lightMedium = this->FindMedium(entity.medium, &entity.loc);
@@ -634,10 +441,9 @@ namespace spectra::pathtracer {
 
             void AddObjectDefinition(const scene::SceneObjectDefinition& definition) {
                 this->RequireRenderSettings();
-                this->RequireUniqueName(this->objectDefinitionNames, "object definition", definition.name);
                 PathtracerInstanceDefinitionSceneEntity entity{
                     .name = definition.name,
-                    .loc  = this->location,
+                    .loc  = ToFileLoc(definition.source, this->source.source),
                 };
                 entity.shapes.reserve(definition.shapes.size());
                 for (const scene::SceneShape& shape : definition.shapes) {
@@ -647,19 +453,17 @@ namespace spectra::pathtracer {
                 }
 
                 this->compiled.instanceDefinitions[definition.name] = std::move(entity);
-                this->objectDefinitionNames.insert(definition.name);
             }
 
             void AddObjectInstance(const scene::SceneObjectInstance& instance) {
                 this->RequireRenderSettings();
-                const std::string definitionName = this->ObjectDefinitionName(instance.definition);
-                if (this->objectDefinitionNames.find(definitionName) == this->objectDefinitionNames.end()) throw std::runtime_error(std::format("{} scene references unknown object definition \"{}\".", this->source.source, definitionName));
+                if (this->objectDefinitionNames.find(instance.definitionName) == this->objectDefinitionNames.end()) throw std::runtime_error(std::format("{} scene references unknown object definition \"{}\".", this->source.source, instance.definitionName));
 
                 Transform worldFromRender = Inverse(this->RenderFromWorldTransform());
                 this->compiled.instances.push_back({
-                    .name               = definitionName,
-                    .loc                = this->location,
-                    .renderFromInstance = this->RenderFromObjectTransform(instance.worldFromInstance) * worldFromRender,
+                    .name               = instance.definitionName,
+                    .loc                = ToFileLoc(instance.source, this->source.source),
+                    .renderFromInstance = this->RenderFromObjectTransform(instance.transform, instance.source) * worldFromRender,
                 });
             }
 
@@ -807,7 +611,7 @@ namespace spectra::pathtracer {
 
             const scene::SceneSnapshot& source;
             CompiledPathtracerScene& compiled;
-            const RenderConfig& renderConfig;
+            RenderConfig renderConfig;
             std::optional<Point2i> filmResolutionOverride{};
             FileLoc location{};
             bool renderSettingsReady{false};
@@ -833,10 +637,6 @@ namespace spectra::pathtracer {
             std::set<std::string> floatTextureNames{};
             std::set<std::string> spectrumTextureNames{};
             std::set<std::string> objectDefinitionNames{};
-            std::map<scene::SceneMaterialId, std::string> materialIdToName{};
-            std::map<scene::SceneTextureId, std::string> textureIdToName{};
-            std::map<scene::SceneMediumId, std::string> mediumIdToName{};
-            std::map<scene::SceneObjectDefinitionId, std::string> objectDefinitionIdToName{};
         };
     } // namespace
 
