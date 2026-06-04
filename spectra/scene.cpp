@@ -98,6 +98,17 @@ namespace spectra::scene {
             return std::runtime_error(std::format("{}: {}", SourceString(source), message));
         }
 
+        class SceneOperationCancelled final : public std::exception {
+        public:
+            [[nodiscard]] const char* what() const noexcept override {
+                return "Spectra scene operation cancelled";
+            }
+        };
+
+        void CheckSceneStop(const std::stop_token* stopToken) {
+            if (stopToken != nullptr && stopToken->stop_requested()) throw SceneOperationCancelled{};
+        }
+
         [[nodiscard]] bool HasExtension(const std::filesystem::path& path, const std::string_view extension) {
             return Lowercase(path.extension().string()) == Lowercase(std::string(extension));
         }
@@ -120,21 +131,37 @@ namespace spectra::scene {
             return !path.extension().empty();
         }
 
-        [[nodiscard]] std::string ReadPlainFile(const std::filesystem::path& path) {
+        [[nodiscard]] std::string ReadPlainFile(const std::filesystem::path& path, const std::stop_token* stopToken) {
             std::ifstream input(path, std::ios::binary);
             if (!input) throw std::runtime_error(std::format("{}: unable to open PBRT scene file", path.string()));
-            std::ostringstream stream;
-            stream << input.rdbuf();
-            return stream.str();
+
+            std::string result;
+            std::array<char, 1 << 15> buffer{};
+            while (input) {
+                CheckSceneStop(stopToken);
+                input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                const std::streamsize count = input.gcount();
+                if (count > 0) result.append(buffer.data(), static_cast<std::size_t>(count));
+            }
+            if (input.bad()) throw std::runtime_error(std::format("{}: PBRT scene file read failed", path.string()));
+            CheckSceneStop(stopToken);
+            return result;
         }
 
-        [[nodiscard]] std::string ReadGzipFile(const std::filesystem::path& path) {
+        [[nodiscard]] std::string ReadGzipFile(const std::filesystem::path& path, const std::stop_token* stopToken) {
             gzFile file = gzopen(path.string().c_str(), "rb");
             if (file == nullptr) throw std::runtime_error(std::format("{}: unable to open gzip PBRT scene file", path.string()));
+            const auto checkStop = [file, stopToken] {
+                if (stopToken != nullptr && stopToken->stop_requested()) {
+                    gzclose(file);
+                    throw SceneOperationCancelled{};
+                }
+            };
 
             std::string result;
             std::array<char, 1 << 15> buffer{};
             while (true) {
+                checkStop();
                 const int count = gzread(file, buffer.data(), static_cast<unsigned int>(buffer.size()));
                 if (count < 0) {
                     int errorNumber = 0;
@@ -146,26 +173,29 @@ namespace spectra::scene {
                 result.append(buffer.data(), static_cast<std::size_t>(count));
             }
 
+            checkStop();
             const int closeStatus = gzclose(file);
             if (closeStatus != Z_OK) throw std::runtime_error(std::format("{}: gzip close failed", path.string()));
             return result;
         }
 
-        [[nodiscard]] std::string ReadSceneFile(const std::filesystem::path& path) {
-            if (HasExtension(path, ".gz")) return ReadGzipFile(path);
-            return ReadPlainFile(path);
+        [[nodiscard]] std::string ReadSceneFile(const std::filesystem::path& path, const std::stop_token* stopToken) {
+            if (HasExtension(path, ".gz")) return ReadGzipFile(path, stopToken);
+            return ReadPlainFile(path, stopToken);
         }
 
         class PbrtTokenStream {
         public:
-            explicit PbrtTokenStream(std::filesystem::path filename) {
+            explicit PbrtTokenStream(std::filesystem::path filename, const std::stop_token* stopToken) : stopToken(stopToken) {
                 this->PushFile(std::move(filename));
             }
 
             [[nodiscard]] std::optional<Token> Next() {
+                CheckSceneStop(this->stopToken);
                 if (this->pushedToken.has_value()) return std::exchange(this->pushedToken, {});
 
                 while (!this->fileStack.empty()) {
+                    CheckSceneStop(this->stopToken);
                     PbrtTokenFile& file = this->fileStack.back();
                     this->SkipIgnored(&file);
                     if (file.offset >= file.content.size()) {
@@ -201,8 +231,10 @@ namespace spectra::scene {
             }
 
             void PushFile(std::filesystem::path path) {
+                CheckSceneStop(this->stopToken);
                 if (!std::filesystem::exists(path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", path.string()));
-                std::string content = ReadSceneFile(path);
+                std::string content = ReadSceneFile(path, this->stopToken);
+                CheckSceneStop(this->stopToken);
                 this->fileStack.push_back(PbrtTokenFile{
                     .filename = std::move(path),
                     .content  = std::move(content),
@@ -280,6 +312,7 @@ namespace spectra::scene {
 
             std::vector<PbrtTokenFile> fileStack{};
             std::optional<Token> pushedToken{};
+            const std::stop_token* stopToken{};
         };
 
         [[nodiscard]] Token RequireToken(PbrtTokenStream& stream, const std::string_view context) {
@@ -465,7 +498,8 @@ namespace spectra::scene {
 
         class PbrtSceneBuilder {
         public:
-            explicit PbrtSceneBuilder(std::filesystem::path inputFile) : inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
+            explicit PbrtSceneBuilder(std::filesystem::path inputFile, const std::stop_token* stopToken = nullptr) : stopToken(stopToken), inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
+                CheckSceneStop(this->stopToken);
                 this->scene.name   = this->inputFile.stem().string();
                 this->scene.title  = this->inputFile.stem().string();
                 this->scene.source = this->inputFile.string();
@@ -481,7 +515,9 @@ namespace spectra::scene {
             }
 
             [[nodiscard]] SceneSnapshot Parse() {
+                CheckSceneStop(this->stopToken);
                 this->ParseFile(this->inputFile);
+                CheckSceneStop(this->stopToken);
                 this->Finish();
                 return std::move(this->scene);
             }
@@ -511,6 +547,7 @@ namespace spectra::scene {
 
             void ResolveParameterPaths(std::vector<SceneParameter>* parameters, const EntityUse entityUse) const {
                 for (SceneParameter& parameter : *parameters) {
+                    CheckSceneStop(this->stopToken);
                     std::vector<std::string>* values = ParameterStringValues(&parameter);
                     if (values == nullptr) continue;
                     if (entityUse == EntityUse::Film && parameter.name == "filename") continue;
@@ -521,6 +558,7 @@ namespace spectra::scene {
                     if (!directFileParameter && !apertureParameter && !spectrumParameter) continue;
 
                     for (std::string& value : *values) {
+                        CheckSceneStop(this->stopToken);
                         if (value.empty()) continue;
                         if (apertureParameter && IsBuiltInApertureName(value)) continue;
                         if (spectrumParameter && !IsPathLike(value) && !std::filesystem::exists(this->searchDirectory / std::filesystem::path(value))) continue;
@@ -533,10 +571,14 @@ namespace spectra::scene {
                 std::vector<SceneParameter> merged;
                 merged.reserve(attributes.size() + parameters.size());
                 for (SceneParameter parameter : attributes) {
+                    CheckSceneStop(this->stopToken);
                     parameter.mayBeUnused = true;
                     merged.push_back(std::move(parameter));
                 }
-                for (SceneParameter& parameter : parameters) merged.push_back(std::move(parameter));
+                for (SceneParameter& parameter : parameters) {
+                    CheckSceneStop(this->stopToken);
+                    merged.push_back(std::move(parameter));
+                }
                 this->ResolveParameterPaths(&merged, entityUse);
                 return merged;
             }
@@ -561,13 +603,18 @@ namespace spectra::scene {
             }
 
             void ParseFile(const std::filesystem::path& path) {
-                PbrtTokenStream stream(path);
-                while (std::optional<Token> directive = stream.Next()) this->ParseDirective(stream, *directive);
+                CheckSceneStop(this->stopToken);
+                PbrtTokenStream stream(path, this->stopToken);
+                while (std::optional<Token> directive = stream.Next()) {
+                    CheckSceneStop(this->stopToken);
+                    this->ParseDirective(stream, *directive);
+                }
             }
 
             [[nodiscard]] std::vector<SceneParameter> ParseParameters(PbrtTokenStream& stream) {
                 std::vector<SceneParameter> parameters;
                 while (true) {
+                    CheckSceneStop(this->stopToken);
                     std::optional<Token> declaration = stream.Next();
                     if (!declaration.has_value()) return parameters;
                     if (declaration->kind != TokenKind::QuotedString) {
@@ -579,6 +626,7 @@ namespace spectra::scene {
                     Token value              = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                     if (value.kind == TokenKind::LeftBracket) {
                         while (true) {
+                            CheckSceneStop(this->stopToken);
                             Token element = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                             if (element.kind == TokenKind::RightBracket) break;
                             this->AppendParameterValue(&parameter, element);
@@ -638,6 +686,7 @@ namespace spectra::scene {
             }
 
             void ParseDirective(PbrtTokenStream& stream, const Token& directive) {
+                CheckSceneStop(this->stopToken);
                 if (directive.kind != TokenKind::Word) throw ParseError(directive.source, "PBRT directive must be an unquoted identifier");
 
                 if (directive.text == "AttributeBegin" || directive.text == "TransformBegin") {
@@ -1119,6 +1168,7 @@ namespace spectra::scene {
             }
 
             SceneSnapshot scene{};
+            const std::stop_token* stopToken{};
             std::filesystem::path inputFile;
             std::filesystem::path searchDirectory;
             GraphicsState graphicsState{};
@@ -1394,12 +1444,17 @@ namespace spectra::scene {
     }
 
     void ValidateSceneCatalogEntry(SceneCatalogEntry& entry) {
+        ValidateSceneCatalogEntry(entry, std::stop_token{});
+    }
+
+    void ValidateSceneCatalogEntry(SceneCatalogEntry& entry, const std::stop_token stopToken) {
         entry.state = SceneCatalogEntryState::Pending;
         entry.document.reset();
         entry.info.reset();
         entry.issues.clear();
         try {
-            PbrtSceneBuilder builder(entry.sourcePath);
+            CheckSceneStop(&stopToken);
+            PbrtSceneBuilder builder(entry.sourcePath, &stopToken);
             SceneSnapshot scene = builder.Parse();
             scene.name          = entry.id;
             scene.title         = entry.displayName;
@@ -1408,6 +1463,11 @@ namespace spectra::scene {
             entry.document = std::make_shared<SceneSnapshot>(std::move(scene));
             entry.info     = DescribeScene(*entry.document);
             entry.state    = SceneCatalogEntryState::Ready;
+        } catch (const SceneOperationCancelled&) {
+            entry.state = SceneCatalogEntryState::Pending;
+            entry.document.reset();
+            entry.info.reset();
+            entry.issues.clear();
         } catch (const std::exception& error) {
             entry.state = SceneCatalogEntryState::Invalid;
             entry.issues.push_back(SceneDiagnostic{

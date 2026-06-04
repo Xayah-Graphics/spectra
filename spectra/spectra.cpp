@@ -395,7 +395,6 @@ namespace xayah {
             this->record_frame(frame);
             this->end_frame(frame);
         }
-        this->context.device.waitIdle();
     }
 
     void Spectra::create_imgui() {
@@ -513,6 +512,7 @@ namespace xayah {
 
     bool Spectra::begin_frame(FrameState& frame) {
         glfwPollEvents();
+        if (glfwWindowShouldClose(this->surface.window.get())) return false;
         if (this->surface.resize_requested) {
             this->recreate_swapchain();
             return false;

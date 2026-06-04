@@ -331,7 +331,8 @@ namespace xayah {
             }
 
             if (validation_index.has_value()) {
-                spectra::scene::ValidateSceneCatalogEntry(validation_entry);
+                if (stop_token.stop_requested()) return;
+                spectra::scene::ValidateSceneCatalogEntry(validation_entry, stop_token);
                 {
                     std::scoped_lock lock{this->scene_catalog_mutex};
                     this->finish_background_scene_task_locked(worker_index, std::chrono::steady_clock::now());
@@ -350,6 +351,7 @@ namespace xayah {
 
             spectra::scene::SceneTranslationReport report{.target = translation_request->key.rendererName};
             try {
+                if (stop_token.stop_requested()) return;
                 report = analyze(*translation_request->document);
                 if (report.target.empty()) report.target = translation_request->key.rendererName;
             } catch (const std::exception& error) {

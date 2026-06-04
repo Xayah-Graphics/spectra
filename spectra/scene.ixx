@@ -236,6 +236,7 @@ export extern "C++" {
         [[nodiscard]] SceneInfo DescribeScene(const SceneSnapshot& scene);
         [[nodiscard]] SceneCatalog DiscoverSceneCatalog();
         void ValidateSceneCatalogEntry(SceneCatalogEntry& entry);
+        void ValidateSceneCatalogEntry(SceneCatalogEntry& entry, std::stop_token stop_token);
         [[nodiscard]] SceneWorkspace BuildScene(const SceneCatalogEntry& entry);
         [[nodiscard]] SceneWorkspace BuildScene(std::string_view name);
     } // namespace spectra::scene

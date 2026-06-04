@@ -21,6 +21,7 @@ int main(const int argc, char**) {
         spectra.register_renderer(xayah::SpectraPathtracer{document_workspace});
         spectra.register_renderer(xayah::SpectraRasterizer{std::move(document_workspace)});
         spectra.run();
+        scene_session->detach();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;
         return 1;
