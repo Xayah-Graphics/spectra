@@ -259,30 +259,41 @@ namespace spectra::scene {
 
         class Lexer {
         public:
-            Lexer(std::filesystem::path filename, std::string content) : filename(std::move(filename)), content(std::move(content)) {}
+            explicit Lexer(std::filesystem::path filename) {
+                this->PushFile(std::move(filename));
+            }
 
             [[nodiscard]] std::optional<Token> Next() {
                 if (this->pushedToken.has_value()) return std::exchange(this->pushedToken, {});
-                this->SkipIgnored();
-                if (this->offset >= this->content.size()) return {};
 
-                const SceneSourceLocation source{
-                    .filename = this->filename.string(),
-                    .line     = this->line,
-                    .column   = this->column,
-                };
+                while (!this->fileStack.empty()) {
+                    LexerFile& file = this->fileStack.back();
+                    this->SkipIgnored(&file);
+                    if (file.offset >= file.content.size()) {
+                        this->fileStack.pop_back();
+                        continue;
+                    }
 
-                const char character = this->content[this->offset];
-                if (character == '[') {
-                    this->Advance();
-                    return Token{.kind = TokenKind::LeftBracket, .text = "[", .source = source};
+                    const SceneSourceLocation source{
+                        .filename = file.filename.string(),
+                        .line     = file.line,
+                        .column   = file.column,
+                    };
+
+                    const char character = file.content[file.offset];
+                    if (character == '[') {
+                        this->Advance(&file);
+                        return Token{.kind = TokenKind::LeftBracket, .text = "[", .source = source};
+                    }
+                    if (character == ']') {
+                        this->Advance(&file);
+                        return Token{.kind = TokenKind::RightBracket, .text = "]", .source = source};
+                    }
+                    if (character == '"') return this->ReadString(&file, source);
+                    return this->ReadWord(&file, source);
                 }
-                if (character == ']') {
-                    this->Advance();
-                    return Token{.kind = TokenKind::RightBracket, .text = "]", .source = source};
-                }
-                if (character == '"') return this->ReadString(source);
-                return this->ReadWord(source);
+
+                return {};
             }
 
             void PushBack(Token token) {
@@ -290,72 +301,85 @@ namespace spectra::scene {
                 this->pushedToken = std::move(token);
             }
 
-        private:
-            void Advance() {
-                if (this->offset >= this->content.size()) return;
-                if (this->content[this->offset] == '\n') {
-                    ++this->line;
-                    this->column = 1;
-                } else {
-                    ++this->column;
-                }
-                ++this->offset;
+            void PushFile(std::filesystem::path path) {
+                if (!std::filesystem::exists(path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", path.string()));
+                std::string content = ReadSceneFile(path);
+                this->fileStack.push_back(LexerFile{
+                    .filename = std::move(path),
+                    .content  = std::move(content),
+                });
             }
 
-            void SkipIgnored() {
-                while (this->offset < this->content.size()) {
-                    const char character = this->content[this->offset];
+        private:
+            struct LexerFile {
+                std::filesystem::path filename;
+                std::string content;
+                std::size_t offset{};
+                int line{1};
+                int column{1};
+            };
+
+            void Advance(LexerFile* file) {
+                if (file->offset >= file->content.size()) return;
+                if (file->content[file->offset] == '\n') {
+                    ++file->line;
+                    file->column = 1;
+                } else {
+                    ++file->column;
+                }
+                ++file->offset;
+            }
+
+            void SkipIgnored(LexerFile* file) {
+                while (file->offset < file->content.size()) {
+                    const char character = file->content[file->offset];
                     if (std::isspace(static_cast<unsigned char>(character))) {
-                        this->Advance();
+                        this->Advance(file);
                         continue;
                     }
                     if (character == '#') {
-                        while (this->offset < this->content.size() && this->content[this->offset] != '\n') this->Advance();
+                        while (file->offset < file->content.size() && file->content[file->offset] != '\n') this->Advance(file);
                         continue;
                     }
                     return;
                 }
             }
 
-            [[nodiscard]] Token ReadString(const SceneSourceLocation& source) {
-                this->Advance();
+            [[nodiscard]] Token ReadString(LexerFile* file, const SceneSourceLocation& source) {
+                this->Advance(file);
                 std::string text;
-                while (this->offset < this->content.size()) {
-                    const char character = this->content[this->offset];
+                while (file->offset < file->content.size()) {
+                    const char character = file->content[file->offset];
                     if (character == '"') {
-                        this->Advance();
+                        this->Advance(file);
                         return Token{.kind = TokenKind::QuotedString, .text = std::move(text), .source = source};
                     }
                     if (character == '\\') {
-                        this->Advance();
-                        if (this->offset >= this->content.size()) throw ParseError(source, "unterminated escape sequence in quoted string");
-                        text.push_back(this->content[this->offset]);
-                        this->Advance();
+                        this->Advance(file);
+                        if (file->offset >= file->content.size()) throw ParseError(source, "unterminated escape sequence in quoted string");
+                        text.push_back(file->content[file->offset]);
+                        this->Advance(file);
                         continue;
                     }
                     text.push_back(character);
-                    this->Advance();
+                    this->Advance(file);
                 }
                 throw ParseError(source, "unterminated quoted string");
             }
 
-            [[nodiscard]] Token ReadWord(const SceneSourceLocation& source) {
+            [[nodiscard]] Token ReadWord(LexerFile* file, const SceneSourceLocation& source) {
                 std::string text;
-                while (this->offset < this->content.size()) {
-                    const char character = this->content[this->offset];
+                while (file->offset < file->content.size()) {
+                    const char character = file->content[file->offset];
                     if (std::isspace(static_cast<unsigned char>(character)) || character == '[' || character == ']' || character == '#') break;
                     text.push_back(character);
-                    this->Advance();
+                    this->Advance(file);
                 }
                 if (text.empty()) throw ParseError(source, "unexpected character in PBRT scene file");
                 return Token{.kind = TokenKind::Word, .text = std::move(text), .source = source};
             }
 
-            std::filesystem::path filename;
-            std::string content;
-            std::size_t offset{};
-            int line{1};
-            int column{1};
+            std::vector<LexerFile> fileStack{};
             std::optional<Token> pushedToken{};
         };
 
@@ -645,8 +669,7 @@ namespace spectra::scene {
             }
 
             void ParseFile(const std::filesystem::path& path) {
-                if (!std::filesystem::exists(path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", path.string()));
-                Lexer lexer(path, ReadSceneFile(path));
+                Lexer lexer(path);
                 while (std::optional<Token> directive = lexer.Next()) this->ParseDirective(lexer, *directive);
             }
 
@@ -802,7 +825,7 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "Include") {
-                    this->ParseFile(this->ResolveIncludePath(RequireStringToken(lexer, "Include"), directive.source));
+                    lexer.PushFile(this->ResolveIncludePath(RequireStringToken(lexer, "Include"), directive.source));
                     return;
                 }
                 if (directive.text == "Integrator") {
@@ -1094,6 +1117,7 @@ namespace spectra::scene {
             }
 
             void Material(std::string type, std::vector<SceneParameter> parameters, const SceneSourceLocation& source) {
+                if (type.empty()) type = "interface";
                 const std::string name = std::format("__inline_material_{}", this->inlineMaterialCount);
                 ++this->inlineMaterialCount;
                 this->scene.materials.push_back(SceneMaterial{
