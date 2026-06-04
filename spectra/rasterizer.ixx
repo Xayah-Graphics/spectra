@@ -7,61 +7,17 @@ module;
 #endif
 #endif
 
-#include <imgui.h>
-
 #include <vulkan/vulkan_raii.hpp>
 
-export module xayah.spectra.rasterizer;
+export module xayah.renderer.rasterizer;
 
 import std;
-export import spectra.scene;
+export import xayah.scene;
+export import xayah.spectra.contract;
 
 export namespace xayah {
-    enum class RasterizerDockSlot {
-        Center,
-        Left,
-        LeftBottom,
-        Right,
-        RightBottom,
-        Bottom,
-        Floating,
-    };
-
-    struct RasterizerPanel {
-        std::string id{};
-        std::string title{};
-        std::string icon{};
-        std::string shortcut_label{};
-        ImGuiKey shortcut_key{ImGuiKey_None};
-        RasterizerDockSlot dock_slot{RasterizerDockSlot::Floating};
-        ImGuiWindowFlags window_flags{0};
-        bool visible{true};
-        bool closable{true};
-        bool show_in_menu{true};
-        bool show_in_toolbar{true};
-        bool zero_window_padding{false};
-        std::move_only_function<void()> draw{};
-    };
-
-    struct RasterizerFrameInfo {
-        std::uint32_t frame_index{};
-        std::uint32_t image_index{};
-    };
-
-    struct RasterizerFrameResult {
-        std::optional<vk::Semaphore> completion_semaphore{};
-        bool close_requested{false};
-        std::optional<std::string> window_detail{};
-    };
-
-    template <typename Frame>
-    concept RasterizerFrameInfoLike = requires(const Frame& frame) {
-        { frame.frame_index } -> std::convertible_to<std::uint32_t>;
-        { frame.image_index } -> std::convertible_to<std::uint32_t>;
-    };
-
     template <typename Host>
-    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, std::string detail) {
+    concept RasterizerHost = requires(Host& host, SpectraPanel panel, std::string detail) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
@@ -73,7 +29,7 @@ export namespace xayah {
     class RasterizerHostView {
     public:
         template <RasterizerHost Host>
-        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](SpectraPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
         RasterizerHostView(const RasterizerHostView& other)                = delete;
         RasterizerHostView(RasterizerHostView&& other) noexcept            = default;
@@ -97,7 +53,7 @@ export namespace xayah {
             return this->swapchainExtentCallback();
         }
 
-        void register_panel(RasterizerPanel panel) {
+        void register_panel(SpectraPanel panel) {
             this->registerPanelCallback(std::move(panel));
         }
 
@@ -110,22 +66,22 @@ export namespace xayah {
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
-        std::move_only_function<void(RasterizerPanel)> registerPanelCallback{};
+        std::move_only_function<void(SpectraPanel)> registerPanelCallback{};
         std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 
-    class SpectraRasterizer final {
+    class RasterizerRenderer final {
     public:
-        explicit SpectraRasterizer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
-        ~SpectraRasterizer() noexcept;
+        explicit RasterizerRenderer(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace);
+        ~RasterizerRenderer() noexcept;
 
-        SpectraRasterizer(const SpectraRasterizer& other) = delete;
-        SpectraRasterizer(SpectraRasterizer&& other) noexcept;
-        SpectraRasterizer& operator=(const SpectraRasterizer& other) = delete;
-        SpectraRasterizer& operator=(SpectraRasterizer&& other) noexcept;
+        RasterizerRenderer(const RasterizerRenderer& other) = delete;
+        RasterizerRenderer(RasterizerRenderer&& other) noexcept;
+        RasterizerRenderer& operator=(const RasterizerRenderer& other) = delete;
+        RasterizerRenderer& operator=(RasterizerRenderer&& other) noexcept;
 
         [[nodiscard]] static std::string_view target_name();
-        [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
+        [[nodiscard]] static xayah::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 
         template <RasterizerHost Host>
@@ -149,9 +105,9 @@ export namespace xayah {
         }
 
         template <RasterizerHost Host, typename Frame>
-            requires RasterizerFrameInfoLike<Frame>
-        [[nodiscard]] RasterizerFrameResult begin_frame(Host& host, const Frame& frame) {
-            return this->begin_frame(RasterizerHostView{host}, RasterizerFrameInfo{
+            requires SpectraFrameInfoLike<Frame>
+        [[nodiscard]] SpectraFrameResult begin_frame(Host& host, const Frame& frame) {
+            return this->begin_frame(RasterizerHostView{host}, SpectraFrameInfo{
                                                                    .frame_index = static_cast<std::uint32_t>(frame.frame_index),
                                                                    .image_index = static_cast<std::uint32_t>(frame.image_index),
                                                                });
@@ -167,6 +123,6 @@ export namespace xayah {
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        [[nodiscard]] RasterizerFrameResult begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame);
+        [[nodiscard]] SpectraFrameResult begin_frame(RasterizerHostView host, const SpectraFrameInfo& frame);
     };
 } // namespace xayah

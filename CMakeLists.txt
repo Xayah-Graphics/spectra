@@ -369,8 +369,10 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/scene.ixx
+        spectra/scene_pbrt.ixx
         PRIVATE
         spectra/scene.cpp
+        spectra/scene_pbrt.cpp
 )
 target_link_libraries(spectra_scene PUBLIC spectra::util PRIVATE ZLIB::ZLIB)
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
@@ -437,6 +439,7 @@ endif ()
 # ============================================================================
 add_library(spectra_imgui)
 add_library(spectra::imgui ALIAS spectra_imgui)
+add_library(xayah::imgui ALIAS spectra_imgui)
 target_sources(
         spectra_imgui
         PRIVATE
@@ -456,64 +459,65 @@ target_sources(
         spectra_core
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/spectra_contract.ixx
         spectra/spectra.ixx
         PRIVATE
         spectra/spectra.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw spectra::imgui)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw xayah::imgui)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
-target_include_directories(spectra_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+target_include_directories(spectra_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
-add_library(spectra_scene_session)
-add_library(spectra::scene_session ALIAS spectra_scene_session)
+add_library(spectra_scene_library)
+add_library(xayah::scene_library ALIAS spectra_scene_library)
 target_sources(
-        spectra_scene_session
+        spectra_scene_library
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        spectra/scene_session.ixx
+        spectra/scene_library.ixx
         PRIVATE
-        spectra/scene_session.cpp
+        spectra/scene_library.cpp
 )
-target_link_libraries(spectra_scene_session PUBLIC spectra::core spectra::scene PRIVATE spectra::imgui)
-set_property(TARGET spectra_scene_session PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(spectra_scene_session PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
-target_include_directories(spectra_scene_session PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+target_link_libraries(spectra_scene_library PUBLIC spectra::core spectra::scene PRIVATE xayah::imgui)
+set_property(TARGET spectra_scene_library PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(spectra_scene_library PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(spectra_scene_library PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
-add_library(spectra_pathtracer)
-add_library(spectra::pathtracer ALIAS spectra_pathtracer)
+add_library(renderer_pathtracer)
+add_library(xayah::renderer_pathtracer ALIAS renderer_pathtracer)
 target_sources(
-        spectra_pathtracer
+        renderer_pathtracer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/pathtracer.ixx
         PRIVATE
         spectra/pathtracer.cpp
 )
-target_link_libraries(spectra_pathtracer PUBLIC Vulkan::Vulkan spectra::scene PRIVATE CUDA::cudart spectra::gpu_lib spectra::imgui)
-set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(spectra_pathtracer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
-target_include_directories(spectra_pathtracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor ${SPECTRA_GPU_INCLUDE_DIRS})
+target_link_libraries(renderer_pathtracer PUBLIC spectra::core spectra::scene PRIVATE CUDA::cudart spectra::gpu_lib xayah::imgui)
+set_property(TARGET renderer_pathtracer PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(renderer_pathtracer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(renderer_pathtracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor ${SPECTRA_GPU_INCLUDE_DIRS})
 
-add_library(spectra_rasterizer)
-add_library(spectra::rasterizer ALIAS spectra_rasterizer)
+add_library(renderer_rasterizer)
+add_library(xayah::renderer_rasterizer ALIAS renderer_rasterizer)
 target_sources(
-        spectra_rasterizer
+        renderer_rasterizer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         spectra/rasterizer.ixx
         PRIVATE
         spectra/rasterizer.cpp
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::scene PRIVATE spectra::imgui)
-set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(spectra_rasterizer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
-target_include_directories(spectra_rasterizer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+target_link_libraries(renderer_rasterizer PUBLIC spectra::core spectra::scene PRIVATE xayah::imgui)
+set_property(TARGET renderer_rasterizer PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(renderer_rasterizer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(renderer_rasterizer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 
 # ============================================================================
 # Application
 # ============================================================================
 add_executable(spectra main.cpp)
-target_link_libraries(spectra PRIVATE spectra::core spectra::scene_session spectra::pathtracer spectra::rasterizer)
+target_link_libraries(spectra PRIVATE spectra::core xayah::scene_library xayah::renderer_pathtracer xayah::renderer_rasterizer)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)

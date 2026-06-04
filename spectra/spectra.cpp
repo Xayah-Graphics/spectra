@@ -22,6 +22,7 @@ module;
 
 module xayah.spectra;
 
+import xayah.spectra.contract;
 import std;
 
 namespace {

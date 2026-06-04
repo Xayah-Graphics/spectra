@@ -37,7 +37,7 @@
 #include <variant>
 #include <vector>
 
-import spectra.scene;
+import xayah.scene;
 
 namespace spectra::pathtracer {
     namespace {
@@ -62,34 +62,34 @@ namespace spectra::pathtracer {
             };
         }
 
-        [[nodiscard]] Transform ToPathtracerTransform(const math::Transform& transform) {
+        [[nodiscard]] Transform ToPathtracerTransform(const spectra::math::Transform& transform) {
             return Transform(ToPathtracerMatrix(transform.matrix), ToPathtracerMatrix(transform.inverse));
         }
 
-        [[nodiscard]] const RGBColorSpace* ToPathtracerColorSpace(scene::ColorSpace colorSpace) {
+        [[nodiscard]] const RGBColorSpace* ToPathtracerColorSpace(xayah::scene::ColorSpace colorSpace) {
             switch (colorSpace) {
-            case scene::ColorSpace::sRGB: return RGBColorSpace::SRGB();
-            case scene::ColorSpace::DCI_P3: return RGBColorSpace::DCI_P3();
-            case scene::ColorSpace::Rec2020: return RGBColorSpace::Rec2020();
-            case scene::ColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1();
+            case xayah::scene::ColorSpace::sRGB: return RGBColorSpace::SRGB();
+            case xayah::scene::ColorSpace::DCI_P3: return RGBColorSpace::DCI_P3();
+            case xayah::scene::ColorSpace::Rec2020: return RGBColorSpace::Rec2020();
+            case xayah::scene::ColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1();
             }
             throw std::runtime_error("Unknown Spectra scene color space.");
         }
 
-        [[nodiscard]] FileLoc ToFileLoc(const scene::SceneSourceLocation& source, const std::string& fallback) {
+        [[nodiscard]] FileLoc ToFileLoc(const xayah::scene::SceneSourceLocation& source, const std::string& fallback) {
             FileLoc location(source.filename.empty() ? std::string_view(fallback) : std::string_view(source.filename));
             location.line   = source.line;
             location.column = source.column;
             return location;
         }
 
-        [[nodiscard]] std::string SourceString(const scene::SceneSourceLocation& source) {
+        [[nodiscard]] std::string SourceString(const xayah::scene::SceneSourceLocation& source) {
             return std::format("{}:{}:{}", source.filename, source.line, source.column);
         }
 
-        [[nodiscard]] std::string FormatGpuSupportReport(const scene::SceneTranslationReport& report) {
+        [[nodiscard]] std::string FormatGpuSupportReport(const xayah::scene::SceneTranslationReport& report) {
             std::string message = "Scene is not supported by the current GPU pathtracer:";
-            for (const scene::SceneDiagnostic& diagnostic : report.diagnostics) message += std::format("\n  {}: {}", SourceString(diagnostic.source), diagnostic.message);
+            for (const xayah::scene::SceneDiagnostic& diagnostic : report.diagnostics) message += std::format("\n  {}: {}", SourceString(diagnostic.source), diagnostic.message);
             return message;
         }
 
@@ -97,31 +97,31 @@ namespace spectra::pathtracer {
             return values.find(value) != values.end();
         }
 
-        [[nodiscard]] std::string OneStringParameter(const std::vector<scene::SceneParameter>& parameters, const std::string& name, std::string fallback) {
-            for (const scene::SceneParameter& parameter : parameters) {
+        [[nodiscard]] std::string OneStringParameter(const std::vector<xayah::scene::SceneParameter>& parameters, const std::string& name, std::string fallback) {
+            for (const xayah::scene::SceneParameter& parameter : parameters) {
                 if (parameter.name != name) continue;
                 if (const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values); values != nullptr && !values->empty()) return values->front();
             }
             return fallback;
         }
 
-        void AddDiagnostic(scene::SceneTranslationReport* report, scene::SceneSourceLocation source, std::string message) {
+        void AddDiagnostic(xayah::scene::SceneTranslationReport* report, xayah::scene::SceneSourceLocation source, std::string message) {
             report->supported = false;
-            report->diagnostics.push_back(scene::SceneDiagnostic{
+            report->diagnostics.push_back(xayah::scene::SceneDiagnostic{
                 .source  = std::move(source),
                 .message = std::move(message),
             });
         }
 
-        void ValidateTransform(scene::SceneTranslationReport* report, const scene::SceneTransformSet& transform, const scene::SceneSourceLocation& source, const std::string_view owner) {
+        void ValidateTransform(xayah::scene::SceneTranslationReport* report, const xayah::scene::SceneTransformSet& transform, const xayah::scene::SceneSourceLocation& source, const std::string_view owner) {
             if (transform.animated) AddDiagnostic(report, source, std::format("{} uses animated transforms, which are represented by the scene document but are not supported by the current GPU pathtracer", owner));
         }
 
-        void ValidateEntityType(scene::SceneTranslationReport* report, const scene::SceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
+        void ValidateEntityType(xayah::scene::SceneTranslationReport* report, const xayah::scene::SceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
             if (!ContainsName(supported, entity.type)) AddDiagnostic(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
         }
 
-        void AppendParameterValues(ParsedParameter* parsedParameter, const scene::SceneParameter& parameter) {
+        void AppendParameterValues(ParsedParameter* parsedParameter, const xayah::scene::SceneParameter& parameter) {
             if (const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values)) {
                 for (float value : *values) parsedParameter->AddFloat(value);
                 return;
@@ -149,26 +149,26 @@ namespace spectra::pathtracer {
 
         class PathtracerSceneCompiler {
         public:
-            PathtracerSceneCompiler(const scene::SceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
+            PathtracerSceneCompiler(const xayah::scene::SceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
 
             void Compile() {
-                const scene::SceneTranslationReport supportReport = AnalyzePathtracerSceneSupport(this->source);
+                const xayah::scene::SceneTranslationReport supportReport = AnalyzePathtracerSceneSupport(this->source);
                 if (!supportReport.supported) throw std::runtime_error(FormatGpuSupportReport(supportReport));
 
                 this->RegisterResourceNames();
                 this->SetRenderSettings(this->source.renderSettings);
-                for (const scene::SceneMaterial& material : this->source.materials) this->AddMaterial(material);
-                for (const scene::SceneTexture& texture : this->source.textures) this->AddTexture(texture);
-                for (const scene::SceneMedium& medium : this->source.media) this->AddMedium(medium);
+                for (const xayah::scene::SceneMaterial& material : this->source.materials) this->AddMaterial(material);
+                for (const xayah::scene::SceneTexture& texture : this->source.textures) this->AddTexture(texture);
+                for (const xayah::scene::SceneMedium& medium : this->source.media) this->AddMedium(medium);
 
                 this->compiled.media   = this->CreateMedia();
                 this->compiled.sampler = this->CreateSampler();
                 this->compiled.camera  = this->CreateCamera();
 
-                for (const scene::SceneLight& light : this->source.lights) this->AddLight(light);
-                for (const scene::SceneShape& shape : this->source.shapes) this->AddShape(shape);
-                for (const scene::SceneObjectDefinition& definition : this->source.objectDefinitions) this->AddObjectDefinition(definition);
-                for (const scene::SceneObjectInstance& instance : this->source.objectInstances) this->AddObjectInstance(instance);
+                for (const xayah::scene::SceneLight& light : this->source.lights) this->AddLight(light);
+                for (const xayah::scene::SceneShape& shape : this->source.shapes) this->AddShape(shape);
+                for (const xayah::scene::SceneObjectDefinition& definition : this->source.objectDefinitions) this->AddObjectDefinition(definition);
+                for (const xayah::scene::SceneObjectInstance& instance : this->source.objectInstances) this->AddObjectInstance(instance);
 
                 this->compiled.textures = this->CreateTextures();
                 this->CreateMaterials();
@@ -182,9 +182,9 @@ namespace spectra::pathtracer {
             }
 
         private:
-            [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<scene::SceneParameter>& parameters, scene::ColorSpace colorSpace) const {
+            [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<xayah::scene::SceneParameter>& parameters, xayah::scene::ColorSpace colorSpace) const {
                 ParsedParameterVector parsedParameters{};
-                for (const scene::SceneParameter& parameter : parameters) {
+                for (const xayah::scene::SceneParameter& parameter : parameters) {
                     if (parameter.type.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty type.", this->source.source));
                     if (parameter.name.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty name.", this->source.source));
                     ParsedParameter* parsedParameter = new ParsedParameter(ToFileLoc(parameter.source, this->source.source));
@@ -199,7 +199,7 @@ namespace spectra::pathtracer {
                 return ParameterDictionary(std::move(parsedParameters), ToPathtracerColorSpace(colorSpace));
             }
 
-            [[nodiscard]] PathtracerSceneEntity MakeEntity(const scene::SceneEntity& entity) const {
+            [[nodiscard]] PathtracerSceneEntity MakeEntity(const xayah::scene::SceneEntity& entity) const {
                 if (entity.type.empty()) throw std::runtime_error(std::format("{} scene entity has an empty type.", this->source.source));
                 return PathtracerSceneEntity{
                     .name       = entity.type,
@@ -208,13 +208,13 @@ namespace spectra::pathtracer {
                 };
             }
 
-            void OverrideIntegerParameter(scene::SceneEntity* entity, std::string name, int value) const {
-                for (scene::SceneParameter& parameter : entity->parameters) {
+            void OverrideIntegerParameter(xayah::scene::SceneEntity* entity, std::string name, int value) const {
+                for (xayah::scene::SceneParameter& parameter : entity->parameters) {
                     if (parameter.type != "integer" || parameter.name != name) continue;
                     parameter.values = std::vector<int>{value};
                     return;
                 }
-                entity->parameters.push_back(scene::SceneParameter{
+                entity->parameters.push_back(xayah::scene::SceneParameter{
                     .type       = "integer",
                     .name       = std::move(name),
                     .values     = std::vector<int>{value},
@@ -223,14 +223,14 @@ namespace spectra::pathtracer {
                 });
             }
 
-            [[nodiscard]] bool HasIntegerParameter(const scene::SceneEntity& entity, const std::string_view name) const {
-                for (const scene::SceneParameter& parameter : entity.parameters) {
+            [[nodiscard]] bool HasIntegerParameter(const xayah::scene::SceneEntity& entity, const std::string_view name) const {
+                for (const xayah::scene::SceneParameter& parameter : entity.parameters) {
                     if (parameter.type == "integer" && parameter.name == name) return true;
                 }
                 return false;
             }
 
-            void ApplySamplerDefaults(scene::SceneEntity* sampler) const {
+            void ApplySamplerDefaults(xayah::scene::SceneEntity* sampler) const {
                 if (sampler == nullptr) throw std::runtime_error("Spectra pathtracer sampler defaults require a sampler entity.");
                 if (!this->renderConfig.default_pixel_samples.has_value()) return;
                 if (this->renderConfig.pixel_samples.has_value()) return;
@@ -265,15 +265,15 @@ namespace spectra::pathtracer {
             }
 
             void RegisterResourceNames() {
-                for (const scene::SceneMaterial& material : this->source.materials) {
+                for (const xayah::scene::SceneMaterial& material : this->source.materials) {
                     this->RequireUniqueName(this->materialNames, "material", material.name);
                     this->materialNames.insert(material.name);
                 }
-                for (const scene::SceneMedium& medium : this->source.media) {
+                for (const xayah::scene::SceneMedium& medium : this->source.media) {
                     this->RequireUniqueName(this->mediumNames, "medium", medium.name);
                     this->mediumNames.insert(medium.name);
                 }
-                for (const scene::SceneObjectDefinition& definition : this->source.objectDefinitions) {
+                for (const xayah::scene::SceneObjectDefinition& definition : this->source.objectDefinitions) {
                     this->RequireUniqueName(this->objectDefinitionNames, "object definition", definition.name);
                     this->objectDefinitionNames.insert(definition.name);
                 }
@@ -284,16 +284,16 @@ namespace spectra::pathtracer {
                 return this->cameraEntity.cameraTransform.RenderFromWorld();
             }
 
-            [[nodiscard]] Transform SceneTransform(const scene::SceneTransformSet& transform, const scene::SceneSourceLocation& source) const {
+            [[nodiscard]] Transform SceneTransform(const xayah::scene::SceneTransformSet& transform, const xayah::scene::SceneSourceLocation& source) const {
                 if (transform.animated) throw std::runtime_error(std::format("{}: animated transform reached GPU scene compiler after validation.", SourceString(source)));
                 return ToPathtracerTransform(transform.start);
             }
 
-            [[nodiscard]] Transform RenderFromObjectTransform(const scene::SceneTransformSet& transform, const scene::SceneSourceLocation& source) const {
+            [[nodiscard]] Transform RenderFromObjectTransform(const xayah::scene::SceneTransformSet& transform, const xayah::scene::SceneSourceLocation& source) const {
                 return this->RenderFromWorldTransform() * this->SceneTransform(transform, source);
             }
 
-            [[nodiscard]] PathtracerShapeSceneEntity MakeShapeEntity(const scene::SceneShape& shape) const {
+            [[nodiscard]] PathtracerShapeSceneEntity MakeShapeEntity(const xayah::scene::SceneShape& shape) const {
                 const std::string materialName = shape.materialName;
                 this->RequireMaterial(materialName);
                 Transform renderFromObject = this->RenderFromObjectTransform(shape.transform, shape.entity.source);
@@ -322,12 +322,12 @@ namespace spectra::pathtracer {
                 return iter->second;
             }
 
-            void SetRenderSettings(const scene::SceneRenderSettings& settings) {
+            void SetRenderSettings(const xayah::scene::SceneRenderSettings& settings) {
                 if (this->renderSettingsReady) throw std::runtime_error(std::format("{} scene render settings are already configured.", this->source.source));
 
                 PathtracerSceneEntity filterEntity = this->MakeEntity(settings.filter);
-                scene::SceneEntity film            = settings.film;
-                scene::SceneEntity sampler         = settings.sampler;
+                xayah::scene::SceneEntity film            = settings.film;
+                xayah::scene::SceneEntity sampler         = settings.sampler;
                 this->ApplySamplerDefaults(&sampler);
                 if (this->filmResolutionOverride.has_value()) {
                     if (this->filmResolutionOverride->x <= 0 || this->filmResolutionOverride->y <= 0) throw std::runtime_error("Spectra interactive film resolution must be positive.");
@@ -372,7 +372,7 @@ namespace spectra::pathtracer {
                 return Camera::Create(this->cameraEntity.name, this->cameraEntity.parameters, cameraMedium, this->cameraEntity.cameraTransform, this->compiled.film, &this->cameraEntity.loc, alloc);
             }
 
-            void AddMaterial(const scene::SceneMaterial& material) {
+            void AddMaterial(const xayah::scene::SceneMaterial& material) {
                 PathtracerSceneEntity entity = this->MakeEntity(material.entity);
                 this->ConsumeMatchingTypeParameter(entity, "material");
                 std::lock_guard<std::mutex> lock(this->materialMutex);
@@ -380,7 +380,7 @@ namespace spectra::pathtracer {
                 this->materials.push_back(std::make_pair(material.name, std::move(entity)));
             }
 
-            void AddTexture(const scene::SceneTexture& texture) {
+            void AddTexture(const xayah::scene::SceneTexture& texture) {
                 this->RequireRenderSettings();
                 if (texture.kind == "float")
                     this->RequireUniqueName(this->floatTextureNames, "float texture", texture.name);
@@ -443,7 +443,7 @@ namespace spectra::pathtracer {
                 }
             }
 
-            void AddMedium(const scene::SceneMedium& medium) {
+            void AddMedium(const xayah::scene::SceneMedium& medium) {
                 this->RequireRenderSettings();
 
                 PathtracerSceneEntity base = this->MakeEntity(medium.entity);
@@ -461,7 +461,7 @@ namespace spectra::pathtracer {
                 this->mediumJobs[medium.name] = RunAsync(create);
             }
 
-            void AddLight(const scene::SceneLight& light) {
+            void AddLight(const xayah::scene::SceneLight& light) {
                 this->RequireRenderSettings();
 
                 PathtracerSceneEntity base = this->MakeEntity(light.entity);
@@ -480,19 +480,19 @@ namespace spectra::pathtracer {
                 this->lightJobs.push_back(RunAsync(create));
             }
 
-            void AddShape(const scene::SceneShape& shape) {
+            void AddShape(const xayah::scene::SceneShape& shape) {
                 this->RequireRenderSettings();
                 this->compiled.shapes.push_back(this->MakeShapeEntity(shape));
             }
 
-            void AddObjectDefinition(const scene::SceneObjectDefinition& definition) {
+            void AddObjectDefinition(const xayah::scene::SceneObjectDefinition& definition) {
                 this->RequireRenderSettings();
                 PathtracerInstanceDefinitionSceneEntity entity{
                     .name = definition.name,
                     .loc  = ToFileLoc(definition.source, this->source.source),
                 };
                 entity.shapes.reserve(definition.shapes.size());
-                for (const scene::SceneShape& shape : definition.shapes) {
+                for (const xayah::scene::SceneShape& shape : definition.shapes) {
                     PathtracerShapeSceneEntity shapeEntity = this->MakeShapeEntity(shape);
                     if (shapeEntity.areaLight.has_value()) throw std::runtime_error(std::format("{} scene object definition \"{}\" contains an area light shape; instanced area lights are not supported.", this->source.source, definition.name));
                     entity.shapes.push_back(std::move(shapeEntity));
@@ -501,7 +501,7 @@ namespace spectra::pathtracer {
                 this->compiled.instanceDefinitions[definition.name] = std::move(entity);
             }
 
-            void AddObjectInstance(const scene::SceneObjectInstance& instance) {
+            void AddObjectInstance(const xayah::scene::SceneObjectInstance& instance) {
                 this->RequireRenderSettings();
                 if (this->objectDefinitionNames.find(instance.definitionName) == this->objectDefinitionNames.end()) throw std::runtime_error(std::format("{} scene references unknown object definition \"{}\".", this->source.source, instance.definitionName));
 
@@ -655,7 +655,7 @@ namespace spectra::pathtracer {
                 return lights;
             }
 
-            const scene::SceneSnapshot& source;
+            const xayah::scene::SceneSnapshot& source;
             CompiledPathtracerScene& compiled;
             RenderConfig renderConfig;
             std::optional<Point2i> filmResolutionOverride{};
@@ -686,7 +686,7 @@ namespace spectra::pathtracer {
         };
     } // namespace
 
-    scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const scene::SceneSnapshot& scene) {
+    xayah::scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const xayah::scene::SceneSnapshot& scene) {
         static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
         static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
         static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
@@ -701,7 +701,7 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
         static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
 
-        scene::SceneTranslationReport report{.target = "Spectra Pathtracer"};
+        xayah::scene::SceneTranslationReport report{.target = "Spectra Pathtracer"};
         ValidateEntityType(&report, scene.renderSettings.filter, supportedFilters, "pixel filter");
         ValidateEntityType(&report, scene.renderSettings.film, supportedFilms, "film");
         ValidateEntityType(&report, scene.renderSettings.camera, supportedCameras, "camera");
@@ -710,25 +710,25 @@ namespace spectra::pathtracer {
         ValidateEntityType(&report, scene.renderSettings.accelerator, supportedAccelerators, "accelerator");
         ValidateTransform(&report, scene.renderSettings.cameraTransform, scene.renderSettings.camera.source, "camera");
 
-        for (const scene::SceneOption& option : scene.renderSettings.options) AddDiagnostic(&report, option.source, std::format("PBRT Option \"{}\" is represented by the scene document but is not wired into the current pathtracer runtime", option.name));
+        for (const xayah::scene::SceneOption& option : scene.renderSettings.options) AddDiagnostic(&report, option.source, std::format("PBRT Option \"{}\" is represented by the scene document but is not wired into the current pathtracer runtime", option.name));
 
         const std::string lightSampler = OneStringParameter(scene.renderSettings.integrator.parameters, "lightsampler", "");
         if (!lightSampler.empty() && !ContainsName(supportedLightSamplers, lightSampler)) AddDiagnostic(&report, scene.renderSettings.integrator.source, std::format("GPU pathtracer does not support light sampler \"{}\"", lightSampler));
 
         std::set<std::string> materials{};
-        for (const scene::SceneMaterial& material : scene.materials) {
+        for (const xayah::scene::SceneMaterial& material : scene.materials) {
             materials.insert(material.name);
             ValidateEntityType(&report, material.entity, supportedMaterials, "material");
         }
 
         std::set<std::string> media{};
-        for (const scene::SceneMedium& medium : scene.media) {
+        for (const xayah::scene::SceneMedium& medium : scene.media) {
             media.insert(medium.name);
             ValidateEntityType(&report, medium.entity, supportedMedia, "medium");
             ValidateTransform(&report, medium.transform, medium.entity.source, std::format("medium \"{}\"", medium.name));
         }
 
-        for (const scene::SceneTexture& texture : scene.textures) {
+        for (const xayah::scene::SceneTexture& texture : scene.textures) {
             if (texture.kind != "float" && texture.kind != "spectrum") AddDiagnostic(&report, texture.entity.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", texture.kind));
             ValidateEntityType(&report, texture.entity, supportedTextures, "texture");
             if (texture.kind == "float" && texture.entity.type == "marble") AddDiagnostic(&report, texture.entity.source, "\"marble\" is only a spectrum texture in the GPU pathtracer");
@@ -736,7 +736,7 @@ namespace spectra::pathtracer {
             ValidateTransform(&report, texture.transform, texture.entity.source, std::format("texture \"{}\"", texture.name));
         }
 
-        const auto validateShape = [&report, &materials, &media](const scene::SceneShape& shape, const std::string_view owner) {
+        const auto validateShape = [&report, &materials, &media](const xayah::scene::SceneShape& shape, const std::string_view owner) {
             ValidateEntityType(&report, shape.entity, supportedShapes, "shape");
             ValidateTransform(&report, shape.transform, shape.entity.source, owner);
             if (shape.materialName.empty() || !ContainsName(materials, shape.materialName)) AddDiagnostic(&report, shape.entity.source, std::format("{} references unknown material \"{}\"", owner, shape.materialName));
@@ -745,24 +745,24 @@ namespace spectra::pathtracer {
             if (shape.areaLight.has_value()) ValidateEntityType(&report, shape.areaLight->entity, supportedAreaLights, "area light");
         };
 
-        for (const scene::SceneLight& light : scene.lights) {
+        for (const xayah::scene::SceneLight& light : scene.lights) {
             ValidateEntityType(&report, light.entity, supportedLights, "light");
             ValidateTransform(&report, light.transform, light.entity.source, std::format("light \"{}\"", light.name));
             if (!light.medium.empty() && !ContainsName(media, light.medium)) AddDiagnostic(&report, light.entity.source, std::format("light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
         }
 
-        for (const scene::SceneShape& shape : scene.shapes) validateShape(shape, std::format("shape \"{}\"", shape.name));
+        for (const xayah::scene::SceneShape& shape : scene.shapes) validateShape(shape, std::format("shape \"{}\"", shape.name));
 
         std::set<std::string> objectDefinitions{};
-        for (const scene::SceneObjectDefinition& definition : scene.objectDefinitions) {
+        for (const xayah::scene::SceneObjectDefinition& definition : scene.objectDefinitions) {
             objectDefinitions.insert(definition.name);
-            for (const scene::SceneShape& shape : definition.shapes) {
+            for (const xayah::scene::SceneShape& shape : definition.shapes) {
                 validateShape(shape, std::format("object definition \"{}\" shape", definition.name));
                 if (shape.areaLight.has_value()) AddDiagnostic(&report, shape.entity.source, std::format("object definition \"{}\" contains an area light shape; instanced area lights are not supported by the current GPU pathtracer", definition.name));
             }
         }
 
-        for (const scene::SceneObjectInstance& instance : scene.objectInstances) {
+        for (const xayah::scene::SceneObjectInstance& instance : scene.objectInstances) {
             if (!ContainsName(objectDefinitions, instance.definitionName)) AddDiagnostic(&report, instance.source, std::format("object instance references unknown definition \"{}\"", instance.definitionName));
             ValidateTransform(&report, instance.transform, instance.source, std::format("object instance \"{}\"", instance.name));
         }
@@ -772,7 +772,7 @@ namespace spectra::pathtracer {
 
     CompiledPathtracerScene::CompiledPathtracerScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireMemoryResource(memoryResource))), lightSpectrumCache(Allocator(RequireMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireMemoryResource(memoryResource)); }) {}
 
-    std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
+    std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const xayah::scene::SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
         std::unique_ptr<CompiledPathtracerScene> compiled = std::make_unique<CompiledPathtracerScene>(memoryResource);
         PathtracerSceneCompiler compiler(scene, *compiled, config, filmResolutionOverride);
         compiler.Compile();

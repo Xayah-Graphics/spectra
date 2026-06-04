@@ -1,11 +1,11 @@
-export module xayah.spectra.scene_session;
+export module xayah.scene.library;
 
-export import spectra.scene;
-export import xayah.spectra;
+export import xayah.scene.pbrt;
+export import xayah.spectra.contract;
 import std;
 
 export namespace xayah {
-    class SpectraSceneSession final {
+    class SceneLibrary final {
     public:
         enum class DisplayState {
             Checking,
@@ -14,13 +14,13 @@ export namespace xayah {
             Invalid,
         };
 
-        SpectraSceneSession();
-        ~SpectraSceneSession() noexcept;
+        SceneLibrary();
+        ~SceneLibrary() noexcept;
 
-        SpectraSceneSession(const SpectraSceneSession& other)                = delete;
-        SpectraSceneSession(SpectraSceneSession&& other) noexcept            = delete;
-        SpectraSceneSession& operator=(const SpectraSceneSession& other)     = delete;
-        SpectraSceneSession& operator=(SpectraSceneSession&& other) noexcept = delete;
+        SceneLibrary(const SceneLibrary& other)                = delete;
+        SceneLibrary(SceneLibrary&& other) noexcept            = delete;
+        SceneLibrary& operator=(const SceneLibrary& other)     = delete;
+        SceneLibrary& operator=(SceneLibrary&& other) noexcept = delete;
 
         template <SpectraSceneHost Host>
         void attach(Host& host) {
@@ -29,8 +29,8 @@ export namespace xayah {
 
         void detach() noexcept;
 
-        [[nodiscard]] std::shared_ptr<spectra::scene::SceneWorkspace> document_workspace() const;
-        void register_translation_target(spectra::scene::SceneTranslationTarget target);
+        [[nodiscard]] std::shared_ptr<xayah::scene::SceneWorkspace> document_workspace() const;
+        void register_translation_target(xayah::scene::SceneTranslationTarget target);
         void set_active_renderer(std::string_view renderer_name);
         void load_first_supported_scene(std::string_view renderer_name);
         [[nodiscard]] SpectraRendererAvailability renderer_availability(std::string_view renderer_name);
@@ -39,20 +39,20 @@ export namespace xayah {
         struct TranslationCacheEntry {
             std::string rendererName{};
             std::string sceneId{};
-            spectra::scene::SceneRevision revision{};
-            spectra::scene::SceneTranslationReport report{};
+            xayah::scene::SceneRevision revision{};
+            xayah::scene::SceneTranslationReport report{};
         };
 
         struct TranslationRequestKey {
             std::string rendererName{};
             std::string sceneId{};
-            spectra::scene::SceneRevision revision{};
+            xayah::scene::SceneRevision revision{};
         };
 
         struct TranslationRequest {
             TranslationRequestKey key{};
             std::size_t sceneIndex{};
-            spectra::scene::SceneCatalogEntry entry{};
+            xayah::scene::PbrtSceneCatalogEntry entry{};
         };
 
         enum class BackgroundTaskKind {
@@ -104,21 +104,21 @@ export namespace xayah {
         [[nodiscard]] static bool translation_request_key_matches(const TranslationRequestKey& lhs, const TranslationRequestKey& rhs);
         [[nodiscard]] bool has_translation_cache_entry_locked(const TranslationRequestKey& key) const;
         [[nodiscard]] bool has_translation_request_locked(const TranslationRequestKey& key) const;
-        [[nodiscard]] spectra::scene::SceneTranslationReport analyze_document(std::string_view renderer_name, const spectra::scene::SceneSnapshot& document);
-        [[nodiscard]] SpectraRendererAvailability availability_from_report(std::string_view renderer_name, const spectra::scene::SceneTranslationReport& report) const;
-        [[nodiscard]] DisplayState display_state(const spectra::scene::SceneCatalogEntry& entry, const std::optional<spectra::scene::SceneTranslationReport>& report, bool renderer_report_required) const;
-        [[nodiscard]] std::optional<spectra::scene::SceneTranslationReport> cached_entry_report(std::string_view renderer_name, const spectra::scene::SceneCatalogEntry& entry) const;
-        void request_entry_report_analysis(std::string_view renderer_name, std::size_t scene_index, const spectra::scene::SceneCatalogEntry& entry);
-        void commit_document(std::size_t scene_index, spectra::scene::SceneSnapshot document);
+        [[nodiscard]] xayah::scene::SceneTranslationReport analyze_document(std::string_view renderer_name, const xayah::scene::SceneSnapshot& document);
+        [[nodiscard]] SpectraRendererAvailability availability_from_report(std::string_view renderer_name, const xayah::scene::SceneTranslationReport& report) const;
+        [[nodiscard]] DisplayState display_state(const xayah::scene::PbrtSceneCatalogEntry& entry, const std::optional<xayah::scene::SceneTranslationReport>& report, bool renderer_report_required) const;
+        [[nodiscard]] std::optional<xayah::scene::SceneTranslationReport> cached_entry_report(std::string_view renderer_name, const xayah::scene::PbrtSceneCatalogEntry& entry) const;
+        void request_entry_report_analysis(std::string_view renderer_name, std::size_t scene_index, const xayah::scene::PbrtSceneCatalogEntry& entry);
+        void commit_document(std::size_t scene_index, xayah::scene::SceneSnapshot document);
         void load_scene(std::size_t scene_index);
         void draw_scene_library_window();
 
-        std::shared_ptr<spectra::scene::SceneWorkspace> workspace{};
+        std::shared_ptr<xayah::scene::SceneWorkspace> workspace{};
         mutable std::mutex scene_catalog_mutex{};
         std::condition_variable_any scene_background_condition{};
-        spectra::scene::SceneCatalog scene_catalog{};
+        xayah::scene::PbrtSceneCatalog scene_catalog{};
         std::vector<bool> scene_catalog_validation_claimed{};
-        std::vector<spectra::scene::SceneTranslationTarget> translation_targets{};
+        std::vector<xayah::scene::SceneTranslationTarget> translation_targets{};
         std::vector<TranslationCacheEntry> translation_cache{};
         std::deque<TranslationRequest> translation_requests{};
         std::vector<TranslationRequestKey> translation_requests_in_progress{};

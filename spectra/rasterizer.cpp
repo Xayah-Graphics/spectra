@@ -6,8 +6,10 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-module xayah.spectra.rasterizer;
+module xayah.renderer.rasterizer;
 
+import xayah.scene;
+import xayah.spectra.contract;
 import std;
 
 namespace {
@@ -40,25 +42,25 @@ namespace {
 } // namespace
 
 namespace xayah {
-    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_rasterizer_scene(const spectra::scene::SceneSnapshot& document) {
-        spectra::scene::SceneTranslationReport report{.target = std::string{SpectraRasterizer::target_name()}, .supported = false};
+    [[nodiscard]] xayah::scene::SceneTranslationReport analyze_rasterizer_scene(const xayah::scene::SceneSnapshot& document) {
+        xayah::scene::SceneTranslationReport report{.target = std::string{RasterizerRenderer::target_name()}, .supported = false};
         if (document.name.empty()) {
-            report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
-                .source  = spectra::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
+            report.diagnostics.push_back(xayah::scene::SceneDiagnostic{
+                .source  = xayah::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
                 .message = "Rasterizer scene translation requires a named scene document",
             });
         } else {
-            report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
-                .source  = spectra::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
+            report.diagnostics.push_back(xayah::scene::SceneDiagnostic{
+                .source  = xayah::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
                 .message = "Rasterizer backend does not currently provide PBRT scene rasterization translation",
             });
         }
         return report;
     }
 
-    class SpectraRasterizer::Impl {
+    class RasterizerRenderer::Impl {
     public:
-        explicit Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
+        explicit Impl(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace);
         ~Impl() noexcept;
 
         [[nodiscard]] std::string_view name() const;
@@ -66,7 +68,7 @@ namespace xayah {
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        [[nodiscard]] RasterizerFrameResult begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame);
+        [[nodiscard]] SpectraFrameResult begin_frame(RasterizerHostView host, const SpectraFrameInfo& frame);
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
@@ -89,10 +91,10 @@ namespace xayah {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool imgui_ready{false};
-        std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace{};
+        std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace{};
 
-        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot{};
-        std::optional<spectra::scene::SceneInfo> scene_info{};
+        std::shared_ptr<const xayah::scene::SceneSnapshot> scene_snapshot{};
+        std::optional<xayah::scene::SceneInfo> scene_info{};
 
         struct {
             vk::Extent2D requested_extent{};
@@ -110,64 +112,64 @@ namespace xayah {
         } viewport;
     };
 
-    SpectraRasterizer::SpectraRasterizer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
+    RasterizerRenderer::RasterizerRenderer(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
 
-    SpectraRasterizer::~SpectraRasterizer() noexcept = default;
+    RasterizerRenderer::~RasterizerRenderer() noexcept = default;
 
-    SpectraRasterizer::SpectraRasterizer(SpectraRasterizer&& other) noexcept = default;
+    RasterizerRenderer::RasterizerRenderer(RasterizerRenderer&& other) noexcept = default;
 
-    SpectraRasterizer& SpectraRasterizer::operator=(SpectraRasterizer&& other) noexcept = default;
+    RasterizerRenderer& RasterizerRenderer::operator=(RasterizerRenderer&& other) noexcept = default;
 
-    std::string_view SpectraRasterizer::target_name() {
+    std::string_view RasterizerRenderer::target_name() {
         return "Spectra Rasterizer";
     }
 
-    spectra::scene::SceneTranslationTarget SpectraRasterizer::translation_target() {
-        return spectra::scene::SceneTranslationTarget{
-            .rendererName = std::string{SpectraRasterizer::target_name()},
-            .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_rasterizer_scene(document); },
+    xayah::scene::SceneTranslationTarget RasterizerRenderer::translation_target() {
+        return xayah::scene::SceneTranslationTarget{
+            .rendererName = std::string{RasterizerRenderer::target_name()},
+            .analyze      = [](const xayah::scene::SceneSnapshot& document) { return analyze_rasterizer_scene(document); },
         };
     }
 
-    std::string_view SpectraRasterizer::name() const {
+    std::string_view RasterizerRenderer::name() const {
         return this->impl->name();
     }
 
-    void SpectraRasterizer::attach(RasterizerHostView host) {
+    void RasterizerRenderer::attach(RasterizerHostView host) {
         this->impl->attach(std::move(host));
     }
 
-    void SpectraRasterizer::detach() noexcept {
+    void RasterizerRenderer::detach() noexcept {
         this->impl->detach();
     }
 
-    void SpectraRasterizer::before_imgui_shutdown() noexcept {
+    void RasterizerRenderer::before_imgui_shutdown() noexcept {
         this->impl->before_imgui_shutdown();
     }
 
-    void SpectraRasterizer::after_imgui_created() {
+    void RasterizerRenderer::after_imgui_created() {
         this->impl->after_imgui_created();
     }
 
-    RasterizerFrameResult SpectraRasterizer::begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame) {
+    SpectraFrameResult RasterizerRenderer::begin_frame(RasterizerHostView host, const SpectraFrameInfo& frame) {
         return this->impl->begin_frame(std::move(host), frame);
     }
 
-    void SpectraRasterizer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+    void RasterizerRenderer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         this->impl->record_frame(command_buffer);
     }
 
-    SpectraRasterizer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
+    RasterizerRenderer::Impl::Impl(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
         if (this->source_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
     }
 
-    SpectraRasterizer::Impl::~Impl() noexcept = default;
+    RasterizerRenderer::Impl::~Impl() noexcept = default;
 
-    std::string_view SpectraRasterizer::Impl::name() const {
+    std::string_view RasterizerRenderer::Impl::name() const {
         return "Spectra Rasterizer";
     }
 
-    void SpectraRasterizer::Impl::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
+    void RasterizerRenderer::Impl::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
         if (frame_count == 0) throw std::runtime_error("Spectra rasterizer host frame count must be positive");
         if (swapchain_extent.width == 0 || swapchain_extent.height == 0) throw std::runtime_error("Spectra rasterizer host swapchain extent must be positive");
         this->physical_device  = &physical_device;
@@ -176,55 +178,55 @@ namespace xayah {
         if (this->ui.requested_extent.width == 0 || this->ui.requested_extent.height == 0) this->ui.requested_extent = swapchain_extent;
     }
 
-    void SpectraRasterizer::Impl::register_panels(RasterizerHostView& host) {
-        host.register_panel(RasterizerPanel{
+    void RasterizerRenderer::Impl::register_panels(RasterizerHostView& host) {
+        host.register_panel(SpectraPanel{
             .id                  = "rasterizer.viewport",
             .title               = "Rasterizer",
             .icon                = ICON_MS_GRID_VIEW,
             .shortcut_label      = "F7",
             .shortcut_key        = ImGuiKey_F7,
-            .dock_slot           = RasterizerDockSlot::Center,
+            .dock_slot           = SpectraDockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
             .visible             = false,
             .show_in_toolbar     = true,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_panel(RasterizerPanel{
+        host.register_panel(SpectraPanel{
             .id              = "rasterizer.settings",
             .title           = "Rasterizer Settings",
             .icon            = ICON_MS_TUNE,
             .shortcut_label  = "F8",
             .shortcut_key    = ImGuiKey_F8,
-            .dock_slot       = RasterizerDockSlot::Right,
+            .dock_slot       = SpectraDockSlot::Right,
             .visible         = false,
             .show_in_toolbar = true,
             .draw            = [this] { this->draw_settings_window(); },
         });
     }
 
-    void SpectraRasterizer::Impl::synchronize_scene_workspace() {
-        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
+    void RasterizerRenderer::Impl::synchronize_scene_workspace() {
+        std::shared_ptr<const xayah::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
         if (next_snapshot == nullptr) throw std::runtime_error("Spectra rasterizer source scene workspace returned an empty scene snapshot");
         if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
-        const spectra::scene::SceneTranslationReport report = analyze_rasterizer_scene(*next_snapshot);
+        const xayah::scene::SceneTranslationReport report = analyze_rasterizer_scene(*next_snapshot);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", SpectraRasterizer::target_name(), next_snapshot->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", RasterizerRenderer::target_name(), next_snapshot->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
         this->scene_snapshot = std::move(next_snapshot);
-        this->scene_info     = spectra::scene::DescribeScene(*this->scene_snapshot);
+        this->scene_info     = xayah::scene::DescribeScene(*this->scene_snapshot);
     }
 
-    std::string SpectraRasterizer::Impl::window_detail() const {
+    std::string RasterizerRenderer::Impl::window_detail() const {
         const std::string scene_title = !this->scene_info.has_value() ? "No Scene" : this->scene_info->title;
         const std::uint32_t width     = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->swapchain_extent.width;
         const std::uint32_t height    = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->swapchain_extent.height;
         return std::format("{} | Spectra Rasterizer | {}x{}", scene_title, width, height);
     }
 
-    void SpectraRasterizer::Impl::create_viewport_resources(const vk::Extent2D extent) {
+    void RasterizerRenderer::Impl::create_viewport_resources(const vk::Extent2D extent) {
         if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport without Vulkan handles");
         if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot create Spectra rasterizer viewport with a zero extent");
         const vk::ImageCreateInfo image_create_info{
@@ -275,13 +277,13 @@ namespace xayah {
         if (this->imgui_ready) this->create_imgui_descriptor();
     }
 
-    void SpectraRasterizer::Impl::destroy_imgui_descriptor_noexcept() noexcept {
+    void RasterizerRenderer::Impl::destroy_imgui_descriptor_noexcept() noexcept {
         if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) return;
         ImGui_ImplVulkan_RemoveTexture(this->viewport.imgui_descriptor);
         this->viewport.imgui_descriptor = VK_NULL_HANDLE;
     }
 
-    void SpectraRasterizer::Impl::destroy_viewport_resources_noexcept() noexcept {
+    void RasterizerRenderer::Impl::destroy_viewport_resources_noexcept() noexcept {
         try {
             this->destroy_imgui_descriptor_noexcept();
             if (this->device != nullptr) this->device->waitIdle();
@@ -295,21 +297,21 @@ namespace xayah {
         this->viewport.layout  = vk::ImageLayout::eUndefined;
     }
 
-    void SpectraRasterizer::Impl::ensure_viewport_resources() {
+    void RasterizerRenderer::Impl::ensure_viewport_resources() {
         if (this->ui.requested_extent.width == 0 || this->ui.requested_extent.height == 0) return;
         if (*this->viewport.image && this->viewport.extent.width == this->ui.requested_extent.width && this->viewport.extent.height == this->ui.requested_extent.height) return;
         this->destroy_viewport_resources_noexcept();
         this->create_viewport_resources(this->ui.requested_extent);
     }
 
-    void SpectraRasterizer::Impl::create_imgui_descriptor() {
+    void RasterizerRenderer::Impl::create_imgui_descriptor() {
         if (!*this->viewport.sampler || !*this->viewport.view) throw std::runtime_error("Cannot create Spectra rasterizer descriptor before viewport resources exist");
         if (this->viewport.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra rasterizer viewport descriptor is already allocated");
         this->viewport.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*this->viewport.sampler), static_cast<VkImageView>(*this->viewport.view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra rasterizer viewport descriptor");
     }
 
-    void SpectraRasterizer::Impl::attach(RasterizerHostView host) {
+    void RasterizerRenderer::Impl::attach(RasterizerHostView host) {
         if (this->attached) throw std::runtime_error("Spectra rasterizer plugin is already attached");
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->attached = true;
@@ -322,7 +324,7 @@ namespace xayah {
         }
     }
 
-    void SpectraRasterizer::Impl::detach() noexcept {
+    void RasterizerRenderer::Impl::detach() noexcept {
         this->destroy_viewport_resources_noexcept();
         this->physical_device  = nullptr;
         this->device           = nullptr;
@@ -331,26 +333,26 @@ namespace xayah {
         this->imgui_ready      = false;
     }
 
-    void SpectraRasterizer::Impl::before_imgui_shutdown() noexcept {
+    void RasterizerRenderer::Impl::before_imgui_shutdown() noexcept {
         this->destroy_imgui_descriptor_noexcept();
         this->imgui_ready = false;
     }
 
-    void SpectraRasterizer::Impl::after_imgui_created() {
+    void RasterizerRenderer::Impl::after_imgui_created() {
         this->imgui_ready = true;
         if (*this->viewport.image && this->viewport.imgui_descriptor == VK_NULL_HANDLE) this->create_imgui_descriptor();
     }
 
-    RasterizerFrameResult SpectraRasterizer::Impl::begin_frame(RasterizerHostView host, const RasterizerFrameInfo&) {
+    SpectraFrameResult RasterizerRenderer::Impl::begin_frame(RasterizerHostView host, const SpectraFrameInfo&) {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->synchronize_scene_workspace();
-        RasterizerFrameResult result{};
+        SpectraFrameResult result{};
         this->ensure_viewport_resources();
         result.window_detail = this->window_detail();
         return result;
     }
 
-    void SpectraRasterizer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+    void RasterizerRenderer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         if (!*this->viewport.image) return;
         transition_image_layout(command_buffer, *this->viewport.image, this->viewport.layout, vk::ImageLayout::eColorAttachmentOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
         this->viewport.layout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -375,7 +377,7 @@ namespace xayah {
         this->viewport.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
-    void SpectraRasterizer::Impl::draw_viewport_window() {
+    void RasterizerRenderer::Impl::draw_viewport_window() {
         const ImVec2 available = ImGui::GetContentRegionAvail();
         if (available.x > 1.0f && available.y > 1.0f) {
             this->ui.requested_extent = vk::Extent2D{static_cast<std::uint32_t>(available.x), static_cast<std::uint32_t>(available.y)};
@@ -384,7 +386,7 @@ namespace xayah {
         ImGui::Image(reinterpret_cast<ImTextureID>(this->viewport.imgui_descriptor), available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
     }
 
-    void SpectraRasterizer::Impl::draw_settings_window() {
+    void RasterizerRenderer::Impl::draw_settings_window() {
         if (this->scene_info.has_value()) {
             ImGui::TextUnformatted(this->scene_info->title.c_str());
             ImGui::Text("Revision: %llu", static_cast<unsigned long long>(this->scene_snapshot->revision.value));

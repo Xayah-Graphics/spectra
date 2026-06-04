@@ -30,8 +30,10 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-module xayah.spectra.pathtracer;
+module xayah.renderer.pathtracer;
 
+import xayah.scene;
+import xayah.spectra.contract;
 import std;
 
 namespace {
@@ -76,8 +78,8 @@ namespace {
         }
     }
 
-    [[nodiscard]] bool scene_entity_has_integer_parameter(const spectra::scene::SceneEntity& entity, const std::string_view name) {
-        for (const spectra::scene::SceneParameter& parameter : entity.parameters) {
+    [[nodiscard]] bool scene_entity_has_integer_parameter(const xayah::scene::SceneEntity& entity, const std::string_view name) {
+        for (const xayah::scene::SceneParameter& parameter : entity.parameters) {
             if (parameter.type == "integer" && parameter.name == name) return true;
         }
         return false;
@@ -145,7 +147,7 @@ namespace xayah::pathtracer {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
-        RenderPipeline(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        RenderPipeline(const xayah::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
         ~RenderPipeline() noexcept;
 
         RenderPipeline(const RenderPipeline& other)                = delete;
@@ -167,7 +169,7 @@ namespace xayah::pathtracer {
         void set_target_sample_count(int target_sample_count);
         void set_exposure(float value);
         void request_reset_accumulation();
-        void replace_scene(const spectra::scene::SceneSnapshot& scene, const spectra::scene::SceneEditBatch& edit_batch);
+        void replace_scene(const xayah::scene::SceneSnapshot& scene, const xayah::scene::SceneEditBatch& edit_batch);
         void release_viewport_descriptors_noexcept() noexcept;
         void create_viewport_descriptors();
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
@@ -177,7 +179,7 @@ namespace xayah::pathtracer {
         std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene{};
         std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
         spectra::pathtracer::RenderConfig render_config{};
-        spectra::scene::SceneRevision scene_revision{};
+        xayah::scene::SceneRevision scene_revision{};
         spectra::Bounds2i pixel_bounds{};
         spectra::Vector2i resolution{};
         spectra::Transform render_from_camera{};
@@ -431,7 +433,7 @@ namespace {
         return std::make_unique<spectra::pathtracer::PathtracerMemoryScope>(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "pathtracer scene");
     }
 
-    [[nodiscard]] PathtracerRuntimeResources create_pathtracer_runtime_resources(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, spectra::pathtracer::PathtracerMemoryScope* scene_memory_scope) {
+    [[nodiscard]] PathtracerRuntimeResources create_pathtracer_runtime_resources(const xayah::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, spectra::pathtracer::PathtracerMemoryScope* scene_memory_scope) {
         if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
         if (scene_memory_scope == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer runtime resources without scene memory");
@@ -487,7 +489,7 @@ namespace {
 } // namespace
 
 namespace xayah::pathtracer {
-    RenderPipeline::RenderPipeline(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    RenderPipeline::RenderPipeline(const xayah::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         try {
             RenderPipeline& pathtracer = *this;
             if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
@@ -596,8 +598,8 @@ namespace xayah::pathtracer {
         this->reset_requested = true;
     }
 
-    void RenderPipeline::replace_scene(const spectra::scene::SceneSnapshot& scene, const spectra::scene::SceneEditBatch& edit_batch) {
-        if (edit_batch.dirty == spectra::scene::SceneDirtyFlags::None) throw std::runtime_error("Cannot replace Spectra pathtracer scene without dirty state");
+    void RenderPipeline::replace_scene(const xayah::scene::SceneSnapshot& scene, const xayah::scene::SceneEditBatch& edit_batch) {
+        if (edit_batch.dirty == xayah::scene::SceneDirtyFlags::None) throw std::runtime_error("Cannot replace Spectra pathtracer scene without dirty state");
         if (edit_batch.beforeRevision != this->scene_revision) throw std::runtime_error("Spectra pathtracer scene edit does not start from the active scene revision");
         if (edit_batch.afterRevision != scene.revision) throw std::runtime_error("Spectra pathtracer scene edit does not match the replacement scene snapshot revision");
         if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available for scene replacement");
@@ -839,7 +841,7 @@ namespace xayah::pathtracer {
         float basis_handedness{1.0f};
     };
 
-    [[nodiscard]] float interactive_camera_fov_degrees(const spectra::scene::SceneInfo& info) {
+    [[nodiscard]] float interactive_camera_fov_degrees(const xayah::scene::SceneInfo& info) {
         if (info.camera != "perspective") throw std::runtime_error(std::format("Interactive Spectra pathtracer camera controls require a perspective camera, not \"{}\"", info.camera));
         if (!(info.camera_fov_degrees > 0.0f && info.camera_fov_degrees < 180.0f)) throw std::runtime_error("Spectra scene camera fov must be inside (0, 180)");
         return info.camera_fov_degrees;
@@ -937,15 +939,15 @@ namespace xayah::pathtracer {
 
 
 namespace xayah {
-    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_pathtracer_scene(const spectra::scene::SceneSnapshot& document) {
-        spectra::scene::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneSupport(document);
-        if (report.target.empty()) report.target = std::string{SpectraPathtracer::target_name()};
+    [[nodiscard]] xayah::scene::SceneTranslationReport analyze_pathtracer_scene(const xayah::scene::SceneSnapshot& document) {
+        xayah::scene::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneSupport(document);
+        if (report.target.empty()) report.target = std::string{PathtracerRenderer::target_name()};
         return report;
     }
 
-    class SpectraPathtracer::Impl {
+    class PathtracerRenderer::Impl {
     public:
-        explicit Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
+        explicit Impl(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace);
         ~Impl() noexcept;
 
         [[nodiscard]] std::string_view name() const;
@@ -953,7 +955,7 @@ namespace xayah {
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        [[nodiscard]] PathtracerFrameResult begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame);
+        [[nodiscard]] SpectraFrameResult begin_frame(PathtracerHostView host, const SpectraFrameInfo& frame);
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
@@ -980,8 +982,8 @@ namespace xayah {
         void detach_noexcept() noexcept;
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         [[nodiscard]] std::string window_detail() const;
-        [[nodiscard]] const spectra::scene::SceneInfo& active_scene_info() const;
-        [[nodiscard]] const spectra::scene::SceneSnapshot& active_scene_snapshot() const;
+        [[nodiscard]] const xayah::scene::SceneInfo& active_scene_info() const;
+        [[nodiscard]] const xayah::scene::SceneSnapshot& active_scene_snapshot() const;
         void synchronize_scene_workspace();
 
         void draw_viewport_window();
@@ -1019,7 +1021,7 @@ namespace xayah {
         std::uint32_t frame_count{};
         vk::Extent2D swapchain_extent{};
         bool attached{false};
-        std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace{};
+        std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace{};
 
         struct {
             bool viewport_known{false};
@@ -1030,8 +1032,8 @@ namespace xayah {
             std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
-        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot{};
-        std::optional<spectra::scene::SceneInfo> scene_info{};
+        std::shared_ptr<const xayah::scene::SceneSnapshot> scene_snapshot{};
+        std::optional<xayah::scene::SceneInfo> scene_info{};
         spectra::pathtracer::RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
         spectra::pathtracer::RenderConfig render_config{.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld, .default_pixel_samples = interactive_default_pixel_samples};
         std::array<int, 2> scene_film_resolution{0, 0};
@@ -1078,61 +1080,61 @@ namespace xayah {
         } statistics;
     };
 
-    SpectraPathtracer::SpectraPathtracer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
+    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
 
-    SpectraPathtracer::~SpectraPathtracer() noexcept = default;
+    PathtracerRenderer::~PathtracerRenderer() noexcept = default;
 
-    SpectraPathtracer::SpectraPathtracer(SpectraPathtracer&& other) noexcept = default;
+    PathtracerRenderer::PathtracerRenderer(PathtracerRenderer&& other) noexcept = default;
 
-    SpectraPathtracer& SpectraPathtracer::operator=(SpectraPathtracer&& other) noexcept = default;
+    PathtracerRenderer& PathtracerRenderer::operator=(PathtracerRenderer&& other) noexcept = default;
 
-    std::string_view SpectraPathtracer::target_name() {
+    std::string_view PathtracerRenderer::target_name() {
         return "Spectra Pathtracer";
     }
 
-    spectra::scene::SceneTranslationTarget SpectraPathtracer::translation_target() {
-        return spectra::scene::SceneTranslationTarget{
-            .rendererName = std::string{SpectraPathtracer::target_name()},
-            .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_pathtracer_scene(document); },
+    xayah::scene::SceneTranslationTarget PathtracerRenderer::translation_target() {
+        return xayah::scene::SceneTranslationTarget{
+            .rendererName = std::string{PathtracerRenderer::target_name()},
+            .analyze      = [](const xayah::scene::SceneSnapshot& document) { return analyze_pathtracer_scene(document); },
         };
     }
 
-    std::string_view SpectraPathtracer::name() const {
+    std::string_view PathtracerRenderer::name() const {
         return this->impl->name();
     }
 
-    void SpectraPathtracer::attach(PathtracerHostView host) {
+    void PathtracerRenderer::attach(PathtracerHostView host) {
         this->impl->attach(std::move(host));
     }
 
-    void SpectraPathtracer::detach() noexcept {
+    void PathtracerRenderer::detach() noexcept {
         this->impl->detach();
     }
 
-    void SpectraPathtracer::before_imgui_shutdown() noexcept {
+    void PathtracerRenderer::before_imgui_shutdown() noexcept {
         this->impl->before_imgui_shutdown();
     }
 
-    void SpectraPathtracer::after_imgui_created() {
+    void PathtracerRenderer::after_imgui_created() {
         this->impl->after_imgui_created();
     }
 
-    PathtracerFrameResult SpectraPathtracer::begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame) {
+    SpectraFrameResult PathtracerRenderer::begin_frame(PathtracerHostView host, const SpectraFrameInfo& frame) {
         return this->impl->begin_frame(std::move(host), frame);
     }
 
-    void SpectraPathtracer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+    void PathtracerRenderer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         this->impl->record_frame(command_buffer);
     }
 
-    void SpectraPathtracer::Impl::RollingFloatAverage::clear() {
+    void PathtracerRenderer::Impl::RollingFloatAverage::clear() {
         this->values.fill(0.0f);
         this->count  = 0;
         this->cursor = 0;
         this->sum    = 0.0f;
     }
 
-    void SpectraPathtracer::Impl::RollingFloatAverage::add(const float value) {
+    void PathtracerRenderer::Impl::RollingFloatAverage::add(const float value) {
         if (!std::isfinite(value) || value < 0.0f) throw std::runtime_error("Rolling statistic value must be finite and non-negative");
         if (this->count < sample_count) {
             this->values[this->cursor] = value;
@@ -1146,34 +1148,34 @@ namespace xayah {
         this->cursor = (this->cursor + 1) % sample_count;
     }
 
-    bool SpectraPathtracer::Impl::RollingFloatAverage::has_value() const {
+    bool PathtracerRenderer::Impl::RollingFloatAverage::has_value() const {
         return this->count > 0;
     }
 
-    float SpectraPathtracer::Impl::RollingFloatAverage::average() const {
+    float PathtracerRenderer::Impl::RollingFloatAverage::average() const {
         if (this->count == 0) return 0.0f;
         return this->sum / static_cast<float>(this->count);
     }
 
-    SpectraPathtracer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
+    PathtracerRenderer::Impl::Impl(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
         if (this->source_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene workspace");
-        const std::shared_ptr<const spectra::scene::SceneSnapshot> source_document = this->source_workspace->snapshot();
+        const std::shared_ptr<const xayah::scene::SceneSnapshot> source_document = this->source_workspace->snapshot();
         if (source_document == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
-        const spectra::scene::SceneTranslationReport report = analyze_pathtracer_scene(*source_document);
+        const xayah::scene::SceneTranslationReport report = analyze_pathtracer_scene(*source_document);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", SpectraPathtracer::target_name(), source_document->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::target_name(), source_document->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
     }
 
-    SpectraPathtracer::Impl::~Impl() noexcept = default;
+    PathtracerRenderer::Impl::~Impl() noexcept = default;
 
-    std::string_view SpectraPathtracer::Impl::name() const {
+    std::string_view PathtracerRenderer::Impl::name() const {
         return "Spectra Pathtracer";
     }
 
-    void SpectraPathtracer::Impl::detach_noexcept() noexcept {
+    void PathtracerRenderer::Impl::detach_noexcept() noexcept {
         try {
             if (this->attached && this->device != nullptr) this->device->waitIdle();
         } catch (...) {
@@ -1188,7 +1190,7 @@ namespace xayah {
         this->attached         = false;
     }
 
-    void SpectraPathtracer::Impl::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
+    void PathtracerRenderer::Impl::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
         if (frame_count == 0) throw std::runtime_error("Spectra pathtracer host frame count must be positive");
         if (swapchain_extent.width == 0 || swapchain_extent.height == 0) throw std::runtime_error("Spectra pathtracer host swapchain extent must be positive");
         this->physical_device  = &physical_device;
@@ -1197,34 +1199,34 @@ namespace xayah {
         this->swapchain_extent = swapchain_extent;
     }
 
-    const spectra::scene::SceneInfo& SpectraPathtracer::Impl::active_scene_info() const {
+    const xayah::scene::SceneInfo& PathtracerRenderer::Impl::active_scene_info() const {
         if (!this->scene_info.has_value()) throw std::runtime_error("Spectra scene metadata is not loaded");
         return *this->scene_info;
     }
 
-    const spectra::scene::SceneSnapshot& SpectraPathtracer::Impl::active_scene_snapshot() const {
+    const xayah::scene::SceneSnapshot& PathtracerRenderer::Impl::active_scene_snapshot() const {
         if (this->scene_snapshot == nullptr) throw std::runtime_error("Spectra scene snapshot is not loaded");
         return *this->scene_snapshot;
     }
 
-    void SpectraPathtracer::Impl::synchronize_scene_workspace() {
-        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
+    void PathtracerRenderer::Impl::synchronize_scene_workspace() {
+        std::shared_ptr<const xayah::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
         if (next_snapshot == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
 
         if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
 
-        const spectra::scene::SceneTranslationReport report = analyze_pathtracer_scene(*next_snapshot);
+        const xayah::scene::SceneTranslationReport report = analyze_pathtracer_scene(*next_snapshot);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", SpectraPathtracer::target_name(), next_snapshot->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::target_name(), next_snapshot->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
 
-        const spectra::scene::SceneRevision previous_revision = this->scene_snapshot == nullptr ? spectra::scene::SceneRevision{} : this->scene_snapshot->revision;
-        const spectra::scene::SceneEditBatch edit_batch       = this->source_workspace->changes_since(previous_revision);
-        spectra::scene::SceneInfo next_info                   = spectra::scene::DescribeScene(*next_snapshot);
+        const xayah::scene::SceneRevision previous_revision = this->scene_snapshot == nullptr ? xayah::scene::SceneRevision{} : this->scene_snapshot->revision;
+        const xayah::scene::SceneEditBatch edit_batch       = this->source_workspace->changes_since(previous_revision);
+        xayah::scene::SceneInfo next_info                   = xayah::scene::DescribeScene(*next_snapshot);
 
-        if (edit_batch.dirty != spectra::scene::SceneDirtyFlags::None && this->render_pipeline != nullptr) {
+        if (edit_batch.dirty != xayah::scene::SceneDirtyFlags::None && this->render_pipeline != nullptr) {
             if (this->device == nullptr) throw std::runtime_error("Spectra pathtracer logical device is not available");
             this->device->waitIdle();
             if (this->gpu_runtime != nullptr) this->gpu_runtime->WaitGpuNoexcept();
@@ -1232,7 +1234,7 @@ namespace xayah {
             this->scene_film_resolution      = this->render_pipeline->film_resolution();
             this->scene_sampler_sample_count = this->render_pipeline->sampler_sample_count();
             this->scene_camera_from_world    = this->render_pipeline->camera_from_world_transform();
-        } else if (edit_batch.dirty != spectra::scene::SceneDirtyFlags::None) {
+        } else if (edit_batch.dirty != xayah::scene::SceneDirtyFlags::None) {
             this->scene_film_resolution      = {0, 0};
             this->scene_camera_from_world    = spectra::Transform{};
             this->scene_sampler_sample_count = 0;
@@ -1240,12 +1242,12 @@ namespace xayah {
 
         this->scene_snapshot = std::move(next_snapshot);
         this->scene_info     = std::move(next_info);
-        if (edit_batch.dirty == spectra::scene::SceneDirtyFlags::None || this->render_pipeline == nullptr) return;
+        if (edit_batch.dirty == xayah::scene::SceneDirtyFlags::None || this->render_pipeline == nullptr) return;
         this->initialize_camera_state();
         this->clear_pathtracer_throughput_statistics();
     }
 
-    void SpectraPathtracer::Impl::attach(PathtracerHostView host) {
+    void PathtracerRenderer::Impl::attach(PathtracerHostView host) {
         if (this->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->attached = true;
@@ -1260,23 +1262,23 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::detach() noexcept {
+    void PathtracerRenderer::Impl::detach() noexcept {
         this->detach_noexcept();
     }
 
-    void SpectraPathtracer::Impl::before_imgui_shutdown() noexcept {
+    void PathtracerRenderer::Impl::before_imgui_shutdown() noexcept {
         if (this->render_pipeline != nullptr) this->render_pipeline->release_viewport_descriptors_noexcept();
     }
 
-    void SpectraPathtracer::Impl::after_imgui_created() {
+    void PathtracerRenderer::Impl::after_imgui_created() {
         if (this->render_pipeline != nullptr) this->render_pipeline->create_viewport_descriptors();
     }
 
-    PathtracerFrameResult SpectraPathtracer::Impl::begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame) {
+    SpectraFrameResult PathtracerRenderer::Impl::begin_frame(PathtracerHostView host, const SpectraFrameInfo& frame) {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->synchronize_scene_workspace();
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
-        PathtracerFrameResult result{};
+        SpectraFrameResult result{};
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
             result.close_requested                                            = this->process_camera_input();
@@ -1290,11 +1292,11 @@ namespace xayah {
         return result;
     }
 
-    void SpectraPathtracer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+    void PathtracerRenderer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         if (this->pathtracer_ready()) this->render_pipeline->record_copy(command_buffer);
     }
 
-    std::string SpectraPathtracer::Impl::window_detail() const {
+    std::string PathtracerRenderer::Impl::window_detail() const {
         std::uint32_t width  = this->swapchain_extent.width;
         std::uint32_t height = this->swapchain_extent.height;
         if (this->render_resolution_sync.pathtracer_created) {
@@ -1309,7 +1311,7 @@ namespace xayah {
         return std::format("{} | Spectra Pathtracer | {}x{} | sample {}/{}", scene_title, width, height, sample_range[0], sample_range[1]);
     }
 
-    void SpectraPathtracer::Impl::unload_scene_noexcept() noexcept {
+    void PathtracerRenderer::Impl::unload_scene_noexcept() noexcept {
         this->scene_snapshot.reset();
         this->scene_info.reset();
         this->scene_film_resolution      = {0, 0};
@@ -1317,7 +1319,7 @@ namespace xayah {
         this->scene_sampler_sample_count = 0;
     }
 
-    void SpectraPathtracer::Impl::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
+    void PathtracerRenderer::Impl::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
         if (this->render_pipeline != nullptr) throw std::runtime_error("Spectra pathtracer is already loaded");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
@@ -1340,7 +1342,7 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution, const bool force, const bool preserve_target_samples) {
+    void PathtracerRenderer::Impl::rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution, const bool force, const bool preserve_target_samples) {
         if (this->render_resolution_sync.rebuilding) throw std::runtime_error("Spectra pathtracer resolution rebuild is already active");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild Spectra pathtracer with a non-positive resolution");
         if (!force && this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
@@ -1382,19 +1384,19 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::rebuild_pathtracer_for_sample_config() {
+    void PathtracerRenderer::Impl::rebuild_pathtracer_for_sample_config() {
         if (!this->render_resolution_sync.pathtracer_created) throw std::runtime_error("Cannot rebuild Spectra pathtracer sample configuration before the render pipeline is created");
         this->rebuild_pathtracer_for_resolution(this->render_resolution_sync.active_resolution, true, false);
     }
 
-    void SpectraPathtracer::Impl::unload_pathtracer_noexcept() noexcept {
+    void PathtracerRenderer::Impl::unload_pathtracer_noexcept() noexcept {
         if (this->gpu_runtime != nullptr) this->gpu_runtime->WaitGpuNoexcept();
         this->render_pipeline.reset();
         this->render_resolution_sync.pathtracer_created = false;
         this->render_resolution_sync.active_resolution  = {0, 0};
     }
 
-    void SpectraPathtracer::Impl::observe_viewport_render_resolution(const std::array<int, 2>& resolution) {
+    void PathtracerRenderer::Impl::observe_viewport_render_resolution(const std::array<int, 2>& resolution) {
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Viewport framebuffer resolution must be positive");
         const ImGuiIO& io = ImGui::GetIO();
         if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid while tracking viewport resolution");
@@ -1407,7 +1409,7 @@ namespace xayah {
         this->render_resolution_sync.stable_seconds += io.DeltaTime;
     }
 
-    void SpectraPathtracer::Impl::synchronize_render_resolution() {
+    void PathtracerRenderer::Impl::synchronize_render_resolution() {
         constexpr float resolution_stability_seconds = 0.3f;
         if (!this->scene_info.has_value()) return;
         if (!this->render_resolution_sync.candidate_known) return;
@@ -1416,22 +1418,22 @@ namespace xayah {
         this->rebuild_pathtracer_for_resolution(this->render_resolution_sync.candidate_resolution);
     }
 
-    [[nodiscard]] bool SpectraPathtracer::Impl::pathtracer_ready() const {
+    [[nodiscard]] bool PathtracerRenderer::Impl::pathtracer_ready() const {
         return this->render_resolution_sync.pathtracer_created && this->render_pipeline != nullptr;
     }
 
-    [[nodiscard]] std::array<int, 2> SpectraPathtracer::Impl::pathtracer_sample_range() const {
+    [[nodiscard]] std::array<int, 2> PathtracerRenderer::Impl::pathtracer_sample_range() const {
         if (this->render_pipeline == nullptr) return {0, 0};
         return {this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count()};
     }
 
-    void SpectraPathtracer::Impl::request_pathtracer_accumulation_reset() {
+    void PathtracerRenderer::Impl::request_pathtracer_accumulation_reset() {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot reset Spectra pathtracer accumulation without an active render pipeline");
         this->render_pipeline->request_reset_accumulation();
         this->clear_pathtracer_throughput_statistics();
     }
 
-    void SpectraPathtracer::Impl::set_default_pixel_samples(const int sample_count) {
+    void PathtracerRenderer::Impl::set_default_pixel_samples(const int sample_count) {
         if (sample_count <= 0) throw std::runtime_error("Spectra pathtracer default SPP must be positive");
         if (this->render_config.default_pixel_samples.has_value() && *this->render_config.default_pixel_samples == sample_count) return;
         this->render_config.default_pixel_samples = sample_count;
@@ -1441,7 +1443,7 @@ namespace xayah {
         this->rebuild_pathtracer_for_sample_config();
     }
 
-    void SpectraPathtracer::Impl::set_override_pixel_samples(const std::optional<int> sample_count) {
+    void PathtracerRenderer::Impl::set_override_pixel_samples(const std::optional<int> sample_count) {
         if (sample_count.has_value() && *sample_count <= 0) throw std::runtime_error("Spectra pathtracer override SPP must be positive");
         if (this->render_config.pixel_samples == sample_count) return;
         this->render_config.pixel_samples = sample_count;
@@ -1449,14 +1451,14 @@ namespace xayah {
         this->rebuild_pathtracer_for_sample_config();
     }
 
-    std::string SpectraPathtracer::Impl::sample_source_text() const {
+    std::string PathtracerRenderer::Impl::sample_source_text() const {
         if (this->render_config.pixel_samples.has_value()) return "Override";
         if (this->scene_snapshot != nullptr && scene_entity_has_integer_parameter(this->scene_snapshot->renderSettings.sampler, "pixelsamples")) return "Scene";
         if (this->render_config.default_pixel_samples.has_value()) return "Spectra Default";
         return "PBRT Default";
     }
 
-    void SpectraPathtracer::Impl::initialize_camera_state() {
+    void PathtracerRenderer::Impl::initialize_camera_state() {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
         const float initial_move_scale = this->render_pipeline->camera_initial_move_scale();
@@ -1476,12 +1478,12 @@ namespace xayah {
         this->camera.moving_from_camera              = spectra::Transform{};
     }
 
-    void SpectraPathtracer::Impl::set_camera_speed(const float speed) {
+    void PathtracerRenderer::Impl::set_camera_speed(const float speed) {
         if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
         this->camera.speed = speed;
     }
 
-    void SpectraPathtracer::Impl::reset_camera() {
+    void PathtracerRenderer::Impl::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
         const pathtracer::InteractiveCameraPose pose = pathtracer::interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
@@ -1494,13 +1496,13 @@ namespace xayah {
         this->request_pathtracer_accumulation_reset();
     }
 
-    void SpectraPathtracer::Impl::clear_pathtracer_throughput_statistics() {
+    void PathtracerRenderer::Impl::clear_pathtracer_throughput_statistics() {
         this->statistics.throughput_mspp.clear();
         this->statistics.last_valid_throughput_mspp = 0.0f;
         this->statistics.has_throughput             = false;
     }
 
-    void SpectraPathtracer::Impl::update_frame_statistics(const std::uint32_t frame_index, const std::uint32_t image_index, const bool rendered_sample, const bool reset_accumulation, const std::uint64_t sample_pixels) {
+    void PathtracerRenderer::Impl::update_frame_statistics(const std::uint32_t frame_index, const std::uint32_t image_index, const bool rendered_sample, const bool reset_accumulation, const std::uint64_t sample_pixels) {
         const ImGuiIO& io = ImGui::GetIO();
         if (!std::isfinite(io.DeltaTime) || !(io.DeltaTime > 0.0f)) throw std::runtime_error("ImGui frame delta time must be finite and positive for statistics");
         if (!rendered_sample && sample_pixels != 0) throw std::runtime_error("Spectra pathtracer frame statistics reported sample-pixels without rendering a sample");
@@ -1523,7 +1525,7 @@ namespace xayah {
         }
     }
 
-    [[nodiscard]] SpectraPathtracer::Impl::PathtracerStatus SpectraPathtracer::Impl::pathtracer_status() const {
+    [[nodiscard]] PathtracerRenderer::Impl::PathtracerStatus PathtracerRenderer::Impl::pathtracer_status() const {
         PathtracerStatus status{};
         const std::array<int, 2> sample_range = this->pathtracer_sample_range();
         if (this->render_resolution_sync.rebuilding) {
@@ -1543,7 +1545,7 @@ namespace xayah {
         return status;
     }
 
-    bool SpectraPathtracer::Impl::process_camera_input() {
+    bool PathtracerRenderer::Impl::process_camera_input() {
         ImGuiIO& io                = ImGui::GetIO();
         const bool close_requested = !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
@@ -1665,7 +1667,7 @@ namespace {
 } // namespace
 
 namespace xayah {
-    void SpectraPathtracer::Impl::draw_viewport_window() {
+    void PathtracerRenderer::Impl::draw_viewport_window() {
         const ImVec2 viewport_position = ImGui::GetCursorScreenPos();
         const ImVec2 viewport_size     = ImGui::GetContentRegionAvail();
         if (viewport_size.x <= 0.0f || viewport_size.y <= 0.0f) throw std::runtime_error("Viewport dock window has no drawable area");
@@ -1700,7 +1702,7 @@ namespace xayah {
         ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     }
 
-    void SpectraPathtracer::Impl::draw_camera_window() {
+    void PathtracerRenderer::Impl::draw_camera_window() {
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         if (ImGui::BeginTable("SpectraCameraControls", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
@@ -1733,13 +1735,13 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::draw_scene_browser_window() {
+    void PathtracerRenderer::Impl::draw_scene_browser_window() {
         if (!this->scene_info.has_value()) {
             ImGui::TextDisabled("No active Spectra scene");
             return;
         }
 
-        const spectra::scene::SceneInfo& scene = this->active_scene_info();
+        const xayah::scene::SceneInfo& scene = this->active_scene_info();
         constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
 
         ImGui::SeparatorText("Scene");
@@ -1781,7 +1783,7 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::draw_settings_window() {
+    void PathtracerRenderer::Impl::draw_settings_window() {
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
         if (this->render_pipeline == nullptr) {
             ImGui::TextDisabled("No active render pipeline");
@@ -1858,13 +1860,13 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::draw_inspector_window() {
+    void PathtracerRenderer::Impl::draw_inspector_window() {
         if (!this->scene_info.has_value()) {
             ImGui::TextDisabled("No active Spectra scene");
             return;
         }
 
-        const spectra::scene::SceneInfo& scene   = this->active_scene_info();
+        const xayah::scene::SceneInfo& scene   = this->active_scene_info();
         constexpr ImGuiTableFlags table_flags    = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
         const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
@@ -1919,13 +1921,13 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::draw_environment_window() {
+    void PathtracerRenderer::Impl::draw_environment_window() {
         if (!this->scene_info.has_value()) {
             ImGui::TextDisabled("No active Spectra pathtracer scene");
             return;
         }
 
-        const spectra::scene::SceneInfo& scene = this->active_scene_info();
+        const xayah::scene::SceneInfo& scene = this->active_scene_info();
         constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         ImGui::SeparatorText("Summary");
         if (ImGui::BeginTable("SpectraEnvironmentSummary", 2, table_flags)) {
@@ -1939,7 +1941,7 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::draw_tonemapper_window() {
+    void PathtracerRenderer::Impl::draw_tonemapper_window() {
         if (this->render_pipeline == nullptr) {
             ImGui::TextDisabled("No active render pipeline");
             return;
@@ -1962,7 +1964,7 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::draw_statistics_window() {
+    void PathtracerRenderer::Impl::draw_statistics_window() {
         constexpr ImGuiTableFlags table_flags    = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
         const std::string viewport_resolution    = this->ui.viewport_known ? resolution_text(this->ui.viewport_framebuffer_size) : "Unknown";
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
@@ -2044,11 +2046,11 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::register_panels(PathtracerHostView& host) {
-        host.register_panel(PathtracerPanel{
+    void PathtracerRenderer::Impl::register_panels(PathtracerHostView& host) {
+        host.register_panel(SpectraPanel{
             .id                  = "pathtracer.viewport",
             .title               = "Viewport",
-            .dock_slot           = PathtracerDockSlot::Center,
+            .dock_slot           = SpectraDockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
             .closable            = false,
             .show_in_menu        = false,
@@ -2056,65 +2058,65 @@ namespace xayah {
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id             = "pathtracer.camera",
             .title          = "Camera",
             .icon           = ICON_MS_PHOTO_CAMERA,
             .shortcut_label = "F1",
             .shortcut_key   = ImGuiKey_F1,
-            .dock_slot      = PathtracerDockSlot::Left,
+            .dock_slot      = SpectraDockSlot::Left,
             .draw           = [this] { this->draw_camera_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id             = "pathtracer.scene_browser",
             .title          = "Scene Summary",
             .icon           = ICON_MS_ACCOUNT_TREE,
             .shortcut_label = "F9",
             .shortcut_key   = ImGuiKey_F9,
-            .dock_slot      = PathtracerDockSlot::Right,
+            .dock_slot      = SpectraDockSlot::Right,
             .draw           = [this] { this->draw_scene_browser_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id             = "pathtracer.settings",
             .title          = "Settings",
             .icon           = ICON_MS_SETTINGS,
             .shortcut_label = "F3",
             .shortcut_key   = ImGuiKey_F3,
-            .dock_slot      = PathtracerDockSlot::Left,
+            .dock_slot      = SpectraDockSlot::Left,
             .draw           = [this] { this->draw_settings_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id             = "pathtracer.inspector",
             .title          = "Inspector",
             .icon           = ICON_MS_LIST_ALT,
             .shortcut_label = "F4",
             .shortcut_key   = ImGuiKey_F4,
-            .dock_slot      = PathtracerDockSlot::RightBottom,
+            .dock_slot      = SpectraDockSlot::RightBottom,
             .draw           = [this] { this->draw_inspector_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id             = "pathtracer.environment",
             .title          = "Environment",
             .icon           = ICON_MS_PUBLIC,
             .shortcut_label = "F5",
             .shortcut_key   = ImGuiKey_F5,
-            .dock_slot      = PathtracerDockSlot::LeftBottom,
+            .dock_slot      = SpectraDockSlot::LeftBottom,
             .draw           = [this] { this->draw_environment_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id             = "pathtracer.tonemapper",
             .title          = "Tonemapper",
             .icon           = ICON_MS_TONALITY,
             .shortcut_label = "F6",
             .shortcut_key   = ImGuiKey_F6,
-            .dock_slot      = PathtracerDockSlot::LeftBottom,
+            .dock_slot      = SpectraDockSlot::LeftBottom,
             .draw           = [this] { this->draw_tonemapper_window(); },
         });
-        host.register_panel(PathtracerPanel{
+        host.register_panel(SpectraPanel{
             .id              = "pathtracer.statistics",
             .title           = "Statistics",
             .icon            = ICON_MS_ANALYTICS,
-            .dock_slot       = PathtracerDockSlot::Bottom,
+            .dock_slot       = SpectraDockSlot::Bottom,
             .show_in_toolbar = false,
             .draw            = [this] { this->draw_statistics_window(); },
         });

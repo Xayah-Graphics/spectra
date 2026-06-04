@@ -1,10 +1,10 @@
-export module spectra.scene;
+export module xayah.scene;
 
 export import spectra.util.math;
 import std;
 
 export extern "C++" {
-    namespace spectra::scene {
+    namespace xayah::scene {
         struct SceneRevision {
             std::uint64_t value{};
 
@@ -41,8 +41,8 @@ export extern "C++" {
         };
 
         struct SceneTransformSet {
-            math::Transform start{};
-            math::Transform end{};
+            spectra::math::Transform start{};
+            spectra::math::Transform end{};
             float startTime{0.0f};
             float endTime{1.0f};
             bool animated{false};
@@ -207,38 +207,6 @@ export extern "C++" {
             std::function<SceneTranslationReport(const SceneSnapshot&)> analyze{};
         };
 
-        enum class SceneCatalogEntryState {
-            Pending,
-            Ready,
-            Invalid,
-        };
-
-        struct SceneCatalogEntry {
-            std::string id{};
-            std::string displayName{};
-            std::string group{};
-            std::filesystem::path relativePath{};
-            std::filesystem::path sourcePath{};
-            SceneCatalogEntryState state{SceneCatalogEntryState::Pending};
-            SceneRevision revision{};
-            std::optional<SceneInfo> info{};
-            std::vector<SceneDiagnostic> issues{};
-        };
-
-        struct SceneCatalog {
-            std::filesystem::path root{};
-            std::vector<SceneCatalogEntry> entries{};
-            std::size_t pending_count{};
-            std::size_t ready_count{};
-            std::size_t invalid_count{};
-        };
-
         [[nodiscard]] SceneInfo DescribeScene(const SceneSnapshot& scene);
-        [[nodiscard]] SceneCatalog DiscoverSceneCatalog();
-        [[nodiscard]] SceneSnapshot ParseSceneCatalogEntry(const SceneCatalogEntry& entry);
-        [[nodiscard]] SceneSnapshot ParseSceneCatalogEntry(const SceneCatalogEntry& entry, std::stop_token stop_token);
-        void ValidateSceneCatalogEntry(SceneCatalogEntry& entry);
-        void ValidateSceneCatalogEntry(SceneCatalogEntry& entry, std::stop_token stop_token);
-        [[nodiscard]] SceneWorkspace BuildScene(std::string_view name);
-    } // namespace spectra::scene
+    } // namespace xayah::scene
 }

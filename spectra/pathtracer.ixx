@@ -7,61 +7,17 @@ module;
 #endif
 #endif
 
-#include <imgui.h>
-
 #include <vulkan/vulkan_raii.hpp>
 
-export module xayah.spectra.pathtracer;
+export module xayah.renderer.pathtracer;
 
 import std;
-export import spectra.scene;
+export import xayah.scene;
+export import xayah.spectra.contract;
 
 export namespace xayah {
-    enum class PathtracerDockSlot {
-        Center,
-        Left,
-        LeftBottom,
-        Right,
-        RightBottom,
-        Bottom,
-        Floating,
-    };
-
-    struct PathtracerPanel {
-        std::string id{};
-        std::string title{};
-        std::string icon{};
-        std::string shortcut_label{};
-        ImGuiKey shortcut_key{ImGuiKey_None};
-        PathtracerDockSlot dock_slot{PathtracerDockSlot::Floating};
-        ImGuiWindowFlags window_flags{0};
-        bool visible{true};
-        bool closable{true};
-        bool show_in_menu{true};
-        bool show_in_toolbar{true};
-        bool zero_window_padding{false};
-        std::move_only_function<void()> draw{};
-    };
-
-    struct PathtracerFrameInfo {
-        std::uint32_t frame_index{};
-        std::uint32_t image_index{};
-    };
-
-    struct PathtracerFrameResult {
-        std::optional<vk::Semaphore> completion_semaphore{};
-        bool close_requested{false};
-        std::optional<std::string> window_detail{};
-    };
-
-    template <typename Frame>
-    concept PathtracerFrameInfoLike = requires(const Frame& frame) {
-        { frame.frame_index } -> std::convertible_to<std::uint32_t>;
-        { frame.image_index } -> std::convertible_to<std::uint32_t>;
-    };
-
     template <typename Host>
-    concept PathtracerHost = requires(Host& host, PathtracerPanel panel, std::string detail) {
+    concept PathtracerHost = requires(Host& host, SpectraPanel panel, std::string detail) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
@@ -73,7 +29,7 @@ export namespace xayah {
     class PathtracerHostView {
     public:
         template <PathtracerHost Host>
-        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](SpectraPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
         PathtracerHostView(const PathtracerHostView& other)                = delete;
         PathtracerHostView(PathtracerHostView&& other) noexcept            = default;
@@ -97,7 +53,7 @@ export namespace xayah {
             return this->swapchainExtentCallback();
         }
 
-        void register_panel(PathtracerPanel panel) {
+        void register_panel(SpectraPanel panel) {
             this->registerPanelCallback(std::move(panel));
         }
 
@@ -110,22 +66,22 @@ export namespace xayah {
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
-        std::move_only_function<void(PathtracerPanel)> registerPanelCallback{};
+        std::move_only_function<void(SpectraPanel)> registerPanelCallback{};
         std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 
-    class SpectraPathtracer final {
+    class PathtracerRenderer final {
     public:
-        explicit SpectraPathtracer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
-        ~SpectraPathtracer() noexcept;
+        explicit PathtracerRenderer(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace);
+        ~PathtracerRenderer() noexcept;
 
-        SpectraPathtracer(const SpectraPathtracer& other) = delete;
-        SpectraPathtracer(SpectraPathtracer&& other) noexcept;
-        SpectraPathtracer& operator=(const SpectraPathtracer& other) = delete;
-        SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept;
+        PathtracerRenderer(const PathtracerRenderer& other) = delete;
+        PathtracerRenderer(PathtracerRenderer&& other) noexcept;
+        PathtracerRenderer& operator=(const PathtracerRenderer& other) = delete;
+        PathtracerRenderer& operator=(PathtracerRenderer&& other) noexcept;
 
         [[nodiscard]] static std::string_view target_name();
-        [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
+        [[nodiscard]] static xayah::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 
         template <PathtracerHost Host>
@@ -149,9 +105,9 @@ export namespace xayah {
         }
 
         template <PathtracerHost Host, typename Frame>
-            requires PathtracerFrameInfoLike<Frame>
-        [[nodiscard]] PathtracerFrameResult begin_frame(Host& host, const Frame& frame) {
-            return this->begin_frame(PathtracerHostView{host}, PathtracerFrameInfo{
+            requires SpectraFrameInfoLike<Frame>
+        [[nodiscard]] SpectraFrameResult begin_frame(Host& host, const Frame& frame) {
+            return this->begin_frame(PathtracerHostView{host}, SpectraFrameInfo{
                                                                    .frame_index = static_cast<std::uint32_t>(frame.frame_index),
                                                                    .image_index = static_cast<std::uint32_t>(frame.image_index),
                                                                });
@@ -167,6 +123,6 @@ export namespace xayah {
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        [[nodiscard]] PathtracerFrameResult begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame);
+        [[nodiscard]] SpectraFrameResult begin_frame(PathtracerHostView host, const SpectraFrameInfo& frame);
     };
 } // namespace xayah
