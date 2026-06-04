@@ -13,65 +13,13 @@ import std;
 
 extern "C++" {
 namespace spectra::scene {
-    [[nodiscard]] SceneDirtyFlags operator|(const SceneDirtyFlags left, const SceneDirtyFlags right) {
-        return static_cast<SceneDirtyFlags>(static_cast<std::uint32_t>(left) | static_cast<std::uint32_t>(right));
-    }
-
-    [[nodiscard]] SceneDirtyFlags operator&(const SceneDirtyFlags left, const SceneDirtyFlags right) {
-        return static_cast<SceneDirtyFlags>(static_cast<std::uint32_t>(left) & static_cast<std::uint32_t>(right));
-    }
-
-    SceneDirtyFlags& operator|=(SceneDirtyFlags& left, const SceneDirtyFlags right) {
-        left = left | right;
-        return left;
-    }
-
-    [[nodiscard]] bool HasDirtyFlag(const SceneDirtyFlags flags, const SceneDirtyFlags flag) {
-        return (flags & flag) != SceneDirtyFlags::None;
-    }
-
-    namespace {
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneCameraId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneMaterialId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneTextureId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneMediumId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneLightId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneShapeId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneObjectDefinitionId id) {
-            return id.value;
-        }
-
-        [[nodiscard]] std::uint64_t SceneIdValue(const SceneObjectInstanceId id) {
-            return id.value;
-        }
-    } // namespace
-
     void SceneEditBuilder::replaceSnapshot(SceneSnapshot snapshot, const SceneDirtyFlags dirty) {
-        if (dirty == SceneDirtyFlags::None) throw std::runtime_error("Scene snapshot replacement must describe dirty state");
+        if (dirty != SceneDirtyFlags::Snapshot) throw std::runtime_error("Scene snapshot replacement must use snapshot dirty state");
         this->replacement = std::move(snapshot);
         this->dirty       = dirty;
     }
 
     SceneWorkspace::SceneWorkspace(SceneSnapshot snapshot) {
-        this->assignMissingIds(snapshot);
         if (snapshot.revision.value == 0) snapshot.revision = SceneRevision{1};
         this->currentSnapshot = std::make_shared<SceneSnapshot>(std::move(snapshot));
     }
@@ -88,15 +36,14 @@ namespace spectra::scene {
     [[nodiscard]] SceneEditBatch SceneWorkspace::commit(SceneEditBuilder edit) {
         if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded scene workspace");
         if (!edit.replacement.has_value()) throw std::runtime_error("Cannot commit an empty scene edit");
-        if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit a scene edit without dirty state");
+        if (edit.dirty != SceneDirtyFlags::Snapshot) throw std::runtime_error("Scene edit commit must use snapshot dirty state");
 
         SceneSnapshot next                 = std::move(*edit.replacement);
         const SceneRevision beforeRevision = this->currentSnapshot->revision;
         next.revision                      = SceneRevision{beforeRevision.value + 1};
-        this->assignMissingIds(next);
         this->currentSnapshot = std::make_shared<SceneSnapshot>(std::move(next));
 
-        SceneEditBatch batch = this->fullEdit(beforeRevision, *this->currentSnapshot);
+        SceneEditBatch batch = this->fullEdit(beforeRevision);
         batch.dirty          = edit.dirty;
         this->lastEdit       = batch;
         return batch;
@@ -111,71 +58,17 @@ namespace spectra::scene {
                 .dirty          = SceneDirtyFlags::None,
             };
         }
-        if (revision.value == 0) return this->fullEdit(revision, *this->currentSnapshot);
+        if (revision.value == 0) return this->fullEdit(revision);
         if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
         throw std::runtime_error("Scene edit history for the requested revision is unavailable");
     }
 
-    void SceneWorkspace::assignMissingIds(SceneSnapshot& snapshot) {
-        std::uint64_t maxId  = 0;
-        const auto observeId = [&maxId](const auto id) { maxId = std::max(maxId, SceneIdValue(id)); };
-        observeId(snapshot.renderSettings.cameraId);
-        for (const SceneMaterial& material : snapshot.materials) observeId(material.id);
-        for (const SceneTexture& texture : snapshot.textures) observeId(texture.id);
-        for (const SceneMedium& medium : snapshot.media) observeId(medium.id);
-        for (const SceneLight& light : snapshot.lights) observeId(light.id);
-        for (const SceneShape& shape : snapshot.shapes) observeId(shape.id);
-        for (const SceneObjectDefinition& definition : snapshot.objectDefinitions) {
-            observeId(definition.id);
-            for (const SceneShape& shape : definition.shapes) observeId(shape.id);
-        }
-        for (const SceneObjectInstance& instance : snapshot.objectInstances) observeId(instance.id);
-        this->nextId = std::max(this->nextId, maxId + 1);
-
-        if (snapshot.renderSettings.cameraId.value == 0) snapshot.renderSettings.cameraId = SceneCameraId{this->nextSceneId()};
-        for (SceneMaterial& material : snapshot.materials)
-            if (material.id.value == 0) material.id = SceneMaterialId{this->nextSceneId()};
-        for (SceneTexture& texture : snapshot.textures)
-            if (texture.id.value == 0) texture.id = SceneTextureId{this->nextSceneId()};
-        for (SceneMedium& medium : snapshot.media)
-            if (medium.id.value == 0) medium.id = SceneMediumId{this->nextSceneId()};
-        for (SceneLight& light : snapshot.lights)
-            if (light.id.value == 0) light.id = SceneLightId{this->nextSceneId()};
-        for (SceneShape& shape : snapshot.shapes)
-            if (shape.id.value == 0) shape.id = SceneShapeId{this->nextSceneId()};
-        for (SceneObjectDefinition& definition : snapshot.objectDefinitions) {
-            if (definition.id.value == 0) definition.id = SceneObjectDefinitionId{this->nextSceneId()};
-            for (SceneShape& shape : definition.shapes)
-                if (shape.id.value == 0) shape.id = SceneShapeId{this->nextSceneId()};
-        }
-        for (SceneObjectInstance& instance : snapshot.objectInstances)
-            if (instance.id.value == 0) instance.id = SceneObjectInstanceId{this->nextSceneId()};
-    }
-
-    [[nodiscard]] std::uint64_t SceneWorkspace::nextSceneId() {
-        const std::uint64_t id = this->nextId;
-        ++this->nextId;
-        return id;
-    }
-
-    [[nodiscard]] SceneEditBatch SceneWorkspace::fullEdit(const SceneRevision before, const SceneSnapshot& snapshot) const {
-        SceneEditBatch batch{
+    [[nodiscard]] SceneEditBatch SceneWorkspace::fullEdit(const SceneRevision before) const {
+        return SceneEditBatch{
             .beforeRevision = before,
-            .afterRevision  = snapshot.revision,
-            .dirty          = SceneDirtyFlags::Camera | SceneDirtyFlags::Film | SceneDirtyFlags::RenderSettings | SceneDirtyFlags::Transform | SceneDirtyFlags::Geometry | SceneDirtyFlags::Material | SceneDirtyFlags::Texture | SceneDirtyFlags::Light | SceneDirtyFlags::Medium | SceneDirtyFlags::Topology | SceneDirtyFlags::CompiledScene,
+            .afterRevision  = this->currentSnapshot->revision,
+            .dirty          = SceneDirtyFlags::Snapshot,
         };
-        batch.cameras.push_back(snapshot.renderSettings.cameraId);
-        for (const SceneMaterial& material : snapshot.materials) batch.materials.push_back(material.id);
-        for (const SceneTexture& texture : snapshot.textures) batch.textures.push_back(texture.id);
-        for (const SceneMedium& medium : snapshot.media) batch.media.push_back(medium.id);
-        for (const SceneLight& light : snapshot.lights) batch.lights.push_back(light.id);
-        for (const SceneShape& shape : snapshot.shapes) batch.shapes.push_back(shape.id);
-        for (const SceneObjectDefinition& definition : snapshot.objectDefinitions) {
-            batch.objectDefinitions.push_back(definition.id);
-            for (const SceneShape& shape : definition.shapes) batch.shapes.push_back(shape.id);
-        }
-        for (const SceneObjectInstance& instance : snapshot.objectInstances) batch.objectInstances.push_back(instance.id);
-        return batch;
     }
 } // namespace spectra::scene
 
@@ -257,9 +150,9 @@ namespace spectra::scene {
             return ReadPlainFile(path);
         }
 
-        class Lexer {
+        class PbrtTokenStream {
         public:
-            explicit Lexer(std::filesystem::path filename) {
+            explicit PbrtTokenStream(std::filesystem::path filename) {
                 this->PushFile(std::move(filename));
             }
 
@@ -267,7 +160,7 @@ namespace spectra::scene {
                 if (this->pushedToken.has_value()) return std::exchange(this->pushedToken, {});
 
                 while (!this->fileStack.empty()) {
-                    LexerFile& file = this->fileStack.back();
+                    PbrtTokenFile& file = this->fileStack.back();
                     this->SkipIgnored(&file);
                     if (file.offset >= file.content.size()) {
                         this->fileStack.pop_back();
@@ -304,14 +197,14 @@ namespace spectra::scene {
             void PushFile(std::filesystem::path path) {
                 if (!std::filesystem::exists(path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", path.string()));
                 std::string content = ReadSceneFile(path);
-                this->fileStack.push_back(LexerFile{
+                this->fileStack.push_back(PbrtTokenFile{
                     .filename = std::move(path),
                     .content  = std::move(content),
                 });
             }
 
         private:
-            struct LexerFile {
+            struct PbrtTokenFile {
                 std::filesystem::path filename;
                 std::string content;
                 std::size_t offset{};
@@ -319,7 +212,7 @@ namespace spectra::scene {
                 int column{1};
             };
 
-            void Advance(LexerFile* file) {
+            void Advance(PbrtTokenFile* file) {
                 if (file->offset >= file->content.size()) return;
                 if (file->content[file->offset] == '\n') {
                     ++file->line;
@@ -330,7 +223,7 @@ namespace spectra::scene {
                 ++file->offset;
             }
 
-            void SkipIgnored(LexerFile* file) {
+            void SkipIgnored(PbrtTokenFile* file) {
                 while (file->offset < file->content.size()) {
                     const char character = file->content[file->offset];
                     if (std::isspace(static_cast<unsigned char>(character))) {
@@ -345,7 +238,7 @@ namespace spectra::scene {
                 }
             }
 
-            [[nodiscard]] Token ReadString(LexerFile* file, const SceneSourceLocation& source) {
+            [[nodiscard]] Token ReadString(PbrtTokenFile* file, const SceneSourceLocation& source) {
                 this->Advance(file);
                 std::string text;
                 while (file->offset < file->content.size()) {
@@ -367,7 +260,7 @@ namespace spectra::scene {
                 throw ParseError(source, "unterminated quoted string");
             }
 
-            [[nodiscard]] Token ReadWord(LexerFile* file, const SceneSourceLocation& source) {
+            [[nodiscard]] Token ReadWord(PbrtTokenFile* file, const SceneSourceLocation& source) {
                 std::string text;
                 while (file->offset < file->content.size()) {
                     const char character = file->content[file->offset];
@@ -379,18 +272,18 @@ namespace spectra::scene {
                 return Token{.kind = TokenKind::Word, .text = std::move(text), .source = source};
             }
 
-            std::vector<LexerFile> fileStack{};
+            std::vector<PbrtTokenFile> fileStack{};
             std::optional<Token> pushedToken{};
         };
 
-        [[nodiscard]] Token RequireToken(Lexer& lexer, const std::string_view context) {
-            std::optional<Token> token = lexer.Next();
+        [[nodiscard]] Token RequireToken(PbrtTokenStream& stream, const std::string_view context) {
+            std::optional<Token> token = stream.Next();
             if (!token.has_value()) throw std::runtime_error(std::format("Unexpected end of PBRT scene file while parsing {}", context));
             return std::move(*token);
         }
 
-        [[nodiscard]] std::string RequireStringToken(Lexer& lexer, const std::string_view context) {
-            Token token = RequireToken(lexer, context);
+        [[nodiscard]] std::string RequireStringToken(PbrtTokenStream& stream, const std::string_view context) {
+            Token token = RequireToken(stream, context);
             if (token.kind != TokenKind::QuotedString) throw ParseError(token.source, std::format("{} expects a quoted string", context));
             return std::move(token.text);
         }
@@ -524,15 +417,12 @@ namespace spectra::scene {
             return std::get_if<std::vector<float>>(&parameter.values);
         }
 
-        [[nodiscard]] bool ParameterHasSingleString(const SceneParameter& parameter, const std::string& name) {
-            const std::vector<std::string>* values = ParameterStringValues(parameter);
-            return parameter.type == "string" && parameter.name == name && values != nullptr && values->size() == 1;
-        }
-
         [[nodiscard]] std::string OneStringParameter(const std::vector<SceneParameter>& parameters, const std::string& name, std::string fallback) {
             for (const SceneParameter& parameter : parameters) {
-                if (!ParameterHasSingleString(parameter, name)) continue;
-                return ParameterStringValues(parameter)->front();
+                if (parameter.type != "string" || parameter.name != name) continue;
+                const std::vector<std::string>* values = ParameterStringValues(parameter);
+                if (values == nullptr || values->size() != 1) return fallback;
+                return values->front();
             }
             return fallback;
         }
@@ -545,10 +435,6 @@ namespace spectra::scene {
                 return values->front();
             }
             return fallback;
-        }
-
-        [[nodiscard]] bool IsFilmOutputParameter(const SceneParameter& parameter) {
-            return parameter.name == "filename";
         }
 
         [[nodiscard]] bool IsBuiltInApertureName(const std::string& value) {
@@ -621,7 +507,7 @@ namespace spectra::scene {
                 for (SceneParameter& parameter : *parameters) {
                     std::vector<std::string>* values = ParameterStringValues(&parameter);
                     if (values == nullptr) continue;
-                    if (entityUse == EntityUse::Film && IsFilmOutputParameter(parameter)) continue;
+                    if (entityUse == EntityUse::Film && parameter.name == "filename") continue;
 
                     const bool directFileParameter = parameter.name == "filename" || parameter.name == "normalmap" || parameter.name == "lensfile" || parameter.name == "emissionfilename";
                     const bool apertureParameter   = parameter.name == "aperture";
@@ -669,25 +555,25 @@ namespace spectra::scene {
             }
 
             void ParseFile(const std::filesystem::path& path) {
-                Lexer lexer(path);
-                while (std::optional<Token> directive = lexer.Next()) this->ParseDirective(lexer, *directive);
+                PbrtTokenStream stream(path);
+                while (std::optional<Token> directive = stream.Next()) this->ParseDirective(stream, *directive);
             }
 
-            [[nodiscard]] std::vector<SceneParameter> ParseParameters(Lexer& lexer) {
+            [[nodiscard]] std::vector<SceneParameter> ParseParameters(PbrtTokenStream& stream) {
                 std::vector<SceneParameter> parameters;
                 while (true) {
-                    std::optional<Token> declaration = lexer.Next();
+                    std::optional<Token> declaration = stream.Next();
                     if (!declaration.has_value()) return parameters;
                     if (declaration->kind != TokenKind::QuotedString) {
-                        lexer.PushBack(std::move(*declaration));
+                        stream.PushBack(std::move(*declaration));
                         return parameters;
                     }
 
                     SceneParameter parameter = this->ParseParameterDeclaration(*declaration);
-                    Token value              = RequireToken(lexer, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
+                    Token value              = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                     if (value.kind == TokenKind::LeftBracket) {
                         while (true) {
-                            Token element = RequireToken(lexer, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
+                            Token element = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                             if (element.kind == TokenKind::RightBracket) break;
                             this->AppendParameterValue(&parameter, element);
                         }
@@ -745,7 +631,7 @@ namespace spectra::scene {
                 std::get<std::vector<float>>(parameter->values).push_back(ParseFloatToken(value));
             }
 
-            void ParseDirective(Lexer& lexer, const Token& directive) {
+            void ParseDirective(PbrtTokenStream& stream, const Token& directive) {
                 if (directive.kind != TokenKind::Word) throw ParseError(directive.source, "PBRT directive must be an unquoted identifier");
 
                 if (directive.text == "AttributeBegin" || directive.text == "TransformBegin") {
@@ -760,50 +646,50 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "ActiveTransform") {
-                    this->ActiveTransform(RequireToken(lexer, "ActiveTransform"), directive.source);
+                    this->ActiveTransform(RequireToken(stream, "ActiveTransform"), directive.source);
                     return;
                 }
                 if (directive.text == "AreaLightSource") {
                     this->RequireWorld(directive, "AreaLightSource");
-                    const std::string type = RequireStringToken(lexer, "AreaLightSource");
-                    this->graphicsState.areaLight = SceneAreaLight{.entity = this->EntityWithAttributes(type, this->ParseParameters(lexer), this->graphicsState.lightAttributes, EntityUse::AreaLight, directive.source, this->graphicsState.colorSpace)};
+                    const std::string type = RequireStringToken(stream, "AreaLightSource");
+                    this->graphicsState.areaLight = SceneAreaLight{.entity = this->EntityWithAttributes(type, this->ParseParameters(stream), this->graphicsState.lightAttributes, EntityUse::AreaLight, directive.source, this->graphicsState.colorSpace)};
                     return;
                 }
                 if (directive.text == "Accelerator") {
                     this->RequireOptions(directive, "Accelerator");
-                    const std::string type = RequireStringToken(lexer, "Accelerator");
-                    this->scene.renderSettings.accelerator = this->Entity(type, this->ParseParameters(lexer), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
+                    const std::string type = RequireStringToken(stream, "Accelerator");
+                    this->scene.renderSettings.accelerator = this->Entity(type, this->ParseParameters(stream), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
                     return;
                 }
                 if (directive.text == "Attribute") {
-                    std::string target = RequireStringToken(lexer, "Attribute");
-                    std::vector<SceneParameter> parameters = this->ParseParameters(lexer);
+                    std::string target = RequireStringToken(stream, "Attribute");
+                    std::vector<SceneParameter> parameters = this->ParseParameters(stream);
                     this->Attribute(std::move(target), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "Camera") {
                     this->RequireOptions(directive, "Camera");
-                    const std::string type = RequireStringToken(lexer, "Camera");
-                    this->scene.renderSettings.camera          = this->Entity(type, this->ParseParameters(lexer), EntityUse::Camera, directive.source, this->graphicsState.colorSpace);
+                    const std::string type = RequireStringToken(stream, "Camera");
+                    this->scene.renderSettings.camera          = this->Entity(type, this->ParseParameters(stream), EntityUse::Camera, directive.source, this->graphicsState.colorSpace);
                     this->scene.renderSettings.cameraTransform = this->WorldFromCameraTransform();
                     this->scene.renderSettings.cameraMedium    = this->graphicsState.mediumInterface.outside;
                     this->namedCoordinateSystems["camera"]     = this->scene.renderSettings.cameraTransform;
                     return;
                 }
                 if (directive.text == "ColorSpace") {
-                    this->graphicsState.colorSpace = ParseColorSpaceName(RequireStringToken(lexer, "ColorSpace"), directive.source);
+                    this->graphicsState.colorSpace = ParseColorSpaceName(RequireStringToken(stream, "ColorSpace"), directive.source);
                     return;
                 }
                 if (directive.text == "ConcatTransform") {
-                    this->ConcatTransform(lexer, directive.source);
+                    this->ConcatTransform(stream, directive.source);
                     return;
                 }
                 if (directive.text == "CoordinateSystem") {
-                    this->namedCoordinateSystems[RequireStringToken(lexer, "CoordinateSystem")] = this->graphicsState.transform;
+                    this->namedCoordinateSystems[RequireStringToken(stream, "CoordinateSystem")] = this->graphicsState.transform;
                     return;
                 }
                 if (directive.text == "CoordSysTransform") {
-                    const std::string name = RequireStringToken(lexer, "CoordSysTransform");
+                    const std::string name = RequireStringToken(stream, "CoordSysTransform");
                     const std::map<std::string, SceneTransformSet>::const_iterator iter = this->namedCoordinateSystems.find(name);
                     if (iter == this->namedCoordinateSystems.end()) throw ParseError(directive.source, std::format("Unknown coordinate system \"{}\"", name));
                     this->graphicsState.transform = iter->second;
@@ -811,8 +697,8 @@ namespace spectra::scene {
                 }
                 if (directive.text == "Film") {
                     this->RequireOptions(directive, "Film");
-                    const std::string type = RequireStringToken(lexer, "Film");
-                    this->scene.renderSettings.film = this->Entity(type, this->ParseParameters(lexer), EntityUse::Film, directive.source, this->graphicsState.colorSpace);
+                    const std::string type = RequireStringToken(stream, "Film");
+                    this->scene.renderSettings.film = this->Entity(type, this->ParseParameters(stream), EntityUse::Film, directive.source, this->graphicsState.colorSpace);
                     return;
                 }
                 if (directive.text == "Identity") {
@@ -821,61 +707,61 @@ namespace spectra::scene {
                 }
                 if (directive.text == "Import") {
                     this->RequireWorld(directive, "Import");
-                    this->Import(lexer, directive.source);
+                    this->Import(stream, directive.source);
                     return;
                 }
                 if (directive.text == "Include") {
-                    lexer.PushFile(this->ResolveIncludePath(RequireStringToken(lexer, "Include"), directive.source));
+                    stream.PushFile(this->ResolveIncludePath(RequireStringToken(stream, "Include"), directive.source));
                     return;
                 }
                 if (directive.text == "Integrator") {
                     this->RequireOptions(directive, "Integrator");
-                    const std::string type = RequireStringToken(lexer, "Integrator");
-                    this->scene.renderSettings.integrator = this->Entity(type, this->ParseParameters(lexer), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
+                    const std::string type = RequireStringToken(stream, "Integrator");
+                    this->scene.renderSettings.integrator = this->Entity(type, this->ParseParameters(stream), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
                     return;
                 }
                 if (directive.text == "LightSource") {
                     this->RequireWorld(directive, "LightSource");
-                    this->LightSource(lexer, directive.source);
+                    this->LightSource(stream, directive.source);
                     return;
                 }
                 if (directive.text == "LookAt") {
                     std::array<float, 9> values{};
-                    for (float& value : values) value = ParseFloatToken(RequireToken(lexer, "LookAt"));
+                    for (float& value : values) value = ParseFloatToken(RequireToken(stream, "LookAt"));
                     this->ApplyActiveTransform(math::LookAt(math::Point3{values[0], values[1], values[2]}, math::Point3{values[3], values[4], values[5]}, math::Vector3{values[6], values[7], values[8]}));
                     return;
                 }
                 if (directive.text == "MakeNamedMaterial") {
                     this->RequireWorld(directive, "MakeNamedMaterial");
-                    std::string name = RequireStringToken(lexer, "MakeNamedMaterial");
-                    std::vector<SceneParameter> parameters = this->ParseParameters(lexer);
+                    std::string name = RequireStringToken(stream, "MakeNamedMaterial");
+                    std::vector<SceneParameter> parameters = this->ParseParameters(stream);
                     this->MakeNamedMaterial(std::move(name), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "MakeNamedMedium") {
-                    std::string name = RequireStringToken(lexer, "MakeNamedMedium");
-                    std::vector<SceneParameter> parameters = this->ParseParameters(lexer);
+                    std::string name = RequireStringToken(stream, "MakeNamedMedium");
+                    std::vector<SceneParameter> parameters = this->ParseParameters(stream);
                     this->MakeNamedMedium(std::move(name), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "Material") {
                     this->RequireWorld(directive, "Material");
-                    std::string type = RequireStringToken(lexer, "Material");
-                    std::vector<SceneParameter> parameters = this->ParseParameters(lexer);
+                    std::string type = RequireStringToken(stream, "Material");
+                    std::vector<SceneParameter> parameters = this->ParseParameters(stream);
                     this->Material(std::move(type), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "MediumInterface") {
-                    this->MediumInterface(lexer);
+                    this->MediumInterface(stream);
                     return;
                 }
                 if (directive.text == "NamedMaterial") {
                     this->RequireWorld(directive, "NamedMaterial");
-                    this->graphicsState.currentMaterialName = RequireStringToken(lexer, "NamedMaterial");
+                    this->graphicsState.currentMaterialName = RequireStringToken(stream, "NamedMaterial");
                     return;
                 }
                 if (directive.text == "ObjectBegin") {
-                    this->ObjectBegin(RequireStringToken(lexer, "ObjectBegin"), directive.source);
+                    this->ObjectBegin(RequireStringToken(stream, "ObjectBegin"), directive.source);
                     return;
                 }
                 if (directive.text == "ObjectEnd") {
@@ -883,19 +769,19 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "ObjectInstance") {
-                    this->ObjectInstance(RequireStringToken(lexer, "ObjectInstance"), directive.source);
+                    this->ObjectInstance(RequireStringToken(stream, "ObjectInstance"), directive.source);
                     return;
                 }
                 if (directive.text == "Option") {
-                    std::string name = RequireStringToken(lexer, "Option");
-                    Token value = RequireToken(lexer, "Option");
+                    std::string name = RequireStringToken(stream, "Option");
+                    Token value = RequireToken(stream, "Option");
                     this->Option(std::move(name), std::move(value.text), directive.source);
                     return;
                 }
                 if (directive.text == "PixelFilter") {
                     this->RequireOptions(directive, "PixelFilter");
-                    const std::string type = RequireStringToken(lexer, "PixelFilter");
-                    this->scene.renderSettings.filter = this->Entity(type, this->ParseParameters(lexer), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
+                    const std::string type = RequireStringToken(stream, "PixelFilter");
+                    this->scene.renderSettings.filter = this->Entity(type, this->ParseParameters(stream), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
                     return;
                 }
                 if (directive.text == "ReverseOrientation") {
@@ -904,52 +790,52 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "Rotate") {
-                    const float angle = ParseFloatToken(RequireToken(lexer, "Rotate"));
-                    const float x     = ParseFloatToken(RequireToken(lexer, "Rotate"));
-                    const float y     = ParseFloatToken(RequireToken(lexer, "Rotate"));
-                    const float z     = ParseFloatToken(RequireToken(lexer, "Rotate"));
+                    const float angle = ParseFloatToken(RequireToken(stream, "Rotate"));
+                    const float x     = ParseFloatToken(RequireToken(stream, "Rotate"));
+                    const float y     = ParseFloatToken(RequireToken(stream, "Rotate"));
+                    const float z     = ParseFloatToken(RequireToken(stream, "Rotate"));
                     this->ApplyActiveTransform(math::Rotate(angle, math::Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "Sampler") {
                     this->RequireOptions(directive, "Sampler");
-                    const std::string type = RequireStringToken(lexer, "Sampler");
-                    this->scene.renderSettings.sampler = this->Entity(type, this->ParseParameters(lexer), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
+                    const std::string type = RequireStringToken(stream, "Sampler");
+                    this->scene.renderSettings.sampler = this->Entity(type, this->ParseParameters(stream), EntityUse::Generic, directive.source, this->graphicsState.colorSpace);
                     return;
                 }
                 if (directive.text == "Scale") {
-                    const float x = ParseFloatToken(RequireToken(lexer, "Scale"));
-                    const float y = ParseFloatToken(RequireToken(lexer, "Scale"));
-                    const float z = ParseFloatToken(RequireToken(lexer, "Scale"));
+                    const float x = ParseFloatToken(RequireToken(stream, "Scale"));
+                    const float y = ParseFloatToken(RequireToken(stream, "Scale"));
+                    const float z = ParseFloatToken(RequireToken(stream, "Scale"));
                     this->ApplyActiveTransform(math::Scale(x, y, z));
                     return;
                 }
                 if (directive.text == "Shape") {
                     this->RequireWorld(directive, "Shape");
-                    std::string type = RequireStringToken(lexer, "Shape");
-                    std::vector<SceneParameter> parameters = this->ParseParameters(lexer);
+                    std::string type = RequireStringToken(stream, "Shape");
+                    std::vector<SceneParameter> parameters = this->ParseParameters(stream);
                     this->Shape(std::move(type), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "Texture") {
                     this->RequireWorld(directive, "Texture");
-                    this->Texture(lexer, directive.source);
+                    this->Texture(stream, directive.source);
                     return;
                 }
                 if (directive.text == "Transform") {
-                    this->Transform(lexer, directive.source);
+                    this->Transform(stream, directive.source);
                     return;
                 }
                 if (directive.text == "TransformTimes") {
                     this->RequireOptions(directive, "TransformTimes");
-                    this->graphicsState.transform.startTime = ParseFloatToken(RequireToken(lexer, "TransformTimes"));
-                    this->graphicsState.transform.endTime   = ParseFloatToken(RequireToken(lexer, "TransformTimes"));
+                    this->graphicsState.transform.startTime = ParseFloatToken(RequireToken(stream, "TransformTimes"));
+                    this->graphicsState.transform.endTime   = ParseFloatToken(RequireToken(stream, "TransformTimes"));
                     return;
                 }
                 if (directive.text == "Translate") {
-                    const float x = ParseFloatToken(RequireToken(lexer, "Translate"));
-                    const float y = ParseFloatToken(RequireToken(lexer, "Translate"));
-                    const float z = ParseFloatToken(RequireToken(lexer, "Translate"));
+                    const float x = ParseFloatToken(RequireToken(stream, "Translate"));
+                    const float y = ParseFloatToken(RequireToken(stream, "Translate"));
+                    const float z = ParseFloatToken(RequireToken(stream, "Translate"));
                     this->ApplyActiveTransform(math::Translate(math::Vector3{x, y, z}));
                     return;
                 }
@@ -1019,23 +905,23 @@ namespace spectra::scene {
                 return result;
             }
 
-            void ReadBracketedMatrix(Lexer& lexer, const std::string_view context, std::array<float, 16>* values) const {
-                Token open = RequireToken(lexer, context);
+            void ReadBracketedMatrix(PbrtTokenStream& stream, const std::string_view context, std::array<float, 16>* values) const {
+                Token open = RequireToken(stream, context);
                 if (open.kind != TokenKind::LeftBracket) throw ParseError(open.source, std::format("{} expects '['", context));
-                for (float& value : *values) value = ParseFloatToken(RequireToken(lexer, context));
-                Token close = RequireToken(lexer, context);
+                for (float& value : *values) value = ParseFloatToken(RequireToken(stream, context));
+                Token close = RequireToken(stream, context);
                 if (close.kind != TokenKind::RightBracket) throw ParseError(close.source, std::format("{} expects ']'", context));
             }
 
-            void Transform(Lexer& lexer, const SceneSourceLocation& source) {
+            void Transform(PbrtTokenStream& stream, const SceneSourceLocation& source) {
                 std::array<float, 16> values{};
-                this->ReadBracketedMatrix(lexer, "Transform", &values);
+                this->ReadBracketedMatrix(stream, "Transform", &values);
                 this->SetActiveTransform(TransformFromPbrtMatrix(values, source));
             }
 
-            void ConcatTransform(Lexer& lexer, const SceneSourceLocation& source) {
+            void ConcatTransform(PbrtTokenStream& stream, const SceneSourceLocation& source) {
                 std::array<float, 16> values{};
-                this->ReadBracketedMatrix(lexer, "ConcatTransform", &values);
+                this->ReadBracketedMatrix(stream, "ConcatTransform", &values);
                 this->ApplyActiveTransform(TransformFromPbrtMatrix(values, source));
             }
 
@@ -1077,9 +963,9 @@ namespace spectra::scene {
                 });
             }
 
-            void MediumInterface(Lexer& lexer) {
-                const std::string inside = RequireStringToken(lexer, "MediumInterface");
-                std::optional<Token> outsideToken = lexer.Next();
+            void MediumInterface(PbrtTokenStream& stream) {
+                const std::string inside = RequireStringToken(stream, "MediumInterface");
+                std::optional<Token> outsideToken = stream.Next();
                 if (!outsideToken.has_value()) {
                     this->graphicsState.mediumInterface = SceneMediumInterface{.inside = inside, .outside = inside};
                     return;
@@ -1088,7 +974,7 @@ namespace spectra::scene {
                     this->graphicsState.mediumInterface = SceneMediumInterface{.inside = inside, .outside = std::move(outsideToken->text)};
                     return;
                 }
-                lexer.PushBack(std::move(*outsideToken));
+                stream.PushBack(std::move(*outsideToken));
                 this->graphicsState.mediumInterface = SceneMediumInterface{.inside = inside, .outside = inside};
             }
 
@@ -1106,11 +992,11 @@ namespace spectra::scene {
                 });
             }
 
-            void LightSource(Lexer& lexer, const SceneSourceLocation& source) {
-                const std::string type = RequireStringToken(lexer, "LightSource");
+            void LightSource(PbrtTokenStream& stream, const SceneSourceLocation& source) {
+                const std::string type = RequireStringToken(stream, "LightSource");
                 this->scene.lights.push_back(SceneLight{
                     .name      = std::format("__light_{}", this->scene.lights.size()),
-                    .entity    = this->EntityWithAttributes(type, this->ParseParameters(lexer), this->graphicsState.lightAttributes, EntityUse::Light, source, this->graphicsState.colorSpace),
+                    .entity    = this->EntityWithAttributes(type, this->ParseParameters(stream), this->graphicsState.lightAttributes, EntityUse::Light, source, this->graphicsState.colorSpace),
                     .transform = this->graphicsState.transform,
                     .medium    = this->graphicsState.mediumInterface.outside,
                 });
@@ -1141,10 +1027,10 @@ namespace spectra::scene {
                 });
             }
 
-            void Texture(Lexer& lexer, const SceneSourceLocation& source) {
-                std::string name = RequireStringToken(lexer, "Texture");
-                std::string kind = RequireStringToken(lexer, "Texture");
-                std::string type = RequireStringToken(lexer, "Texture");
+            void Texture(PbrtTokenStream& stream, const SceneSourceLocation& source) {
+                std::string name = RequireStringToken(stream, "Texture");
+                std::string kind = RequireStringToken(stream, "Texture");
+                std::string type = RequireStringToken(stream, "Texture");
                 if (kind != "float" && kind != "spectrum") throw ParseError(source, std::format("Texture \"{}\" has unsupported value type \"{}\"", name, kind));
                 this->RequireUniqueName(kind == "float" ? this->floatTextureNames : this->spectrumTextureNames, "texture", name, source);
                 if (kind == "float")
@@ -1154,7 +1040,7 @@ namespace spectra::scene {
                 this->scene.textures.push_back(SceneTexture{
                     .name      = std::move(name),
                     .kind      = std::move(kind),
-                    .entity    = this->EntityWithAttributes(std::move(type), this->ParseParameters(lexer), this->graphicsState.textureAttributes, EntityUse::Texture, source, this->graphicsState.colorSpace),
+                    .entity    = this->EntityWithAttributes(std::move(type), this->ParseParameters(stream), this->graphicsState.textureAttributes, EntityUse::Texture, source, this->graphicsState.colorSpace),
                     .transform = this->graphicsState.transform,
                 });
             }
@@ -1209,8 +1095,8 @@ namespace spectra::scene {
                 });
             }
 
-            void Import(Lexer& lexer, const SceneSourceLocation& source) {
-                const std::filesystem::path importPath = this->ResolveIncludePath(RequireStringToken(lexer, "Import"), source);
+            void Import(PbrtTokenStream& stream, const SceneSourceLocation& source) {
+                const std::filesystem::path importPath = this->ResolveIncludePath(RequireStringToken(stream, "Import"), source);
                 const GraphicsState savedState         = this->graphicsState;
                 this->ParseFile(importPath);
                 this->graphicsState = savedState;

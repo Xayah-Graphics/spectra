@@ -11,73 +11,10 @@ export extern "C++" {
             friend auto operator<=>(const SceneRevision&, const SceneRevision&) = default;
         };
 
-        struct SceneCameraId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneCameraId&, const SceneCameraId&) = default;
-        };
-
-        struct SceneMaterialId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneMaterialId&, const SceneMaterialId&) = default;
-        };
-
-        struct SceneTextureId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneTextureId&, const SceneTextureId&) = default;
-        };
-
-        struct SceneMediumId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneMediumId&, const SceneMediumId&) = default;
-        };
-
-        struct SceneLightId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneLightId&, const SceneLightId&) = default;
-        };
-
-        struct SceneShapeId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneShapeId&, const SceneShapeId&) = default;
-        };
-
-        struct SceneObjectDefinitionId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneObjectDefinitionId&, const SceneObjectDefinitionId&) = default;
-        };
-
-        struct SceneObjectInstanceId {
-            std::uint64_t value{};
-
-            friend auto operator<=>(const SceneObjectInstanceId&, const SceneObjectInstanceId&) = default;
-        };
-
         enum class SceneDirtyFlags : std::uint32_t {
-            None           = 0,
-            Camera         = 1u << 0u,
-            Film           = 1u << 1u,
-            RenderSettings = 1u << 2u,
-            Transform      = 1u << 3u,
-            Geometry       = 1u << 4u,
-            Material       = 1u << 5u,
-            Texture        = 1u << 6u,
-            Light          = 1u << 7u,
-            Medium         = 1u << 8u,
-            Topology       = 1u << 9u,
-            CompiledScene  = 1u << 10u,
+            None     = 0,
+            Snapshot = 1,
         };
-
-        [[nodiscard]] SceneDirtyFlags operator|(SceneDirtyFlags left, SceneDirtyFlags right);
-        [[nodiscard]] SceneDirtyFlags operator&(SceneDirtyFlags left, SceneDirtyFlags right);
-        SceneDirtyFlags& operator|=(SceneDirtyFlags& left, SceneDirtyFlags right);
-        [[nodiscard]] bool HasDirtyFlag(SceneDirtyFlags flags, SceneDirtyFlags flag);
 
         enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
 
@@ -123,7 +60,6 @@ export extern "C++" {
         };
 
         struct SceneRenderSettings {
-            SceneCameraId cameraId{};
             SceneEntity filter{.type = "gaussian"};
             SceneEntity film{.type = "rgb"};
             SceneEntity camera{.type = "perspective"};
@@ -136,13 +72,11 @@ export extern "C++" {
         };
 
         struct SceneMaterial {
-            SceneMaterialId id{};
             std::string name{};
             SceneEntity entity{};
         };
 
         struct SceneTexture {
-            SceneTextureId id{};
             std::string name{};
             std::string kind{};
             SceneEntity entity{};
@@ -150,14 +84,12 @@ export extern "C++" {
         };
 
         struct SceneMedium {
-            SceneMediumId id{};
             std::string name{};
             SceneEntity entity{};
             SceneTransformSet transform{};
         };
 
         struct SceneLight {
-            SceneLightId id{};
             std::string name{};
             SceneEntity entity{};
             SceneTransformSet transform{};
@@ -169,7 +101,6 @@ export extern "C++" {
         };
 
         struct SceneShape {
-            SceneShapeId id{};
             std::string name{};
             SceneEntity entity{};
             SceneTransformSet transform{};
@@ -180,14 +111,12 @@ export extern "C++" {
         };
 
         struct SceneObjectDefinition {
-            SceneObjectDefinitionId id{};
             std::string name{};
             std::vector<SceneShape> shapes{};
             SceneSourceLocation source{};
         };
 
         struct SceneObjectInstance {
-            SceneObjectInstanceId id{};
             std::string name{};
             std::string definitionName{};
             SceneTransformSet transform{};
@@ -213,14 +142,6 @@ export extern "C++" {
             SceneRevision beforeRevision{};
             SceneRevision afterRevision{};
             SceneDirtyFlags dirty{SceneDirtyFlags::None};
-            std::vector<SceneCameraId> cameras{};
-            std::vector<SceneMaterialId> materials{};
-            std::vector<SceneTextureId> textures{};
-            std::vector<SceneMediumId> media{};
-            std::vector<SceneLightId> lights{};
-            std::vector<SceneShapeId> shapes{};
-            std::vector<SceneObjectDefinitionId> objectDefinitions{};
-            std::vector<SceneObjectInstanceId> objectInstances{};
         };
 
         class SceneEditBuilder {
@@ -245,13 +166,10 @@ export extern "C++" {
             [[nodiscard]] SceneEditBatch changes_since(SceneRevision revision) const;
 
         private:
-            void assignMissingIds(SceneSnapshot& snapshot);
-            [[nodiscard]] std::uint64_t nextSceneId();
-            [[nodiscard]] SceneEditBatch fullEdit(SceneRevision before, const SceneSnapshot& snapshot) const;
+            [[nodiscard]] SceneEditBatch fullEdit(SceneRevision before) const;
 
             std::shared_ptr<const SceneSnapshot> currentSnapshot{};
             std::optional<SceneEditBatch> lastEdit{};
-            std::uint64_t nextId{1};
         };
 
         struct SceneInfo {
