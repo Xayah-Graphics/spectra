@@ -70,14 +70,50 @@ export namespace xayah {
             std::shared_ptr<const spectra::scene::SceneSnapshot> document{};
         };
 
+        enum class BackgroundTaskKind {
+            Idle,
+            SceneValidation,
+            Translation,
+        };
+
+        struct BackgroundWorkerTask {
+            BackgroundTaskKind kind{BackgroundTaskKind::Idle};
+            std::string sceneId{};
+            std::string rendererName{};
+            std::chrono::steady_clock::time_point startedAt{};
+        };
+
+        struct BackgroundConsoleState {
+            std::vector<BackgroundWorkerTask> workerTasks{};
+            std::chrono::steady_clock::time_point lastProgressAt{};
+            std::chrono::steady_clock::time_point lastHeartbeatAt{};
+            bool sceneCheckCompleteLogged{false};
+        };
+
+        struct BackgroundConsoleMessage {
+            std::string text{};
+            bool progress{true};
+        };
+
         void attach_panel_host(std::move_only_function<void(SpectraPanel)> register_panel);
         void start_scene_background_workers();
-        void run_scene_background_worker(std::stop_token stop_token);
+        void run_scene_background_worker(std::stop_token stop_token, std::size_t worker_index);
         void refresh_scene_catalog_counts();
         void clear_translation_cache_for_scene(std::string_view scene_id);
         void ensure_translation_target_exists(std::string_view renderer_name) const;
         [[nodiscard]] bool has_scene_background_work_locked() const;
         [[nodiscard]] std::optional<std::size_t> next_catalog_validation_index_locked() const;
+        void reset_background_console_state_locked(std::chrono::steady_clock::time_point now);
+        void begin_background_scene_task_locked(std::size_t worker_index, std::string_view scene_id, std::chrono::steady_clock::time_point now);
+        void finish_background_scene_task_locked(std::size_t worker_index, std::chrono::steady_clock::time_point now);
+        void begin_background_translation_task_locked(std::size_t worker_index, const TranslationRequestKey& key, std::chrono::steady_clock::time_point now);
+        void finish_background_translation_task_locked(std::size_t worker_index, std::chrono::steady_clock::time_point now);
+        [[nodiscard]] bool scene_check_complete_locked() const;
+        [[nodiscard]] std::size_t active_background_task_count_locked(BackgroundTaskKind kind) const;
+        [[nodiscard]] std::size_t cached_translation_report_count_locked(std::string_view renderer_name) const;
+        [[nodiscard]] std::optional<std::string> active_background_task_text_locked(std::chrono::steady_clock::time_point now) const;
+        [[nodiscard]] std::optional<BackgroundConsoleMessage> next_background_console_message_locked(std::chrono::steady_clock::time_point now);
+        void maybe_log_background_heartbeat();
         [[nodiscard]] static bool translation_request_key_matches(const TranslationRequestKey& lhs, const TranslationRequestKey& rhs);
         [[nodiscard]] bool has_translation_cache_entry_locked(const TranslationRequestKey& key) const;
         [[nodiscard]] bool has_translation_request_locked(const TranslationRequestKey& key) const;
@@ -99,6 +135,7 @@ export namespace xayah {
         std::vector<TranslationCacheEntry> translation_cache{};
         std::deque<TranslationRequest> translation_requests{};
         std::vector<TranslationRequestKey> translation_requests_in_progress{};
+        BackgroundConsoleState background_console{};
         std::string active_renderer{};
         std::size_t active_scene_index{};
         bool attached{false};
