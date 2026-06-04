@@ -11,7 +11,7 @@ namespace {
         if (value <= 0.0f) throw std::runtime_error(std::string{label} + " must be positive");
     }
 
-    void validate_config(const xayah::SparklesConfig& config) {
+    void validate_config(const spectra::SparklesConfig& config) {
         for (const float value : config.origin) validate_float(value, "Sparkles origin");
         validate_positive(config.launch_speed, "Sparkles launch_speed");
         if (config.launch_speed_jitter < 0.0f || !std::isfinite(config.launch_speed_jitter)) throw std::runtime_error("Sparkles launch_speed_jitter must be finite and non-negative");
@@ -57,7 +57,7 @@ namespace {
 
 } // namespace
 
-namespace xayah {
+namespace spectra {
     SparklesSolver::SparklesSolver(const SparklesConfig& config) : config{config} {
         validate_config(this->config);
         this->states.reserve(static_cast<std::size_t>(this->config.explosion_particles + this->config.ring_particles + this->config.glitter_particles + 512u));
@@ -252,4 +252,4 @@ namespace xayah {
         const float r     = std::sqrt(std::max(0.0f, 1.0f - z * z));
         return {r * std::cos(theta), z, r * std::sin(theta)};
     }
-} // namespace xayah
+} // namespace spectra

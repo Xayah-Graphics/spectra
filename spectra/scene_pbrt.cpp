@@ -6,14 +6,14 @@ module;
 
 #include <zlib.h>
 
-module xayah.scene.pbrt;
+module spectra.scene.pbrt;
 
-import xayah.scene;
+import spectra.scene;
 
 import std;
 
 
-namespace xayah::scene {
+namespace spectra::scene {
     namespace {
         constexpr char DefaultMaterialName[] = "__pbrt_default_material";
 
@@ -1395,4 +1395,4 @@ namespace xayah::scene {
         if (name == "default") scene.name = "default";
         return SceneWorkspace{std::move(scene)};
     }
-} // namespace xayah::scene
+} // namespace spectra::scene

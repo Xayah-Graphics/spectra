@@ -1,7 +1,7 @@
 export module bouncingball;
 import std;
 
-namespace xayah {
+namespace spectra {
     export struct BouncingBallVertex {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
@@ -35,4 +35,4 @@ namespace xayah {
         std::vector<BouncingBallVertex> vertices{};
         std::vector<std::uint32_t> indices{};
     };
-} // namespace xayah
+} // namespace spectra

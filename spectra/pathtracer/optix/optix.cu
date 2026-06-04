@@ -12,7 +12,7 @@
 #include <spectra/pathtracer/wavefront/intersect.cuh>
 
 // Make shader support functions visible to OptiX-IR, which is compiled as a
-// separate device module from spectra_gpu_lib.
+// separate device module from spectra_pathtracer.
 #include <optix_device.h>
 #include <spectra/pathtracer/util/color.cu>
 #include <spectra/pathtracer/util/colorspace.cu>

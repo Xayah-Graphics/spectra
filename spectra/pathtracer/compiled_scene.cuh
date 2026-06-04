@@ -21,10 +21,10 @@
 #include <string>
 #include <vector>
 
-namespace xayah::scene {
+namespace spectra::scene {
     struct SceneTranslationReport;
     struct SceneSnapshot;
-} // namespace xayah::scene
+} // namespace spectra::scene
 
 namespace spectra {
     struct MeasuredBxDFData;
@@ -117,8 +117,8 @@ namespace spectra::pathtracer {
         ThreadLocal<Allocator> threadAllocators;
     };
 
-    [[nodiscard]] xayah::scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const xayah::scene::SceneSnapshot& scene);
-    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const xayah::scene::SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
+    [[nodiscard]] spectra::scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const spectra::scene::SceneSnapshot& scene);
+    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const spectra::scene::SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride = {});
 } // namespace spectra::pathtracer
 
 #endif // SPECTRA_PATHTRACER_COMPILED_SCENE_H

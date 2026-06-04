@@ -1,9 +1,9 @@
-export module xayah.scene.pbrt;
+export module spectra.scene.pbrt;
 
-export import xayah.scene;
+export import spectra.scene;
 import std;
 
-export namespace xayah::scene {
+export namespace spectra::scene {
     enum class PbrtSceneCatalogEntryState {
         Pending,
         Ready,
@@ -36,4 +36,4 @@ export namespace xayah::scene {
     void ValidatePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry);
     void ValidatePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
     [[nodiscard]] SceneWorkspace BuildPbrtScene(std::string_view name);
-} // namespace xayah::scene
+} // namespace spectra::scene

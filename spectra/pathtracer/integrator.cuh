@@ -19,9 +19,9 @@
 #include <spectra/pathtracer/wavefront/workitems.cuh>
 #include <spectra/pathtracer/wavefront/workqueue.cuh>
 
-namespace xayah::scene {
+namespace spectra::scene {
     struct SceneSnapshot;
-} // namespace xayah::scene
+} // namespace spectra::scene
 
 namespace spectra::optix {
     class SpectraOptiXAggregate;

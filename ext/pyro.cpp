@@ -11,7 +11,7 @@ import std;
 namespace {
     constexpr std::uint32_t flow_boundary_periodic = 3u;
 
-    void write_flow_face(const std::size_t index, const xayah::PyroFlowBoundaryFace& face, std::array<std::uint32_t, 6>& types, std::array<float, 18>& velocity, std::array<float, 6>& pressure) {
+    void write_flow_face(const std::size_t index, const spectra::PyroFlowBoundaryFace& face, std::array<std::uint32_t, 6>& types, std::array<float, 18>& velocity, std::array<float, 6>& pressure) {
         types[index]              = static_cast<std::uint32_t>(face.type);
         velocity[index * 3u + 0u] = face.velocity_x;
         velocity[index * 3u + 1u] = face.velocity_y;
@@ -19,12 +19,12 @@ namespace {
         pressure[index]           = face.pressure;
     }
 
-    void write_scalar_face(const std::size_t index, const xayah::PyroScalarBoundaryFace& face, std::array<std::uint32_t, 6>& types, std::array<float, 6>& values) {
+    void write_scalar_face(const std::size_t index, const spectra::PyroScalarBoundaryFace& face, std::array<std::uint32_t, 6>& types, std::array<float, 6>& values) {
         types[index]  = static_cast<std::uint32_t>(face.type);
         values[index] = face.value;
     }
 
-    void write_flow_boundary(const xayah::PyroFlowBoundary& boundary, std::array<std::uint32_t, 6>& types, std::array<float, 18>& velocity, std::array<float, 6>& pressure) {
+    void write_flow_boundary(const spectra::PyroFlowBoundary& boundary, std::array<std::uint32_t, 6>& types, std::array<float, 18>& velocity, std::array<float, 6>& pressure) {
         write_flow_face(0u, boundary.x_minus, types, velocity, pressure);
         write_flow_face(1u, boundary.x_plus, types, velocity, pressure);
         write_flow_face(2u, boundary.y_minus, types, velocity, pressure);
@@ -33,7 +33,7 @@ namespace {
         write_flow_face(5u, boundary.z_plus, types, velocity, pressure);
     }
 
-    void write_scalar_boundary(const xayah::PyroScalarBoundary& boundary, std::array<std::uint32_t, 6>& types, std::array<float, 6>& values) {
+    void write_scalar_boundary(const spectra::PyroScalarBoundary& boundary, std::array<std::uint32_t, 6>& types, std::array<float, 6>& values) {
         write_scalar_face(0u, boundary.x_minus, types, values);
         write_scalar_face(1u, boundary.x_plus, types, values);
         write_scalar_face(2u, boundary.y_minus, types, values);
@@ -42,15 +42,15 @@ namespace {
         write_scalar_face(5u, boundary.z_plus, types, values);
     }
 
-    bool paired_periodic(const xayah::PyroFlowBoundaryFace& minus_face, const xayah::PyroFlowBoundaryFace& plus_face) {
-        return (minus_face.type == xayah::PyroFlowBoundaryType::periodic) == (plus_face.type == xayah::PyroFlowBoundaryType::periodic);
+    bool paired_periodic(const spectra::PyroFlowBoundaryFace& minus_face, const spectra::PyroFlowBoundaryFace& plus_face) {
+        return (minus_face.type == spectra::PyroFlowBoundaryType::periodic) == (plus_face.type == spectra::PyroFlowBoundaryType::periodic);
     }
 
-    bool paired_periodic(const xayah::PyroScalarBoundaryFace& minus_face, const xayah::PyroScalarBoundaryFace& plus_face) {
-        return (minus_face.type == xayah::PyroScalarBoundaryType::periodic) == (plus_face.type == xayah::PyroScalarBoundaryType::periodic);
+    bool paired_periodic(const spectra::PyroScalarBoundaryFace& minus_face, const spectra::PyroScalarBoundaryFace& plus_face) {
+        return (minus_face.type == spectra::PyroScalarBoundaryType::periodic) == (plus_face.type == spectra::PyroScalarBoundaryType::periodic);
     }
 
-    void validate_config(const xayah::PyroConfig& config) {
+    void validate_config(const spectra::PyroConfig& config) {
         if (config.resolution[0] == 0 || config.resolution[1] == 0 || config.resolution[2] == 0) throw std::runtime_error("Pyro resolution must be positive");
         if (config.resolution[0] > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) || config.resolution[1] > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) || config.resolution[2] > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) throw std::runtime_error("Pyro resolution exceeds CUDA solver int range");
         if (config.cell_size <= 0.0f) throw std::runtime_error("Pyro cell_size must be positive");
@@ -63,7 +63,7 @@ namespace {
         if (cell_count == 0 || cell_count > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) throw std::runtime_error("Pyro cell count exceeds pressure solver int range");
     }
 
-    void validate_source(const xayah::PyroPlumeSource& source) {
+    void validate_source(const spectra::PyroPlumeSource& source) {
         if (source.radius[0] <= 0.0f || source.radius[1] <= 0.0f || source.radius[2] <= 0.0f) throw std::runtime_error("Pyro plume source radius must be positive");
         if (source.density < 0.0f) throw std::runtime_error("Pyro plume source density must be non-negative");
         if (source.temperature < 0.0f) throw std::runtime_error("Pyro plume source temperature must be non-negative");
@@ -117,7 +117,7 @@ namespace {
     }
 } // namespace
 
-namespace xayah {
+namespace spectra {
     PyroSolver::PyroSolver(const PyroConfig& config) {
         validate_config(config);
         this->host.resolution                  = config.resolution;
@@ -538,4 +538,4 @@ namespace xayah {
         this->host.spmv_buffer_size = 0;
         this->device                = {};
     }
-} // namespace xayah
+} // namespace spectra

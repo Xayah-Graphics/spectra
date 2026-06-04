@@ -242,7 +242,7 @@ namespace {
     }
 } // namespace
 
-namespace xayah::cloth_cuda {
+namespace spectra::cloth_cuda {
     void launch_reset(const cudaStream_t stream, const unsigned grid, const unsigned block, float* position_x, float* position_y, float* position_z, float* previous_x, float* previous_y, float* previous_z, float* velocity_x, float* velocity_y, float* velocity_z, float* inverse_mass, const std::uint32_t columns, const std::uint32_t rows, const float origin_x, const float origin_y, const float origin_z, const float dx, const float dz) {
         reset_kernel<<<grid, block, 0, stream>>>(position_x, position_y, position_z, previous_x, previous_y, previous_z, velocity_x, velocity_y, velocity_z, inverse_mass, columns, rows, origin_x, origin_y, origin_z, dx, dz);
         check_cuda(cudaGetLastError(), "reset cloth kernel");
@@ -279,4 +279,4 @@ namespace xayah::cloth_cuda {
         normalize_normals_kernel<<<grid, block, 0, stream>>>(normal_x, normal_y, normal_z, error_flag, vertex_count);
         check_cuda(cudaGetLastError(), "normalize cloth normals kernel");
     }
-} // namespace xayah::cloth_cuda
+} // namespace spectra::cloth_cuda

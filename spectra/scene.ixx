@@ -1,10 +1,10 @@
-export module xayah.scene;
+export module spectra.scene;
 
 export import spectra.util.math;
 import std;
 
 export extern "C++" {
-    namespace xayah::scene {
+    namespace spectra::scene {
         struct SceneRevision {
             std::uint64_t value{};
 
@@ -208,5 +208,5 @@ export extern "C++" {
         };
 
         [[nodiscard]] SceneInfo DescribeScene(const SceneSnapshot& scene);
-    } // namespace xayah::scene
+    } // namespace spectra::scene
 }

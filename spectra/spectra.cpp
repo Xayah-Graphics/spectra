@@ -20,9 +20,9 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-module xayah.spectra;
+module spectra;
 
-import xayah.spectra.contract;
+import spectra.contract;
 import std;
 
 namespace {
@@ -144,7 +144,7 @@ namespace {
 
 } // namespace
 
-namespace xayah {
+namespace spectra {
     struct Spectra::FrameState {
         std::uint32_t frame_index{0};
         std::uint32_t image_index{0};
@@ -925,4 +925,4 @@ namespace xayah {
         this->surface.resize_requested = false;
         this->create_imgui();
     }
-} // namespace xayah
+} // namespace spectra

@@ -9,13 +9,13 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-export module xayah.renderer.pathtracer;
+export module spectra.pathtracer;
 
 import std;
-export import xayah.scene;
-export import xayah.spectra.contract;
+export import spectra.scene;
+export import spectra.contract;
 
-export namespace xayah {
+export namespace spectra::pathtracer {
     template <typename Host>
     concept PathtracerHost = requires(Host& host, SpectraPanel panel, std::string detail) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
@@ -72,7 +72,7 @@ export namespace xayah {
 
     class PathtracerRenderer final {
     public:
-        explicit PathtracerRenderer(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace);
+        explicit PathtracerRenderer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
         ~PathtracerRenderer() noexcept;
 
         PathtracerRenderer(const PathtracerRenderer& other) = delete;
@@ -81,7 +81,7 @@ export namespace xayah {
         PathtracerRenderer& operator=(PathtracerRenderer&& other) noexcept;
 
         [[nodiscard]] static std::string_view target_name();
-        [[nodiscard]] static xayah::scene::SceneTranslationTarget translation_target();
+        [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 
         template <PathtracerHost Host>
@@ -125,4 +125,4 @@ export namespace xayah {
         void after_imgui_created();
         [[nodiscard]] SpectraFrameResult begin_frame(PathtracerHostView host, const SpectraFrameInfo& frame);
     };
-} // namespace xayah
+} // namespace spectra::pathtracer

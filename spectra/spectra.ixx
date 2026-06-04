@@ -12,12 +12,12 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-export module xayah.spectra;
+export module spectra;
 
-export import xayah.spectra.contract;
+export import spectra.contract;
 import std;
 
-export namespace xayah {
+export namespace spectra {
     class Spectra {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
@@ -184,4 +184,4 @@ export namespace xayah {
     void Spectra::register_renderer(Renderer renderer) {
         this->register_renderer(RegisteredRenderer{std::move(renderer)});
     }
-} // namespace xayah
+} // namespace spectra

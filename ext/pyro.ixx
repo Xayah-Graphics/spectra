@@ -7,7 +7,7 @@ module;
 export module pyro;
 import std;
 
-namespace xayah {
+namespace spectra {
     export enum class PyroFlowBoundaryType : std::uint32_t {
         no_slip_wall   = 0,
         free_slip_wall = 1,
@@ -189,4 +189,4 @@ namespace xayah {
         void solve_pressure(float delta_seconds);
         void reset_moved_from() noexcept;
     };
-} // namespace xayah
+} // namespace spectra

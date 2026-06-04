@@ -1,9 +1,9 @@
-module xayah.scene;
+module spectra.scene;
 
 import std;
 
 extern "C++" {
-namespace xayah::scene {
+namespace spectra::scene {
     namespace {
         [[nodiscard]] float OneFloatParameter(const std::vector<SceneParameter>& parameters, const std::string& name, const float fallback) {
             for (const SceneParameter& parameter : parameters) {
@@ -121,5 +121,5 @@ namespace xayah::scene {
             .camera_fov_degrees      = cameraFov,
         };
     }
-} // namespace xayah::scene
+} // namespace spectra::scene
 }

@@ -4,11 +4,11 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-export module xayah.spectra.contract;
+export module spectra.contract;
 
 import std;
 
-export namespace xayah {
+export namespace spectra {
     enum class SpectraDockSlot {
         Center,
         Left,
@@ -96,4 +96,4 @@ export namespace xayah {
         { renderer.begin_frame(host, frame) } -> SpectraFrameResultLike;
         { renderer.record_frame(commandBuffer) } -> std::same_as<void>;
     };
-} // namespace xayah
+} // namespace spectra

@@ -6,10 +6,10 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-module xayah.renderer.rasterizer;
+module spectra.rasterizer;
 
-import xayah.scene;
-import xayah.spectra.contract;
+import spectra.scene;
+import spectra.contract;
 import std;
 
 namespace {
@@ -41,17 +41,17 @@ namespace {
     }
 } // namespace
 
-namespace xayah {
-    [[nodiscard]] xayah::scene::SceneTranslationReport analyze_rasterizer_scene(const xayah::scene::SceneSnapshot& document) {
-        xayah::scene::SceneTranslationReport report{.target = std::string{RasterizerRenderer::target_name()}, .supported = false};
+namespace spectra::rasterizer {
+    [[nodiscard]] spectra::scene::SceneTranslationReport analyze_rasterizer_scene(const spectra::scene::SceneSnapshot& document) {
+        spectra::scene::SceneTranslationReport report{.target = std::string{RasterizerRenderer::target_name()}, .supported = false};
         if (document.name.empty()) {
-            report.diagnostics.push_back(xayah::scene::SceneDiagnostic{
-                .source  = xayah::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
+            report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
+                .source  = spectra::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
                 .message = "Rasterizer scene translation requires a named scene document",
             });
         } else {
-            report.diagnostics.push_back(xayah::scene::SceneDiagnostic{
-                .source  = xayah::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
+            report.diagnostics.push_back(spectra::scene::SceneDiagnostic{
+                .source  = spectra::scene::SceneSourceLocation{.filename = document.source, .line = 1, .column = 1},
                 .message = "Rasterizer backend does not currently provide PBRT scene rasterization translation",
             });
         }
@@ -60,7 +60,7 @@ namespace xayah {
 
     class RasterizerRenderer::Impl {
     public:
-        explicit Impl(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace);
+        explicit Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
         ~Impl() noexcept;
 
         [[nodiscard]] std::string_view name() const;
@@ -91,10 +91,10 @@ namespace xayah {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool imgui_ready{false};
-        std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace{};
+        std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace{};
 
-        std::shared_ptr<const xayah::scene::SceneSnapshot> scene_snapshot{};
-        std::optional<xayah::scene::SceneInfo> scene_info{};
+        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot{};
+        std::optional<spectra::scene::SceneInfo> scene_info{};
 
         struct {
             vk::Extent2D requested_extent{};
@@ -112,7 +112,7 @@ namespace xayah {
         } viewport;
     };
 
-    RasterizerRenderer::RasterizerRenderer(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
+    RasterizerRenderer::RasterizerRenderer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
 
     RasterizerRenderer::~RasterizerRenderer() noexcept = default;
 
@@ -124,10 +124,10 @@ namespace xayah {
         return "Spectra Rasterizer";
     }
 
-    xayah::scene::SceneTranslationTarget RasterizerRenderer::translation_target() {
-        return xayah::scene::SceneTranslationTarget{
+    spectra::scene::SceneTranslationTarget RasterizerRenderer::translation_target() {
+        return spectra::scene::SceneTranslationTarget{
             .rendererName = std::string{RasterizerRenderer::target_name()},
-            .analyze      = [](const xayah::scene::SceneSnapshot& document) { return analyze_rasterizer_scene(document); },
+            .analyze      = [](const spectra::scene::SceneSnapshot& document) { return analyze_rasterizer_scene(document); },
         };
     }
 
@@ -159,7 +159,7 @@ namespace xayah {
         this->impl->record_frame(command_buffer);
     }
 
-    RasterizerRenderer::Impl::Impl(std::shared_ptr<xayah::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
+    RasterizerRenderer::Impl::Impl(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
         if (this->source_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
     }
 
@@ -206,17 +206,17 @@ namespace xayah {
     }
 
     void RasterizerRenderer::Impl::synchronize_scene_workspace() {
-        std::shared_ptr<const xayah::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
+        std::shared_ptr<const spectra::scene::SceneSnapshot> next_snapshot = this->source_workspace->snapshot();
         if (next_snapshot == nullptr) throw std::runtime_error("Spectra rasterizer source scene workspace returned an empty scene snapshot");
         if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
-        const xayah::scene::SceneTranslationReport report = analyze_rasterizer_scene(*next_snapshot);
+        const spectra::scene::SceneTranslationReport report = analyze_rasterizer_scene(*next_snapshot);
         if (!report.supported) {
             std::string message = std::format("{} cannot translate scene \"{}\"", RasterizerRenderer::target_name(), next_snapshot->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
         this->scene_snapshot = std::move(next_snapshot);
-        this->scene_info     = xayah::scene::DescribeScene(*this->scene_snapshot);
+        this->scene_info     = spectra::scene::DescribeScene(*this->scene_snapshot);
     }
 
     std::string RasterizerRenderer::Impl::window_detail() const {
@@ -395,4 +395,4 @@ namespace xayah {
             ImGui::Text("Textures: %llu", static_cast<unsigned long long>(this->scene_info->texture_count));
         }
     }
-} // namespace xayah
+} // namespace spectra::rasterizer
