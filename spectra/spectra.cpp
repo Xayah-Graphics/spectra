@@ -76,74 +76,120 @@ namespace {
         io.FontDefault = default_font;
     }
 
+    [[nodiscard]] ImVec4 ui_rgba(const int red, const int green, const int blue, const float alpha = 1.0f) {
+        return ImVec4{static_cast<float>(red) / 255.0f, static_cast<float>(green) / 255.0f, static_cast<float>(blue) / 255.0f, alpha};
+    }
+
     void apply_imgui_style() {
         ImGui::StyleColorsDark();
         ImGuiStyle& style                  = ImGui::GetStyle();
-        style.WindowRounding               = 6.0f;
+        style.Alpha                        = 1.0f;
+        style.DisabledAlpha                = 0.45f;
+        style.WindowRounding               = 7.0f;
         style.WindowBorderSize             = 1.0f;
+        style.ChildRounding                = 6.0f;
+        style.ChildBorderSize              = 1.0f;
+        style.PopupRounding                = 7.0f;
+        style.PopupBorderSize              = 1.0f;
         style.ColorButtonPosition          = ImGuiDir_Right;
-        style.FrameRounding                = 4.0f;
+        style.FrameRounding                = 5.0f;
         style.FrameBorderSize              = 1.0f;
-        style.GrabRounding                 = 4.0f;
-        style.ScrollbarRounding            = 6.0f;
-        style.TabRounding                  = 4.0f;
+        style.GrabRounding                 = 5.0f;
+        style.ScrollbarRounding            = 8.0f;
+        style.TabRounding                  = 6.0f;
+        style.TabBorderSize                = 0.0f;
         style.IndentSpacing                = 14.0f;
-        style.ItemSpacing                  = ImVec2{8.0f, 6.0f};
-        style.FramePadding                 = ImVec2{8.0f, 5.0f};
-        style.WindowPadding                = ImVec2{10.0f, 10.0f};
-        style.Colors[ImGuiCol_WindowBg]    = ImVec4{0.075f, 0.080f, 0.090f, 1.0f};
-        style.Colors[ImGuiCol_ChildBg]     = ImVec4{0.060f, 0.065f, 0.074f, 1.0f};
-        style.Colors[ImGuiCol_MenuBarBg]   = ImVec4{0.050f, 0.055f, 0.064f, 1.0f};
-        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4{0.050f, 0.055f, 0.064f, 1.0f};
-        style.Colors[ImGuiCol_PopupBg]     = ImVec4{0.070f, 0.075f, 0.085f, 1.0f};
-        style.Colors[ImGuiCol_Border]      = ImVec4{0.180f, 0.195f, 0.220f, 1.0f};
-        style.Colors[ImGuiCol_FrameBg]     = ImVec4{0.105f, 0.115f, 0.130f, 1.0f};
+        style.ItemSpacing                  = ImVec2{8.0f, 7.0f};
+        style.ItemInnerSpacing             = ImVec2{7.0f, 5.0f};
+        style.FramePadding                 = ImVec2{9.0f, 5.0f};
+        style.CellPadding                  = ImVec2{8.0f, 5.0f};
+        style.WindowPadding                = ImVec2{11.0f, 10.0f};
+        style.SeparatorTextPadding         = ImVec2{8.0f, 4.0f};
+        style.SelectableTextAlign          = ImVec2{0.0f, 0.5f};
 
-        const ImVec4 normal_color = ImVec4{0.165f, 0.345f, 0.650f, 1.0f};
-        constexpr std::array normal_colors{
-            ImGuiCol_Header,
-            ImGuiCol_SliderGrab,
-            ImGuiCol_Button,
-            ImGuiCol_CheckMark,
-            ImGuiCol_ResizeGrip,
-            ImGuiCol_TextSelectedBg,
-            ImGuiCol_Separator,
-            ImGuiCol_FrameBgActive,
-        };
-        for (const ImGuiCol color_id : normal_colors) style.Colors[color_id] = normal_color;
-
-        const ImVec4 active_color = ImVec4{0.105f, 0.285f, 0.560f, 1.0f};
-        constexpr std::array active_colors{
-            ImGuiCol_HeaderActive,
-            ImGuiCol_SliderGrabActive,
-            ImGuiCol_ButtonActive,
-            ImGuiCol_ResizeGripActive,
-            ImGuiCol_SeparatorActive,
-        };
-        for (const ImGuiCol color_id : active_colors) style.Colors[color_id] = active_color;
-
-        const ImVec4 hovered_color = ImVec4{0.235f, 0.450f, 0.760f, 1.0f};
-        constexpr std::array hovered_colors{
-            ImGuiCol_HeaderHovered,
-            ImGuiCol_ButtonHovered,
-            ImGuiCol_FrameBgHovered,
-            ImGuiCol_ResizeGripHovered,
-            ImGuiCol_SeparatorHovered,
-        };
-        for (const ImGuiCol color_id : hovered_colors) style.Colors[color_id] = hovered_color;
-
-        style.Colors[ImGuiCol_TitleBgActive]    = ImVec4{0.090f, 0.100f, 0.115f, 1.0f};
-        style.Colors[ImGuiCol_TitleBg]          = ImVec4{0.050f, 0.055f, 0.064f, 1.0f};
-        style.Colors[ImGuiCol_Tab]              = ImVec4{0.080f, 0.090f, 0.105f, 1.0f};
-        style.Colors[ImGuiCol_TabHovered]       = ImVec4{0.235f, 0.450f, 0.760f, 1.0f};
-        style.Colors[ImGuiCol_TabActive]        = ImVec4{0.125f, 0.150f, 0.180f, 1.0f};
-        style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4{0.020f, 0.025f, 0.032f, 0.650f};
+        style.Colors[ImGuiCol_Text]                  = ui_rgba(232, 236, 243);
+        style.Colors[ImGuiCol_TextDisabled]          = ui_rgba(132, 143, 156);
+        style.Colors[ImGuiCol_WindowBg]              = ui_rgba(16, 18, 21);
+        style.Colors[ImGuiCol_ChildBg]               = ui_rgba(20, 23, 27);
+        style.Colors[ImGuiCol_PopupBg]               = ui_rgba(24, 28, 33);
+        style.Colors[ImGuiCol_Border]                = ui_rgba(48, 55, 63);
+        style.Colors[ImGuiCol_BorderShadow]          = ui_rgba(0, 0, 0, 0.0f);
+        style.Colors[ImGuiCol_FrameBg]               = ui_rgba(29, 34, 40);
+        style.Colors[ImGuiCol_FrameBgHovered]        = ui_rgba(38, 47, 55);
+        style.Colors[ImGuiCol_FrameBgActive]         = ui_rgba(47, 62, 72);
+        style.Colors[ImGuiCol_TitleBg]               = ui_rgba(15, 17, 20);
+        style.Colors[ImGuiCol_TitleBgActive]         = ui_rgba(21, 25, 30);
+        style.Colors[ImGuiCol_TitleBgCollapsed]      = ui_rgba(15, 17, 20);
+        style.Colors[ImGuiCol_MenuBarBg]             = ui_rgba(16, 18, 21);
+        style.Colors[ImGuiCol_ScrollbarBg]           = ui_rgba(17, 20, 23);
+        style.Colors[ImGuiCol_ScrollbarGrab]         = ui_rgba(49, 57, 66);
+        style.Colors[ImGuiCol_ScrollbarGrabHovered]  = ui_rgba(67, 78, 90);
+        style.Colors[ImGuiCol_ScrollbarGrabActive]   = ui_rgba(83, 98, 114);
+        style.Colors[ImGuiCol_CheckMark]             = ui_rgba(91, 197, 184);
+        style.Colors[ImGuiCol_SliderGrab]            = ui_rgba(91, 166, 230);
+        style.Colors[ImGuiCol_SliderGrabActive]      = ui_rgba(118, 195, 245);
+        style.Colors[ImGuiCol_Button]                = ui_rgba(31, 37, 43);
+        style.Colors[ImGuiCol_ButtonHovered]         = ui_rgba(43, 55, 64);
+        style.Colors[ImGuiCol_ButtonActive]          = ui_rgba(47, 78, 95);
+        style.Colors[ImGuiCol_Header]                = ui_rgba(31, 38, 45);
+        style.Colors[ImGuiCol_HeaderHovered]         = ui_rgba(43, 58, 70);
+        style.Colors[ImGuiCol_HeaderActive]          = ui_rgba(48, 79, 96);
+        style.Colors[ImGuiCol_Separator]             = ui_rgba(47, 54, 62);
+        style.Colors[ImGuiCol_SeparatorHovered]      = ui_rgba(78, 112, 132);
+        style.Colors[ImGuiCol_SeparatorActive]       = ui_rgba(92, 145, 169);
+        style.Colors[ImGuiCol_ResizeGrip]            = ui_rgba(47, 54, 62, 0.7f);
+        style.Colors[ImGuiCol_ResizeGripHovered]     = ui_rgba(78, 112, 132, 0.8f);
+        style.Colors[ImGuiCol_ResizeGripActive]      = ui_rgba(92, 145, 169, 0.95f);
+        style.Colors[ImGuiCol_Tab]                   = ui_rgba(22, 25, 29);
+        style.Colors[ImGuiCol_TabHovered]            = ui_rgba(42, 57, 69);
+        style.Colors[ImGuiCol_TabActive]             = ui_rgba(35, 43, 51);
+        style.Colors[ImGuiCol_TabUnfocused]          = ui_rgba(18, 21, 24);
+        style.Colors[ImGuiCol_TabUnfocusedActive]    = ui_rgba(27, 32, 38);
+        style.Colors[ImGuiCol_DockingPreview]        = ui_rgba(91, 166, 230, 0.42f);
+        style.Colors[ImGuiCol_DockingEmptyBg]        = ui_rgba(14, 16, 19);
+        style.Colors[ImGuiCol_TableHeaderBg]         = ui_rgba(26, 31, 36);
+        style.Colors[ImGuiCol_TableBorderStrong]     = ui_rgba(50, 58, 67);
+        style.Colors[ImGuiCol_TableBorderLight]      = ui_rgba(39, 46, 53);
+        style.Colors[ImGuiCol_TableRowBg]            = ui_rgba(0, 0, 0, 0.0f);
+        style.Colors[ImGuiCol_TableRowBgAlt]         = ui_rgba(24, 28, 33, 0.58f);
+        style.Colors[ImGuiCol_TextSelectedBg]        = ui_rgba(64, 124, 163, 0.45f);
+        style.Colors[ImGuiCol_DragDropTarget]        = ui_rgba(91, 197, 184, 0.9f);
+        style.Colors[ImGuiCol_NavHighlight]          = ui_rgba(91, 166, 230, 0.7f);
+        style.Colors[ImGuiCol_ModalWindowDimBg]      = ui_rgba(5, 7, 10, 0.68f);
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
 
     [[nodiscard]] float command_bar_height() {
         const ImGuiStyle& style = ImGui::GetStyle();
-        return ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
+        return std::max(42.0f, ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f);
+    }
+
+    void push_toolbar_button_style(const bool active) {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, active ? style.Colors[ImGuiCol_HeaderActive] : style.Colors[ImGuiCol_Button]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ui_rgba(59, 96, 116) : style.Colors[ImGuiCol_ButtonHovered]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_ButtonActive]);
+        ImGui::PushStyleColor(ImGuiCol_Border, active ? ui_rgba(91, 166, 230, 0.95f) : style.Colors[ImGuiCol_Border]);
+    }
+
+    void pop_toolbar_button_style() {
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
+    }
+
+    void push_renderer_button_style(const bool active) {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, active ? ui_rgba(49, 78, 95) : ui_rgba(28, 33, 39));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ui_rgba(60, 97, 116) : ui_rgba(39, 49, 57));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_ButtonActive]);
+        ImGui::PushStyleColor(ImGuiCol_Border, active ? ui_rgba(91, 166, 230, 0.85f) : ui_rgba(49, 57, 65));
+    }
+
+    void pop_renderer_button_style() {
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
     }
 
 } // namespace
@@ -777,26 +823,33 @@ namespace spectra {
 
         constexpr ImGuiWindowFlags command_bar_flags =
             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 7.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ui_rgba(13, 15, 18, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ui_rgba(42, 48, 55, 1.0f));
         const bool began = ImGui::Begin("SpectraCommandBar", nullptr, command_bar_flags);
         if (!began) {
             ImGui::End();
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(2);
             return;
         }
 
-        ImGui::TextUnformatted("Spectra");
-        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ui_rgba(232, 236, 243), "Spectra");
+        ImGui::SameLine(0.0f, 10.0f);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, 10.0f);
         for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
             const bool selected = renderer_index == this->active_renderer_index;
             const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
-            ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+            push_renderer_button_style(selected);
             ImGui::BeginDisabled(!availability.available);
-            if (ImGui::SmallButton(this->renderers[renderer_index].name.c_str())) this->activate_renderer(renderer_index);
+            if (ImGui::Button(this->renderers[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) this->activate_renderer(renderer_index);
             ImGui::EndDisabled();
-            ImGui::PopStyleColor();
+            pop_renderer_button_style();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !availability.detail.empty()) ImGui::SetTooltip("%s", availability.detail.c_str());
-            if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 4.0f);
+            if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 6.0f);
         }
 
         std::vector<SpectraSidebarTab*> visible_tabs{};
@@ -811,45 +864,49 @@ namespace spectra {
 
         if (visible_tabs.empty() && visible_actions.empty()) {
             ImGui::End();
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(2);
             return;
         }
 
         const std::size_t button_count = visible_tabs.size() + visible_actions.size();
-        const float button_size        = ImGui::GetFrameHeight();
-        const float total_width        = static_cast<float>(button_count) * button_size + static_cast<float>(button_count + 1) * 4.0f + 2.0f;
-        const float window_width = ImGui::GetWindowWidth();
+        const float button_size        = std::max(30.0f, ImGui::GetFrameHeight());
+        const float total_width        = static_cast<float>(button_count) * button_size + static_cast<float>(button_count + 1) * 6.0f + 8.0f;
+        const float window_width       = ImGui::GetWindowWidth();
         if (window_width > total_width + ImGui::GetCursorPosX() + 24.0f) ImGui::SameLine(window_width - total_width - ImGui::GetStyle().WindowPadding.x);
         else ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::SameLine(0.0f, 6.0f);
         std::size_t button_index = 0;
         for (SpectraSidebarTab* tab : visible_tabs) {
             const bool selected = this->sidebar_visible && tab->id == this->active_sidebar_tab_id;
             const char* label   = tab->icon.empty() ? tab->title.c_str() : tab->icon.c_str();
-            ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+            push_toolbar_button_style(selected);
             if (ImGui::Button(label, ImVec2{button_size, button_size})) {
                 this->active_sidebar_tab_id = tab->id;
                 this->sidebar_visible       = !selected;
                 this->sidebar_tab_selection_requested = true;
                 this->dock_layout_initialized = false;
             }
-            ImGui::PopStyleColor();
+            pop_toolbar_button_style();
             if (ImGui::IsItemHovered() && !tab->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", tab->title.c_str(), tab->shortcut_label.c_str());
             if (ImGui::IsItemHovered() && tab->shortcut_label.empty()) ImGui::SetTooltip("%s", tab->title.c_str());
             ++button_index;
-            if (button_index < button_count) ImGui::SameLine(0.0f, 4.0f);
+            if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
         }
         for (SpectraToolbarAction* action : visible_actions) {
             const bool active = action->active();
-            ImGui::PushStyleColor(ImGuiCol_Button, active ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+            push_toolbar_button_style(active);
             if (ImGui::Button(action->icon.c_str(), ImVec2{button_size, button_size})) action->trigger();
-            ImGui::PopStyleColor();
+            pop_toolbar_button_style();
             if (ImGui::IsItemHovered() && !action->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", action->title.c_str(), action->shortcut_label.c_str());
             if (ImGui::IsItemHovered() && action->shortcut_label.empty()) ImGui::SetTooltip("%s", action->title.c_str());
             ++button_index;
-            if (button_index < button_count) ImGui::SameLine(0.0f, 4.0f);
+            if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
         }
         ImGui::End();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
     }
 
     void Spectra::draw_dockspace() {
@@ -928,17 +985,26 @@ namespace spectra {
         }
         if (visible_tabs.empty()) return;
 
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 10.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{8.0f, 8.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ui_rgba(18, 21, 25, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Tab, ui_rgba(24, 28, 33, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TabActive, ui_rgba(38, 47, 56, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, ui_rgba(48, 66, 78, 1.0f));
         const bool began = ImGui::Begin("Sidebar", nullptr, ImGuiWindowFlags_NoCollapse);
         if (!began) {
             ImGui::End();
+            ImGui::PopStyleColor(4);
+            ImGui::PopStyleVar(2);
             return;
         }
-        if (ImGui::BeginTabBar("SpectraSidebarTabs")) {
+        if (ImGui::BeginTabBar("SpectraSidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
             for (SpectraSidebarTab* tab : visible_tabs) {
                 const ImGuiTabItemFlags tab_flags = this->sidebar_tab_selection_requested && tab->id == this->active_sidebar_tab_id ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
                 const std::string label = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
                 if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
                     this->active_sidebar_tab_id = tab->id;
+                    ImGui::Spacing();
                     tab->draw();
                     ImGui::EndTabItem();
                 }
@@ -947,6 +1013,8 @@ namespace spectra {
             ImGui::EndTabBar();
         }
         ImGui::End();
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(2);
     }
 
     void Spectra::draw_registered_panels() {

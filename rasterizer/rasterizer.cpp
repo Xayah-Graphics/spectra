@@ -41,7 +41,7 @@ namespace {
     void draw_status_row(const char* label, const std::string_view value) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(label);
+        ImGui::TextDisabled("%s", label);
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(value.data(), value.data() + value.size());
     }
@@ -343,7 +343,10 @@ namespace spectra::rasterizer {
     }
 
     void RasterizerRenderer::Impl::draw_rasterizer_window() {
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
+        ImGui::TextUnformatted("Rasterizer");
+        ImGui::SameLine();
+        ImGui::TextDisabled("Development");
         ImGui::SeparatorText("Status");
         if (ImGui::BeginTable("SpectraRasterizerStatus", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);

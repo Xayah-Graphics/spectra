@@ -1640,7 +1640,7 @@ namespace {
     void draw_statistics_row(const char* label, const char* value) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(label);
+        ImGui::TextDisabled("%s", label);
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(value);
     }
@@ -1657,6 +1657,29 @@ namespace {
     [[nodiscard]] std::string positive_int_text(const int value) {
         if (value <= 0) return "Pending";
         return std::format("{}", value);
+    }
+
+    [[nodiscard]] ImFont* overlay_value_font() {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.Fonts == nullptr) throw std::runtime_error("ImGui font atlas is unavailable");
+        if (io.Fonts->Fonts.Size < 2) throw std::runtime_error("Spectra performance overlay requires the mono UI font");
+        ImFont* font = io.Fonts->Fonts.back();
+        if (font == nullptr) throw std::runtime_error("Spectra performance overlay mono font is null");
+        return font;
+    }
+
+    void draw_overlay_statistics_row(const char* label, const char* value) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("%s", label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::PushFont(overlay_value_font());
+        ImGui::TextUnformatted(value);
+        ImGui::PopFont();
+    }
+
+    void draw_overlay_statistics_row(const char* label, const std::string& value) {
+        draw_overlay_statistics_row(label, value.c_str());
     }
 } // namespace
 
@@ -1698,7 +1721,7 @@ namespace spectra::pathtracer {
     }
 
     void PathtracerRenderer::Impl::draw_camera_tab() {
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
         if (ImGui::BeginTable("SpectraCameraControls", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
@@ -1737,7 +1760,7 @@ namespace spectra::pathtracer {
         }
 
         const SceneInfo& scene = this->active_scene_info();
-        constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
+        constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
 
         ImGui::SeparatorText("Scene");
         if (ImGui::BeginTable("PathtracerSceneSummary", 2, table_flags)) {
@@ -1785,7 +1808,7 @@ namespace spectra::pathtracer {
             return;
         }
 
-        if (ImGui::BeginTable("SpectraPathTracerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+        if (ImGui::BeginTable("SpectraPathTracerSettings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_statistics_row("State", pathtracer_status.state);
@@ -1849,7 +1872,7 @@ namespace spectra::pathtracer {
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Accumulation");
             ImGui::TableSetColumnIndex(1);
-            if (ImGui::Button("Reset Accumulation")) this->request_pathtracer_accumulation_reset();
+            if (ImGui::Button(ICON_MS_RESTART_ALT " Reset")) this->request_pathtracer_accumulation_reset();
 
             ImGui::EndTable();
         }
@@ -1860,7 +1883,7 @@ namespace spectra::pathtracer {
             ImGui::TextDisabled("No active render pipeline");
             return;
         }
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg;
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
         if (ImGui::BeginTable("SpectraTonemapperSettings", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 130.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
@@ -1883,11 +1906,18 @@ namespace spectra::pathtracer {
 
         const ImVec2 overlay_position{this->ui.viewport_position[0] + 12.0f, this->ui.viewport_position[1] + 12.0f};
         ImGui::SetNextWindowPos(overlay_position, ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.35f);
+        ImGui::SetNextWindowBgAlpha(0.48f);
         constexpr ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{10.0f, 8.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 7.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.050f, 0.058f, 0.068f, 0.88f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.250f, 0.310f, 0.360f, 0.62f});
         const bool began = ImGui::Begin("PathtracerPerformanceOverlay", nullptr, overlay_flags);
         if (!began) {
             ImGui::End();
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(3);
             return;
         }
 
@@ -1897,35 +1927,38 @@ namespace spectra::pathtracer {
         const std::string viewport_resolution = resolution_text(this->ui.viewport_framebuffer_size);
         const std::string render_resolution   = this->render_resolution_sync.pathtracer_created ? resolution_text(this->render_resolution_sync.active_resolution) : "Pending";
 
+        ImGui::TextDisabled("%s", "Performance");
         if (ImGui::BeginTable("SpectraPathtracerPerformanceOverlayStats", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 78.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            draw_statistics_row("Scene", scene_title);
-            draw_statistics_row("State", status.state);
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 76.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 148.0f);
+            draw_overlay_statistics_row("Scene", scene_title);
+            draw_overlay_statistics_row("State", status.state);
             if (this->render_pipeline != nullptr) {
-                draw_statistics_row("Sample", std::format("{} / {}", this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count()));
-                draw_statistics_row("Progress", std::format("{:.1f}%", this->render_pipeline->completion_ratio() * 100.0f));
+                draw_overlay_statistics_row("Sample", std::format("{} / {}", this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count()));
+                draw_overlay_statistics_row("Progress", std::format("{:.1f}%", this->render_pipeline->completion_ratio() * 100.0f));
             } else {
-                draw_statistics_row("Sample", "No Pipeline");
-                draw_statistics_row("Progress", "Pending");
+                draw_overlay_statistics_row("Sample", "No Pipeline");
+                draw_overlay_statistics_row("Progress", "Pending");
             }
-            draw_statistics_row("Viewport", viewport_resolution);
-            draw_statistics_row("Render", render_resolution);
-            draw_statistics_row("Frame", std::format("{:.3f} ms", this->statistics.last_frame_milliseconds));
+            draw_overlay_statistics_row("Viewport", viewport_resolution);
+            draw_overlay_statistics_row("Render", render_resolution);
+            draw_overlay_statistics_row("Frame", std::format("{:.3f} ms", this->statistics.last_frame_milliseconds));
             if (this->statistics.frame_milliseconds.has_value()) {
                 const float average_frame_milliseconds = this->statistics.frame_milliseconds.average();
                 if (!(average_frame_milliseconds > 0.0f)) throw std::runtime_error("Average frame time must be positive after statistics are collected");
-                draw_statistics_row("FPS Avg", std::format("{:.1f}", 1000.0f / average_frame_milliseconds));
+                draw_overlay_statistics_row("FPS Avg", std::format("{:.1f}", 1000.0f / average_frame_milliseconds));
             } else {
-                draw_statistics_row("FPS Avg", "Collecting");
+                draw_overlay_statistics_row("FPS Avg", "Collecting");
             }
             if (this->statistics.throughput_mspp.has_value())
-                draw_statistics_row("Throughput", std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()));
+                draw_overlay_statistics_row("Throughput", std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()));
             else
-                draw_statistics_row("Throughput", "Collecting");
+                draw_overlay_statistics_row("Throughput", "Collecting");
             ImGui::EndTable();
         }
         ImGui::End();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(3);
     }
 
     void PathtracerRenderer::Impl::register_panels(PathtracerHostView& host) {

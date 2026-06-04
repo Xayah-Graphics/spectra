@@ -43,6 +43,17 @@ namespace {
         throw std::runtime_error("Unknown Spectra scene display state");
     }
 
+    void draw_display_state_label(const spectra::scene::SceneLibrary::DisplayState state) {
+        const ImVec4 color        = display_state_color(state);
+        const ImVec2 cursor       = ImGui::GetCursorScreenPos();
+        const float text_height   = ImGui::GetTextLineHeight();
+        const float dot_radius    = 3.5f;
+        const ImVec2 dot_position = ImVec2{cursor.x + dot_radius, cursor.y + text_height * 0.5f};
+        ImGui::GetWindowDrawList()->AddCircleFilled(dot_position, dot_radius, ImGui::GetColorU32(color));
+        ImGui::SetCursorScreenPos(ImVec2{cursor.x + dot_radius * 2.0f + 7.0f, cursor.y});
+        ImGui::TextColored(color, "%s", display_state_text(state));
+    }
+
     [[nodiscard]] bool display_filter_matches(const spectra::scene::SceneLibrary::DisplayState state, const int filter) {
         if (filter == 0) return true;
         if (filter == 1) return state == spectra::scene::SceneLibrary::DisplayState::Candidate || state == spectra::scene::SceneLibrary::DisplayState::Loaded;
@@ -605,23 +616,27 @@ namespace spectra::scene {
         if (selected_scene_index_snapshot >= catalog_snapshot.entries.size()) selected_scene_index_snapshot = active_scene_index_snapshot;
         if (selected_scene_index_snapshot < catalog_snapshot.entries.size() && catalog_snapshot.entries[selected_scene_index_snapshot].state == PbrtSceneCatalogEntryState::NonScene) selected_scene_index_snapshot = active_scene_index_snapshot;
 
-        ImGui::TextUnformatted("Scenes");
+        ImGui::TextUnformatted("Scene Library");
         ImGui::SameLine();
-        ImGui::TextDisabled("%zu candidate / %zu listed", catalog_snapshot.candidate_count, visible_scene_count(catalog_snapshot));
+        ImGui::TextDisabled("%zu / %zu", catalog_snapshot.candidate_count, visible_scene_count(catalog_snapshot));
         if (!active_renderer_snapshot.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", active_renderer_snapshot.c_str());
         }
 
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::InputText("##SpectraSceneSearch", this->scene_library.search.data(), this->scene_library.search.size(), ImGuiInputTextFlags_AutoSelectAll)) {
+        const float filter_width  = 142.0f;
+        const float control_width = ImGui::GetContentRegionAvail().x;
+        const bool compact_layout = control_width < 360.0f;
+        ImGui::SetNextItemWidth(compact_layout ? -1.0f : std::max(120.0f, control_width - filter_width - ImGui::GetStyle().ItemSpacing.x));
+        if (ImGui::InputTextWithHint("##SpectraSceneSearch", ICON_MS_SEARCH " Search scenes", this->scene_library.search.data(), this->scene_library.search.size(), ImGuiInputTextFlags_AutoSelectAll)) {
             std::scoped_lock lock{this->scene_catalog_mutex};
             this->scene_library.selected_index = active_scene_index_snapshot;
         }
 
         int filter = filter_snapshot;
         constexpr std::array<const char*, 5> filter_labels{"All", "Candidate", "Unsupported", "Invalid", "Checking"};
-        ImGui::SetNextItemWidth(-1.0f);
+        if (!compact_layout) ImGui::SameLine();
+        ImGui::SetNextItemWidth(compact_layout ? -1.0f : filter_width);
         if (ImGui::BeginCombo("##SpectraSceneFilter", filter_labels.at(static_cast<std::size_t>(filter)))) {
             for (std::size_t filter_index = 0; filter_index < filter_labels.size(); ++filter_index) {
                 const bool selected = filter == static_cast<int>(filter_index);
@@ -637,13 +652,13 @@ namespace spectra::scene {
         }
 
         const std::string_view search_text{this->scene_library.search.data()};
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
-        const float table_height              = std::max(180.0f, ImGui::GetContentRegionAvail().y * 0.55f);
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBodyUntilResize;
+        const float table_height              = std::max(220.0f, ImGui::GetContentRegionAvail().y * 0.58f);
         if (ImGui::BeginTable("SpectraSceneLibraryTable", 4, table_flags, ImVec2{0.0f, table_height})) {
             ImGui::TableSetupColumn("Scene", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 105.0f);
-            ImGui::TableSetupColumn("Integrator", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 104.0f);
+            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn("Integrator", ImGuiTableColumnFlags_WidthFixed, 96.0f);
             ImGui::TableHeadersRow();
             for (std::size_t scene_index = 0; scene_index < catalog_snapshot.entries.size(); ++scene_index) {
                 const PbrtSceneCatalogEntry& entry = catalog_snapshot.entries[scene_index];
@@ -669,7 +684,7 @@ namespace spectra::scene {
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextDisabled("%s", entry.group.c_str());
                 ImGui::TableSetColumnIndex(2);
-                ImGui::TextColored(display_state_color(state), "%s", display_state_text(state));
+                draw_display_state_label(state);
                 ImGui::TableSetColumnIndex(3);
                 if (entry.probe.has_value())
                     ImGui::TextUnformatted(last_probe_feature_type(*entry.probe, SceneProbeFeatureCategory::Integrator, "-").c_str());
@@ -686,10 +701,11 @@ namespace spectra::scene {
         const bool selected_active = selected_scene_index_snapshot == active_scene_index_snapshot;
         if (!active_renderer_snapshot.empty() && selected_entry.state == PbrtSceneCatalogEntryState::Candidate && !selected_report.has_value()) this->request_entry_report_analysis(active_renderer_snapshot, selected_scene_index_snapshot, selected_entry);
         const DisplayState selected_state = this->display_state(selected_entry, selected_report, !active_renderer_snapshot.empty(), selected_active);
-        ImGui::SeparatorText("Selected");
-        ImGui::TextUnformatted(selected_entry.displayName.c_str());
+        ImGui::Spacing();
+        ImGui::SeparatorText("Selected Scene");
+        ImGui::TextWrapped("%s", selected_entry.displayName.c_str());
         ImGui::TextDisabled("%s", selected_entry.id.c_str());
-        ImGui::TextColored(display_state_color(selected_state), "%s", display_state_text(selected_state));
+        draw_display_state_label(selected_state);
 
         const bool selected_candidate = selected_state == DisplayState::Candidate || selected_state == DisplayState::Loaded;
         ImGui::BeginDisabled(!selected_candidate || selected_active);
@@ -702,7 +718,6 @@ namespace spectra::scene {
             }
         }
         ImGui::EndDisabled();
-        if (selected_active) ImGui::TextColored(display_state_color(DisplayState::Loaded), "Loaded");
 
         if (load_error_snapshot.has_value()) {
             ImGui::SeparatorText("Last Load Error");
@@ -710,9 +725,9 @@ namespace spectra::scene {
         }
 
         if (selected_entry.probe.has_value()) {
-            constexpr ImGuiTableFlags info_flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
+            constexpr ImGuiTableFlags info_flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
             if (ImGui::BeginTable("SpectraSceneLibraryInfo", 2, info_flags)) {
-                ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+                ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 112.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                 const auto row = [](const char* label, const std::string& value) {
                     ImGui::TableNextRow();
@@ -737,6 +752,8 @@ namespace spectra::scene {
 
         if (selected_report.has_value() && !selected_report->diagnostics.empty()) {
             if (ImGui::CollapsingHeader("Translation", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
                 if (ImGui::BeginChild("SpectraSceneLibraryTranslation", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
                     for (const SceneDiagnostic& diagnostic : selected_report->diagnostics) {
                         ImGui::TextColored(display_state_color(DisplayState::Unsupported), "%s", source_location_text(diagnostic.source).c_str());
@@ -745,11 +762,15 @@ namespace spectra::scene {
                     }
                 }
                 ImGui::EndChild();
+                ImGui::PopStyleColor();
+                ImGui::PopStyleVar();
             }
         }
 
         if (!selected_entry.issues.empty()) {
             if (ImGui::CollapsingHeader("Probe Issues", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
                 if (ImGui::BeginChild("SpectraSceneLibraryIssues", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
                     for (const SceneDiagnostic& issue : selected_entry.issues) {
                         ImGui::TextColored(display_state_color(DisplayState::Invalid), "%s", source_location_text(issue.source).c_str());
@@ -758,6 +779,8 @@ namespace spectra::scene {
                     }
                 }
                 ImGui::EndChild();
+                ImGui::PopStyleColor();
+                ImGui::PopStyleVar();
             }
         }
     }
