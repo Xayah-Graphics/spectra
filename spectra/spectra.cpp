@@ -198,6 +198,8 @@ namespace spectra {
     struct Spectra::FrameState {
         std::uint32_t frame_index{0};
         std::uint32_t image_index{0};
+        std::uint64_t frame_number{0};
+        double delta_seconds{0.0};
         bool recreate_after_present{false};
         std::vector<vk::SemaphoreSubmitInfo> external_waits{};
     };
@@ -640,6 +642,12 @@ namespace spectra {
 
         frame.recreate_after_present = false;
         frame.frame_index            = this->sync.frame_index;
+        frame.frame_number           = this->timing.frame_number;
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        if (this->timing.last_frame_time_valid) frame.delta_seconds = std::chrono::duration<double>(now - this->timing.last_frame_time).count();
+        this->timing.last_frame_time       = now;
+        this->timing.last_frame_time_valid = true;
+        if (!std::isfinite(frame.delta_seconds) || frame.delta_seconds < 0.0) throw std::runtime_error("Spectra frame delta time is invalid");
         if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
 
         try {
@@ -667,7 +675,12 @@ namespace spectra {
 
         if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
         if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        const SpectraFrameInfo frame_info{frame.frame_index, frame.image_index};
+        const SpectraFrameInfo frame_info{
+            .frame_index   = frame.frame_index,
+            .image_index   = frame.image_index,
+            .frame_number  = frame.frame_number,
+            .delta_seconds = frame.delta_seconds,
+        };
         SpectraFrameResult frame_result = this->renderers[this->active_renderer_index].begin_frame(*this, frame_info);
         if (frame_result.completion_semaphore.has_value()) {
             if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
@@ -789,6 +802,7 @@ namespace spectra {
         if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
 
         this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
+        ++this->timing.frame_number;
     }
 
     void Spectra::draw_command_bar() {

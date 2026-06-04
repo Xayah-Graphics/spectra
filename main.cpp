@@ -83,16 +83,17 @@ namespace spectra::app {
 
     struct RasterizerProjectFrameInfo {
         double delta_seconds{};
+        double time_seconds{};
         std::uint64_t frame_index{};
     };
 
     template <typename Adapter>
-    concept RasterizerProjectAdapter = std::default_initializable<Adapter> && requires(Adapter& adapter, const Adapter& constAdapter, rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) {
+    concept RasterizerProjectAdapter = std::default_initializable<Adapter> && requires(Adapter& adapter, const Adapter& constAdapter, const RasterizerProjectFrameInfo& frame) {
         { Adapter::project_id() } -> std::convertible_to<std::string_view>;
         { Adapter::project_title() } -> std::convertible_to<std::string_view>;
         { constAdapter.create_document() } -> std::same_as<rasterizer::SceneDocument>;
-        { adapter.reset(workspace) } -> std::same_as<void>;
-        { adapter.step(workspace, frame) } -> std::same_as<void>;
+        { adapter.reset() } -> std::same_as<rasterizer::SceneFrameSnapshot>;
+        { adapter.step(frame) } -> std::same_as<rasterizer::SceneFrameSnapshot>;
     };
 
     class RasterizerProjectRuntime {
@@ -107,8 +108,8 @@ namespace spectra::app {
         [[nodiscard]] virtual std::string_view id() const                              = 0;
         [[nodiscard]] virtual std::string_view title() const                           = 0;
         [[nodiscard]] virtual rasterizer::SceneDocument create_document() const         = 0;
-        virtual void reset(rasterizer::SceneWorkspace& workspace)                      = 0;
-        virtual void step(rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) = 0;
+        [[nodiscard]] virtual rasterizer::SceneFrameSnapshot reset()                    = 0;
+        [[nodiscard]] virtual rasterizer::SceneFrameSnapshot step(const RasterizerProjectFrameInfo& frame) = 0;
     };
 
     template <RasterizerProjectAdapter Adapter>
@@ -128,12 +129,12 @@ namespace spectra::app {
             return this->adapter.create_document();
         }
 
-        void reset(rasterizer::SceneWorkspace& workspace) override {
-            this->adapter.reset(workspace);
+        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() override {
+            return this->adapter.reset();
         }
 
-        void step(rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) override {
-            this->adapter.step(workspace, frame);
+        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerProjectFrameInfo& frame) override {
+            return this->adapter.step(frame);
         }
 
     private:
@@ -191,6 +192,8 @@ namespace spectra::app {
             edit.replaceTimeline(rasterizer::SimulationTimeline{
                 .mode            = rasterizer::SimulationTimelineMode::Live,
                 .framesPerSecond = document->framesPerSecond,
+                .playing         = true,
+                .loop            = true,
                 .cursor          = frame.cursor,
             });
         }
@@ -199,10 +202,28 @@ namespace spectra::app {
         if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer project frame commit did not mark the frame dirty");
     }
 
+    void CommitRasterizerTimelineAndFrame(rasterizer::SceneWorkspace& workspace, rasterizer::SimulationTimeline timeline, rasterizer::SceneFrameSnapshot frame) {
+        timeline.cursor       = frame.cursor;
+        timeline.currentFrame = frame;
+        rasterizer::SceneEditBuilder edit{};
+        edit.replaceTimeline(std::move(timeline));
+        edit.replaceFrame(std::move(frame));
+        const rasterizer::SceneEditBatch batch = workspace.commit(std::move(edit));
+        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer project timeline commit did not mark the timeline dirty");
+        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer project frame commit did not mark the frame dirty");
+    }
+
+    void CommitRasterizerTimeline(rasterizer::SceneWorkspace& workspace, rasterizer::SimulationTimeline timeline) {
+        rasterizer::SceneEditBuilder edit{};
+        edit.replaceTimeline(std::move(timeline));
+        const rasterizer::SceneEditBatch batch = workspace.commit(std::move(edit));
+        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer project timeline commit did not mark the timeline dirty");
+    }
+
     [[nodiscard]] rasterizer::FrameCursor MakeFrameCursor(const RasterizerProjectFrameInfo& info) {
         return rasterizer::FrameCursor{
             .frameIndex   = info.frame_index,
-            .timeSeconds  = static_cast<double>(info.frame_index) * info.delta_seconds,
+            .timeSeconds  = info.time_seconds,
         };
     }
 
@@ -228,6 +249,11 @@ namespace spectra::app {
                 .baseColor = rasterizer::SceneVector4{0.95f, 0.28f, 0.18f, 1.0f},
                 .roughness = 0.42f,
             });
+            document.materials.push_back(rasterizer::SceneMaterial{
+                .name      = "floor",
+                .baseColor = rasterizer::SceneVector4{0.38f, 0.43f, 0.38f, 1.0f},
+                .roughness = 0.74f,
+            });
             document.lights.push_back(rasterizer::SceneLight{
                 .name      = "key",
                 .kind      = rasterizer::SceneLightKind::Directional,
@@ -235,6 +261,15 @@ namespace spectra::app {
                 .color     = rasterizer::SceneVector3{1.0f, 0.97f, 0.92f},
                 .intensity = 3.0f,
             });
+            document.camera = rasterizer::SceneCamera{
+                .name      = "camera.main",
+                .transform = rasterizer::SceneTransform{.position = rasterizer::SceneVector3{4.4f, 2.7f, 5.8f}},
+                .target    = rasterizer::SceneVector3{0.0f, 1.25f, 0.0f},
+                .verticalFovDegrees = 42.0f,
+                .nearPlane = 0.05f,
+                .farPlane  = 80.0f,
+            };
+            document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_mesh());
             document.rigidBodies.push_back(rasterizer::SceneRigidBody{
                 .name         = "ball.body",
@@ -246,18 +281,39 @@ namespace spectra::app {
             return document;
         }
 
-        void reset(rasterizer::SceneWorkspace& workspace) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
             this->solver.reset();
-            CommitRasterizerFrame(workspace, this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .frame_index = 0u}), true);
+            return this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        void step(rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerProjectFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
-            CommitRasterizerFrame(workspace, this->make_frame(frame), false);
+            return this->make_frame(frame);
         }
 
     private:
         xayah::projects::bouncing_ball::BouncingBallSolver solver{};
+
+        [[nodiscard]] rasterizer::SceneMesh make_floor_mesh() const {
+            return rasterizer::SceneMesh{
+                .name         = "floor.mesh",
+                .positions    = {
+                    rasterizer::SceneVector3{-5.5f, 0.0f, -5.5f},
+                    rasterizer::SceneVector3{5.5f, 0.0f, -5.5f},
+                    rasterizer::SceneVector3{5.5f, 0.0f, 5.5f},
+                    rasterizer::SceneVector3{-5.5f, 0.0f, 5.5f},
+                },
+                .normals      = {
+                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
+                },
+                .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
+                .materialName = "floor",
+                .dynamic      = false,
+            };
+        }
 
         [[nodiscard]] rasterizer::SceneMesh make_mesh() const {
             rasterizer::SceneMesh mesh{
@@ -322,14 +378,14 @@ namespace spectra::app {
             return document;
         }
 
-        void reset(rasterizer::SceneWorkspace& workspace) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
             this->solver.reset();
-            CommitRasterizerFrame(workspace, this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .frame_index = 0u}), true);
+            return this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        void step(rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerProjectFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
-            CommitRasterizerFrame(workspace, this->make_frame(frame), false);
+            return this->make_frame(frame);
         }
 
     private:
@@ -394,14 +450,14 @@ namespace spectra::app {
             return document;
         }
 
-        void reset(rasterizer::SceneWorkspace& workspace) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
             this->solver.reset();
-            CommitRasterizerFrame(workspace, this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .frame_index = 0u}), true);
+            return this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        void step(rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerProjectFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
-            CommitRasterizerFrame(workspace, this->make_frame(frame), false);
+            return this->make_frame(frame);
         }
 
     private:
@@ -468,14 +524,14 @@ namespace spectra::app {
             return document;
         }
 
-        void reset(rasterizer::SceneWorkspace& workspace) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
             this->solver.reset();
-            CommitRasterizerFrame(workspace, this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .frame_index = 0u}), true);
+            return this->make_frame(RasterizerProjectFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        void step(rasterizer::SceneWorkspace& workspace, const RasterizerProjectFrameInfo& frame) {
+        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerProjectFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
-            CommitRasterizerFrame(workspace, this->make_frame(frame), false);
+            return this->make_frame(frame);
         }
 
     private:
@@ -727,18 +783,12 @@ namespace spectra::app {
 
         [[nodiscard]] SpectraFrameResult begin_frame(Spectra& host, const SpectraFrameInfo& frame) {
             RasterizerSpectraHost rasterizerHost{host};
-            if (frame.frame_index != this->last_project_frame_index) {
-                const std::shared_ptr<const rasterizer::SceneDocument> document = this->scene_workspace->document();
-                if (document->framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer project scene frame rate must be positive");
-                this->project_runtime->step(*this->scene_workspace, RasterizerProjectFrameInfo{
-                                                                      .delta_seconds = 1.0 / document->framesPerSecond,
-                                                                      .frame_index   = frame.frame_index,
-                                                                  });
-                this->last_project_frame_index = frame.frame_index;
-            }
+            this->drive_simulation(frame);
             rasterizer::RasterizerFrameResult result = this->renderer->begin_frame(rasterizerHost, rasterizer::RasterizerFrameInfo{
                                                                                                       .frame_index = frame.frame_index,
                                                                                                       .image_index = frame.image_index,
+                                                                                                      .frame_number = frame.frame_number,
+                                                                                                      .delta_seconds = frame.delta_seconds,
                                                                                                   });
             return SpectraFrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
@@ -752,9 +802,81 @@ namespace spectra::app {
         }
 
     private:
+        void drive_simulation(const SpectraFrameInfo& frame) {
+            const std::shared_ptr<const rasterizer::SceneDocument> document = this->scene_workspace->document();
+            if (document->framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer project scene frame rate must be positive");
+            const double fixed_delta_seconds = 1.0 / document->framesPerSecond;
+            rasterizer::SimulationTimeline timeline = this->scene_workspace->timeline();
+            if (timeline.framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer project timeline frame rate must be positive");
+            if (timeline.resetRequestSerial != this->observed_reset_request_serial) {
+                this->reset_project(timeline);
+                this->observed_reset_request_serial = timeline.resetRequestSerial;
+                this->committed_playback_frame_index.reset();
+                return;
+            }
+            if (timeline.clearRecordingRequestSerial != this->observed_clear_recording_request_serial) {
+                timeline.recordedFrames.clear();
+                timeline.selectedFrameIndex = 0;
+                CommitRasterizerTimeline(*this->scene_workspace, std::move(timeline));
+                this->observed_clear_recording_request_serial = this->scene_workspace->timeline().clearRecordingRequestSerial;
+                this->committed_playback_frame_index.reset();
+                return;
+            }
+            if (timeline.mode == rasterizer::SimulationTimelineMode::Playback) {
+                if (timeline.recordedFrames.empty()) return;
+                if (timeline.selectedFrameIndex >= timeline.recordedFrames.size()) throw std::runtime_error("Rasterizer playback selected frame is out of range");
+                if (this->committed_playback_frame_index.has_value() && *this->committed_playback_frame_index == timeline.selectedFrameIndex) return;
+                rasterizer::SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
+                CommitRasterizerFrame(*this->scene_workspace, std::move(selected_frame), false);
+                this->committed_playback_frame_index = timeline.selectedFrameIndex;
+                return;
+            }
+            this->committed_playback_frame_index.reset();
+            if (!timeline.playing) return;
+            if (!std::isfinite(frame.delta_seconds) || frame.delta_seconds < 0.0) throw std::runtime_error("Rasterizer frame delta time is invalid");
+            this->simulation_accumulator_seconds += frame.delta_seconds;
+            bool advanced = false;
+            rasterizer::SceneFrameSnapshot snapshot{};
+            while (this->simulation_accumulator_seconds >= fixed_delta_seconds) {
+                this->simulation_accumulator_seconds -= fixed_delta_seconds;
+                ++this->simulation_frame_index;
+                this->simulation_time_seconds += fixed_delta_seconds;
+                snapshot = this->project_runtime->step(RasterizerProjectFrameInfo{
+                    .delta_seconds = fixed_delta_seconds,
+                    .time_seconds  = this->simulation_time_seconds,
+                    .frame_index   = this->simulation_frame_index,
+                });
+                advanced = true;
+            }
+            if (!advanced) return;
+            if (timeline.mode == rasterizer::SimulationTimelineMode::Record) {
+                timeline.recordedFrames.push_back(snapshot);
+                timeline.selectedFrameIndex = timeline.recordedFrames.size() - 1u;
+                CommitRasterizerTimelineAndFrame(*this->scene_workspace, std::move(timeline), std::move(snapshot));
+                return;
+            }
+            CommitRasterizerFrame(*this->scene_workspace, std::move(snapshot), false);
+        }
+
+        void reset_project(rasterizer::SimulationTimeline timeline) {
+            this->simulation_accumulator_seconds = 0.0;
+            this->simulation_time_seconds        = 0.0;
+            this->simulation_frame_index         = 0;
+            rasterizer::SceneFrameSnapshot snapshot = this->project_runtime->reset();
+            timeline.cursor                         = snapshot.cursor;
+            timeline.currentFrame                   = snapshot;
+            timeline.selectedFrameIndex             = 0;
+            CommitRasterizerTimelineAndFrame(*this->scene_workspace, std::move(timeline), std::move(snapshot));
+        }
+
         std::shared_ptr<rasterizer::SceneWorkspace> scene_workspace{};
         std::unique_ptr<RasterizerProjectRuntime> project_runtime{};
-        std::uint32_t last_project_frame_index{0};
+        double simulation_accumulator_seconds{};
+        double simulation_time_seconds{};
+        std::uint64_t simulation_frame_index{};
+        std::uint64_t observed_reset_request_serial{};
+        std::uint64_t observed_clear_recording_request_serial{};
+        std::optional<std::uint64_t> committed_playback_frame_index{};
         std::unique_ptr<rasterizer::RasterizerRenderer> renderer{};
     };
 
@@ -762,8 +884,8 @@ namespace spectra::app {
     static_assert(SpectraRendererForHost<RasterizerSpectraRenderer, Spectra>);
 
     void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, std::shared_ptr<rasterizer::SceneWorkspace> rasterizerSceneWorkspace, std::unique_ptr<RasterizerProjectRuntime> rasterizerProjectRuntime) {
-        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneLibrary)});
         app.register_renderer(RasterizerSpectraRenderer{std::move(rasterizerSceneWorkspace), std::move(rasterizerProjectRuntime)});
+        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneLibrary)});
     }
 } // namespace spectra::app
 
@@ -776,7 +898,7 @@ int main(const int argc, char**) {
         std::unique_ptr<spectra::app::RasterizerProjectRuntime> rasterizer_project_runtime = rasterizer_project_registry.create_first_runtime();
         spectra::rasterizer::SceneDocument rasterizer_project_document = rasterizer_project_runtime->create_document();
         std::shared_ptr<spectra::rasterizer::SceneWorkspace> rasterizer_scene_workspace = std::make_shared<spectra::rasterizer::SceneWorkspace>(std::move(rasterizer_project_document));
-        rasterizer_project_runtime->reset(*rasterizer_scene_workspace);
+        spectra::app::CommitRasterizerFrame(*rasterizer_scene_workspace, rasterizer_project_runtime->reset(), true);
 
         spectra::Spectra app{"Spectra"};
         spectra::app::RegisterRenderers(app, std::move(pbrt_scene_library), std::move(rasterizer_scene_workspace), std::move(rasterizer_project_runtime));

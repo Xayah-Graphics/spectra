@@ -66,6 +66,8 @@ export namespace spectra {
     struct SpectraFrameInfo {
         std::uint32_t frame_index{};
         std::uint32_t image_index{};
+        std::uint64_t frame_number{};
+        double delta_seconds{};
     };
 
     struct SpectraFrameResult {
@@ -122,6 +124,8 @@ export namespace spectra {
     concept SpectraFrameInfoLike = requires(const Frame& frame) {
         { frame.frame_index } -> std::convertible_to<std::uint32_t>;
         { frame.image_index } -> std::convertible_to<std::uint32_t>;
+        { frame.frame_number } -> std::convertible_to<std::uint64_t>;
+        { frame.delta_seconds } -> std::convertible_to<double>;
     };
 
     template <typename Result>
@@ -287,6 +291,12 @@ export namespace spectra {
             std::uint64_t frame_count{0};
             float refresh_timer{0.0f};
         } window_title;
+
+        struct {
+            std::uint64_t frame_number{0};
+            std::chrono::steady_clock::time_point last_frame_time{};
+            bool last_frame_time_valid{false};
+        } timing;
 
         bool dock_layout_initialized{false};
         bool imgui_shutdown_notified{false};

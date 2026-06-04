@@ -102,6 +102,16 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
+    struct SceneCamera {
+        std::string name{};
+        SceneTransform transform{};
+        SceneVector3 target{};
+        float verticalFovDegrees{45.0f};
+        float nearPlane{0.01f};
+        float farPlane{200.0f};
+        SceneSourceLocation source{};
+    };
+
     struct SceneMesh {
         std::string name{};
         std::vector<SceneVector3> positions{};
@@ -185,6 +195,7 @@ export namespace spectra::rasterizer {
         std::string source{};
         SceneVector3 gravity{0.0f, -9.8f, 0.0f};
         double framesPerSecond{24.0};
+        std::optional<SceneCamera> camera{};
         std::vector<SceneMaterial> materials{};
         std::vector<SceneLight> lights{};
         std::vector<SceneMesh> meshes{};
@@ -219,8 +230,14 @@ export namespace spectra::rasterizer {
     struct SimulationTimeline {
         SimulationTimelineMode mode{SimulationTimelineMode::Playback};
         double framesPerSecond{24.0};
+        bool playing{true};
+        bool loop{true};
         FrameCursor cursor{};
+        std::uint64_t selectedFrameIndex{};
+        std::uint64_t resetRequestSerial{};
+        std::uint64_t clearRecordingRequestSerial{};
         std::optional<SceneFrameSnapshot> currentFrame{};
+        std::vector<SceneFrameSnapshot> recordedFrames{};
     };
 
     struct SceneEditBatch {
@@ -382,6 +399,8 @@ export namespace spectra::rasterizer {
     struct RasterizerFrameInfo {
         std::uint32_t frame_index{};
         std::uint32_t image_index{};
+        std::uint64_t frame_number{};
+        double delta_seconds{};
     };
 
     struct RasterizerFrameResult {
@@ -394,6 +413,8 @@ export namespace spectra::rasterizer {
     concept RasterizerFrameInfoLike = requires(const Frame& frame) {
         { frame.frame_index } -> std::convertible_to<std::uint32_t>;
         { frame.image_index } -> std::convertible_to<std::uint32_t>;
+        { frame.frame_number } -> std::convertible_to<std::uint64_t>;
+        { frame.delta_seconds } -> std::convertible_to<double>;
     };
 
     template <typename Host>
@@ -495,6 +516,8 @@ export namespace spectra::rasterizer {
             return this->begin_frame(RasterizerHostView{host}, RasterizerFrameInfo{
                                                                    .frame_index = static_cast<std::uint32_t>(frame.frame_index),
                                                                    .image_index = static_cast<std::uint32_t>(frame.image_index),
+                                                                   .frame_number = static_cast<std::uint64_t>(frame.frame_number),
+                                                                   .delta_seconds = static_cast<double>(frame.delta_seconds),
                                                                });
         }
 
