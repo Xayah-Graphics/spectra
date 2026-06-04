@@ -82,6 +82,7 @@ export namespace spectra {
 
         void create_imgui();
         void notify_renderers_before_imgui_shutdown() noexcept;
+        void wait_device_idle_noexcept() noexcept;
         void destroy_imgui() noexcept;
         void detach_renderers_noexcept() noexcept;
 

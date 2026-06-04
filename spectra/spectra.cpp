@@ -343,11 +343,6 @@ namespace spectra {
     Spectra::~Spectra() noexcept {
         this->detach_renderers_noexcept();
 
-        try {
-            if (*this->context.device) this->context.device.waitIdle();
-        } catch (...) {
-        }
-
         this->destroy_imgui();
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
@@ -475,8 +470,16 @@ namespace spectra {
         }
     }
 
+    void Spectra::wait_device_idle_noexcept() noexcept {
+        try {
+            if (*this->context.device) this->context.device.waitIdle();
+        } catch (...) {
+        }
+    }
+
     void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
         if (this->imgui_shutdown_notified) return;
+        this->wait_device_idle_noexcept();
         for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
             try {
                 renderer->before_imgui_shutdown(*this);
