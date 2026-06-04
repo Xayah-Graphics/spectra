@@ -15,7 +15,6 @@ module;
 export module xayah.spectra;
 
 import std;
-import spectra.scene;
 
 export namespace xayah {
     enum class SpectraDockSlot {
@@ -55,6 +54,11 @@ export namespace xayah {
         std::optional<std::string> window_detail{};
     };
 
+    struct SpectraRendererAvailability {
+        bool available{true};
+        std::string detail{};
+    };
+
     template <typename Panel>
     concept SpectraPanelLike = requires(Panel panel) {
         std::string{std::move(panel.id)};
@@ -79,6 +83,11 @@ export namespace xayah {
         std::optional<std::string>{std::move(result.window_detail)};
     };
 
+    template <typename Host>
+    concept SpectraSceneHost = requires(Host& host, SpectraPanel panel) {
+        { host.register_panel(std::move(panel)) } -> std::same_as<void>;
+    };
+
     template <typename Renderer, typename Host>
     concept SpectraRendererForHost = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, const std::remove_cvref_t<Renderer>& constRenderer, Host& host, const SpectraFrameInfo& frame, const vk::raii::CommandBuffer& commandBuffer) {
         { constRenderer.name() } -> std::convertible_to<std::string_view>;
@@ -92,7 +101,7 @@ export namespace xayah {
 
     class Spectra {
     public:
-        explicit Spectra(spectra::scene::SceneWorkspace scene_workspace, const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
+        explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
 
         Spectra(const Spectra& other)                = delete;
@@ -105,9 +114,6 @@ export namespace xayah {
         void register_renderer(Renderer renderer);
         void run();
 
-        [[nodiscard]] std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot() const;
-        [[nodiscard]] spectra::scene::SceneEditBatch scene_changes_since(spectra::scene::SceneRevision revision) const;
-        [[nodiscard]] spectra::scene::SceneEditBatch commit_scene(spectra::scene::SceneEditBuilder edit);
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const;
         [[nodiscard]] const vk::raii::Device& device() const;
         [[nodiscard]] std::uint32_t frame_count() const;
@@ -117,6 +123,8 @@ export namespace xayah {
             requires SpectraPanelLike<Panel>
         void register_panel(Panel panel);
         void set_window_detail(std::string detail);
+        void set_renderer_availability_callback(std::move_only_function<SpectraRendererAvailability(std::string_view)> callback);
+        void set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback);
 
     private:
         struct FrameState;
@@ -167,6 +175,7 @@ export namespace xayah {
         void draw_dockspace();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
+        [[nodiscard]] SpectraRendererAvailability renderer_availability(std::string_view renderer_name);
 
         void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
         void recreate_swapchain();
@@ -225,9 +234,10 @@ export namespace xayah {
         bool dock_layout_initialized{false};
         bool imgui_shutdown_notified{false};
         std::size_t active_renderer_index{0};
-        spectra::scene::SceneWorkspace scene_workspace{};
         std::vector<SpectraPanel> panels{};
         std::vector<RegisteredRenderer> renderers{};
+        std::move_only_function<SpectraRendererAvailability(std::string_view)> renderer_availability_callback{};
+        std::move_only_function<void(std::string_view)> renderer_activation_callback{};
     };
 
     template <typename Panel>

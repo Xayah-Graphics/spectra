@@ -1,6 +1,7 @@
 #include <Ptexture.h>
 #include <algorithm>
 #include <mutex>
+#include <set>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
@@ -11,6 +12,7 @@
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/splines.cuh>
+#include <vector>
 
 // Windows strikes again.
 #ifdef RGB
@@ -655,6 +657,43 @@ namespace spectra {
     static std::mutex textureCacheMutex;
     static std::map<std::string, LuminanceTextureCacheItem> lumTextureCache;
     static std::map<std::string, RGBTextureCacheItem> rgbTextureCache;
+    static std::vector<cudaTextureObject_t> gpuTextureObjects;
+
+    static void registerGPUTextureObject(const cudaTextureObject_t textureObject) {
+        std::lock_guard<std::mutex> lock(textureCacheMutex);
+        gpuTextureObjects.push_back(textureObject);
+    }
+
+    void ClearGPUTextureCaches() {
+        std::vector<cudaTextureObject_t> textureObjects{};
+        std::vector<cudaMipmappedArray_t> mipArrays{};
+        {
+            std::lock_guard<std::mutex> lock(textureCacheMutex);
+            textureObjects.swap(gpuTextureObjects);
+
+            std::set<cudaMipmappedArray_t> uniqueMipArrays{};
+            for (const std::pair<const std::string, LuminanceTextureCacheItem>& cacheItem : lumTextureCache) uniqueMipArrays.insert(cacheItem.second.mipArray);
+            for (const std::pair<const std::string, RGBTextureCacheItem>& cacheItem : rgbTextureCache) uniqueMipArrays.insert(cacheItem.second.mipArray);
+            mipArrays.assign(uniqueMipArrays.begin(), uniqueMipArrays.end());
+
+            lumTextureCache.clear();
+            rgbTextureCache.clear();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(ptexCacheMutex);
+            ptexFloatTextureCache.clear();
+            ptexSpectrumTextureCache.clear();
+        }
+        ImageTextureBase::ClearCache();
+
+        for (const cudaTextureObject_t textureObject : textureObjects) {
+            if (textureObject != 0) CUDA_CHECK(cudaDestroyTextureObject(textureObject));
+        }
+        for (const cudaMipmappedArray_t mipArray : mipArrays) {
+            if (mipArray != nullptr) CUDA_CHECK(cudaFreeMipmappedArray(mipArray));
+        }
+    }
 
     static cudaMipmappedArray_t createSingleChannelTextureArray(const Image& image, const RGBColorSpace* colorSpace, int* nMIPMapLevels) {
         CHECK_EQ(1, image.NChannels());
@@ -887,6 +926,7 @@ namespace spectra {
 
         cudaTextureObject_t texObj;
         CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
+        registerGPUTextureObject(texObj);
 
         TextureMapping2D mapping = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
@@ -982,6 +1022,7 @@ namespace spectra {
 
         cudaTextureObject_t texObj;
         CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
+        registerGPUTextureObject(texObj);
 
         TextureMapping2D mapping = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 

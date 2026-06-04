@@ -460,10 +460,52 @@ target_sources(
         PRIVATE
         spectra/spectra.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan spectra::scene PRIVATE glfw spectra::imgui)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw spectra::imgui)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+
+add_library(spectra_pathtracer_scene)
+add_library(spectra::pathtracer_scene ALIAS spectra_pathtracer_scene)
+target_sources(
+        spectra_pathtracer_scene
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/pathtracer_scene.ixx
+        PRIVATE
+        spectra/pathtracer_scene.cpp
+)
+target_link_libraries(spectra_pathtracer_scene PUBLIC spectra::scene PRIVATE spectra::gpu_lib)
+set_property(TARGET spectra_pathtracer_scene PROPERTY CXX_MODULE_STD ON)
+target_include_directories(spectra_pathtracer_scene PRIVATE ${SPECTRA_GPU_INCLUDE_DIRS})
+
+add_library(spectra_rasterizer_scene)
+add_library(spectra::rasterizer_scene ALIAS spectra_rasterizer_scene)
+target_sources(
+        spectra_rasterizer_scene
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/rasterizer_scene.ixx
+        PRIVATE
+        spectra/rasterizer_scene.cpp
+)
+target_link_libraries(spectra_rasterizer_scene PUBLIC spectra::scene)
+set_property(TARGET spectra_rasterizer_scene PROPERTY CXX_MODULE_STD ON)
+
+add_library(spectra_scene_session)
+add_library(spectra::scene_session ALIAS spectra_scene_session)
+target_sources(
+        spectra_scene_session
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        spectra/scene_session.ixx
+        PRIVATE
+        spectra/scene_session.cpp
+)
+target_link_libraries(spectra_scene_session PUBLIC spectra::core spectra::scene PRIVATE spectra::imgui)
+set_property(TARGET spectra_scene_session PROPERTY CXX_MODULE_STD ON)
+target_compile_definitions(spectra_scene_session PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_include_directories(spectra_scene_session PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 add_library(spectra_pathtracer)
 add_library(spectra::pathtracer ALIAS spectra_pathtracer)
@@ -475,7 +517,7 @@ target_sources(
         PRIVATE
         spectra/pathtracer.cpp
 )
-target_link_libraries(spectra_pathtracer PUBLIC Vulkan::Vulkan spectra::scene PRIVATE CUDA::cudart spectra::gpu_lib spectra::imgui)
+target_link_libraries(spectra_pathtracer PUBLIC Vulkan::Vulkan spectra::pathtracer_scene PRIVATE CUDA::cudart spectra::gpu_lib spectra::imgui)
 set_property(TARGET spectra_pathtracer PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_pathtracer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_pathtracer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
@@ -490,7 +532,7 @@ target_sources(
         PRIVATE
         spectra/rasterizer.cpp
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::scene PRIVATE spectra::imgui)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::rasterizer_scene PRIVATE spectra::imgui)
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 target_compile_definitions(spectra_rasterizer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_rasterizer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
@@ -500,5 +542,5 @@ target_include_directories(spectra_rasterizer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 # Application
 # ============================================================================
 add_executable(spectra main.cpp)
-target_link_libraries(spectra PRIVATE spectra::core spectra::pathtracer spectra::rasterizer)
+target_link_libraries(spectra PRIVATE spectra::core spectra::scene_session spectra::pathtracer spectra::rasterizer)
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)

@@ -87,10 +87,38 @@ namespace spectra::pathtracer {
             return std::format("{}:{}:{}", source.filename, source.line, source.column);
         }
 
-        [[nodiscard]] std::string FormatGpuSupportReport(const scene::SceneGpuSupportReport& report) {
+        [[nodiscard]] std::string FormatGpuSupportReport(const scene::SceneTranslationReport& report) {
             std::string message = "Scene is not supported by the current GPU pathtracer:";
-            for (const scene::SceneGpuSupportIssue& issue : report.issues) message += std::format("\n  {}: {}", SourceString(issue.source), issue.message);
+            for (const scene::SceneDiagnostic& diagnostic : report.diagnostics) message += std::format("\n  {}: {}", SourceString(diagnostic.source), diagnostic.message);
             return message;
+        }
+
+        [[nodiscard]] bool ContainsName(const std::set<std::string>& values, const std::string& value) {
+            return values.find(value) != values.end();
+        }
+
+        [[nodiscard]] std::string OneStringParameter(const std::vector<scene::SceneParameter>& parameters, const std::string& name, std::string fallback) {
+            for (const scene::SceneParameter& parameter : parameters) {
+                if (parameter.name != name) continue;
+                if (const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values); values != nullptr && !values->empty()) return values->front();
+            }
+            return fallback;
+        }
+
+        void AddDiagnostic(scene::SceneTranslationReport* report, scene::SceneSourceLocation source, std::string message) {
+            report->supported = false;
+            report->diagnostics.push_back(scene::SceneDiagnostic{
+                .source  = std::move(source),
+                .message = std::move(message),
+            });
+        }
+
+        void ValidateTransform(scene::SceneTranslationReport* report, const scene::SceneTransformSet& transform, const scene::SceneSourceLocation& source, const std::string_view owner) {
+            if (transform.animated) AddDiagnostic(report, source, std::format("{} uses animated transforms, which are represented by the scene document but are not supported by the current GPU pathtracer", owner));
+        }
+
+        void ValidateEntityType(scene::SceneTranslationReport* report, const scene::SceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
+            if (!ContainsName(supported, entity.type)) AddDiagnostic(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
         }
 
         void AppendParameterValues(ParsedParameter* parsedParameter, const scene::SceneParameter& parameter) {
@@ -124,7 +152,7 @@ namespace spectra::pathtracer {
             PathtracerSceneCompiler(const scene::SceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
 
             void Compile() {
-                const scene::SceneGpuSupportReport supportReport = scene::ValidateSceneForGpuPathtracer(this->source);
+                const scene::SceneTranslationReport supportReport = AnalyzePathtracerSceneSupport(this->source);
                 if (!supportReport.supported) throw std::runtime_error(FormatGpuSupportReport(supportReport));
 
                 this->RegisterResourceNames();
@@ -639,6 +667,90 @@ namespace spectra::pathtracer {
             std::set<std::string> objectDefinitionNames{};
         };
     } // namespace
+
+    scene::SceneTranslationReport AnalyzePathtracerSceneSupport(const scene::SceneSnapshot& scene) {
+        static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
+        static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
+        static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
+        static const std::set<std::string> supportedSamplers{"zsobol", "paddedsobol", "halton", "sobol", "pmj02bn", "independent", "stratified"};
+        static const std::set<std::string> supportedIntegrators{"path", "volpath"};
+        static const std::set<std::string> supportedAccelerators{"bvh"};
+        static const std::set<std::string> supportedMaterials{"none", "interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
+        static const std::set<std::string> supportedTextures{"constant", "scale", "mix", "directionmix", "bilerp", "imagemap", "checkerboard", "dots", "fbm", "wrinkled", "windy", "marble", "ptex"};
+        static const std::set<std::string> supportedMedia{"homogeneous", "uniformgrid", "rgbgrid", "cloud", "nanovdb"};
+        static const std::set<std::string> supportedLights{"point", "spot", "goniometric", "projection", "distant", "infinite"};
+        static const std::set<std::string> supportedAreaLights{"diffuse"};
+        static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
+        static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
+
+        scene::SceneTranslationReport report{.target = "Spectra Pathtracer"};
+        ValidateEntityType(&report, scene.renderSettings.filter, supportedFilters, "pixel filter");
+        ValidateEntityType(&report, scene.renderSettings.film, supportedFilms, "film");
+        ValidateEntityType(&report, scene.renderSettings.camera, supportedCameras, "camera");
+        ValidateEntityType(&report, scene.renderSettings.sampler, supportedSamplers, "sampler");
+        ValidateEntityType(&report, scene.renderSettings.integrator, supportedIntegrators, "integrator");
+        ValidateEntityType(&report, scene.renderSettings.accelerator, supportedAccelerators, "accelerator");
+        ValidateTransform(&report, scene.renderSettings.cameraTransform, scene.renderSettings.camera.source, "camera");
+
+        for (const scene::SceneOption& option : scene.renderSettings.options) AddDiagnostic(&report, option.source, std::format("PBRT Option \"{}\" is represented by the scene document but is not wired into the current pathtracer runtime", option.name));
+
+        const std::string lightSampler = OneStringParameter(scene.renderSettings.integrator.parameters, "lightsampler", "");
+        if (!lightSampler.empty() && !ContainsName(supportedLightSamplers, lightSampler)) AddDiagnostic(&report, scene.renderSettings.integrator.source, std::format("GPU pathtracer does not support light sampler \"{}\"", lightSampler));
+
+        std::set<std::string> materials{};
+        for (const scene::SceneMaterial& material : scene.materials) {
+            materials.insert(material.name);
+            ValidateEntityType(&report, material.entity, supportedMaterials, "material");
+        }
+
+        std::set<std::string> media{};
+        for (const scene::SceneMedium& medium : scene.media) {
+            media.insert(medium.name);
+            ValidateEntityType(&report, medium.entity, supportedMedia, "medium");
+            ValidateTransform(&report, medium.transform, medium.entity.source, std::format("medium \"{}\"", medium.name));
+        }
+
+        for (const scene::SceneTexture& texture : scene.textures) {
+            if (texture.kind != "float" && texture.kind != "spectrum") AddDiagnostic(&report, texture.entity.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", texture.kind));
+            ValidateEntityType(&report, texture.entity, supportedTextures, "texture");
+            if (texture.kind == "float" && texture.entity.type == "marble") AddDiagnostic(&report, texture.entity.source, "\"marble\" is only a spectrum texture in the GPU pathtracer");
+            if (texture.kind == "spectrum" && (texture.entity.type == "fbm" || texture.entity.type == "wrinkled" || texture.entity.type == "windy")) AddDiagnostic(&report, texture.entity.source, std::format("\"{}\" is only a float texture in the GPU pathtracer", texture.entity.type));
+            ValidateTransform(&report, texture.transform, texture.entity.source, std::format("texture \"{}\"", texture.name));
+        }
+
+        const auto validateShape = [&report, &materials, &media](const scene::SceneShape& shape, const std::string_view owner) {
+            ValidateEntityType(&report, shape.entity, supportedShapes, "shape");
+            ValidateTransform(&report, shape.transform, shape.entity.source, owner);
+            if (shape.materialName.empty() || !ContainsName(materials, shape.materialName)) AddDiagnostic(&report, shape.entity.source, std::format("{} references unknown material \"{}\"", owner, shape.materialName));
+            if (!shape.mediumInterface.inside.empty() && !ContainsName(media, shape.mediumInterface.inside)) AddDiagnostic(&report, shape.entity.source, std::format("{} references unknown inside medium \"{}\"", owner, shape.mediumInterface.inside));
+            if (!shape.mediumInterface.outside.empty() && !ContainsName(media, shape.mediumInterface.outside)) AddDiagnostic(&report, shape.entity.source, std::format("{} references unknown outside medium \"{}\"", owner, shape.mediumInterface.outside));
+            if (shape.areaLight.has_value()) ValidateEntityType(&report, shape.areaLight->entity, supportedAreaLights, "area light");
+        };
+
+        for (const scene::SceneLight& light : scene.lights) {
+            ValidateEntityType(&report, light.entity, supportedLights, "light");
+            ValidateTransform(&report, light.transform, light.entity.source, std::format("light \"{}\"", light.name));
+            if (!light.medium.empty() && !ContainsName(media, light.medium)) AddDiagnostic(&report, light.entity.source, std::format("light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
+        }
+
+        for (const scene::SceneShape& shape : scene.shapes) validateShape(shape, std::format("shape \"{}\"", shape.name));
+
+        std::set<std::string> objectDefinitions{};
+        for (const scene::SceneObjectDefinition& definition : scene.objectDefinitions) {
+            objectDefinitions.insert(definition.name);
+            for (const scene::SceneShape& shape : definition.shapes) {
+                validateShape(shape, std::format("object definition \"{}\" shape", definition.name));
+                if (shape.areaLight.has_value()) AddDiagnostic(&report, shape.entity.source, std::format("object definition \"{}\" contains an area light shape; instanced area lights are not supported by the current GPU pathtracer", definition.name));
+            }
+        }
+
+        for (const scene::SceneObjectInstance& instance : scene.objectInstances) {
+            if (!ContainsName(objectDefinitions, instance.definitionName)) AddDiagnostic(&report, instance.source, std::format("object instance references unknown definition \"{}\"", instance.definitionName));
+            ValidateTransform(&report, instance.transform, instance.source, std::format("object instance \"{}\"", instance.name));
+        }
+
+        return report;
+    }
 
     CompiledPathtracerScene::CompiledPathtracerScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireMemoryResource(memoryResource))), lightSpectrumCache(Allocator(RequireMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireMemoryResource(memoryResource)); }) {}
 

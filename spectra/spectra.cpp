@@ -23,7 +23,6 @@ module;
 module xayah.spectra;
 
 import std;
-import spectra.scene;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -80,21 +79,27 @@ namespace {
     void apply_imgui_style() {
         ImGui::StyleColorsDark();
         ImGuiStyle& style                  = ImGui::GetStyle();
-        style.WindowRounding               = 0.0f;
-        style.WindowBorderSize             = 0.0f;
+        style.WindowRounding               = 6.0f;
+        style.WindowBorderSize             = 1.0f;
         style.ColorButtonPosition          = ImGuiDir_Right;
-        style.FrameRounding                = 2.0f;
+        style.FrameRounding                = 4.0f;
         style.FrameBorderSize              = 1.0f;
         style.GrabRounding                 = 4.0f;
-        style.IndentSpacing                = 12.0f;
-        style.Colors[ImGuiCol_WindowBg]    = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
-        style.Colors[ImGuiCol_MenuBarBg]   = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
-        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4{0.2f, 0.2f, 0.2f, 1.0f};
-        style.Colors[ImGuiCol_PopupBg]     = ImVec4{0.135f, 0.135f, 0.135f, 1.0f};
-        style.Colors[ImGuiCol_Border]      = ImVec4{0.4f, 0.4f, 0.4f, 0.5f};
-        style.Colors[ImGuiCol_FrameBg]     = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
+        style.ScrollbarRounding            = 6.0f;
+        style.TabRounding                  = 4.0f;
+        style.IndentSpacing                = 14.0f;
+        style.ItemSpacing                  = ImVec2{8.0f, 6.0f};
+        style.FramePadding                 = ImVec2{8.0f, 5.0f};
+        style.WindowPadding                = ImVec2{10.0f, 10.0f};
+        style.Colors[ImGuiCol_WindowBg]    = ImVec4{0.075f, 0.080f, 0.090f, 1.0f};
+        style.Colors[ImGuiCol_ChildBg]     = ImVec4{0.060f, 0.065f, 0.074f, 1.0f};
+        style.Colors[ImGuiCol_MenuBarBg]   = ImVec4{0.050f, 0.055f, 0.064f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4{0.050f, 0.055f, 0.064f, 1.0f};
+        style.Colors[ImGuiCol_PopupBg]     = ImVec4{0.070f, 0.075f, 0.085f, 1.0f};
+        style.Colors[ImGuiCol_Border]      = ImVec4{0.180f, 0.195f, 0.220f, 1.0f};
+        style.Colors[ImGuiCol_FrameBg]     = ImVec4{0.105f, 0.115f, 0.130f, 1.0f};
 
-        const ImVec4 normal_color = ImVec4{0.465f, 0.465f, 0.525f, 1.0f};
+        const ImVec4 normal_color = ImVec4{0.165f, 0.345f, 0.650f, 1.0f};
         constexpr std::array normal_colors{
             ImGuiCol_Header,
             ImGuiCol_SliderGrab,
@@ -107,7 +112,7 @@ namespace {
         };
         for (const ImGuiCol color_id : normal_colors) style.Colors[color_id] = normal_color;
 
-        const ImVec4 active_color = ImVec4{0.365f, 0.365f, 0.425f, 1.0f};
+        const ImVec4 active_color = ImVec4{0.105f, 0.285f, 0.560f, 1.0f};
         constexpr std::array active_colors{
             ImGuiCol_HeaderActive,
             ImGuiCol_SliderGrabActive,
@@ -117,7 +122,7 @@ namespace {
         };
         for (const ImGuiCol color_id : active_colors) style.Colors[color_id] = active_color;
 
-        const ImVec4 hovered_color = ImVec4{0.565f, 0.565f, 0.625f, 1.0f};
+        const ImVec4 hovered_color = ImVec4{0.235f, 0.450f, 0.760f, 1.0f};
         constexpr std::array hovered_colors{
             ImGuiCol_HeaderHovered,
             ImGuiCol_ButtonHovered,
@@ -127,15 +132,15 @@ namespace {
         };
         for (const ImGuiCol color_id : hovered_colors) style.Colors[color_id] = hovered_color;
 
-        style.Colors[ImGuiCol_TitleBgActive]    = ImVec4{0.465f, 0.465f, 0.465f, 1.0f};
-        style.Colors[ImGuiCol_TitleBg]          = ImVec4{0.125f, 0.125f, 0.125f, 1.0f};
-        style.Colors[ImGuiCol_Tab]              = ImVec4{0.05f, 0.05f, 0.05f, 0.5f};
-        style.Colors[ImGuiCol_TabHovered]       = ImVec4{0.465f, 0.495f, 0.525f, 1.0f};
-        style.Colors[ImGuiCol_TabActive]        = ImVec4{0.282f, 0.290f, 0.302f, 1.0f};
-        style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4{0.465f, 0.465f, 0.465f, 0.350f};
-        style.Colors[ImGuiCol_ButtonActive]     = static_cast<ImVec4>(ImColor::HSV(0.3F, 0.5F, 0.5F));
+        style.Colors[ImGuiCol_TitleBgActive]    = ImVec4{0.090f, 0.100f, 0.115f, 1.0f};
+        style.Colors[ImGuiCol_TitleBg]          = ImVec4{0.050f, 0.055f, 0.064f, 1.0f};
+        style.Colors[ImGuiCol_Tab]              = ImVec4{0.080f, 0.090f, 0.105f, 1.0f};
+        style.Colors[ImGuiCol_TabHovered]       = ImVec4{0.235f, 0.450f, 0.760f, 1.0f};
+        style.Colors[ImGuiCol_TabActive]        = ImVec4{0.125f, 0.150f, 0.180f, 1.0f};
+        style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4{0.020f, 0.025f, 0.032f, 0.650f};
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
+
 } // namespace
 
 namespace xayah {
@@ -162,21 +167,12 @@ namespace xayah {
         return this->swapchain.extent;
     }
 
-    std::shared_ptr<const spectra::scene::SceneSnapshot> Spectra::scene_snapshot() const {
-        return this->scene_workspace.snapshot();
-    }
-
-    spectra::scene::SceneEditBatch Spectra::scene_changes_since(const spectra::scene::SceneRevision revision) const {
-        return this->scene_workspace.changes_since(revision);
-    }
-
-    spectra::scene::SceneEditBatch Spectra::commit_scene(spectra::scene::SceneEditBuilder edit) {
-        return this->scene_workspace.commit(std::move(edit));
-    }
-
     void Spectra::activate_renderer(const std::size_t renderer_index) {
         if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
+        if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available for the active scene", this->renderers[renderer_index].name) : availability.detail);
         this->active_renderer_index = renderer_index;
+        if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers[renderer_index].name);
     }
 
     void Spectra::store_panel(SpectraPanel panel) {
@@ -195,8 +191,22 @@ namespace xayah {
         this->window_title.detail = std::move(detail);
     }
 
-    Spectra::Spectra(spectra::scene::SceneWorkspace scene_workspace, const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try : scene_workspace(std::move(scene_workspace)) {
-        if (!this->scene_workspace.loaded()) throw std::runtime_error("Spectra requires a loaded scene workspace");
+    void Spectra::set_renderer_availability_callback(std::move_only_function<SpectraRendererAvailability(std::string_view)> callback) {
+        this->renderer_availability_callback = std::move(callback);
+    }
+
+    void Spectra::set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback) {
+        this->renderer_activation_callback = std::move(callback);
+    }
+
+    SpectraRendererAvailability Spectra::renderer_availability(const std::string_view renderer_name) {
+        if (!this->renderer_availability_callback) return SpectraRendererAvailability{};
+        SpectraRendererAvailability availability = this->renderer_availability_callback(renderer_name);
+        if (!availability.available && availability.detail.empty()) availability.detail = std::format("Renderer \"{}\" is not available for the active scene", renderer_name);
+        return availability;
+    }
+
+    Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
         const std::string app_name_string{app_name};
@@ -364,10 +374,18 @@ namespace xayah {
         for (const RegisteredRenderer& existing_renderer : this->renderers) {
             if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
         }
+        const bool first_renderer = this->renderers.empty();
+        if (first_renderer) {
+            const SpectraRendererAvailability availability = this->renderer_availability(renderer.name);
+            if (!availability.available) throw std::runtime_error(availability.detail);
+        }
         renderer.attach(*this);
         if (this->imgui.initialized) renderer.after_imgui_created(*this);
         this->renderers.push_back(std::move(renderer));
-        if (this->renderers.size() == 1) this->active_renderer_index = 0;
+        if (first_renderer) {
+            this->active_renderer_index = 0;
+            if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers.front().name);
+        }
     }
 
     void Spectra::run() {
@@ -677,7 +695,11 @@ namespace xayah {
         if (ImGui::BeginMenu("Renderer")) {
             for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
                 const bool selected = renderer_index == this->active_renderer_index;
+                const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
+                ImGui::BeginDisabled(!availability.available);
                 if (ImGui::MenuItem(this->renderers[renderer_index].name.c_str(), nullptr, selected)) this->activate_renderer(renderer_index);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !availability.detail.empty()) ImGui::SetTooltip("%s", availability.detail.c_str());
             }
             ImGui::EndMenu();
         }
@@ -686,6 +708,21 @@ namespace xayah {
     }
 
     void Spectra::draw_menu_toolbar() {
+        ImGui::SameLine();
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
+            const bool selected = renderer_index == this->active_renderer_index;
+            const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
+            ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+            ImGui::BeginDisabled(!availability.available);
+            if (ImGui::SmallButton(this->renderers[renderer_index].name.c_str())) this->activate_renderer(renderer_index);
+            ImGui::EndDisabled();
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !availability.detail.empty()) ImGui::SetTooltip("%s", availability.detail.c_str());
+            if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 4.0f);
+        }
+
         std::vector<SpectraPanel*> toolbar_panels{};
         for (SpectraPanel& panel : this->panels) {
             if (panel.show_in_toolbar) toolbar_panels.push_back(&panel);
@@ -693,21 +730,21 @@ namespace xayah {
         if (toolbar_panels.empty()) return;
 
         const float button_size  = ImGui::GetFrameHeight();
-        const float total_width  = 2.0f + static_cast<float>(toolbar_panels.size()) * button_size + static_cast<float>(toolbar_panels.size() + 1) * 2.0f;
+        const float total_width  = 2.0f + static_cast<float>(toolbar_panels.size()) * button_size + static_cast<float>(toolbar_panels.size() + 1) * 4.0f;
         const float window_width = ImGui::GetWindowWidth();
-        if (window_width <= total_width + 180.0f) return;
+        if (window_width <= total_width + 520.0f) return;
 
-        ImGui::SameLine(window_width * 0.5f - total_width * 0.5f);
+        ImGui::SameLine(window_width - total_width - 16.0f);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
         for (SpectraPanel* panel : toolbar_panels) {
             const char* label = panel->icon.empty() ? panel->title.c_str() : panel->icon.c_str();
-            ImGui::PushStyleColor(ImGuiCol_Button, panel->visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+            ImGui::PushStyleColor(ImGuiCol_Button, panel->visible ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
             if (ImGui::Button(label, ImVec2{button_size, button_size})) panel->visible = !panel->visible;
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered() && !panel->shortcut_label.empty()) ImGui::SetTooltip("Toggle %s Window (%s)", panel->title.c_str(), panel->shortcut_label.c_str());
             if (ImGui::IsItemHovered() && panel->shortcut_label.empty()) ImGui::SetTooltip("Toggle %s Window", panel->title.c_str());
-            ImGui::SameLine(0.0f, 2.0f);
+            ImGui::SameLine(0.0f, 4.0f);
         }
     }
 
@@ -730,13 +767,13 @@ namespace xayah {
         ImGui::DockBuilderSetNodeSize(dockspace_id, main_viewport->WorkSize);
 
         ImGuiID center_id = dockspace_id;
-        ImGuiID left_id   = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.25f, nullptr, &center_id);
-        ImGuiID right_id  = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.25f, nullptr, &center_id);
-        ImGuiID bottom_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.35f, nullptr, &center_id);
+        ImGuiID left_id   = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Left, 0.30f, nullptr, &center_id);
+        ImGuiID right_id  = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.27f, nullptr, &center_id);
+        ImGuiID bottom_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Down, 0.30f, nullptr, &center_id);
         if (left_id == 0 || right_id == 0 || bottom_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra dock layout");
 
-        ImGuiID left_bottom_id  = ImGui::DockBuilderSplitNode(left_id, ImGuiDir_Down, 0.35f, nullptr, &left_id);
-        ImGuiID right_bottom_id = ImGui::DockBuilderSplitNode(right_id, ImGuiDir_Down, 0.35f, nullptr, &right_id);
+        ImGuiID left_bottom_id  = ImGui::DockBuilderSplitNode(left_id, ImGuiDir_Down, 0.30f, nullptr, &left_id);
+        ImGuiID right_bottom_id = ImGui::DockBuilderSplitNode(right_id, ImGuiDir_Down, 0.45f, nullptr, &right_id);
         if (left_bottom_id == 0 || right_bottom_id == 0 || left_id == 0 || right_id == 0) throw std::runtime_error("Failed to build Spectra side panels");
 
         for (const SpectraPanel& panel : this->panels) {

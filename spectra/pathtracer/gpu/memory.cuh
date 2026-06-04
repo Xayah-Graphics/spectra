@@ -24,6 +24,8 @@ namespace spectra {
 
     class CUDATrackedMemoryResource : public CUDAMemoryResource {
     public:
+        ~CUDATrackedMemoryResource() noexcept override;
+
         void* do_allocate(size_t size, size_t alignment);
         void do_deallocate(void* p, size_t bytes, size_t alignment);
 
@@ -31,6 +33,8 @@ namespace spectra {
             return this == &other;
         }
 
+        void ReleaseAll();
+        void ReleaseAllNoexcept() noexcept;
         void PrefetchToGPU() const;
         size_t BytesAllocated() const {
             return bytesAllocated;

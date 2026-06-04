@@ -12,6 +12,10 @@ namespace spectra {
         }
     } // namespace
 
+    CUDATrackedMemoryResource::~CUDATrackedMemoryResource() noexcept {
+        this->ReleaseAllNoexcept();
+    }
+
     void* CUDAMemoryResource::do_allocate(size_t size, size_t alignment) {
         if (size == 0) return nullptr;
 
@@ -54,9 +58,30 @@ namespace spectra {
 
         auto iter = allocations.find(p);
         DCHECK(iter != allocations.end());
+        DCHECK_EQ(size, iter->second);
         CUDA_CHECK(cudaFree(p));
+        const size_t byteCount = iter->second;
         allocations.erase(iter);
-        bytesAllocated -= size;
+        bytesAllocated -= byteCount;
+    }
+
+    void CUDATrackedMemoryResource::ReleaseAll() {
+        std::lock_guard<std::mutex> lock(CUDAManagedAllocationMutex());
+        std::lock_guard<std::mutex> allocationLock(mutex);
+        for (auto iter = allocations.begin(); iter != allocations.end();) {
+            void* ptr              = iter->first;
+            const size_t byteCount = iter->second;
+            CUDA_CHECK(cudaFree(ptr));
+            bytesAllocated -= byteCount;
+            iter = allocations.erase(iter);
+        }
+    }
+
+    void CUDATrackedMemoryResource::ReleaseAllNoexcept() noexcept {
+        try {
+            this->ReleaseAll();
+        } catch (...) {
+        }
     }
 
     void CUDATrackedMemoryResource::PrefetchToGPU() const {

@@ -191,18 +191,52 @@ export extern "C++" {
             float camera_fov_degrees{};
         };
 
-        struct SceneGpuSupportIssue {
+        struct SceneDiagnostic {
             SceneSourceLocation source{};
             std::string message{};
         };
 
-        struct SceneGpuSupportReport {
+        struct SceneTranslationReport {
+            std::string target{};
             bool supported{true};
-            std::vector<SceneGpuSupportIssue> issues{};
+            std::vector<SceneDiagnostic> diagnostics{};
         };
 
-        [[nodiscard]] SceneGpuSupportReport ValidateSceneForGpuPathtracer(const SceneSnapshot& scene);
+        struct SceneTranslationTarget {
+            std::string rendererName{};
+            std::function<SceneTranslationReport(const SceneSnapshot&)> analyze{};
+        };
+
+        enum class SceneCatalogEntryState {
+            Pending,
+            Ready,
+            Invalid,
+        };
+
+        struct SceneCatalogEntry {
+            std::string id{};
+            std::string displayName{};
+            std::string group{};
+            std::filesystem::path relativePath{};
+            std::filesystem::path sourcePath{};
+            SceneCatalogEntryState state{SceneCatalogEntryState::Pending};
+            std::shared_ptr<const SceneSnapshot> document{};
+            std::optional<SceneInfo> info{};
+            std::vector<SceneDiagnostic> issues{};
+        };
+
+        struct SceneCatalog {
+            std::filesystem::path root{};
+            std::vector<SceneCatalogEntry> entries{};
+            std::size_t pending_count{};
+            std::size_t ready_count{};
+            std::size_t invalid_count{};
+        };
+
         [[nodiscard]] SceneInfo DescribeScene(const SceneSnapshot& scene);
+        [[nodiscard]] SceneCatalog DiscoverSceneCatalog();
+        void ValidateSceneCatalogEntry(SceneCatalogEntry& entry);
+        [[nodiscard]] SceneWorkspace BuildScene(const SceneCatalogEntry& entry);
         [[nodiscard]] SceneWorkspace BuildScene(std::string_view name);
     } // namespace spectra::scene
 }

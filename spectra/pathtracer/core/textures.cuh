@@ -416,6 +416,7 @@ namespace spectra {
         }
 
         static void ClearCache() {
+            std::unique_lock<std::mutex> lock(textureCacheMutex);
             textureCache.clear();
         }
 
@@ -903,6 +904,8 @@ namespace spectra {
             }
         }
     };
+
+    void ClearGPUTextureCaches();
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_CORE_TEXTURES_H

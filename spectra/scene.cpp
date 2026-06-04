@@ -102,6 +102,12 @@ namespace spectra::scene {
             return Lowercase(path.extension().string()) == Lowercase(std::string(extension));
         }
 
+        [[nodiscard]] bool IsPbrtSceneFile(const std::filesystem::path& path) {
+            if (HasExtension(path, ".pbrt")) return true;
+            if (!HasExtension(path, ".gz")) return false;
+            return HasExtension(path.stem(), ".pbrt");
+        }
+
         [[nodiscard]] bool IsAbsolutePathString(const std::string& value) {
             if (value.empty()) return false;
             if (std::filesystem::path(value).is_absolute()) return true;
@@ -1134,14 +1140,57 @@ namespace spectra::scene {
             return std::filesystem::absolute(std::filesystem::path(SPECTRA_PROJECT_SCENE_ROOT)).lexically_normal();
         }
 
+        [[nodiscard]] std::string PathId(std::filesystem::path path) {
+            return path.generic_string();
+        }
+
+        [[nodiscard]] std::filesystem::path PbrtSceneFilenameStem(const std::filesystem::path& path) {
+            std::filesystem::path filename = path.filename();
+            if (HasExtension(filename, ".gz")) filename = filename.stem();
+            if (HasExtension(filename, ".pbrt")) filename = filename.stem();
+            return filename;
+        }
+
+        [[nodiscard]] std::string SceneDisplayName(const std::filesystem::path& relativePath) {
+            return PbrtSceneFilenameStem(relativePath).string();
+        }
+
+        [[nodiscard]] std::string SceneGroupName(const std::filesystem::path& relativePath) {
+            if (relativePath.empty()) return "scene";
+            const std::filesystem::path::iterator begin = relativePath.begin();
+            if (begin == relativePath.end()) return "scene";
+            return begin->string();
+        }
+
+        [[nodiscard]] bool ContainsWorldBegin(const std::filesystem::path& path) {
+            PbrtTokenStream stream(path);
+            while (std::optional<Token> token = stream.Next()) {
+                if (token->kind == TokenKind::Word && token->text == "WorldBegin") return true;
+            }
+            return false;
+        }
+
+        void RefreshCatalogCounts(SceneCatalog* catalog) {
+            catalog->pending_count     = 0;
+            catalog->ready_count       = 0;
+            catalog->invalid_count     = 0;
+            for (const SceneCatalogEntry& entry : catalog->entries) {
+                switch (entry.state) {
+                case SceneCatalogEntryState::Pending: ++catalog->pending_count; break;
+                case SceneCatalogEntryState::Ready: ++catalog->ready_count; break;
+                case SceneCatalogEntryState::Invalid: ++catalog->invalid_count; break;
+                }
+            }
+        }
+
         [[nodiscard]] std::filesystem::path ResolveScenePathByUniqueStem(const std::filesystem::path& root, const std::string& name) {
             std::optional<std::filesystem::path> match;
             if (!std::filesystem::exists(root)) throw std::runtime_error(std::format("{}: scene root does not exist", root.string()));
             for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(root)) {
                 if (!entry.is_regular_file()) continue;
                 const std::filesystem::path path = entry.path();
-                if (!HasExtension(path, ".pbrt")) continue;
-                if (path.stem().string() != name) continue;
+                if (!IsPbrtSceneFile(path)) continue;
+                if (PbrtSceneFilenameStem(path).string() != name) continue;
                 if (match.has_value()) throw std::runtime_error(std::format("Scene alias \"{}\" is ambiguous; pass a scene-root-relative .pbrt path", name));
                 match = path;
             }
@@ -1166,111 +1215,7 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", requested));
         }
 
-        [[nodiscard]] bool ContainsName(const std::set<std::string>& values, const std::string& value) {
-            return values.find(value) != values.end();
-        }
-
-        void AddIssue(SceneGpuSupportReport* report, SceneSourceLocation source, std::string message) {
-            report->supported = false;
-            report->issues.push_back(SceneGpuSupportIssue{
-                .source  = std::move(source),
-                .message = std::move(message),
-            });
-        }
-
-        void ValidateTransform(SceneGpuSupportReport* report, const SceneTransformSet& transform, const SceneSourceLocation& source, const std::string_view owner) {
-            if (transform.animated) AddIssue(report, source, std::format("{} uses animated transforms, which are parsed and represented by Scene but are not supported by the current GPU pathtracer", owner));
-        }
-
-        void ValidateEntityType(SceneGpuSupportReport* report, const SceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
-            if (!ContainsName(supported, entity.type)) AddIssue(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
-        }
-
     } // namespace
-
-    SceneGpuSupportReport ValidateSceneForGpuPathtracer(const SceneSnapshot& scene) {
-        static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
-        static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
-        static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
-        static const std::set<std::string> supportedSamplers{"zsobol", "paddedsobol", "halton", "sobol", "pmj02bn", "independent", "stratified"};
-        static const std::set<std::string> supportedIntegrators{"path", "volpath"};
-        static const std::set<std::string> supportedAccelerators{"bvh"};
-        static const std::set<std::string> supportedMaterials{"none", "interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
-        static const std::set<std::string> supportedTextures{"constant", "scale", "mix", "directionmix", "bilerp", "imagemap", "checkerboard", "dots", "fbm", "wrinkled", "windy", "marble", "ptex"};
-        static const std::set<std::string> supportedMedia{"homogeneous", "uniformgrid", "rgbgrid", "cloud", "nanovdb"};
-        static const std::set<std::string> supportedLights{"point", "spot", "goniometric", "projection", "distant", "infinite"};
-        static const std::set<std::string> supportedAreaLights{"diffuse"};
-        static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
-        static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
-
-        SceneGpuSupportReport report{};
-        ValidateEntityType(&report, scene.renderSettings.filter, supportedFilters, "pixel filter");
-        ValidateEntityType(&report, scene.renderSettings.film, supportedFilms, "film");
-        ValidateEntityType(&report, scene.renderSettings.camera, supportedCameras, "camera");
-        ValidateEntityType(&report, scene.renderSettings.sampler, supportedSamplers, "sampler");
-        ValidateEntityType(&report, scene.renderSettings.integrator, supportedIntegrators, "integrator");
-        ValidateEntityType(&report, scene.renderSettings.accelerator, supportedAccelerators, "accelerator");
-        ValidateTransform(&report, scene.renderSettings.cameraTransform, scene.renderSettings.camera.source, "camera");
-
-        for (const SceneOption& option : scene.renderSettings.options) AddIssue(&report, option.source, std::format("PBRT Option \"{}\" is represented by Scene but is not wired into the current render runtime path", option.name));
-
-        const std::string lightSampler = OneStringParameter(scene.renderSettings.integrator.parameters, "lightsampler", "");
-        if (!lightSampler.empty() && !ContainsName(supportedLightSamplers, lightSampler)) AddIssue(&report, scene.renderSettings.integrator.source, std::format("GPU pathtracer does not support light sampler \"{}\"", lightSampler));
-
-        std::set<std::string> materials{};
-        for (const SceneMaterial& material : scene.materials) {
-            materials.insert(material.name);
-            ValidateEntityType(&report, material.entity, supportedMaterials, "material");
-        }
-
-        std::set<std::string> media{};
-        for (const SceneMedium& medium : scene.media) {
-            media.insert(medium.name);
-            ValidateEntityType(&report, medium.entity, supportedMedia, "medium");
-            ValidateTransform(&report, medium.transform, medium.entity.source, std::format("medium \"{}\"", medium.name));
-        }
-
-        for (const SceneTexture& texture : scene.textures) {
-            if (texture.kind != "float" && texture.kind != "spectrum") AddIssue(&report, texture.entity.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", texture.kind));
-            ValidateEntityType(&report, texture.entity, supportedTextures, "texture");
-            if (texture.kind == "float" && texture.entity.type == "marble") AddIssue(&report, texture.entity.source, "\"marble\" is only a spectrum texture in the GPU pathtracer");
-            if (texture.kind == "spectrum" && (texture.entity.type == "fbm" || texture.entity.type == "wrinkled" || texture.entity.type == "windy")) AddIssue(&report, texture.entity.source, std::format("\"{}\" is only a float texture in the GPU pathtracer", texture.entity.type));
-            ValidateTransform(&report, texture.transform, texture.entity.source, std::format("texture \"{}\"", texture.name));
-        }
-
-        const auto validateShape = [&report, &materials, &media](const SceneShape& shape, const std::string_view owner) {
-            ValidateEntityType(&report, shape.entity, supportedShapes, "shape");
-            ValidateTransform(&report, shape.transform, shape.entity.source, owner);
-            if (shape.materialName.empty() || !ContainsName(materials, shape.materialName)) AddIssue(&report, shape.entity.source, std::format("{} references unknown material \"{}\"", owner, shape.materialName));
-            if (!shape.mediumInterface.inside.empty() && !ContainsName(media, shape.mediumInterface.inside)) AddIssue(&report, shape.entity.source, std::format("{} references unknown inside medium \"{}\"", owner, shape.mediumInterface.inside));
-            if (!shape.mediumInterface.outside.empty() && !ContainsName(media, shape.mediumInterface.outside)) AddIssue(&report, shape.entity.source, std::format("{} references unknown outside medium \"{}\"", owner, shape.mediumInterface.outside));
-            if (shape.areaLight.has_value()) ValidateEntityType(&report, shape.areaLight->entity, supportedAreaLights, "area light");
-        };
-
-        for (const SceneLight& light : scene.lights) {
-            ValidateEntityType(&report, light.entity, supportedLights, "light");
-            ValidateTransform(&report, light.transform, light.entity.source, std::format("light \"{}\"", light.name));
-            if (!light.medium.empty() && !ContainsName(media, light.medium)) AddIssue(&report, light.entity.source, std::format("light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
-        }
-
-        for (const SceneShape& shape : scene.shapes) validateShape(shape, std::format("shape \"{}\"", shape.name));
-
-        std::set<std::string> objectDefinitions{};
-        for (const SceneObjectDefinition& definition : scene.objectDefinitions) {
-            objectDefinitions.insert(definition.name);
-            for (const SceneShape& shape : definition.shapes) {
-                validateShape(shape, std::format("object definition \"{}\" shape", definition.name));
-                if (shape.areaLight.has_value()) AddIssue(&report, shape.entity.source, std::format("object definition \"{}\" contains an area light shape; instanced area lights are not supported by the current GPU pathtracer", definition.name));
-            }
-        }
-
-        for (const SceneObjectInstance& instance : scene.objectInstances) {
-            if (!ContainsName(objectDefinitions, instance.definitionName)) AddIssue(&report, instance.source, std::format("object instance references unknown definition \"{}\"", instance.definitionName));
-            ValidateTransform(&report, instance.transform, instance.source, std::format("object instance \"{}\"", instance.name));
-        }
-
-        return report;
-    }
 
     SceneInfo DescribeScene(const SceneSnapshot& scene) {
         std::size_t definitionShapeCount     = 0;
@@ -1310,6 +1255,76 @@ namespace spectra::scene {
             .object_instance_count   = scene.objectInstances.size(),
             .camera_fov_degrees      = cameraFov,
         };
+    }
+
+    SceneCatalog DiscoverSceneCatalog() {
+        SceneCatalog catalog{.root = SceneRoot()};
+        if (!std::filesystem::exists(catalog.root)) throw std::runtime_error(std::format("{}: scene root does not exist", catalog.root.string()));
+        for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(catalog.root)) {
+            if (!entry.is_regular_file()) continue;
+            const std::filesystem::path sourcePath = std::filesystem::absolute(entry.path()).lexically_normal();
+            if (!IsPbrtSceneFile(sourcePath)) continue;
+            std::optional<std::string> scanError{};
+            try {
+                if (!ContainsWorldBegin(sourcePath)) continue;
+            } catch (const std::exception& error) {
+                scanError = error.what();
+            }
+
+            const std::filesystem::path relativePath = sourcePath.lexically_relative(catalog.root);
+            SceneCatalogEntry catalogEntry{
+                .id          = PathId(relativePath),
+                .displayName = SceneDisplayName(relativePath),
+                .group       = SceneGroupName(relativePath),
+                .relativePath = relativePath,
+                .sourcePath  = sourcePath,
+                .state       = scanError.has_value() ? SceneCatalogEntryState::Invalid : SceneCatalogEntryState::Pending,
+            };
+            if (scanError.has_value()) {
+                catalogEntry.issues.push_back(SceneDiagnostic{
+                    .source  = SceneSourceLocation{.filename = sourcePath.string(), .line = 1, .column = 1},
+                    .message = *scanError,
+                });
+            }
+            catalog.entries.push_back(std::move(catalogEntry));
+        }
+        std::ranges::sort(catalog.entries, {}, &SceneCatalogEntry::id);
+        RefreshCatalogCounts(&catalog);
+        return catalog;
+    }
+
+    void ValidateSceneCatalogEntry(SceneCatalogEntry& entry) {
+        entry.state = SceneCatalogEntryState::Pending;
+        entry.document.reset();
+        entry.info.reset();
+        entry.issues.clear();
+        try {
+            PbrtSceneBuilder builder(entry.sourcePath);
+            SceneSnapshot scene = builder.Parse();
+            scene.name          = entry.id;
+            scene.title         = entry.displayName;
+            if (scene.revision.value == 0) scene.revision = SceneRevision{1};
+
+            entry.document = std::make_shared<SceneSnapshot>(std::move(scene));
+            entry.info     = DescribeScene(*entry.document);
+            entry.state    = SceneCatalogEntryState::Ready;
+        } catch (const std::exception& error) {
+            entry.state = SceneCatalogEntryState::Invalid;
+            entry.issues.push_back(SceneDiagnostic{
+                .source  = SceneSourceLocation{.filename = entry.sourcePath.string(), .line = 1, .column = 1},
+                .message = error.what(),
+            });
+        }
+    }
+
+    SceneWorkspace BuildScene(const SceneCatalogEntry& entry) {
+        if (entry.state != SceneCatalogEntryState::Ready) throw std::runtime_error(std::format("Cannot build disabled Spectra scene \"{}\"", entry.id));
+        if (entry.document != nullptr) return SceneWorkspace{*entry.document};
+        PbrtSceneBuilder builder(entry.sourcePath);
+        SceneSnapshot scene = builder.Parse();
+        scene.name          = entry.id;
+        scene.title         = entry.displayName;
+        return SceneWorkspace{std::move(scene)};
     }
 
     SceneWorkspace BuildScene(const std::string_view name) {

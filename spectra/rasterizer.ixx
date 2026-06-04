@@ -14,7 +14,7 @@ module;
 export module xayah.spectra.rasterizer;
 
 import std;
-import spectra.scene;
+export import xayah.spectra.rasterizer.scene;
 
 export namespace xayah {
     enum class RasterizerDockSlot {
@@ -62,7 +62,6 @@ export namespace xayah {
 
     template <typename Host>
     concept RasterizerHost = requires(Host& host, RasterizerPanel panel, std::string detail) {
-        { host.scene_snapshot() } -> std::same_as<std::shared_ptr<const spectra::scene::SceneSnapshot>>;
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
@@ -74,17 +73,13 @@ export namespace xayah {
     class RasterizerHostView {
     public:
         template <RasterizerHost Host>
-        explicit RasterizerHostView(Host& host) : sceneSnapshotCallback([&host] { return host.scene_snapshot(); }), physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
         RasterizerHostView(const RasterizerHostView& other)                = delete;
         RasterizerHostView(RasterizerHostView&& other) noexcept            = default;
         RasterizerHostView& operator=(const RasterizerHostView& other)     = delete;
         RasterizerHostView& operator=(RasterizerHostView&& other) noexcept = default;
         ~RasterizerHostView() noexcept                                     = default;
-
-        [[nodiscard]] std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot() {
-            return this->sceneSnapshotCallback();
-        }
 
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() {
             return this->physicalDeviceCallback();
@@ -111,7 +106,6 @@ export namespace xayah {
         }
 
     private:
-        std::move_only_function<std::shared_ptr<const spectra::scene::SceneSnapshot>()> sceneSnapshotCallback{};
         std::move_only_function<const vk::raii::PhysicalDevice&()> physicalDeviceCallback{};
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
         std::move_only_function<std::uint32_t()> frameCountCallback{};
@@ -122,7 +116,7 @@ export namespace xayah {
 
     class SpectraRasterizer final {
     public:
-        SpectraRasterizer();
+        explicit SpectraRasterizer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
         ~SpectraRasterizer() noexcept;
 
         SpectraRasterizer(const SpectraRasterizer& other) = delete;
@@ -130,6 +124,7 @@ export namespace xayah {
         SpectraRasterizer& operator=(const SpectraRasterizer& other) = delete;
         SpectraRasterizer& operator=(SpectraRasterizer&& other) noexcept;
 
+        [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 
         template <RasterizerHost Host>

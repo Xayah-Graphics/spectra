@@ -14,7 +14,7 @@ module;
 export module xayah.spectra.pathtracer;
 
 import std;
-import spectra.scene;
+export import xayah.spectra.pathtracer.scene;
 
 export namespace xayah {
     enum class PathtracerDockSlot {
@@ -62,8 +62,6 @@ export namespace xayah {
 
     template <typename Host>
     concept PathtracerHost = requires(Host& host, PathtracerPanel panel, std::string detail) {
-        { host.scene_snapshot() } -> std::same_as<std::shared_ptr<const spectra::scene::SceneSnapshot>>;
-        { host.scene_changes_since(spectra::scene::SceneRevision{}) } -> std::same_as<spectra::scene::SceneEditBatch>;
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
@@ -75,21 +73,13 @@ export namespace xayah {
     class PathtracerHostView {
     public:
         template <PathtracerHost Host>
-        explicit PathtracerHostView(Host& host) : sceneSnapshotCallback([&host] { return host.scene_snapshot(); }), sceneChangesSinceCallback([&host](spectra::scene::SceneRevision revision) { return host.scene_changes_since(revision); }), physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
 
         PathtracerHostView(const PathtracerHostView& other)                = delete;
         PathtracerHostView(PathtracerHostView&& other) noexcept            = default;
         PathtracerHostView& operator=(const PathtracerHostView& other)     = delete;
         PathtracerHostView& operator=(PathtracerHostView&& other) noexcept = default;
         ~PathtracerHostView() noexcept                                     = default;
-
-        [[nodiscard]] std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot() {
-            return this->sceneSnapshotCallback();
-        }
-
-        [[nodiscard]] spectra::scene::SceneEditBatch scene_changes_since(spectra::scene::SceneRevision revision) {
-            return this->sceneChangesSinceCallback(revision);
-        }
 
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() {
             return this->physicalDeviceCallback();
@@ -116,8 +106,6 @@ export namespace xayah {
         }
 
     private:
-        std::move_only_function<std::shared_ptr<const spectra::scene::SceneSnapshot>()> sceneSnapshotCallback{};
-        std::move_only_function<spectra::scene::SceneEditBatch(spectra::scene::SceneRevision)> sceneChangesSinceCallback{};
         std::move_only_function<const vk::raii::PhysicalDevice&()> physicalDeviceCallback{};
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
         std::move_only_function<std::uint32_t()> frameCountCallback{};
@@ -128,7 +116,7 @@ export namespace xayah {
 
     class SpectraPathtracer final {
     public:
-        SpectraPathtracer();
+        explicit SpectraPathtracer(std::shared_ptr<spectra::scene::SceneWorkspace> source_workspace);
         ~SpectraPathtracer() noexcept;
 
         SpectraPathtracer(const SpectraPathtracer& other) = delete;
@@ -136,6 +124,7 @@ export namespace xayah {
         SpectraPathtracer& operator=(const SpectraPathtracer& other) = delete;
         SpectraPathtracer& operator=(SpectraPathtracer&& other) noexcept;
 
+        [[nodiscard]] static spectra::scene::SceneTranslationTarget translation_target();
         [[nodiscard]] std::string_view name() const;
 
         template <PathtracerHost Host>
