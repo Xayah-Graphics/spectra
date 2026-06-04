@@ -4,12 +4,12 @@
 #include <exception>
 #include <memory>
 #include <optional>
-#include <spectra/pathtracer/compiled_scene.cuh>
-#include <spectra/pathtracer/core/kernel_config.cuh>
-#include <spectra/pathtracer/core/render_config.cuh>
-#include <spectra/pathtracer/integrator.cuh>
-#include <spectra/pathtracer/memory/memory.cuh>
-#include <spectra/pathtracer/util/float.cuh>
+#include <pathtracer/compiled_scene.cuh>
+#include <pathtracer/core/kernel_config.cuh>
+#include <pathtracer/core/render_config.cuh>
+#include <pathtracer/integrator.cuh>
+#include <pathtracer/memory/memory.cuh>
+#include <pathtracer/util/float.cuh>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -17,7 +17,214 @@
 #include <utility>
 #include <vector>
 
+import spectra.pathtracer;
+import spectra.scene;
 import spectra.scene.pbrt;
+
+namespace spectra::app {
+    [[nodiscard]] pathtracer::ColorSpace ToPathtracerColorSpace(const scene::ColorSpace colorSpace) {
+        switch (colorSpace) {
+        case scene::ColorSpace::sRGB: return pathtracer::ColorSpace::sRGB;
+        case scene::ColorSpace::DCI_P3: return pathtracer::ColorSpace::DCI_P3;
+        case scene::ColorSpace::Rec2020: return pathtracer::ColorSpace::Rec2020;
+        case scene::ColorSpace::ACES2065_1: return pathtracer::ColorSpace::ACES2065_1;
+        }
+        throw std::runtime_error("Unknown scene color space while adapting scene to pathtracer");
+    }
+
+    [[nodiscard]] pathtracer::SceneSourceLocation ToPathtracerSourceLocation(const scene::SceneSourceLocation& source) {
+        return pathtracer::SceneSourceLocation{
+            .filename = source.filename,
+            .line     = source.line,
+            .column   = source.column,
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneRevision ToPathtracerRevision(const scene::SceneRevision revision) {
+        return pathtracer::SceneRevision{.value = revision.value};
+    }
+
+    [[nodiscard]] pathtracer::SceneTransform ToPathtracerTransform(const math::Transform& transform) {
+        return pathtracer::SceneTransform{
+            .matrix  = transform.matrix,
+            .inverse = transform.inverse,
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneTransformSet ToPathtracerTransformSet(const scene::SceneTransformSet& transform) {
+        return pathtracer::SceneTransformSet{
+            .start     = ToPathtracerTransform(transform.start),
+            .end       = ToPathtracerTransform(transform.end),
+            .startTime = transform.startTime,
+            .endTime   = transform.endTime,
+            .animated  = transform.animated,
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneParameter ToPathtracerParameter(const scene::SceneParameter& parameter) {
+        return pathtracer::SceneParameter{
+            .type        = parameter.type,
+            .name        = parameter.name,
+            .values      = parameter.values,
+            .mayBeUnused = parameter.mayBeUnused,
+            .colorSpace  = ToPathtracerColorSpace(parameter.colorSpace),
+            .source      = ToPathtracerSourceLocation(parameter.source),
+        };
+    }
+
+    [[nodiscard]] std::vector<pathtracer::SceneParameter> ToPathtracerParameters(const std::vector<scene::SceneParameter>& parameters) {
+        std::vector<pathtracer::SceneParameter> result;
+        result.reserve(parameters.size());
+        for (const scene::SceneParameter& parameter : parameters) result.push_back(ToPathtracerParameter(parameter));
+        return result;
+    }
+
+    [[nodiscard]] pathtracer::SceneEntity ToPathtracerEntity(const scene::SceneEntity& entity) {
+        return pathtracer::SceneEntity{
+            .type       = entity.type,
+            .parameters = ToPathtracerParameters(entity.parameters),
+            .colorSpace = ToPathtracerColorSpace(entity.colorSpace),
+            .source     = ToPathtracerSourceLocation(entity.source),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneOption ToPathtracerOption(const scene::SceneOption& option) {
+        return pathtracer::SceneOption{
+            .name   = option.name,
+            .value  = option.value,
+            .source = ToPathtracerSourceLocation(option.source),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneMediumInterface ToPathtracerMediumInterface(const scene::SceneMediumInterface& mediumInterface) {
+        return pathtracer::SceneMediumInterface{
+            .inside  = mediumInterface.inside,
+            .outside = mediumInterface.outside,
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneRenderSettings ToPathtracerRenderSettings(const scene::SceneRenderSettings& settings) {
+        std::vector<pathtracer::SceneOption> options;
+        options.reserve(settings.options.size());
+        for (const scene::SceneOption& option : settings.options) options.push_back(ToPathtracerOption(option));
+
+        return pathtracer::SceneRenderSettings{
+            .filter          = ToPathtracerEntity(settings.filter),
+            .film            = ToPathtracerEntity(settings.film),
+            .camera          = ToPathtracerEntity(settings.camera),
+            .sampler         = ToPathtracerEntity(settings.sampler),
+            .integrator      = ToPathtracerEntity(settings.integrator),
+            .accelerator     = ToPathtracerEntity(settings.accelerator),
+            .cameraTransform = ToPathtracerTransformSet(settings.cameraTransform),
+            .cameraMedium    = settings.cameraMedium,
+            .options         = std::move(options),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneMaterial ToPathtracerMaterial(const scene::SceneMaterial& material) {
+        return pathtracer::SceneMaterial{
+            .name   = material.name,
+            .entity = ToPathtracerEntity(material.entity),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneTexture ToPathtracerTexture(const scene::SceneTexture& texture) {
+        return pathtracer::SceneTexture{
+            .name      = texture.name,
+            .kind      = texture.kind,
+            .entity    = ToPathtracerEntity(texture.entity),
+            .transform = ToPathtracerTransformSet(texture.transform),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneMedium ToPathtracerMedium(const scene::SceneMedium& medium) {
+        return pathtracer::SceneMedium{
+            .name      = medium.name,
+            .entity    = ToPathtracerEntity(medium.entity),
+            .transform = ToPathtracerTransformSet(medium.transform),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneLight ToPathtracerLight(const scene::SceneLight& light) {
+        return pathtracer::SceneLight{
+            .name      = light.name,
+            .entity    = ToPathtracerEntity(light.entity),
+            .transform = ToPathtracerTransformSet(light.transform),
+            .medium    = light.medium,
+        };
+    }
+
+    [[nodiscard]] std::optional<pathtracer::SceneAreaLight> ToPathtracerAreaLight(const std::optional<scene::SceneAreaLight>& areaLight) {
+        if (!areaLight.has_value()) return std::nullopt;
+        return pathtracer::SceneAreaLight{.entity = ToPathtracerEntity(areaLight->entity)};
+    }
+
+    [[nodiscard]] pathtracer::SceneShape ToPathtracerShape(const scene::SceneShape& shape) {
+        return pathtracer::SceneShape{
+            .name               = shape.name,
+            .entity             = ToPathtracerEntity(shape.entity),
+            .transform          = ToPathtracerTransformSet(shape.transform),
+            .reverseOrientation = shape.reverseOrientation,
+            .materialName       = shape.materialName,
+            .areaLight          = ToPathtracerAreaLight(shape.areaLight),
+            .mediumInterface    = ToPathtracerMediumInterface(shape.mediumInterface),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneObjectDefinition ToPathtracerObjectDefinition(const scene::SceneObjectDefinition& definition) {
+        std::vector<pathtracer::SceneShape> shapes;
+        shapes.reserve(definition.shapes.size());
+        for (const scene::SceneShape& shape : definition.shapes) shapes.push_back(ToPathtracerShape(shape));
+
+        return pathtracer::SceneObjectDefinition{
+            .name   = definition.name,
+            .shapes = std::move(shapes),
+            .source = ToPathtracerSourceLocation(definition.source),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneObjectInstance ToPathtracerObjectInstance(const scene::SceneObjectInstance& instance) {
+        return pathtracer::SceneObjectInstance{
+            .name           = instance.name,
+            .definitionName = instance.definitionName,
+            .transform      = ToPathtracerTransformSet(instance.transform),
+            .source         = ToPathtracerSourceLocation(instance.source),
+        };
+    }
+
+    [[nodiscard]] pathtracer::SceneSnapshot ToPathtracerScene(const scene::SceneSnapshot& source) {
+        pathtracer::SceneSnapshot result{
+            .revision       = ToPathtracerRevision(source.revision),
+            .name           = source.name,
+            .title          = source.title,
+            .source         = source.source,
+            .renderSettings = ToPathtracerRenderSettings(source.renderSettings),
+        };
+
+        result.materials.reserve(source.materials.size());
+        for (const scene::SceneMaterial& material : source.materials) result.materials.push_back(ToPathtracerMaterial(material));
+
+        result.textures.reserve(source.textures.size());
+        for (const scene::SceneTexture& texture : source.textures) result.textures.push_back(ToPathtracerTexture(texture));
+
+        result.media.reserve(source.media.size());
+        for (const scene::SceneMedium& medium : source.media) result.media.push_back(ToPathtracerMedium(medium));
+
+        result.lights.reserve(source.lights.size());
+        for (const scene::SceneLight& light : source.lights) result.lights.push_back(ToPathtracerLight(light));
+
+        result.shapes.reserve(source.shapes.size());
+        for (const scene::SceneShape& shape : source.shapes) result.shapes.push_back(ToPathtracerShape(shape));
+
+        result.objectDefinitions.reserve(source.objectDefinitions.size());
+        for (const scene::SceneObjectDefinition& definition : source.objectDefinitions) result.objectDefinitions.push_back(ToPathtracerObjectDefinition(definition));
+
+        result.objectInstances.reserve(source.objectInstances.size());
+        for (const scene::SceneObjectInstance& instance : source.objectInstances) result.objectInstances.push_back(ToPathtracerObjectInstance(instance));
+
+        return result;
+    }
+} // namespace spectra::app
 
 namespace {
     class UsageError : public std::runtime_error {
@@ -94,10 +301,11 @@ int main(int argc, char* argv[]) {
         spectra::pathtracer::GpuRuntime runtime(runtime_config);
         runtime.UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(render_config));
 
-        spectra::scene::SceneWorkspace scene_workspace                               = spectra::scene::BuildPbrtScene(*scene_name);
-        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot          = scene_workspace.snapshot();
+        spectra::scene::SceneWorkspace scene_workspace                      = spectra::scene::BuildPbrtScene(*scene_name);
+        std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot = scene_workspace.snapshot();
+        spectra::pathtracer::SceneSnapshot pathtracer_scene                = spectra::app::ToPathtracerScene(*scene_snapshot);
         spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_gpu scene");
-        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(*scene_snapshot, render_config, &scene_memory_scope);
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(pathtracer_scene, render_config, &scene_memory_scope);
         spectra::pathtracer::WavefrontPathtracer pathtracer(&scene_memory_scope, *compiled_scene, render_config);
 
         spectra::Float seconds = pathtracer.Render();

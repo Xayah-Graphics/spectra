@@ -1,0 +1,13 @@
+#include <pathtracer/util/lowdiscrepancy.cuh>
+#include <pathtracer/util/math.cuh>
+#include <pathtracer/util/primes.cuh>
+
+namespace spectra {
+    // Low Discrepancy Function Definitions
+    pstd::vector<DigitPermutation>* ComputeRadicalInversePermutations(uint32_t seed, Allocator alloc) {
+        pstd::vector<DigitPermutation>* perms = alloc.new_object<pstd::vector<DigitPermutation>>(alloc);
+        perms->resize(PrimeTableSize);
+        for (int i = 0; i < PrimeTableSize; ++i) (*perms)[i] = DigitPermutation(Primes[i], seed, alloc);
+        return perms;
+    }
+} // namespace spectra

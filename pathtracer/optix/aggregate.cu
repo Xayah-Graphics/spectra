@@ -1,0 +1,1461 @@
+#include <array>
+#include <atomic>
+#include <mutex>
+#include <optix.h>
+// clang-format off
+#include <optix_function_table_definition.h>
+#include <optix_stubs.h>
+#include <optix_stack_size.h>
+// clang-format on
+#include <pathtracer/compiled_scene.cuh>
+#include <pathtracer/core/diagnostics.cuh>
+#include <pathtracer/core/lights.cuh>
+#include <pathtracer/core/materials.cuh>
+#include <pathtracer/core/render_config.cuh>
+#include <pathtracer/core/textures.cuh>
+#include <pathtracer/gpu/util.cuh>
+#include <pathtracer/optix/aggregate.cuh>
+#include <pathtracer/optix/optix.cuh>
+#include <pathtracer/util/loopsubdiv.cuh>
+#include <pathtracer/util/mesh.cuh>
+#include <pathtracer/util/parallel.cuh>
+#include <pathtracer/util/pstd.cuh>
+#include <pathtracer/util/splines.cuh>
+#include <pathtracer/wavefront/intersect.cuh>
+#include <spectra_optix_config.h>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#define SPECTRA_OPTIX_CHECK(EXPR)                                                                                                        \
+    do {                                                                                                                                 \
+        OptixResult res = EXPR;                                                                                                          \
+        if (res != OPTIX_SUCCESS) SPECTRA_FATAL("OptiX call " #EXPR " failed with code %d: \"%s\"", int(res), optixGetErrorString(res)); \
+    } while (false) /* eat semicolon */
+
+#define SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(EXPR, OPTIX_DIAGNOSTICS)          \
+    do {                                                                       \
+        OptixResult res = EXPR;                                                \
+        if (res != OPTIX_SUCCESS)                                              \
+            SPECTRA_FATAL("OptiX call " #EXPR " failed with code %d: \"%s\"\n" \
+                          "OptiX diagnostics: %s",                             \
+                int(res), optixGetErrorString(res), OPTIX_DIAGNOSTICS);        \
+    } while (false) /* eat semicolon */
+
+namespace spectra::optix {
+    SpectraOptiXAggregate::BVH::BVH(size_t size) {
+        intersectHGRecords.resize(size);
+        shadowHGRecords.resize(size);
+        randomHitHGRecords.resize(size);
+    }
+
+    SpectraOptiXAggregate::BVH::BVH(BVH&&)                                   = default;
+    SpectraOptiXAggregate::BVH& SpectraOptiXAggregate::BVH::operator=(BVH&&) = default;
+    SpectraOptiXAggregate::BVH::~BVH()                                       = default;
+
+    struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) RaygenRecord {
+        __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+    };
+
+    struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) MissRecord {
+        __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+    };
+
+    extern "C" {
+    extern unsigned char SPECTRA_EMBEDDED_OPTIX_INPUT[];
+    extern unsigned long long SPECTRA_EMBEDDED_OPTIX_INPUT_SIZE;
+    }
+
+    static constexpr unsigned int SpectraOptiXPayloadSemantics = OPTIX_PAYLOAD_SEMANTICS_TRACE_CALLER_READ_WRITE | OPTIX_PAYLOAD_SEMANTICS_CH_READ_WRITE | OPTIX_PAYLOAD_SEMANTICS_MS_READ_WRITE | OPTIX_PAYLOAD_SEMANTICS_AH_READ_WRITE | OPTIX_PAYLOAD_SEMANTICS_IS_READ_WRITE;
+
+    static constexpr std::array<unsigned int, 3> SpectraOptiXPayloadSemanticsByValue = {
+        SpectraOptiXPayloadSemantics,
+        SpectraOptiXPayloadSemantics,
+        SpectraOptiXPayloadSemantics,
+    };
+
+    static constexpr OptixPayloadType SpectraOptiXPayload = {
+        static_cast<unsigned int>(SpectraOptiXPayloadSemanticsByValue.size()),
+        SpectraOptiXPayloadSemanticsByValue.data(),
+    };
+
+    template <typename T>
+    static pathtracer::PathtracerDeviceBuffer CopyToDevice(pstd::span<const T> buffer) {
+        size_t size = buffer.size() * sizeof(buffer[0]);
+        pathtracer::PathtracerDeviceBuffer deviceBuffer(size);
+        SPECTRA_CUDA_CHECK(cudaMemcpy(deviceBuffer.data(), buffer.data(), size, cudaMemcpyHostToDevice));
+        return deviceBuffer;
+    }
+
+    SpectraOptiXAggregate::Accel SpectraOptiXAggregate::buildOptixBVH(OptixDeviceContext optixContext, const std::vector<OptixBuildInput>& buildInputs, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+        if (buildInputs.empty()) return {};
+
+        // Figure out memory requirements.
+        OptixAccelBuildOptions accelOptions = {};
+        accelOptions.buildFlags             = (OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE);
+        accelOptions.motionOptions.numKeys  = 1;
+        accelOptions.operation              = OPTIX_BUILD_OPERATION_BUILD;
+
+        OptixAccelBufferSizes blasBufferSizes;
+        SPECTRA_OPTIX_CHECK(optixAccelComputeMemoryUsage(optixContext, &accelOptions, buildInputs.data(), buildInputs.size(), &blasBufferSizes));
+
+        pathtracer::PathtracerDeviceBuffer compactedSizeBuffer(sizeof(uint64_t));
+        OptixAccelEmitDesc emitDesc;
+        emitDesc.type   = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+        emitDesc.result = compactedSizeBuffer.device_ptr();
+
+        // Allocate buffers.
+        pathtracer::PathtracerDeviceBuffer tempBuffer(blasBufferSizes.tempSizeInBytes);
+        pathtracer::PathtracerDeviceBuffer outputBuffer(blasBufferSizes.outputSizeInBytes);
+        pathtracer::PathtracerDeviceBuffer accelBuffer;
+
+        // Build.
+        cudaStream_t buildStream = threadCUDAStreams.Get().get();
+        OptixTraversableHandle traversableHandle{0};
+        SPECTRA_OPTIX_CHECK(optixAccelBuild(optixContext, buildStream, &accelOptions, buildInputs.data(), buildInputs.size(), tempBuffer.device_ptr(), blasBufferSizes.tempSizeInBytes, outputBuffer.device_ptr(), blasBufferSizes.outputSizeInBytes, &traversableHandle, &emitDesc, 1));
+
+        SPECTRA_CUDA_CHECK(cudaStreamSynchronize(buildStream));
+        uint64_t compactedSize;
+        SPECTRA_CUDA_CHECK(cudaMemcpyAsync(&compactedSize, compactedSizeBuffer.data(), sizeof(uint64_t), cudaMemcpyDeviceToHost, buildStream));
+        SPECTRA_CUDA_CHECK(cudaStreamSynchronize(buildStream));
+
+        if (compactedSize < blasBufferSizes.outputSizeInBytes) {
+            // Compact the acceleration structure
+            pathtracer::PathtracerDeviceBuffer compactedBuffer(compactedSize);
+
+            SPECTRA_OPTIX_CHECK(optixAccelCompact(optixContext, buildStream, traversableHandle, compactedBuffer.device_ptr(), compactedSize, &traversableHandle));
+            SPECTRA_CUDA_CHECK(cudaStreamSynchronize(buildStream));
+            accelBuffer = std::move(compactedBuffer);
+        } else {
+            accelBuffer = std::move(outputBuffer);
+        }
+
+        return Accel{
+            .traversableHandle = traversableHandle,
+            .buffer            = std::move(accelBuffer),
+        };
+    }
+
+    static Material getMaterial(const pathtracer::PathtracerShapeSceneEntity& shape, const std::map<std::string, Material>& materials) {
+        auto iter = materials.find(shape.materialName);
+        if (iter == materials.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: material not defined", shape.materialName));
+        return iter->second;
+    }
+
+    static FloatTexture getAlphaTexture(const pathtracer::PathtracerShapeSceneEntity& shape, const std::map<std::string, FloatTexture>& floatTextures, Allocator alloc) {
+        FloatTexture alphaTexture;
+
+        std::string alphaTexName = shape.parameters.GetTexture("alpha");
+        if (alphaTexName.empty()) {
+            if (Float alpha = shape.parameters.GetOneFloat("alpha", 1.f); alpha < 1.f)
+                alphaTexture = alloc.new_object<FloatConstantTexture>(alpha);
+            else
+                return nullptr;
+        } else {
+            auto iter = floatTextures.find(alphaTexName);
+            if (iter == floatTextures.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: alpha texture not defined.", alphaTexName));
+
+            alphaTexture = iter->second;
+        }
+
+        if (!BasicTextureEvaluator().CanEvaluate({alphaTexture}, {})) {
+            // It would be nice to just use the spectra::UniversalTextureEvaluator (maybe
+            // always), but optix complains "spectra::Error: Found call graph recursion"...
+            throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: alpha texture too complex for spectra::BasicTextureEvaluator.", alphaTexName));
+        }
+
+        return alphaTexture;
+    }
+
+    static int getOptixGeometryFlags(bool isTriangle, FloatTexture alphaTexture) {
+        if (alphaTexture && isTriangle)
+            // Need anyhit
+            return OPTIX_GEOMETRY_FLAG_NONE;
+        else
+            return OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
+    }
+
+    static MediumInterface* getMediumInterface(const pathtracer::PathtracerShapeSceneEntity& shape, const std::map<std::string, Medium>& media, Allocator alloc) {
+        if (shape.insideMedium.empty() && shape.outsideMedium.empty()) return nullptr;
+
+        auto getMedium = [&](const std::string& name) -> Medium {
+            if (name.empty()) return nullptr;
+
+            auto iter = media.find(name);
+            if (iter == media.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: medium not defined", name));
+            return iter->second;
+        };
+
+        return alloc.new_object<MediumInterface>(getMedium(shape.insideMedium), getMedium(shape.outsideMedium));
+    }
+
+    std::map<int, TriQuadMesh> SpectraOptiXAggregate::PreparePLYMeshes(const std::vector<pathtracer::PathtracerShapeSceneEntity>& shapes, const std::map<std::string, FloatTexture>& floatTextures, const Float displacementEdgeScale) {
+        std::map<int, TriQuadMesh> plyMeshes;
+        std::mutex mutex;
+        ParallelFor(0, shapes.size(), [&](int64_t i) {
+            const auto& shape = shapes[i];
+            if (shape.name != "plymesh") return;
+
+            std::string filename = shape.parameters.GetOneString("filename", "");
+            if (filename.empty()) throw std::runtime_error(diagnostics::Format(&shape.loc, "plymesh: \"filename\" must be provided."));
+            TriQuadMesh plyMesh = TriQuadMesh::ReadPLY(filename); // todo: alloc
+            if (!plyMesh.triIndices.empty() || !plyMesh.quadIndices.empty()) {
+                plyMesh.ConvertToOnlyTriangles();
+
+                Float edgeLength = shape.parameters.GetOneFloat("edgelength", 1.f);
+                edgeLength *= displacementEdgeScale;
+
+                std::string displacementTexName = shape.parameters.GetTexture("displacement");
+                if (!displacementTexName.empty()) {
+                    auto iter = floatTextures.find(displacementTexName);
+                    if (iter == floatTextures.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: no such texture defined.", displacementTexName));
+                    FloatTexture displacement = iter->second;
+                    plyMesh                   = plyMesh.Displace(
+                        [&](Point3f v0, Point3f v1) {
+                            v0 = (*shape.renderFromObject)(v0);
+                            v1 = (*shape.renderFromObject)(v1);
+                            return Distance(v0, v1);
+                        },
+                        edgeLength,
+                        [&](Point3f* pCPU, const Normal3f* nCPU, const Point2f* uvCPU, int nVertices) {
+                            pathtracer::PathtracerMemoryScope displacementMemory(pathtracer::PathtracerMemoryScopeKind::Transient, "ply displacement");
+                            Point3f* p  = static_cast<Point3f*>(displacementMemory.allocate(nVertices * sizeof(spectra::Point3f), alignof(spectra::Point3f)));
+                            Normal3f* n = static_cast<Normal3f*>(displacementMemory.allocate(nVertices * sizeof(spectra::Normal3f), alignof(spectra::Normal3f)));
+                            Point2f* uv = static_cast<Point2f*>(displacementMemory.allocate(nVertices * sizeof(spectra::Point2f), alignof(spectra::Point2f)));
+
+                            std::memcpy(p, pCPU, nVertices * sizeof(Point3f));
+                            std::memcpy(n, nCPU, nVertices * sizeof(Normal3f));
+                            std::memcpy(uv, uvCPU, nVertices * sizeof(Point2f));
+
+                            GPUParallelFor(nVertices, [=] __device__(int i) {
+                                TextureEvalContext ctx;
+                                ctx.p   = p[i];
+                                ctx.uv  = uv[i];
+                                Float d = UniversalTextureEvaluator()(displacement, ctx);
+                                p[i] += Vector3f(d * n[i]);
+                            });
+                            GPUWait();
+
+                            std::memcpy(pCPU, p, nVertices * sizeof(Point3f));
+
+                        },
+                        &shape.loc);
+                }
+            }
+
+            std::lock_guard<std::mutex> lock(mutex);
+            plyMeshes[i] = std::move(plyMesh);
+        });
+
+        return plyMeshes;
+    }
+
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForTriangles(const std::vector<pathtracer::PathtracerShapeSceneEntity>& shapes, const std::map<int, TriQuadMesh>& plyMeshes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+        // Count how many of the shapes are triangle meshes
+        std::vector<size_t> meshIndexToShapeIndex;
+        for (size_t i = 0; i < shapes.size(); ++i) {
+            const auto& shape = shapes[i];
+            if (shape.name == "trianglemesh" || shape.name == "plymesh" || shape.name == "loopsubdiv") meshIndexToShapeIndex.push_back(i);
+        }
+
+        size_t nMeshes = meshIndexToShapeIndex.size();
+        if (nMeshes == 0) return {};
+
+        std::vector<TriangleMesh*> meshes(nMeshes, nullptr);
+        std::vector<Bounds3f> meshBounds(nMeshes);
+        ParallelFor(0, nMeshes, [&](int64_t meshIndex) {
+            Allocator alloc   = threadAllocators.Get();
+            size_t shapeIndex = meshIndexToShapeIndex[meshIndex];
+            const auto& shape = shapes[shapeIndex];
+
+            TriangleMesh* mesh = nullptr;
+            if (shape.name == "trianglemesh") {
+                mesh = Triangle::CreateMesh(shape.renderFromObject, shape.reverseOrientation, shape.parameters, &shape.loc, meshBufferCache, alloc);
+                SPECTRA_CHECK(mesh != nullptr);
+            } else if (shape.name == "loopsubdiv") {
+                // LoopSubdiv uses the same tessellation callback contract as the shape loader.
+                int nLevels                    = shape.parameters.GetOneInt("levels", 3);
+                std::vector<int> vertexIndices = shape.parameters.GetIntArray("indices");
+                if (vertexIndices.empty())
+                    throw std::runtime_error(diagnostics::Format(&shape.loc, "Vertex indices \"indices\" not "
+                                                                             "provided for LoopSubdiv shape."));
+
+                std::vector<Point3f> P = shape.parameters.GetPoint3fArray("P");
+                if (P.empty())
+                    throw std::runtime_error(diagnostics::Format(&shape.loc, "Vertex positions \"P\" not provided "
+                                                                             "for LoopSubdiv shape."));
+
+                // don't actually use this for now...
+                std::string scheme = shape.parameters.GetOneString("scheme", "loop");
+
+                mesh = LoopSubdivide(shape.renderFromObject, shape.reverseOrientation, nLevels, vertexIndices, P, meshBufferCache, alloc);
+                SPECTRA_CHECK(mesh != nullptr);
+            } else if (shape.name == "plymesh") {
+                auto plyIter = plyMeshes.find(shapeIndex);
+                SPECTRA_CHECK(plyIter != plyMeshes.end());
+                const TriQuadMesh& plyMesh = plyIter->second;
+
+                if (!plyMesh.quadIndices.empty() && shape.areaLight.has_value()) {
+                    // This would be nice to fix, but it involves some
+                    // plumbing and it's a rare case. The underlying issue
+                    // is that when we create AreaLights for emissive
+                    // shapes earlier, we're not expecting this..
+                    std::string filename = shape.parameters.GetOneString("filename", "");
+                    throw std::runtime_error(diagnostics::Format(&shape.loc,
+                        "%s: PLY file being used as an area light has quads--"
+                        "this is currently unsupported. Please replace them with "
+                        "\"bilinearmesh\" "
+                        "shapes as a workaround. (Sorry!).",
+                        filename));
+                }
+
+                mesh = alloc.new_object<TriangleMesh>(*shape.renderFromObject, shape.reverseOrientation, plyMesh.triIndices, plyMesh.p, std::vector<Vector3f>(), plyMesh.n, plyMesh.uv, plyMesh.faceIndices, meshBufferCache, alloc);
+            } else
+                SPECTRA_FATAL("Logic error in GPUAggregate::buildBVHForTriangles()");
+
+            Bounds3f bounds;
+            for (size_t i = 0; i < mesh->nVertices; ++i) bounds = Union(bounds, mesh->p[i]);
+
+            meshes[meshIndex]     = mesh;
+            meshBounds[meshIndex] = bounds;
+        });
+
+        BVH bvh(nMeshes);
+        std::vector<OptixBuildInput> optixBuildInputs(nMeshes);
+        std::vector<CUdeviceptr> pDeviceDevicePtrs(nMeshes);
+        std::vector<pathtracer::PathtracerDeviceBuffer> vertexBuffers(nMeshes);
+        std::vector<pathtracer::PathtracerDeviceBuffer> indexBuffers(nMeshes);
+        std::vector<uint32_t> triangleInputFlags(nMeshes);
+
+        std::mutex boundsMutex;
+        ParallelFor(0, nMeshes, [&](int64_t startIndex, int64_t endIndex) {
+            Allocator alloc = threadAllocators.Get();
+            Bounds3f localBounds;
+
+            for (int meshIndex = startIndex; meshIndex < endIndex; ++meshIndex) {
+                int shapeIndex     = meshIndexToShapeIndex[meshIndex];
+                TriangleMesh* mesh = meshes[meshIndex];
+                const auto& shape  = shapes[shapeIndex];
+
+                OptixBuildInput& input = optixBuildInputs[meshIndex];
+
+                input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+
+                input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+                input.triangleArray.numVertices  = mesh->nVertices;
+#ifdef SPECTRA_FLOAT_AS_DOUBLE
+                // Convert the vertex positions to 32-bit floats before giving
+                // them to OptiX, since it doesn't support double-precision
+                // geometry.
+                input.triangleArray.vertexStrideInBytes = 3 * sizeof(float);
+                std::vector<float> p32(3 * mesh->nVertices);
+                for (int i = 0; i < mesh->nVertices; i++) {
+                    p32[3 * i]     = mesh->p[i].x;
+                    p32[3 * i + 1] = mesh->p[i].y;
+                    p32[3 * i + 2] = mesh->p[i].z;
+                }
+                pathtracer::PathtracerDeviceBuffer vertexBuffer(mesh->nVertices * 3 * sizeof(float));
+                SPECTRA_CUDA_CHECK(cudaMemcpy(vertexBuffer.data(), p32.data(), mesh->nVertices * 3 * sizeof(float), cudaMemcpyHostToDevice));
+#else
+                input.triangleArray.vertexStrideInBytes = sizeof(Point3f);
+                pathtracer::PathtracerDeviceBuffer vertexBuffer(mesh->nVertices * sizeof(spectra::Point3f));
+                SPECTRA_CUDA_CHECK(cudaMemcpy(vertexBuffer.data(), mesh->p, mesh->nVertices * sizeof(spectra::Point3f),
+                    cudaMemcpyHostToDevice));
+#endif
+                vertexBuffers[meshIndex]          = std::move(vertexBuffer);
+                pDeviceDevicePtrs[meshIndex]      = vertexBuffers[meshIndex].device_ptr();
+                input.triangleArray.vertexBuffers = &pDeviceDevicePtrs[meshIndex];
+
+                input.triangleArray.indexFormat        = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+                input.triangleArray.indexStrideInBytes = 3 * sizeof(int);
+                input.triangleArray.numIndexTriplets   = mesh->nTriangles;
+                pathtracer::PathtracerDeviceBuffer indexBuffer(mesh->nTriangles * 3 * sizeof(int));
+                SPECTRA_CUDA_CHECK(cudaMemcpy(indexBuffer.data(), mesh->vertexIndices, mesh->nTriangles * 3 * sizeof(int), cudaMemcpyHostToDevice));
+                indexBuffers[meshIndex]          = std::move(indexBuffer);
+                input.triangleArray.indexBuffer = indexBuffers[meshIndex].device_ptr();
+
+                FloatTexture alphaTexture     = getAlphaTexture(shape, floatTextures, alloc);
+                Material material             = getMaterial(shape, materials);
+                triangleInputFlags[meshIndex] = getOptixGeometryFlags(true, alphaTexture);
+                input.triangleArray.flags     = &triangleInputFlags[meshIndex];
+
+                // Do this here, after the alpha texture has been consumed.
+                shape.parameters.ReportUnused();
+
+                input.triangleArray.numSbtRecords               = 1;
+                input.triangleArray.sbtIndexOffsetBuffer        = CUdeviceptr(nullptr);
+                input.triangleArray.sbtIndexOffsetSizeInBytes   = 0;
+                input.triangleArray.sbtIndexOffsetStrideInBytes = 0;
+
+                HitgroupRecord hgRecord;
+                SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
+                hgRecord.triRec.mesh         = mesh;
+                hgRecord.triRec.material     = material;
+                hgRecord.triRec.alphaTexture = alphaTexture;
+                hgRecord.triRec.areaLights   = {};
+                if (shape.areaLight.has_value()) {
+                    if (!material)
+                        throw std::runtime_error(diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
+                    else {
+                        // Note: this will hit if we try to have an instance as an area
+                        // light.
+                        auto iter = shapeIndexToAreaLights.find(shapeIndex);
+                        SPECTRA_CHECK(iter != shapeIndexToAreaLights.end());
+                        SPECTRA_CHECK_EQ(iter->second->size(), mesh->nTriangles);
+                        hgRecord.triRec.areaLights = pstd::MakeSpan(*iter->second);
+                    }
+                }
+                hgRecord.triRec.mediumInterface = getMediumInterface(shape, media, alloc);
+
+                bvh.intersectHGRecords[meshIndex] = hgRecord;
+
+                SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(randomHitPG, &hgRecord));
+                bvh.randomHitHGRecords[meshIndex] = hgRecord;
+
+                SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(shadowPG, &hgRecord));
+                bvh.shadowHGRecords[meshIndex] = hgRecord;
+
+                localBounds = Union(localBounds, meshBounds[meshIndex]);
+            }
+
+            std::lock_guard<std::mutex> lock(boundsMutex);
+            bvh.bounds = Union(bvh.bounds, localBounds);
+        });
+
+        Accel accel           = buildOptixBVH(optixContext, optixBuildInputs, threadCUDAStreams);
+        bvh.traversableHandle = accel.traversableHandle;
+        bvh.accelBuffer       = std::move(accel.buffer);
+
+        return bvh;
+    }
+
+    BilinearPatchMesh* SpectraOptiXAggregate::diceCurveToBLP(const pathtracer::PathtracerShapeSceneEntity& shape, int nDiceU, int nDiceV, MeshBufferCache& meshBufferCache, Allocator alloc) {
+        SPECTRA_CHECK_EQ(shape.name, "curve");
+        const ParameterDictionary& parameters = shape.parameters;
+        const FileLoc* loc                    = &shape.loc;
+
+        // Extract parameters; the following ~90 lines of code are,
+        // unfortunately, copied from Curve::Create.  We would like to avoid
+        // the overhead of splitting the curve and creating Curve objects, so
+        // here we go..
+        Float width  = parameters.GetOneFloat("width", 1.f);
+        Float width0 = parameters.GetOneFloat("width0", width);
+        Float width1 = parameters.GetOneFloat("width1", width);
+
+        int degree = parameters.GetOneInt("degree", 3);
+        if (degree != 2 && degree != 3) {
+            throw std::runtime_error(diagnostics::Format(loc, "Invalid degree %d: only degree 2 and 3 curves are supported.", degree));
+            return {};
+        }
+
+        std::string basis = parameters.GetOneString("basis", "bezier");
+        if (basis != "bezier" && basis != "bspline") {
+            throw std::runtime_error(diagnostics::Format(loc,
+                "Invalid basis \"%s\": only \"bezier\" and \"bspline\" are "
+                "supported.",
+                basis));
+            return {};
+        }
+
+        int nSegments;
+        std::vector<Point3f> cp = parameters.GetPoint3fArray("P");
+        bool bezierBasis        = (basis == "bezier");
+        if (bezierBasis) {
+            // After the first segment, which uses degree+1 control points,
+            // subsequent segments reuse the last control point of the previous
+            // one and then use degree more control points.
+            if (((cp.size() - 1 - degree) % degree) != 0) {
+                throw std::runtime_error(diagnostics::Format(loc,
+                    "Invalid number of control points %d: for the degree %d "
+                    "Bezier basis %d + n * %d are required, for n >= 0.",
+                    (int) cp.size(), degree, degree + 1, degree));
+                return {};
+            }
+            nSegments = (cp.size() - 1) / degree;
+        } else {
+            if (cp.size() < degree + 1) {
+                throw std::runtime_error(diagnostics::Format(loc,
+                    "Invalid number of control points %d: for the degree %d "
+                    "b-spline basis, must have >= %d.",
+                    int(cp.size()), degree, degree + 1));
+                return {};
+            }
+            nSegments = cp.size() - degree;
+        }
+
+        CurveType type;
+        std::string curveType = parameters.GetOneString("type", "flat");
+        if (curveType == "flat")
+            type = CurveType::Flat;
+        else if (curveType == "ribbon")
+            type = CurveType::Ribbon;
+        else if (curveType == "cylinder")
+            type = CurveType::Cylinder;
+        else {
+            throw std::runtime_error(diagnostics::Format(loc, R"(Unknown curve type "%s".)", curveType));
+        }
+
+        std::vector<Normal3f> n = parameters.GetNormal3fArray("N");
+        if (!n.empty()) {
+            if (type != CurveType::Ribbon) {
+                diagnostics::PrintWarning("Curve normals are only used with \"ribbon\" type curves.");
+                n = {};
+            } else if (n.size() != nSegments + 1) {
+                throw std::runtime_error(diagnostics::Format(loc,
+                    "Invalid number of normals %d: must provide %d normals for "
+                    "ribbon curves with %d segments.",
+                    int(n.size()), nSegments + 1, nSegments));
+                return {};
+            }
+            for (Normal3f& nn : n) Normalize(nn);
+        } else if (type == CurveType::Ribbon) {
+            throw std::runtime_error(diagnostics::Format(loc, "Must provide normals \"N\" at curve endpoints with ribbon "
+                                                              "curves."));
+            return {};
+        }
+
+        // Start dicing...
+        std::vector<int> blpIndices;
+        std::vector<Point3f> blpP;
+        std::vector<Normal3f> blpN;
+        std::vector<Point2f> blpUV;
+
+        int lastCPOffset = -1;
+        pstd::array<Point3f, 4> segCpBezier;
+
+        for (int i = 0; i <= nDiceU; ++i) {
+            Float u     = Float(i) / Float(nDiceU);
+            Float width = Lerp(u, width0, width1);
+
+            int segmentIndex = int(u * nSegments);
+            if (segmentIndex == nSegments) // u == 1...
+                --segmentIndex;
+
+            // Compute offset into original control points for current u
+            int cpOffset;
+            if (bezierBasis)
+                cpOffset = segmentIndex * degree;
+            else
+                // Uniform b-spline.
+                cpOffset = segmentIndex;
+
+            if (cpOffset != lastCPOffset) {
+                // update segCpBezier
+                if (bezierBasis) {
+                    if (degree == 2) {
+                        // Elevate to degree 3.
+                        segCpBezier = ElevateQuadraticBezierToCubic(pstd::MakeConstSpan(cp).subspan(cpOffset, 3));
+                    } else {
+                        // All set.
+                        for (int i = 0; i < 4; ++i) segCpBezier[i] = cp[cpOffset + i];
+                    }
+                } else {
+                    // Uniform b-spline.
+                    if (degree == 2) {
+                        pstd::array<Point3f, 3> bezCp = QuadraticBSplineToBezier(pstd::MakeConstSpan(cp).subspan(cpOffset, 3));
+                        segCpBezier                   = ElevateQuadraticBezierToCubic(pstd::MakeConstSpan(bezCp));
+                    } else {
+                        segCpBezier = CubicBSplineToBezier(pstd::MakeConstSpan(cp).subspan(cpOffset, 4));
+                    }
+                }
+                lastCPOffset = cpOffset;
+            }
+
+            Float uSeg = (u * nSegments) - segmentIndex;
+
+            Vector3f dpdu;
+            Point3f p = EvaluateCubicBezier(segCpBezier, uSeg, &dpdu);
+
+            switch (type) {
+            case CurveType::Ribbon:
+                {
+                    Float normalAngle       = AngleBetween(n[segmentIndex], n[segmentIndex + 1]);
+                    Float invSinNormalAngle = 1 / std::sin(normalAngle);
+
+                    Normal3f nu;
+                    if (normalAngle == 0)
+                        nu = n[segmentIndex];
+                    else {
+                        Float sin0 = std::sin((1 - uSeg) * normalAngle) * invSinNormalAngle;
+                        Float sin1 = std::sin(uSeg * normalAngle) * invSinNormalAngle;
+                        nu         = sin0 * n[segmentIndex] + sin1 * n[segmentIndex + 1];
+                    }
+                    Vector3f dpdv = Normalize(Cross(nu, dpdu)) * width;
+
+                    blpP.push_back(p - dpdv / 2);
+                    blpP.push_back(p + dpdv / 2);
+                    blpUV.push_back(Point2f(u, 0));
+                    blpUV.push_back(Point2f(u, 1));
+
+                    if (i > 0) {
+                        blpIndices.push_back(2 * (i - 1));
+                        blpIndices.push_back(2 * (i - 1) + 1);
+                        blpIndices.push_back(2 * i);
+                        blpIndices.push_back(2 * i + 1);
+                    }
+                    break;
+                }
+            case CurveType::Flat:
+            case CurveType::Cylinder:
+                {
+                    Vector3f ortho[2];
+                    CoordinateSystem(Normalize(dpdu), &ortho[0], &ortho[1]);
+                    ortho[0] *= width / 2;
+                    ortho[1] *= width / 2;
+
+                    // Repeat the first/last vertex so we can assign different
+                    // texture coordinates...
+                    for (int v = 0; v <= nDiceV; ++v) {
+                        Float angle = Float(v) / nDiceV * 2 * Pi;
+                        blpP.push_back(p + ortho[0] * std::cos(angle) + ortho[1] * std::sin(angle));
+                        blpN.push_back(Normal3f(Normalize(blpP.back() - p)));
+                        blpUV.push_back(Point2f(u, Float(v) / nDiceV));
+                    }
+
+                    if (i > 0) {
+                        for (int v = 0; v < nDiceV; ++v) {
+                            // Indexing is funny due to doubled-up last vertex
+                            blpIndices.push_back((nDiceV + 1) * (i - 1) + v);
+                            blpIndices.push_back((nDiceV + 1) * (i - 1) + v + 1);
+                            blpIndices.push_back((nDiceV + 1) * i + v);
+                            blpIndices.push_back((nDiceV + 1) * i + v + 1);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        return alloc.new_object<BilinearPatchMesh>(*shape.renderFromObject, shape.reverseOrientation, blpIndices, blpP, blpN, blpUV, std::vector<int>(), nullptr, meshBufferCache, alloc);
+    }
+
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForBLPs(const std::vector<pathtracer::PathtracerShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+        // Count how many BLP meshes there are in shapes
+        std::vector<size_t> meshIndexToShapeIndex;
+        for (size_t i = 0; i < shapes.size(); ++i) {
+            const auto& shape = shapes[i];
+            if (shape.name == "bilinearmesh" || shape.name == "curve") meshIndexToShapeIndex.push_back(i);
+        }
+
+        size_t nMeshes = meshIndexToShapeIndex.size();
+        if (nMeshes == 0) return {};
+
+        // Create meshes
+        std::vector<BilinearPatchMesh*> meshes(nMeshes, nullptr);
+        std::atomic<int> nPatches = 0;
+
+        ParallelFor(0, nMeshes, [&](int64_t meshIndex) {
+            Allocator alloc   = threadAllocators.Get();
+            size_t shapeIndex = meshIndexToShapeIndex[meshIndex];
+            const auto& shape = shapes[shapeIndex];
+
+            if (shape.name == "bilinearmesh") {
+                BilinearPatchMesh* mesh = BilinearPatch::CreateMesh(shape.renderFromObject, shape.reverseOrientation, shape.parameters, &shape.loc, meshBufferCache, alloc);
+                meshes[meshIndex]       = mesh;
+                nPatches += mesh->nPatches;
+            } else if (shape.name == "curve") {
+                BilinearPatchMesh* curveMesh = diceCurveToBLP(shape, 5 /* nseg */, 5 /* nvert */, meshBufferCache, alloc);
+                if (curveMesh) {
+                    meshes[meshIndex] = curveMesh;
+                    nPatches += curveMesh->nPatches;
+                }
+            }
+        });
+
+        // Figure out where each mesh starts from entries of the aabb array
+        std::vector<int> meshAABBStartIndex(nMeshes);
+        int aabbIndex = 0;
+        for (size_t meshIndex = 0; meshIndex < meshes.size(); ++meshIndex) {
+            meshAABBStartIndex[meshIndex] = aabbIndex;
+            aabbIndex += meshes[meshIndex]->nPatches;
+        }
+
+        // Create build inputs
+        BVH bvh(nMeshes);
+        int buildInputIndex = 0;
+        std::vector<OptixBuildInput> optixBuildInputs(nMeshes);
+        std::vector<OptixAabb> aabbs(nPatches);
+        pathtracer::PathtracerDeviceBuffer deviceAABBs(sizeof(OptixAabb) * nPatches);
+        OptixAabb* deviceAABBsPtr = static_cast<OptixAabb*>(deviceAABBs.data());
+        std::vector<CUdeviceptr> aabbDevicePtrs(nMeshes);
+        std::vector<uint32_t> flags(nMeshes);
+
+        std::mutex boundsMutex;
+        ParallelFor(0, nMeshes, [&](int64_t meshIndex) {
+            Allocator alloc         = threadAllocators.Get();
+            BilinearPatchMesh* mesh = meshes[meshIndex];
+
+            OptixBuildInput& input                   = optixBuildInputs[meshIndex];
+            input.type                               = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+            input.customPrimitiveArray.numSbtRecords = 1;
+            input.customPrimitiveArray.numPrimitives = mesh->nPatches;
+            int aabbIndex                            = meshAABBStartIndex[meshIndex];
+            aabbDevicePtrs[meshIndex]                = reinterpret_cast<CUdeviceptr>(&deviceAABBsPtr[aabbIndex]);
+            input.customPrimitiveArray.aabbBuffers   = &aabbDevicePtrs[meshIndex];
+            input.customPrimitiveArray.flags         = &flags[meshIndex];
+
+            Bounds3f meshBounds;
+            for (int patchIndex = 0; patchIndex < mesh->nPatches; ++patchIndex) {
+                Bounds3f patchBounds;
+                for (int i = 0; i < 4; ++i) patchBounds = Union(patchBounds, mesh->p[mesh->vertexIndices[4 * patchIndex + i]]);
+
+                OptixAabb aabb     = {float(patchBounds.pMin.x), float(patchBounds.pMin.y), float(patchBounds.pMin.z), float(patchBounds.pMax.x), float(patchBounds.pMax.y), float(patchBounds.pMax.z)};
+                aabbs[aabbIndex++] = aabb;
+
+                meshBounds = Union(meshBounds, patchBounds);
+            }
+
+            size_t shapeIndex         = meshIndexToShapeIndex[meshIndex];
+            const auto& shape         = shapes[shapeIndex];
+            Material material         = getMaterial(shape, materials);
+            FloatTexture alphaTexture = getAlphaTexture(shape, floatTextures, alloc);
+
+            // After "alpha" has been consumed...
+            shape.parameters.ReportUnused();
+
+            flags[meshIndex] = getOptixGeometryFlags(false, alphaTexture);
+
+            HitgroupRecord hgRecord;
+            SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
+            hgRecord.bilinearRec.mesh         = mesh;
+            hgRecord.bilinearRec.material     = material;
+            hgRecord.bilinearRec.alphaTexture = alphaTexture;
+            hgRecord.bilinearRec.areaLights   = {};
+            if (shape.areaLight.has_value()) {
+                if (!material)
+                    throw std::runtime_error(diagnostics::Format(&shape.loc, "Area light shape \"%s\" cannot use an interface material.", shape.name));
+                else {
+                    auto iter = shapeIndexToAreaLights.find(shapeIndex);
+                    // Note: this will hit if we try to have an instance as an area
+                    // light.
+                    SPECTRA_CHECK(iter != shapeIndexToAreaLights.end());
+                    SPECTRA_CHECK_EQ(iter->second->size(), mesh->nPatches);
+                    hgRecord.bilinearRec.areaLights = pstd::MakeSpan(*iter->second);
+                }
+            }
+            hgRecord.bilinearRec.mediumInterface = getMediumInterface(shape, media, alloc);
+
+            bvh.intersectHGRecords[meshIndex] = hgRecord;
+
+            SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(randomHitPG, &hgRecord));
+            bvh.randomHitHGRecords[meshIndex] = hgRecord;
+
+            SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(shadowPG, &hgRecord));
+            bvh.shadowHGRecords[meshIndex] = hgRecord;
+
+            std::lock_guard<std::mutex> lock(boundsMutex);
+            bvh.bounds = Union(bvh.bounds, meshBounds);
+        });
+
+        SPECTRA_CUDA_CHECK(cudaMemcpyAsync(deviceAABBs.data(), aabbs.data(), aabbs.size() * sizeof(OptixAabb), cudaMemcpyHostToDevice, threadCUDAStreams.Get().get()));
+
+        Accel accel           = buildOptixBVH(optixContext, optixBuildInputs, threadCUDAStreams);
+        bvh.traversableHandle = accel.traversableHandle;
+        bvh.accelBuffer       = std::move(accel.buffer);
+
+        return bvh;
+    }
+
+    SpectraOptiXAggregate::BVH SpectraOptiXAggregate::buildBVHForQuadrics(const std::vector<pathtracer::PathtracerShapeSceneEntity>& shapes, OptixDeviceContext optixContext, const OptixProgramGroup& intersectPG, const OptixProgramGroup& shadowPG, const OptixProgramGroup& randomHitPG, const std::map<std::string, FloatTexture>& floatTextures, const std::map<std::string, Material>& materials, const std::map<std::string, Medium>& media, const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights, const pathtracer::RenderConfig& config, MeshBufferCache& meshBufferCache, ThreadLocal<Allocator>& threadAllocators, ThreadLocal<pathtracer::PathtracerCudaStream>& threadCUDAStreams) {
+        int nQuadrics = 0;
+        for (size_t shapeIndex = 0; shapeIndex < shapes.size(); ++shapeIndex) {
+            const auto& s = shapes[shapeIndex];
+            if (s.name == "sphere" || s.name == "cylinder" || s.name == "disk") ++nQuadrics;
+        }
+
+        if (nQuadrics == 0) return {};
+
+        Allocator alloc = threadAllocators.Get();
+        BVH bvh(nQuadrics);
+        std::vector<OptixBuildInput> optixBuildInputs(nQuadrics);
+        pathtracer::PathtracerDeviceBuffer deviceShapeAABBs(sizeof(OptixAabb) * nQuadrics);
+        OptixAabb* deviceShapeAABBsPtr = static_cast<OptixAabb*>(deviceShapeAABBs.data());
+        std::vector<OptixAabb> shapeAABBs(nQuadrics);
+        std::vector<CUdeviceptr> aabbDevicePtrs(nQuadrics);
+        std::vector<uint32_t> flags(nQuadrics);
+
+        int quadricIndex = 0;
+        for (size_t shapeIndex = 0; shapeIndex < shapes.size(); ++shapeIndex) {
+            const auto& s = shapes[shapeIndex];
+            if (s.name != "sphere" && s.name != "cylinder" && s.name != "disk") continue;
+
+            pstd::vector<Shape> shapes = Shape::Create(s.name, s.renderFromObject, s.objectFromRender, s.reverseOrientation, s.parameters, floatTextures, config, &s.loc, meshBufferCache, alloc);
+            if (shapes.empty()) continue;
+            SPECTRA_CHECK_EQ(1, shapes.size());
+            Shape shape = shapes[0];
+
+            OptixBuildInput& input                   = optixBuildInputs[quadricIndex];
+            input.type                               = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+            input.customPrimitiveArray.numSbtRecords = 1;
+            input.customPrimitiveArray.numPrimitives = 1;
+            input.customPrimitiveArray.flags         = &flags[quadricIndex];
+
+            Bounds3f shapeBounds                   = shape.Bounds();
+            OptixAabb aabb                         = {float(shapeBounds.pMin.x), float(shapeBounds.pMin.y), float(shapeBounds.pMin.z), float(shapeBounds.pMax.x), float(shapeBounds.pMax.y), float(shapeBounds.pMax.z)};
+            shapeAABBs[quadricIndex]               = aabb;
+            aabbDevicePtrs[quadricIndex]           = reinterpret_cast<CUdeviceptr>(&deviceShapeAABBsPtr[quadricIndex]);
+            input.customPrimitiveArray.aabbBuffers = &aabbDevicePtrs[quadricIndex];
+
+            bvh.bounds = Union(bvh.bounds, shapeBounds);
+
+            // Find alpha texture, if present.
+            Material material         = getMaterial(s, materials);
+            FloatTexture alphaTexture = getAlphaTexture(s, floatTextures, alloc);
+            flags[quadricIndex]       = getOptixGeometryFlags(false, alphaTexture);
+
+            // Once again, after any alpha texture is created...
+            s.parameters.ReportUnused();
+
+            HitgroupRecord hgRecord;
+            SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(intersectPG, &hgRecord));
+            hgRecord.quadricRec.shape        = shape;
+            hgRecord.quadricRec.material     = material;
+            hgRecord.quadricRec.alphaTexture = alphaTexture;
+            hgRecord.quadricRec.areaLight    = nullptr;
+            if (s.areaLight.has_value()) {
+                if (!material)
+                    throw std::runtime_error(diagnostics::Format(&s.loc, "Area light shape \"%s\" cannot use an interface material.", s.name));
+                else {
+                    auto iter = shapeIndexToAreaLights.find(shapeIndex);
+                    // Note: this will hit if we try to have an instance as an area
+                    // light.
+                    SPECTRA_CHECK(iter != shapeIndexToAreaLights.end());
+                    SPECTRA_CHECK_EQ(iter->second->size(), 1);
+                    hgRecord.quadricRec.areaLight = (*iter->second)[0];
+                }
+            }
+            hgRecord.quadricRec.mediumInterface = getMediumInterface(s, media, alloc);
+
+            bvh.intersectHGRecords[quadricIndex] = hgRecord;
+
+            SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(randomHitPG, &hgRecord));
+            bvh.randomHitHGRecords[quadricIndex] = hgRecord;
+
+            SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(shadowPG, &hgRecord));
+            bvh.shadowHGRecords[quadricIndex] = hgRecord;
+
+            ++quadricIndex;
+        }
+
+        SPECTRA_CUDA_CHECK(cudaMemcpyAsync(deviceShapeAABBs.data(), shapeAABBs.data(), shapeAABBs.size() * sizeof(shapeAABBs[0]), cudaMemcpyHostToDevice, threadCUDAStreams.Get().get()));
+
+        Accel accel           = buildOptixBVH(optixContext, optixBuildInputs, threadCUDAStreams);
+        bvh.traversableHandle = accel.traversableHandle;
+        bvh.accelBuffer       = std::move(accel.buffer);
+
+        return bvh;
+    }
+
+    static void optixDiagnosticCallback(unsigned int level, const char* tag, const char* message, void* cbdata) {
+        static_cast<void>(cbdata);
+        if (level <= 2) throw std::runtime_error(diagnostics::Format("OptiX: %s: %s", tag, message));
+    }
+
+    static std::mutex& AccelerationBuildMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    int SpectraOptiXAggregate::addHGRecords(BVH& bvh) {
+        if (bvh.intersectHGRecords.empty()) return -1;
+
+        static std::mutex mutex;
+        std::lock_guard<std::mutex> lock(mutex);
+
+        int sbtOffset = intersectHGRecords.size();
+        intersectHGRecords.insert(intersectHGRecords.end(), bvh.intersectHGRecords.begin(), bvh.intersectHGRecords.end());
+        shadowHGRecords.insert(shadowHGRecords.end(), bvh.shadowHGRecords.begin(), bvh.shadowHGRecords.end());
+        randomHitHGRecords.insert(randomHitHGRecords.end(), bvh.randomHitHGRecords.begin(), bvh.randomHitHGRecords.end());
+        if (!bvh.accelBuffer.empty()) accelBuffers.push_back(std::move(bvh.accelBuffer));
+        return sbtOffset;
+    }
+
+    OptixPipelineCompileOptions SpectraOptiXAggregate::getPipelineCompileOptions() {
+        OptixPipelineCompileOptions pipelineCompileOptions = {};
+        // The current scene graph builds a root IAS containing direct GAS entries and
+        // object-instance IAS entries, so this is a real nested graph.
+        pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
+        pipelineCompileOptions.usesMotionBlur        = false;
+        pipelineCompileOptions.numPayloadValues      = 0;
+        pipelineCompileOptions.numAttributeValues    = 4;
+        pipelineCompileOptions.exceptionFlags        = OPTIX_EXCEPTION_FLAG_NONE;
+        pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
+        pipelineCompileOptions.pipelineLaunchParamsSizeInBytes  = sizeof(RayIntersectParameters);
+        pipelineCompileOptions.usesPrimitiveTypeFlags           = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE | OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM;
+        pipelineCompileOptions.allowOpacityMicromaps            = false;
+        pipelineCompileOptions.allowClusteredGeometry           = false;
+
+        return pipelineCompileOptions;
+    }
+
+    OptixModule SpectraOptiXAggregate::createOptiXModule(OptixDeviceContext optixContext, const char* input, size_t inputSize) {
+        OptixModuleCompileOptions moduleCompileOptions = {};
+        moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
+        moduleCompileOptions.optLevel         = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
+        moduleCompileOptions.debugLevel       = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
+        moduleCompileOptions.numPayloadTypes = 1;
+        moduleCompileOptions.payloadTypes    = &SpectraOptiXPayload;
+
+        OptixPipelineCompileOptions pipelineCompileOptions = getPipelineCompileOptions();
+
+        char optixDiagnostics[4096] = {};
+        size_t optixDiagnosticsSize = sizeof(optixDiagnostics);
+        OptixModule optixModule     = nullptr;
+        OptixTask firstTask         = nullptr;
+
+        SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(optixModuleCreateWithTasks(optixContext, &moduleCompileOptions, &pipelineCompileOptions, input, inputSize, optixDiagnostics, &optixDiagnosticsSize, &optixModule, &firstTask), optixDiagnostics);
+
+        std::vector<OptixTask> tasks;
+        if (firstTask) tasks.push_back(firstTask);
+
+        while (!tasks.empty()) {
+            OptixTask task = tasks.back();
+            tasks.pop_back();
+
+            std::array<OptixTask, 8> additionalTasks = {};
+            unsigned int additionalTaskCount         = 0;
+            optixDiagnosticsSize                     = sizeof(optixDiagnostics);
+            SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(optixTaskExecute(task, additionalTasks.data(), static_cast<unsigned int>(additionalTasks.size()), &additionalTaskCount), optixDiagnostics);
+            for (unsigned int i = 0; i < additionalTaskCount; ++i) tasks.push_back(additionalTasks[i]);
+        }
+
+        OptixModuleCompileState state;
+        SPECTRA_OPTIX_CHECK(optixModuleGetCompilationState(optixModule, &state));
+        if (state != OPTIX_MODULE_COMPILE_STATE_COMPLETED) SPECTRA_FATAL("OptiX module compilation did not complete; state=%d diagnostics=%s", int(state), optixDiagnostics);
+
+        return optixModule;
+    }
+
+    OptixProgramGroup SpectraOptiXAggregate::createRaygenPG(const char* entrypoint) {
+        OptixProgramGroupOptions pgOptions = {};
+        OptixProgramGroupDesc desc         = {};
+        desc.kind                          = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+        desc.raygen.module                 = optixModule;
+        desc.raygen.entryFunctionName      = entrypoint;
+
+        char optixDiagnostics[4096];
+        size_t optixDiagnosticsSize = sizeof(optixDiagnostics);
+        OptixProgramGroup pg;
+        SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(optixProgramGroupCreate(optixContext, &desc, 1, &pgOptions, optixDiagnostics, &optixDiagnosticsSize, &pg), optixDiagnostics);
+
+        programGroups.push_back(pg);
+        return pg;
+    }
+
+    OptixProgramGroup SpectraOptiXAggregate::createMissPG(const char* entrypoint) {
+        OptixProgramGroupOptions pgOptions = {};
+        OptixProgramGroupDesc desc         = {};
+        desc.kind                          = OPTIX_PROGRAM_GROUP_KIND_MISS;
+        desc.miss.module                   = optixModule;
+        desc.miss.entryFunctionName        = entrypoint;
+
+        char optixDiagnostics[4096];
+        size_t optixDiagnosticsSize = sizeof(optixDiagnostics);
+        OptixProgramGroup pg;
+        SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(optixProgramGroupCreate(optixContext, &desc, 1, &pgOptions, optixDiagnostics, &optixDiagnosticsSize, &pg), optixDiagnostics);
+
+        programGroups.push_back(pg);
+        return pg;
+    }
+
+    OptixProgramGroup SpectraOptiXAggregate::createIntersectionPG(const char* closest, const char* any, const char* intersect) {
+        OptixProgramGroupOptions pgOptions = {};
+        OptixProgramGroupDesc desc         = {};
+        desc.kind                          = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+
+        if (closest) {
+            desc.hitgroup.moduleCH            = optixModule;
+            desc.hitgroup.entryFunctionNameCH = closest;
+        }
+        if (any) {
+            desc.hitgroup.moduleAH            = optixModule;
+            desc.hitgroup.entryFunctionNameAH = any;
+        }
+        if (intersect) {
+            desc.hitgroup.moduleIS            = optixModule;
+            desc.hitgroup.entryFunctionNameIS = intersect;
+        }
+
+        char optixDiagnostics[4096];
+        size_t optixDiagnosticsSize = sizeof(optixDiagnostics);
+        OptixProgramGroup pg;
+        SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(optixProgramGroupCreate(optixContext, &desc, 1, &pgOptions, optixDiagnostics, &optixDiagnosticsSize, &pg), optixDiagnostics);
+
+        programGroups.push_back(pg);
+        return pg;
+    }
+
+    SpectraOptiXAggregate::SpectraOptiXAggregate(pathtracer::CompiledPathtracerScene& scene, const pathtracer::RenderConfig& config, pathtracer::PathtracerMemoryScope* memoryScope) : memoryScope(memoryScope), cudaStream(nullptr) {
+        if (this->memoryScope == nullptr) throw std::runtime_error("Spectra OptiX aggregate requires a pathtracer memory scope");
+        const NamedTextures& textures                                     = scene.textures;
+        const std::map<int, pstd::vector<Light>*>& shapeIndexToAreaLights = scene.shapeIndexToAreaLights;
+        const std::map<std::string, Medium>& media                        = scene.media;
+        const std::map<std::string, Material>& materials                  = scene.materials;
+
+        CUcontext cudaContext;
+        SPECTRA_CU_CHECK(cuCtxGetCurrent(&cudaContext));
+        SPECTRA_CHECK(cudaContext != nullptr);
+
+#ifdef SPECTRA_IS_WINDOWS
+        // On Windows, it is unfortunately necessary to disable
+        // multithreading here.  The issue is that GPU managed memory can
+        // only be accessed by one of the CPU or the GPU at a time; the
+        // program crashes if this is restriction is violated.  Thus, it's
+        // bad news if we are simultaneously, say, reading PLY files on
+        // the CPU and storing them in managed memory while an OptiX
+        // kernel is running on the GPU to build a BVH... (Issue #164).
+        DisableThreadPool();
+#endif // SPECTRA_IS_WINDOWS
+
+        ThreadLocal<pathtracer::PathtracerCudaStream> threadCUDAStreams([]() {
+            pathtracer::PathtracerCudaStream stream;
+            stream.Create();
+            return stream;
+        });
+
+        paramsPool.resize(256); // should be plenty
+        for (ParamBufferState& ps : paramsPool) {
+            ps.deviceBuffer.Allocate(sizeof(RayIntersectParameters));
+            ps.finishedEvent.Create();
+            ps.hostBuffer.Allocate(sizeof(RayIntersectParameters));
+        }
+
+        // Create OptiX context
+        SPECTRA_OPTIX_CHECK(optixInit());
+        OptixDeviceContextOptions ctxOptions = {};
+        ctxOptions.logCallbackLevel = 2; // error
+        ctxOptions.logCallbackFunction = optixDiagnosticCallback;
+        SPECTRA_OPTIX_CHECK(optixDeviceContextCreate(cudaContext, &ctxOptions, &optixContext));
+        SPECTRA_OPTIX_CHECK(optixDeviceContextSetCacheEnabled(optixContext, 1));
+        SPECTRA_OPTIX_CHECK(optixDeviceContextSetCacheLocation(optixContext, SpectraOptiXCacheDir));
+        SPECTRA_OPTIX_CHECK(optixDeviceContextSetCacheDatabaseSizes(optixContext, SpectraOptiXCacheSizeBytes / 2, SpectraOptiXCacheSizeBytes));
+
+        // OptiX module
+        optixModule = createOptiXModule(optixContext, reinterpret_cast<const char*>(SPECTRA_EMBEDDED_OPTIX_INPUT), static_cast<size_t>(SPECTRA_EMBEDDED_OPTIX_INPUT_SIZE));
+
+        // Optix program groups...
+        char optixDiagnostics[4096];
+        size_t optixDiagnosticsSize = sizeof(optixDiagnostics);
+
+        OptixProgramGroup raygenPGClosest    = createRaygenPG("__raygen__findClosest");
+        OptixProgramGroup missPGNoOp         = createMissPG("__miss__noop");
+        OptixProgramGroup hitPGTriangle      = createIntersectionPG("__closesthit__triangle", "__anyhit__triangle", nullptr);
+        OptixProgramGroup hitPGBilinearPatch = createIntersectionPG("__closesthit__bilinearPatch", nullptr, "__intersection__bilinearPatch");
+        OptixProgramGroup hitPGQuadric       = createIntersectionPG("__closesthit__quadric", nullptr, "__intersection__quadric");
+
+        OptixProgramGroup raygenPGShadow         = createRaygenPG("__raygen__shadow");
+        OptixProgramGroup missPGShadow           = createMissPG("__miss__shadow");
+        OptixProgramGroup anyhitPGShadowTriangle = createIntersectionPG(nullptr, "__anyhit__shadowTriangle", nullptr);
+
+        OptixProgramGroup raygenPGShadowTr = createRaygenPG("__raygen__shadow_Tr");
+        OptixProgramGroup missPGShadowTr   = createMissPG("__miss__shadow_Tr");
+
+        OptixProgramGroup anyhitPGShadowBilinearPatch = createIntersectionPG(nullptr, "__anyhit__shadowBilinearPatch", "__intersection__bilinearPatch");
+        OptixProgramGroup anyhitPGShadowQuadric       = createIntersectionPG(nullptr, "__anyhit__shadowQuadric", "__intersection__quadric");
+
+        OptixProgramGroup raygenPGRandomHit           = createRaygenPG("__raygen__randomHit");
+        OptixProgramGroup hitPGRandomHitTriangle      = createIntersectionPG("__closesthit__randomHitTriangle", nullptr, nullptr);
+        OptixProgramGroup hitPGRandomHitBilinearPatch = createIntersectionPG("__closesthit__randomHitBilinearPatch", nullptr, "__intersection__bilinearPatch");
+        OptixProgramGroup hitPGRandomHitQuadric       = createIntersectionPG("__closesthit__randomHitQuadric", nullptr, "__intersection__quadric");
+
+        // Optix pipeline...
+        OptixProgramGroup allPGs[] = {raygenPGClosest, missPGNoOp, hitPGTriangle, hitPGBilinearPatch, hitPGQuadric, raygenPGShadow, missPGShadow, anyhitPGShadowTriangle, anyhitPGShadowBilinearPatch, anyhitPGShadowQuadric, raygenPGShadowTr, missPGShadowTr, raygenPGRandomHit, hitPGRandomHitTriangle, hitPGRandomHitBilinearPatch, hitPGRandomHitQuadric};
+
+        OptixPipelineCompileOptions pipelineCompileOptions = getPipelineCompileOptions();
+
+        OptixPipelineLinkOptions pipelineLinkOptions            = {};
+        pipelineLinkOptions.maxTraceDepth                       = 2;
+        pipelineLinkOptions.maxContinuationCallableDepth        = 0;
+        pipelineLinkOptions.maxDirectCallableDepthFromState     = 0;
+        pipelineLinkOptions.maxDirectCallableDepthFromTraversal = 0;
+        pipelineLinkOptions.maxTraversableGraphDepth            = 3;
+
+        SPECTRA_OPTIX_CHECK_WITH_DIAGNOSTICS(optixPipelineCreate(optixContext, &pipelineCompileOptions, &pipelineLinkOptions, allPGs, sizeof(allPGs) / sizeof(allPGs[0]), optixDiagnostics, &optixDiagnosticsSize, &optixPipeline), optixDiagnostics);
+
+        OptixStackSizes stackSizes = {};
+        for (OptixProgramGroup programGroup : allPGs) SPECTRA_OPTIX_CHECK(optixUtilAccumulateStackSizes(programGroup, &stackSizes, optixPipeline));
+        unsigned int directCallableStackSizeFromTraversal = 0;
+        unsigned int directCallableStackSizeFromState     = 0;
+        unsigned int continuationStackSize                = 0;
+        SPECTRA_OPTIX_CHECK(optixUtilComputeStackSizes(&stackSizes, pipelineLinkOptions.maxTraceDepth, pipelineLinkOptions.maxContinuationCallableDepth, pipelineLinkOptions.maxDirectCallableDepthFromState, &directCallableStackSizeFromTraversal, &directCallableStackSizeFromState, &continuationStackSize));
+        SPECTRA_OPTIX_CHECK(optixPipelineSetStackSize(optixPipeline, directCallableStackSizeFromTraversal, directCallableStackSizeFromState, continuationStackSize, pipelineLinkOptions.maxTraversableGraphDepth));
+
+        // Shader binding tables...
+        // Hitgroups are done as meshes are processed
+
+        // Closest intersection
+        Allocator alloc(memoryScope);
+        RaygenRecord* raygenClosestRecord = alloc.new_object<RaygenRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGClosest, raygenClosestRecord));
+        intersectSBT.raygenRecord = (CUdeviceptr) raygenClosestRecord;
+
+        MissRecord* missNoOpRecord = alloc.new_object<MissRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGNoOp, missNoOpRecord));
+        intersectSBT.missRecordBase          = (CUdeviceptr) missNoOpRecord;
+        intersectSBT.missRecordStrideInBytes = sizeof(MissRecord);
+        intersectSBT.missRecordCount         = 1;
+
+        // Shadow
+        RaygenRecord* raygenShadowRecord = alloc.new_object<RaygenRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGShadow, raygenShadowRecord));
+        shadowSBT.raygenRecord = (CUdeviceptr) raygenShadowRecord;
+
+        MissRecord* missShadowRecord = alloc.new_object<MissRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGShadow, missShadowRecord));
+        shadowSBT.missRecordBase          = (CUdeviceptr) missShadowRecord;
+        shadowSBT.missRecordStrideInBytes = sizeof(MissRecord);
+        shadowSBT.missRecordCount         = 1;
+
+        // Shadow + Tr
+        RaygenRecord* raygenShadowTrRecord = alloc.new_object<RaygenRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGShadowTr, raygenShadowTrRecord));
+        shadowTrSBT.raygenRecord = (CUdeviceptr) raygenShadowTrRecord;
+
+        MissRecord* missShadowTrRecord = alloc.new_object<MissRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(missPGShadowTr, missShadowTrRecord));
+        shadowTrSBT.missRecordBase          = (CUdeviceptr) missShadowTrRecord;
+        shadowTrSBT.missRecordStrideInBytes = sizeof(MissRecord);
+        shadowTrSBT.missRecordCount         = 1;
+
+        // Random hit
+        RaygenRecord* raygenRandomHitRecord = alloc.new_object<RaygenRecord>();
+        SPECTRA_OPTIX_CHECK(optixSbtRecordPackHeader(raygenPGRandomHit, raygenRandomHitRecord));
+        randomHitSBT.raygenRecord            = (CUdeviceptr) raygenRandomHitRecord;
+        randomHitSBT.missRecordBase          = (CUdeviceptr) missNoOpRecord;
+        randomHitSBT.missRecordStrideInBytes = sizeof(MissRecord);
+        randomHitSBT.missRecordCount         = 1;
+
+
+        // Note: do not delete the pointers in threadBufferResources, since doing
+        // so would cause the memory they manage to be freed.
+        ThreadLocal<Allocator> threadAllocators([memoryScope]() {
+            pstd::pmr::monotonic_buffer_resource* resource = new pstd::pmr::monotonic_buffer_resource(1024 * 1024, memoryScope);
+            return Allocator(resource);
+        });
+
+        ///////////////////////////////////////////////////////////////////////////
+        // Build top-level acceleration structures for non-instanced shapes
+        for (const auto& shape : scene.shapes)
+            if (shape.name != "sphere" && shape.name != "cylinder" && shape.name != "disk" && shape.name != "trianglemesh" && shape.name != "plymesh" && shape.name != "loopsubdiv" && shape.name != "bilinearmesh" && shape.name != "curve") throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: unknown shape", shape.name));
+
+        std::map<int, TriQuadMesh> plyMeshes = PreparePLYMeshes(scene.shapes, textures.floatTextures, config.displacement_edge_scale);
+
+        struct GAS {
+            BVH bvh;
+            int sbtOffset;
+        };
+        AsyncJob<GAS*>* triJob = RunAsync([&]() {
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
+            BVH triangleBVH = buildBVHForTriangles(scene.shapes, plyMeshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, shapeIndexToAreaLights, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            int sbtOffset   = addHGRecords(triangleBVH);
+            return new GAS{std::move(triangleBVH), sbtOffset};
+        });
+
+        AsyncJob<GAS*>* blpJob = RunAsync([&]() {
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
+            BVH blpBVH            = buildBVHForBLPs(scene.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            int bilinearSBTOffset = addHGRecords(blpBVH);
+            return new GAS{std::move(blpBVH), bilinearSBTOffset};
+        });
+
+        AsyncJob<GAS*>* quadricJob = RunAsync([&]() {
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
+            BVH quadricBVH       = buildBVHForQuadrics(scene.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, shapeIndexToAreaLights, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            int quadricSBTOffset = addHGRecords(quadricBVH);
+            return new GAS{std::move(quadricBVH), quadricSBTOffset};
+        });
+
+        ///////////////////////////////////////////////////////////////////////////
+        // Create IASes for instance definitions
+        // TODO: better name here...
+        struct Instance {
+            OptixTraversableHandle handles[3] = {};
+            int sbtOffsets[3]                 = {-1, -1, -1};
+            Bounds3f bounds;
+
+            int NumValidHandles() const {
+                return (handles[0] ? 1 : 0) + (handles[1] ? 1 : 0) + (handles[2] ? 1 : 0);
+            }
+        };
+
+        std::vector<std::string> allInstanceNames;
+        for (const auto& def : scene.instanceDefinitions) allInstanceNames.push_back(def.first);
+
+        std::unordered_map<std::string, Instance> instanceMap;
+        std::mutex instanceMapMutex;
+        ParallelFor(0, scene.instanceDefinitions.size(), [&](int64_t i) {
+            std::string name = allInstanceNames[i];
+            auto iter        = scene.instanceDefinitions.find(name);
+            SPECTRA_CHECK(iter != scene.instanceDefinitions.end());
+            const auto& def = *iter;
+
+            Instance inst;
+
+            std::lock_guard<std::mutex> buildLock(AccelerationBuildMutex());
+            std::map<int, TriQuadMesh> meshes = PreparePLYMeshes(def.second.shapes, textures.floatTextures, config.displacement_edge_scale);
+
+            BVH triangleBVH = buildBVHForTriangles(def.second.shapes, meshes, optixContext, hitPGTriangle, anyhitPGShadowTriangle, hitPGRandomHitTriangle, textures.floatTextures, materials, media, {}, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            meshes.clear();
+            if (triangleBVH.traversableHandle) {
+                inst.handles[0]    = triangleBVH.traversableHandle;
+                inst.sbtOffsets[0] = addHGRecords(triangleBVH);
+                inst.bounds        = triangleBVH.bounds;
+            }
+
+            BVH blpBVH = buildBVHForBLPs(def.second.shapes, optixContext, hitPGBilinearPatch, anyhitPGShadowBilinearPatch, hitPGRandomHitBilinearPatch, textures.floatTextures, materials, media, {}, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            if (blpBVH.traversableHandle) {
+                inst.handles[1]    = blpBVH.traversableHandle;
+                inst.sbtOffsets[1] = addHGRecords(blpBVH);
+                inst.bounds        = Union(inst.bounds, blpBVH.bounds);
+            }
+
+            BVH quadricBVH = buildBVHForQuadrics(def.second.shapes, optixContext, hitPGQuadric, anyhitPGShadowQuadric, hitPGRandomHitQuadric, textures.floatTextures, materials, media, {}, config, scene.meshBufferCache, threadAllocators, threadCUDAStreams);
+            if (quadricBVH.traversableHandle) {
+                inst.handles[2]    = quadricBVH.traversableHandle;
+                inst.sbtOffsets[2] = addHGRecords(quadricBVH);
+                inst.bounds        = Union(inst.bounds, quadricBVH.bounds);
+            }
+
+            std::lock_guard<std::mutex> lock(instanceMapMutex);
+            instanceMap[def.first] = inst;
+        });
+
+
+        ///////////////////////////////////////////////////////////////////////////
+        // Create OptixInstances for instances
+
+        // Get the appropriate instanceMap iterator for each instance use, just
+        // once, and in parallel.  While we're at it, count the total number of
+        // OptixInstances that will be added to iasInstances.
+        std::vector<std::unordered_map<std::string, Instance>::const_iterator> instanceMapIters(scene.instances.size());
+        std::atomic<int> totalOptixInstances{0};
+        std::vector<int> numValidHandles(scene.instances.size());
+        ParallelFor(0, scene.instances.size(), [&](int64_t indexBegin, int64_t indexEnd) {
+            int localTotalInstances = 0;
+
+            for (int64_t i = indexBegin; i < indexEnd; ++i) {
+                const auto& sceneInstance = scene.instances[i];
+                auto iter                 = instanceMap.find(sceneInstance.name);
+                instanceMapIters[i]       = iter;
+
+                if (iter != instanceMap.end()) {
+                    int nHandles = iter->second.NumValidHandles();
+                    localTotalInstances += nHandles;
+                    numValidHandles[i] = nHandles;
+                }
+            }
+
+            // Don't hammer the atomic; at least accumulate sums locally for a
+            // range of them before we add to it.
+            totalOptixInstances += localTotalInstances;
+        });
+
+        std::vector<OptixInstance> iasInstances;
+        iasInstances.reserve(3 + totalOptixInstances);
+
+        // Consume futures for top-level non-instanced geometry acceleration structures.
+        OptixInstance gasInstance = {};
+        float identity[12]        = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+        memcpy(gasInstance.transform, identity, 12 * sizeof(float));
+        gasInstance.visibilityMask = 255;
+        gasInstance.flags          = OPTIX_INSTANCE_FLAG_NONE; // TODO: OPTIX_INSTANCE_FLAG_DISABLE_ANYHIT
+        for (AsyncJob<GAS*>* job : {triJob, blpJob, quadricJob}) {
+            GAS* gas = job->GetResult();
+            if (gas->bvh.traversableHandle) {
+                gasInstance.traversableHandle = gas->bvh.traversableHandle;
+                gasInstance.sbtOffset         = gas->sbtOffset;
+                iasInstances.push_back(gasInstance);
+
+                bounds = Union(bounds, gas->bvh.bounds);
+            }
+            delete gas;
+        }
+
+        // Resize iasInstances to be just the right size for the OptixInstances
+        // to come
+        size_t iasInstancesOffset = iasInstances.size();
+        iasInstances.resize(iasInstances.size() + totalOptixInstances);
+
+        // Compute the staring offset in iasInstances for each instance use.
+        std::vector<size_t> instanceIASOffset(scene.instances.size());
+        for (size_t i = 0; i < scene.instances.size(); ++i) {
+            instanceIASOffset[i] = iasInstancesOffset;
+            iasInstancesOffset += numValidHandles[i];
+        }
+
+        // Now loop over all of the instance uses in parallel.
+        ParallelFor(0, scene.instances.size(), [&](int64_t indexBegin, int64_t indexEnd) {
+            Bounds3f localBounds;
+
+            for (int64_t index = indexBegin; index < indexEnd; ++index) {
+                const auto& sceneInstance = scene.instances[index];
+                auto iter                 = instanceMapIters[index];
+                if (iter == instanceMap.end()) throw std::runtime_error(diagnostics::Format(&sceneInstance.loc, "%s: object instance not defined.", sceneInstance.name));
+
+                const Instance& in = iter->second;
+                if (in.bounds.IsDegenerate())
+                    // Empty instance. Nothing to do (and don't update bounds!)
+                    continue;
+
+                localBounds = Union(localBounds, sceneInstance.renderFromInstance(in.bounds));
+
+                size_t iasOffset = instanceIASOffset[index];
+                for (int i = 0; i < 3; ++i) {
+                    if (!in.handles[i]) continue;
+
+                    OptixInstance optixInstance        = {};
+                    SquareMatrix<4> renderFromInstance = sceneInstance.renderFromInstance.GetMatrix();
+                    for (int j = 0; j < 3; ++j)
+                        for (int k = 0; k < 4; ++k) optixInstance.transform[4 * j + k] = renderFromInstance[j][k];
+                    optixInstance.visibilityMask = 255;
+                    optixInstance.sbtOffset      = in.sbtOffsets[i];
+                    optixInstance.flags          = OPTIX_INSTANCE_FLAG_NONE; // TODO:
+                    // OPTIX_INSTANCE_FLAG_DISABLE_ANYHIT
+                    optixInstance.traversableHandle = in.handles[i];
+                    iasInstances[iasOffset]         = optixInstance;
+                    ++iasOffset;
+                }
+            }
+
+            // As before with totalOptixInstances, try to limit how many times
+            // we update the global bounds so we're not hammering on it.
+            std::lock_guard<std::mutex> lock(boundsMutex);
+            bounds = Union(bounds, localBounds);
+        });
+
+        ///////////////////////////////////////////////////////////////////////////
+        // Build the top-level IAS
+        OptixBuildInput buildInput            = {};
+        buildInput.type                       = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+        pathtracer::PathtracerDeviceBuffer instanceDeviceBuffer = CopyToDevice(pstd::MakeConstSpan(iasInstances));
+        buildInput.instanceArray.instances    = instanceDeviceBuffer.device_ptr();
+        buildInput.instanceArray.numInstances = iasInstances.size();
+
+        Accel rootAccel = buildOptixBVH(optixContext, {buildInput}, threadCUDAStreams);
+        rootTraversable = rootAccel.traversableHandle;
+        if (!rootAccel.buffer.empty()) accelBuffers.push_back(std::move(rootAccel.buffer));
+
+        ///////////////////////////////////////////////////////////////////////////
+        // Final SBT initialization
+        pathtracer::PathtracerDeviceBuffer isectHGRBDeviceBuffer = CopyToDevice(pstd::MakeConstSpan(intersectHGRecords));
+        CUdeviceptr isectHGRBDevicePtr = isectHGRBDeviceBuffer.device_ptr();
+        sbtBuffers.push_back(std::move(isectHGRBDeviceBuffer));
+        intersectSBT.hitgroupRecordBase          = isectHGRBDevicePtr;
+        intersectSBT.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
+        intersectSBT.hitgroupRecordCount         = intersectHGRecords.size();
+
+        pathtracer::PathtracerDeviceBuffer shadowHGRBDeviceBuffer = CopyToDevice(pstd::MakeConstSpan(shadowHGRecords));
+        CUdeviceptr shadowHGRBDevicePtr = shadowHGRBDeviceBuffer.device_ptr();
+        sbtBuffers.push_back(std::move(shadowHGRBDeviceBuffer));
+        shadowSBT.hitgroupRecordBase          = shadowHGRBDevicePtr;
+        shadowSBT.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
+        shadowSBT.hitgroupRecordCount         = shadowHGRecords.size();
+
+        // Still want to run the closest hit shaders...
+        shadowTrSBT.hitgroupRecordBase          = isectHGRBDevicePtr;
+        shadowTrSBT.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
+        shadowTrSBT.hitgroupRecordCount         = intersectHGRecords.size();
+
+        pathtracer::PathtracerDeviceBuffer randomHitHGRBDeviceBuffer = CopyToDevice(pstd::MakeConstSpan(randomHitHGRecords));
+        CUdeviceptr randomHitHGRBDevicePtr = randomHitHGRBDeviceBuffer.device_ptr();
+        sbtBuffers.push_back(std::move(randomHitHGRBDeviceBuffer));
+        randomHitSBT.hitgroupRecordBase          = randomHitHGRBDevicePtr;
+        randomHitSBT.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
+        randomHitSBT.hitgroupRecordCount         = randomHitHGRecords.size();
+
+#ifdef SPECTRA_IS_WINDOWS
+        ReenableThreadPool();
+#endif // SPECTRA_IS_WINDOWS
+    }
+
+    SpectraOptiXAggregate::~SpectraOptiXAggregate() {
+        SPECTRA_CUDA_CHECK(cudaDeviceSynchronize());
+
+        if (optixPipeline) SPECTRA_OPTIX_CHECK(optixPipelineDestroy(optixPipeline));
+        for (OptixProgramGroup programGroup : programGroups) SPECTRA_OPTIX_CHECK(optixProgramGroupDestroy(programGroup));
+        if (optixModule) SPECTRA_OPTIX_CHECK(optixModuleDestroy(optixModule));
+
+        for (ParamBufferState& ps : paramsPool) {
+            if (ps.used) SPECTRA_CUDA_CHECK(cudaEventSynchronize(ps.finishedEvent.get()));
+        }
+
+        if (optixContext) SPECTRA_OPTIX_CHECK(optixDeviceContextDestroy(optixContext));
+    }
+
+    SpectraOptiXAggregate::ParamBufferState& SpectraOptiXAggregate::getParamBuffer(const RayIntersectParameters& params) const {
+        SPECTRA_CHECK(nextParamOffset < paramsPool.size());
+
+        ParamBufferState& pbs = paramsPool[nextParamOffset];
+        if (++nextParamOffset == paramsPool.size()) nextParamOffset = 0;
+        if (!pbs.used)
+            pbs.used = true;
+        else
+            SPECTRA_CUDA_CHECK(cudaEventSynchronize(pbs.finishedEvent.get()));
+
+        // Copy to host-side pinned memory
+        memcpy(pbs.hostBuffer.data(), &params, sizeof(params));
+        SPECTRA_CUDA_CHECK(cudaMemcpyAsync(pbs.deviceBuffer.data(), pbs.hostBuffer.data(), sizeof(params), cudaMemcpyHostToDevice));
+
+        return pbs;
+    }
+
+    void SpectraOptiXAggregate::IntersectClosest(int maxRays, const RayQueue* rayQueue, EscapedRayQueue* escapedRayQueue, HitAreaLightQueue* hitAreaLightQueue, MaterialEvalQueue* basicEvalMaterialQueue, MaterialEvalQueue* universalEvalMaterialQueue, MediumSampleQueue* mediumSampleQueue, RayQueue* nextRayQueue) const {
+        if (rootTraversable) {
+            RayIntersectParameters params     = {};
+            params.traversable                = rootTraversable;
+            params.rayQueue                   = rayQueue;
+            params.nextRayQueue               = nextRayQueue;
+            params.escapedRayQueue            = escapedRayQueue;
+            params.hitAreaLightQueue          = hitAreaLightQueue;
+            params.basicEvalMaterialQueue     = basicEvalMaterialQueue;
+            params.universalEvalMaterialQueue = universalEvalMaterialQueue;
+            params.mediumSampleQueue          = mediumSampleQueue;
+
+            ParamBufferState& pbs = getParamBuffer(params);
+
+            SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &intersectSBT, maxRays, 1, 1));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+        }
+    }
+
+    void SpectraOptiXAggregate::IntersectShadow(int maxRays, ShadowRayQueue* shadowRayQueue, SOA<PixelSampleState>* pixelSampleState) const {
+        if (rootTraversable) {
+            RayIntersectParameters params = {};
+            params.traversable            = rootTraversable;
+            params.shadowRayQueue         = shadowRayQueue;
+            params.pixelSampleState       = *pixelSampleState;
+
+            ParamBufferState& pbs = getParamBuffer(params);
+
+            SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &shadowSBT, maxRays, 1, 1));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+        }
+    }
+
+    void SpectraOptiXAggregate::IntersectShadowTr(int maxRays, ShadowRayQueue* shadowRayQueue, SOA<PixelSampleState>* pixelSampleState) const {
+        if (rootTraversable) {
+            RayIntersectParameters params = {};
+            params.traversable            = rootTraversable;
+            params.shadowRayQueue         = shadowRayQueue;
+            params.pixelSampleState       = *pixelSampleState;
+
+            ParamBufferState& pbs = getParamBuffer(params);
+
+            SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &shadowTrSBT, maxRays, 1, 1));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+        }
+    }
+
+    void SpectraOptiXAggregate::IntersectOneRandom(int maxRays, SubsurfaceScatterQueue* subsurfaceScatterQueue) const {
+        if (rootTraversable) {
+            RayIntersectParameters params = {};
+            params.traversable            = rootTraversable;
+            params.subsurfaceScatterQueue = subsurfaceScatterQueue;
+
+            ParamBufferState& pbs = getParamBuffer(params);
+
+            SPECTRA_OPTIX_CHECK(optixLaunch(optixPipeline, cudaStream, pbs.deviceBuffer.device_ptr(), sizeof(RayIntersectParameters), &randomHitSBT, maxRays, 1, 1));
+            SPECTRA_CUDA_CHECK(cudaEventRecord(pbs.finishedEvent.get()));
+        }
+    }
+} // namespace spectra::optix
