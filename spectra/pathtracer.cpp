@@ -22,9 +22,9 @@ module;
 #include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
 #include <spectra/pathtracer/core/textures.cuh>
-#include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
 #include <spectra/pathtracer/integrator.cuh>
+#include <spectra/pathtracer/memory/memory.cuh>
 #include <spectra/pathtracer/util/transform.cuh>
 #include <spectra/pathtracer/util/vecmath.cuh>
 
@@ -125,9 +125,9 @@ namespace xayah::pathtracer {
             vk::DeviceSize interop_allocation_size{0};
             vk::DeviceSize interop_buffer_size{0};
             vk::raii::Semaphore cuda_complete_semaphore{nullptr};
-            cudaExternalMemory_t cuda_external_memory{};
-            cudaExternalSemaphore_t cuda_external_semaphore{};
-            float* cuda_pixels{nullptr};
+            spectra::pathtracer::PathtracerCudaExternalMemory cuda_external_memory{};
+            spectra::pathtracer::PathtracerCudaExternalSemaphore cuda_external_semaphore{};
+            spectra::pathtracer::PathtracerCudaMappedBuffer cuda_pixels{};
 
             vk::raii::DeviceMemory image_memory{nullptr};
             vk::raii::Image image{nullptr};
@@ -165,7 +165,7 @@ namespace xayah::pathtracer {
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
 
-        std::unique_ptr<spectra::CUDATrackedMemoryResource> scene_memory_resource{};
+        std::unique_ptr<spectra::pathtracer::PathtracerMemoryScope> scene_memory_scope{};
         std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene{};
         std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
         spectra::pathtracer::RenderConfig render_config{};
@@ -231,18 +231,9 @@ namespace {
     void destroy_pathtracer_frame_resources_noexcept(xayah::pathtracer::RenderPipeline& pathtracer) noexcept {
         release_pathtracer_viewport_descriptors_noexcept(pathtracer);
         for (xayah::pathtracer::RenderPipeline::FrameResource& frame : pathtracer.frames) {
-            if (frame.cuda_pixels != nullptr) {
-                cudaFree(frame.cuda_pixels);
-                frame.cuda_pixels = nullptr;
-            }
-            if (frame.cuda_external_semaphore != nullptr) {
-                cudaDestroyExternalSemaphore(frame.cuda_external_semaphore);
-                frame.cuda_external_semaphore = nullptr;
-            }
-            if (frame.cuda_external_memory != nullptr) {
-                cudaDestroyExternalMemory(frame.cuda_external_memory);
-                frame.cuda_external_memory = nullptr;
-            }
+            frame.cuda_pixels.ReleaseNoexcept();
+            frame.cuda_external_semaphore.ReleaseNoexcept();
+            frame.cuda_external_memory.ReleaseNoexcept();
         }
         pathtracer.frames.clear();
         pathtracer.active_frame_index = 0;
@@ -270,22 +261,23 @@ namespace {
         HANDLE memory_handle = device.getMemoryWin32HandleKHR(memory_handle_info);
         if (memory_handle == nullptr) throw std::runtime_error("Failed to export Vulkan memory Win32 handle for CUDA");
         memory_handle_desc.handle.win32.handle = memory_handle;
-        CUDA_CHECK(cudaImportExternalMemory(&frame.cuda_external_memory, &memory_handle_desc));
+        frame.cuda_external_memory.Import(memory_handle_desc);
         CloseHandle(memory_handle);
 #else
         const vk::MemoryGetFdInfoKHR memory_handle_info{*frame.interop_memory, spectra_external_memory_handle_type()};
         int memory_fd = device.getMemoryFdKHR(memory_handle_info);
         if (memory_fd < 0) throw std::runtime_error("Failed to export Vulkan memory FD for CUDA");
         memory_handle_desc.handle.fd = memory_fd;
-        CUDA_CHECK(cudaImportExternalMemory(&frame.cuda_external_memory, &memory_handle_desc));
+        frame.cuda_external_memory.Import(memory_handle_desc);
         close(memory_fd);
 #endif
 
         cudaExternalMemoryBufferDesc buffer_desc{};
         buffer_desc.offset = 0;
         buffer_desc.size   = static_cast<unsigned long long>(frame.interop_buffer_size);
-        CUDA_CHECK(cudaExternalMemoryGetMappedBuffer(reinterpret_cast<void**>(&frame.cuda_pixels), frame.cuda_external_memory, &buffer_desc));
-        if (frame.cuda_pixels == nullptr) throw std::runtime_error("CUDA external memory mapped to a null Spectra pathtracer RGBA pointer");
+        void* mapped_pixels = nullptr;
+        CUDA_CHECK(cudaExternalMemoryGetMappedBuffer(&mapped_pixels, frame.cuda_external_memory.get(), &buffer_desc));
+        frame.cuda_pixels.Adopt(mapped_pixels);
     }
 
     void create_pathtracer_cuda_complete_semaphore(const vk::raii::Device& device, xayah::pathtracer::RenderPipeline::FrameResource& frame) {
@@ -300,17 +292,17 @@ namespace {
         HANDLE semaphore_handle = device.getSemaphoreWin32HandleKHR(semaphore_handle_info);
         if (semaphore_handle == nullptr) throw std::runtime_error("Failed to export Vulkan semaphore Win32 handle for CUDA");
         semaphore_handle_desc.handle.win32.handle = semaphore_handle;
-        CUDA_CHECK(cudaImportExternalSemaphore(&frame.cuda_external_semaphore, &semaphore_handle_desc));
+        frame.cuda_external_semaphore.Import(semaphore_handle_desc);
         CloseHandle(semaphore_handle);
 #else
         const vk::SemaphoreGetFdInfoKHR semaphore_handle_info{*frame.cuda_complete_semaphore, spectra_external_semaphore_handle_type()};
         int semaphore_fd = device.getSemaphoreFdKHR(semaphore_handle_info);
         if (semaphore_fd < 0) throw std::runtime_error("Failed to export Vulkan semaphore FD for CUDA");
         semaphore_handle_desc.handle.fd = semaphore_fd;
-        CUDA_CHECK(cudaImportExternalSemaphore(&frame.cuda_external_semaphore, &semaphore_handle_desc));
+        frame.cuda_external_semaphore.Import(semaphore_handle_desc);
         close(semaphore_fd);
 #endif
-        if (frame.cuda_external_semaphore == nullptr) throw std::runtime_error("CUDA external semaphore import returned null");
+        if (!frame.cuda_external_semaphore.valid()) throw std::runtime_error("CUDA external semaphore import returned null");
     }
 
     void create_pathtracer_display_image(xayah::pathtracer::RenderPipeline& pathtracer, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, xayah::pathtracer::RenderPipeline::FrameResource& frame) {
@@ -385,7 +377,7 @@ namespace {
 
     void clear_pathtracer_texture_caches_noexcept() noexcept {
         try {
-            spectra::ClearGPUTextureCaches();
+            spectra::ClearPathtracerTextureCaches();
         } catch (...) {
         }
     }
@@ -400,9 +392,9 @@ namespace {
         pathtracer.integrator.reset();
         pathtracer.compiled_scene.reset();
         clear_pathtracer_texture_caches_noexcept();
-        if (pathtracer.scene_memory_resource != nullptr) {
-            pathtracer.scene_memory_resource->ReleaseAllNoexcept();
-            pathtracer.scene_memory_resource.reset();
+        if (pathtracer.scene_memory_scope != nullptr) {
+            pathtracer.scene_memory_scope->ReleaseAllNoexcept();
+            pathtracer.scene_memory_scope.reset();
         }
         pathtracer.pixel_bounds         = spectra::Bounds2i{};
         pathtracer.resolution           = spectra::Vector2i{};
@@ -427,16 +419,16 @@ namespace {
         std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator{};
     };
 
-    [[nodiscard]] std::unique_ptr<spectra::CUDATrackedMemoryResource> create_pathtracer_scene_memory_resource() {
-        return std::make_unique<spectra::CUDATrackedMemoryResource>();
+    [[nodiscard]] std::unique_ptr<spectra::pathtracer::PathtracerMemoryScope> create_pathtracer_scene_memory_scope() {
+        return std::make_unique<spectra::pathtracer::PathtracerMemoryScope>(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "pathtracer scene");
     }
 
-    [[nodiscard]] PathtracerRuntimeResources create_pathtracer_runtime_resources(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, spectra::CUDATrackedMemoryResource* scene_memory_resource) {
+    [[nodiscard]] PathtracerRuntimeResources create_pathtracer_runtime_resources(const spectra::scene::SceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, spectra::pathtracer::PathtracerMemoryScope* scene_memory_scope) {
         if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
-        if (scene_memory_resource == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer runtime resources without scene memory");
-        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(scene, render_config, scene_memory_resource, spectra::Point2i{resolution[0], resolution[1]});
-        std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator         = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(scene_memory_resource, *compiled_scene, render_config);
+        if (scene_memory_scope == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer runtime resources without scene memory");
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(scene, render_config, scene_memory_scope, spectra::Point2i{resolution[0], resolution[1]});
+        std::unique_ptr<spectra::pathtracer::WavefrontPathtracer> integrator         = std::make_unique<spectra::pathtracer::WavefrontPathtracer>(scene_memory_scope, *compiled_scene, render_config);
         return PathtracerRuntimeResources{
             .compiled_scene = std::move(compiled_scene),
             .integrator     = std::move(integrator),
@@ -500,8 +492,8 @@ namespace xayah::pathtracer {
             pathtracer.render_config   = render_config;
             pathtracer.scene_revision  = scene.revision;
 
-            pathtracer.scene_memory_resource     = create_pathtracer_scene_memory_resource();
-            PathtracerRuntimeResources resources = create_pathtracer_runtime_resources(scene, render_config, resolution, pathtracer.scene_memory_resource.get());
+            pathtracer.scene_memory_scope        = create_pathtracer_scene_memory_scope();
+            PathtracerRuntimeResources resources = create_pathtracer_runtime_resources(scene, render_config, resolution, pathtracer.scene_memory_scope.get());
             pathtracer.compiled_scene            = std::move(resources.compiled_scene);
             pathtracer.integrator                = std::move(resources.integrator);
             initialize_pathtracer_integrator_state(pathtracer);
@@ -609,8 +601,8 @@ namespace xayah::pathtracer {
         spectra::GPUWait();
         destroy_pathtracer_scene_resources_noexcept(*this);
         try {
-            this->scene_memory_resource = create_pathtracer_scene_memory_resource();
-            PathtracerRuntimeResources next_resources = create_pathtracer_runtime_resources(scene, this->render_config, preserved_resolution, this->scene_memory_resource.get());
+            this->scene_memory_scope = create_pathtracer_scene_memory_scope();
+            PathtracerRuntimeResources next_resources = create_pathtracer_runtime_resources(scene, this->render_config, preserved_resolution, this->scene_memory_scope.get());
             this->compiled_scene = std::move(next_resources.compiled_scene);
             this->integrator     = std::move(next_resources.integrator);
             this->scene_revision = scene.revision;
@@ -663,10 +655,11 @@ namespace xayah::pathtracer {
             result.sample_pixels   = sample_pixels;
         }
         FrameResource& output_frame = pathtracer.frames.at(frame_index);
-        pathtracer.integrator->UpdateFramebufferFromFilm(pathtracer.pixel_bounds, pathtracer.exposure, output_frame.cuda_pixels);
+        pathtracer.integrator->UpdateFramebufferFromFilm(pathtracer.pixel_bounds, pathtracer.exposure, static_cast<float*>(output_frame.cuda_pixels.data()));
 
         cudaExternalSemaphoreSignalParams signal_params{};
-        CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&output_frame.cuda_external_semaphore, &signal_params, 1, 0));
+        cudaExternalSemaphore_t cuda_external_semaphore = output_frame.cuda_external_semaphore.get();
+        CUDA_CHECK(cudaSignalExternalSemaphoresAsync(&cuda_external_semaphore, &signal_params, 1, 0));
         return result;
     }
 

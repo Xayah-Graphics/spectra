@@ -7,8 +7,8 @@
 #include <spectra/pathtracer/compiled_scene.cuh>
 #include <spectra/pathtracer/core/kernel_config.cuh>
 #include <spectra/pathtracer/core/render_config.cuh>
-#include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/integrator.cuh>
+#include <spectra/pathtracer/memory/memory.cuh>
 #include <spectra/pathtracer/util/float.cuh>
 #include <stdexcept>
 #include <string>
@@ -96,8 +96,9 @@ int main(int argc, char* argv[]) {
 
         spectra::scene::SceneWorkspace scene_workspace                               = spectra::scene::BuildScene(*scene_name);
         std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot          = scene_workspace.snapshot();
-        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(*scene_snapshot, render_config, &spectra::CUDATrackedMemoryResource::singleton);
-        spectra::pathtracer::WavefrontPathtracer pathtracer(&spectra::CUDATrackedMemoryResource::singleton, *compiled_scene, render_config);
+        spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_gpu scene");
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(*scene_snapshot, render_config, &scene_memory_scope);
+        spectra::pathtracer::WavefrontPathtracer pathtracer(&scene_memory_scope, *compiled_scene, render_config);
 
         spectra::Float seconds = pathtracer.Render();
 

@@ -1,17 +1,18 @@
 #include <Ptexture.h>
 #include <algorithm>
 #include <mutex>
-#include <set>
 #include <spectra/pathtracer/core/diagnostics.cuh>
 #include <spectra/pathtracer/core/interaction.cuh>
 #include <spectra/pathtracer/core/paramdict.cuh>
 #include <spectra/pathtracer/core/textures.cuh>
 #include <spectra/pathtracer/gpu/util.cuh>
+#include <spectra/pathtracer/memory/memory.cuh>
 #include <spectra/pathtracer/util/color.cuh>
 #include <spectra/pathtracer/util/colorspace.cuh>
 #include <spectra/pathtracer/util/file.h>
 #include <spectra/pathtracer/util/float.cuh>
 #include <spectra/pathtracer/util/splines.cuh>
+#include <utility>
 #include <vector>
 
 // Windows strikes again.
@@ -641,14 +642,14 @@ namespace spectra {
     }
 
     struct LuminanceTextureCacheItem {
-        cudaMipmappedArray_t mipArray;
+        pathtracer::PathtracerCudaMipmappedArray mipArray;
         cudaTextureReadMode readMode;
         int nMIPMapLevels;
         bool originallySingleChannel;
     };
 
     struct RGBTextureCacheItem {
-        cudaMipmappedArray_t mipArray;
+        pathtracer::PathtracerCudaMipmappedArray mipArray;
         cudaTextureReadMode readMode;
         int nMIPMapLevels;
         const RGBColorSpace* colorSpace;
@@ -657,27 +658,22 @@ namespace spectra {
     static std::mutex textureCacheMutex;
     static std::map<std::string, LuminanceTextureCacheItem> lumTextureCache;
     static std::map<std::string, RGBTextureCacheItem> rgbTextureCache;
-    static std::vector<cudaTextureObject_t> gpuTextureObjects;
+    static std::vector<pathtracer::PathtracerCudaTextureObject> gpuTextureObjects;
 
-    static void registerGPUTextureObject(const cudaTextureObject_t textureObject) {
+    static void registerGPUTextureObject(pathtracer::PathtracerCudaTextureObject textureObject) {
         std::lock_guard<std::mutex> lock(textureCacheMutex);
-        gpuTextureObjects.push_back(textureObject);
+        gpuTextureObjects.push_back(std::move(textureObject));
     }
 
-    void ClearGPUTextureCaches() {
-        std::vector<cudaTextureObject_t> textureObjects{};
-        std::vector<cudaMipmappedArray_t> mipArrays{};
+    void ClearPathtracerTextureCaches() {
+        std::vector<pathtracer::PathtracerCudaTextureObject> textureObjects{};
+        std::map<std::string, LuminanceTextureCacheItem> luminanceTextures{};
+        std::map<std::string, RGBTextureCacheItem> rgbTextures{};
         {
             std::lock_guard<std::mutex> lock(textureCacheMutex);
             textureObjects.swap(gpuTextureObjects);
-
-            std::set<cudaMipmappedArray_t> uniqueMipArrays{};
-            for (const std::pair<const std::string, LuminanceTextureCacheItem>& cacheItem : lumTextureCache) uniqueMipArrays.insert(cacheItem.second.mipArray);
-            for (const std::pair<const std::string, RGBTextureCacheItem>& cacheItem : rgbTextureCache) uniqueMipArrays.insert(cacheItem.second.mipArray);
-            mipArrays.assign(uniqueMipArrays.begin(), uniqueMipArrays.end());
-
-            lumTextureCache.clear();
-            rgbTextureCache.clear();
+            luminanceTextures.swap(lumTextureCache);
+            rgbTextures.swap(rgbTextureCache);
         }
 
         {
@@ -687,17 +683,14 @@ namespace spectra {
         }
         ImageTextureBase::ClearCache();
 
-        for (const cudaTextureObject_t textureObject : textureObjects) {
-            if (textureObject != 0) CUDA_CHECK(cudaDestroyTextureObject(textureObject));
-        }
-        for (const cudaMipmappedArray_t mipArray : mipArrays) {
-            if (mipArray != nullptr) CUDA_CHECK(cudaFreeMipmappedArray(mipArray));
-        }
+        textureObjects.clear();
+        luminanceTextures.clear();
+        rgbTextures.clear();
     }
 
-    static cudaMipmappedArray_t createSingleChannelTextureArray(const Image& image, const RGBColorSpace* colorSpace, int* nMIPMapLevels) {
+    static pathtracer::PathtracerCudaMipmappedArray createSingleChannelTextureArray(const Image& image, const RGBColorSpace* colorSpace, int* nMIPMapLevels) {
         CHECK_EQ(1, image.NChannels());
-        cudaMipmappedArray_t mipArray;
+        pathtracer::PathtracerCudaMipmappedArray mipArray;
 
         cudaChannelFormatDesc channelDesc;
         switch (image.Format()) {
@@ -712,12 +705,12 @@ namespace spectra {
 
         const Image& baseImage = mipmap.GetLevel(0);
         cudaExtent extent      = make_cudaExtent(baseImage.Resolution().x, baseImage.Resolution().y, 0);
-        CUDA_CHECK(cudaMallocMipmappedArray(&mipArray, &channelDesc, extent, mipmap.Levels(), 0 /* flags */));
+        mipArray.Allocate(channelDesc, extent, mipmap.Levels(), 0);
 
         for (int level = 0; level < mipmap.Levels(); ++level) {
             const Image& levelImage = mipmap.GetLevel(level);
             cudaArray_t levelArray;
-            CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, mipArray, level));
+            CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, mipArray.get(), level));
 
             int pitch;
             switch (image.Format()) {
@@ -760,7 +753,7 @@ namespace spectra {
         ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
 
         // These have to be initialized one way or another in the below
-        cudaMipmappedArray_t mipArray;
+        cudaMipmappedArray_t mipArray = nullptr;
         int nMIPMapLevels = 0;
         cudaTextureReadMode readMode;
         const RGBColorSpace* colorSpace = nullptr;
@@ -769,7 +762,7 @@ namespace spectra {
         textureCacheMutex.lock();
         auto rgbIter = rgbTextureCache.find(filename);
         if (rgbIter != rgbTextureCache.end()) {
-            mipArray      = rgbIter->second.mipArray;
+            mipArray      = rgbIter->second.mipArray.get();
             readMode      = rgbIter->second.readMode;
             nMIPMapLevels = rgbIter->second.nMIPMapLevels;
             colorSpace    = rgbIter->second.colorSpace;
@@ -779,7 +772,7 @@ namespace spectra {
             // We don't want to take it if it was originally an RGB texture and
             // GPUFloatImageTexture converted it to single channel
             if (lumIter != lumTextureCache.end() && lumIter->second.originallySingleChannel) {
-                mipArray      = lumIter->second.mipArray;
+                mipArray      = lumIter->second.mipArray.get();
                 readMode      = lumIter->second.readMode;
                 nMIPMapLevels = lumIter->second.nMIPMapLevels;
                 colorSpace    = RGBColorSpace::SRGB();
@@ -802,6 +795,7 @@ namespace spectra {
                         MIPMap mipmap(image, colorSpace, WrapMode::Clamp /* TODO */, Allocator(), MIPMapFilterOptions());
                         nMIPMapLevels          = mipmap.Levels();
                         const Image& baseImage = mipmap.GetLevel(0);
+                        pathtracer::PathtracerCudaMipmappedArray newMipArray;
 
                         switch (image.Format()) {
                         case PixelFormat::U256:
@@ -809,11 +803,11 @@ namespace spectra {
                                 cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
 
                                 cudaExtent extent = make_cudaExtent(baseImage.Resolution().x, baseImage.Resolution().y, 0);
-                                CUDA_CHECK(cudaMallocMipmappedArray(&mipArray, &channelDesc, extent, mipmap.Levels(), 0 /* flags */));
+                                newMipArray.Allocate(channelDesc, extent, mipmap.Levels(), 0);
                                 for (int level = 0; level < mipmap.Levels(); ++level) {
                                     const Image& levelImage = mipmap.GetLevel(level);
                                     cudaArray_t levelArray;
-                                    CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, mipArray, level));
+                                    CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, newMipArray.get(), level));
 
                                     std::vector<uint8_t> rgba(4 * levelImage.Resolution().x * levelImage.Resolution().y);
                                     size_t offset = 0;
@@ -835,12 +829,12 @@ namespace spectra {
                                 cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(16, 16, 16, 16, cudaChannelFormatKindFloat);
 
                                 cudaExtent extent = make_cudaExtent(baseImage.Resolution().x, baseImage.Resolution().y, 0);
-                                CUDA_CHECK(cudaMallocMipmappedArray(&mipArray, &channelDesc, extent, mipmap.Levels(), 0 /* flags */));
+                                newMipArray.Allocate(channelDesc, extent, mipmap.Levels(), 0);
 
                                 for (int level = 0; level < mipmap.Levels(); ++level) {
                                     const Image& levelImage = mipmap.GetLevel(level);
                                     cudaArray_t levelArray;
-                                    CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, mipArray, level));
+                                    CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, newMipArray.get(), level));
 
                                     std::vector<Half> rgba(4 * levelImage.Resolution().x * levelImage.Resolution().y);
 
@@ -863,12 +857,12 @@ namespace spectra {
                                 cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 32, 32, 32, cudaChannelFormatKindFloat);
 
                                 cudaExtent extent = make_cudaExtent(baseImage.Resolution().x, baseImage.Resolution().y, 0);
-                                CUDA_CHECK(cudaMallocMipmappedArray(&mipArray, &channelDesc, extent, mipmap.Levels(), 0 /* flags */));
+                                newMipArray.Allocate(channelDesc, extent, mipmap.Levels(), 0);
 
                                 for (int level = 0; level < mipmap.Levels(); ++level) {
                                     const Image& levelImage = mipmap.GetLevel(level);
                                     cudaArray_t levelArray;
-                                    CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, mipArray, level));
+                                    CUDA_CHECK(cudaGetMipmappedArrayLevel(&levelArray, newMipArray.get(), level));
 
                                     std::vector<float> rgba(4 * levelImage.Resolution().x * levelImage.Resolution().y);
 
@@ -889,14 +883,16 @@ namespace spectra {
                         default: SPECTRA_FATAL("Unexpected PixelFormat");
                         }
 
+                        mipArray = newMipArray.get();
                         textureCacheMutex.lock();
-                        rgbTextureCache[filename] = RGBTextureCacheItem{mipArray, readMode, nMIPMapLevels, colorSpace};
+                        rgbTextureCache[filename] = RGBTextureCacheItem{std::move(newMipArray), readMode, nMIPMapLevels, colorSpace};
                         textureCacheMutex.unlock();
                     } else if (image.NChannels() == 1) {
-                        mipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);
+                        pathtracer::PathtracerCudaMipmappedArray newMipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);
+                        mipArray = newMipArray.get();
 
                         textureCacheMutex.lock();
-                        lumTextureCache[filename] = LuminanceTextureCacheItem{mipArray, readMode, nMIPMapLevels, true};
+                        lumTextureCache[filename] = LuminanceTextureCacheItem{std::move(newMipArray), readMode, nMIPMapLevels, true};
                         textureCacheMutex.unlock();
                         isSingleChannel = true;
                     } else {
@@ -924,9 +920,10 @@ namespace spectra {
         texDesc.borderColor[0] = texDesc.borderColor[1] = texDesc.borderColor[2] = texDesc.borderColor[3] = 0.f;
         texDesc.sRGB                                                                                      = 1;
 
-        cudaTextureObject_t texObj;
-        CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
-        registerGPUTextureObject(texObj);
+        pathtracer::PathtracerCudaTextureObject textureObject;
+        textureObject.Create(resDesc, texDesc);
+        cudaTextureObject_t texObj = textureObject.get();
+        registerGPUTextureObject(std::move(textureObject));
 
         TextureMapping2D mapping = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 
@@ -950,14 +947,14 @@ namespace spectra {
         std::string encodingString  = parameters.GetOneString("encoding", defaultEncoding);
         ColorEncoding encoding      = ColorEncoding::Get(encodingString, alloc);
 
-        cudaMipmappedArray_t mipArray;
+        cudaMipmappedArray_t mipArray = nullptr;
         int nMIPMapLevels = 0;
         cudaTextureReadMode readMode;
 
         textureCacheMutex.lock();
         auto iter = lumTextureCache.find(filename);
         if (iter != lumTextureCache.end()) {
-            mipArray      = iter->second.mipArray;
+            mipArray      = iter->second.mipArray.get();
             readMode      = iter->second.readMode;
             nMIPMapLevels = iter->second.nMIPMapLevels;
             textureCacheMutex.unlock();
@@ -995,11 +992,12 @@ namespace spectra {
                     throw std::runtime_error(diagnostics::Format(loc, "%s: %d channel image, without RGB channels.", filename, image.NChannels()));
             }
 
-            mipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);
+            pathtracer::PathtracerCudaMipmappedArray newMipArray = createSingleChannelTextureArray(image, colorSpace, &nMIPMapLevels);
+            mipArray = newMipArray.get();
             readMode = (image.Format() == PixelFormat::U256) ? cudaReadModeNormalizedFloat : cudaReadModeElementType;
 
             textureCacheMutex.lock();
-            lumTextureCache[filename] = LuminanceTextureCacheItem{mipArray, readMode, nMIPMapLevels, !convertedImage};
+            lumTextureCache[filename] = LuminanceTextureCacheItem{std::move(newMipArray), readMode, nMIPMapLevels, !convertedImage};
             textureCacheMutex.unlock();
         }
 
@@ -1020,9 +1018,10 @@ namespace spectra {
         texDesc.borderColor[0] = texDesc.borderColor[1] = texDesc.borderColor[2] = texDesc.borderColor[3] = 0.f;
         texDesc.sRGB                                                                                      = 1;
 
-        cudaTextureObject_t texObj;
-        CUDA_CHECK(cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr));
-        registerGPUTextureObject(texObj);
+        pathtracer::PathtracerCudaTextureObject textureObject;
+        textureObject.Create(resDesc, texDesc);
+        cudaTextureObject_t texObj = textureObject.get();
+        registerGPUTextureObject(std::move(textureObject));
 
         TextureMapping2D mapping = TextureMapping2D::Create(parameters, renderFromTexture, loc, alloc);
 

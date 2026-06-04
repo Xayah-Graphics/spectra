@@ -25,8 +25,8 @@
 #include <spectra/pathtracer/core/samplers.cuh>
 #include <spectra/pathtracer/core/shapes.cuh>
 #include <spectra/pathtracer/core/textures.cuh>
-#include <spectra/pathtracer/gpu/memory.cuh>
 #include <spectra/pathtracer/integrator.cuh>
+#include <spectra/pathtracer/memory/memory.cuh>
 #include <spectra/pathtracer/optix/aggregate.cuh>
 #include <spectra/pathtracer/util/bluenoise.cuh>
 #include <spectra/pathtracer/util/color.cuh>
@@ -63,7 +63,7 @@ namespace spectra::pathtracer::detail {
 namespace spectra::pathtracer {
     class PathtracerRuntimeResources {
     public:
-        PathtracerRuntimeResources() : bufferResource(std::make_unique<pstd::pmr::monotonic_buffer_resource>(1024 * 1024, &CUDATrackedMemoryResource::singleton)), alloc(bufferResource.get()) {
+        PathtracerRuntimeResources() : memoryScope(std::make_unique<PathtracerMemoryScope>(PathtracerMemoryScopeKind::Runtime, "pathtracer runtime")), bufferResource(std::make_unique<pstd::pmr::monotonic_buffer_resource>(1024 * 1024, memoryScope.get())), alloc(bufferResource.get()) {
             ColorEncoding::Init(alloc);
             Spectra::Init(alloc);
             RGBToSpectrumTable::Init(alloc);
@@ -86,6 +86,7 @@ namespace spectra::pathtracer {
         PathtracerRuntimeResources& operator=(PathtracerRuntimeResources&&) noexcept = delete;
 
     private:
+        std::unique_ptr<PathtracerMemoryScope> memoryScope;
         std::unique_ptr<pstd::pmr::monotonic_buffer_resource> bufferResource;
         Allocator alloc;
     };
@@ -241,9 +242,9 @@ namespace spectra::pathtracer {
         sampler        = pathtracerScene.sampler;
         infiniteLights = pathtracerScene.infiniteLights;
 
-        CUDATrackedMemoryResource* mr = dynamic_cast<CUDATrackedMemoryResource*>(memoryResource);
-        SPECTRA_CHECK(mr);
-        aggregate = new optix::SpectraOptiXAggregate(pathtracerScene, this->renderConfig, mr);
+        PathtracerMemoryScope* memoryScope = dynamic_cast<PathtracerMemoryScope*>(memoryResource);
+        SPECTRA_CHECK(memoryScope);
+        aggregate = new optix::SpectraOptiXAggregate(pathtracerScene, this->renderConfig, memoryScope);
 
         // Preprocess the light sources
         for (Light light : pathtracerScene.allLights) light.Preprocess(aggregate->Bounds());
@@ -496,9 +497,9 @@ namespace spectra::pathtracer {
             // Copy all the scene data structures over to GPU memory.  This
             // ensures that there isn't a big performance hitch for the first batch
             // of rays as that stuff is copied over on demand.
-            CUDATrackedMemoryResource* mr = dynamic_cast<CUDATrackedMemoryResource*>(memoryResource);
-            SPECTRA_CHECK(mr);
-            mr->PrefetchToGPU();
+            PathtracerMemoryScope* memoryScope = dynamic_cast<PathtracerMemoryScope*>(memoryResource);
+            SPECTRA_CHECK(memoryScope);
+            memoryScope->PrefetchManagedToGPU();
         }
     }
 

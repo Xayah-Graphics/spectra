@@ -158,7 +158,12 @@ namespace spectra {
     class TextureMapping2D : public TaggedPointer<UVMapping, SphericalMapping, CylindricalMapping, PlanarMapping> {
     public:
         // TextureMapping2D Interface
-        using TaggedPointer::TaggedPointer;
+        TextureMapping2D() = default;
+        __host__ __device__ TextureMapping2D(std::nullptr_t ptr) : TaggedPointer(ptr) {}
+        __host__ __device__ TextureMapping2D(UVMapping* ptr) : TaggedPointer(ptr) {}
+        __host__ __device__ TextureMapping2D(SphericalMapping* ptr) : TaggedPointer(ptr) {}
+        __host__ __device__ TextureMapping2D(CylindricalMapping* ptr) : TaggedPointer(ptr) {}
+        __host__ __device__ TextureMapping2D(PlanarMapping* ptr) : TaggedPointer(ptr) {}
         __host__ __device__ TextureMapping2D(TaggedPointer<UVMapping, SphericalMapping, CylindricalMapping, PlanarMapping> tp) : TaggedPointer(tp) {}
 
         static TextureMapping2D Create(const ParameterDictionary& parameters, const Transform& renderFromTexture, const FileLoc* loc, Allocator alloc);
@@ -191,7 +196,9 @@ namespace spectra {
     class TextureMapping3D : public TaggedPointer<PointTransformMapping> {
     public:
         // TextureMapping3D Interface
-        using TaggedPointer::TaggedPointer;
+        TextureMapping3D() = default;
+        __host__ __device__ TextureMapping3D(std::nullptr_t ptr) : TaggedPointer(ptr) {}
+        __host__ __device__ TextureMapping3D(PointTransformMapping* ptr) : TaggedPointer(ptr) {}
         __host__ __device__ TextureMapping3D(TaggedPointer<PointTransformMapping> tp) : TaggedPointer(tp) {}
 
         static TextureMapping3D Create(const ParameterDictionary& parameters, const Transform& renderFromTexture, const FileLoc* loc, Allocator alloc);
@@ -905,7 +912,7 @@ namespace spectra {
         }
     };
 
-    void ClearGPUTextureCaches();
+    void ClearPathtracerTextureCaches();
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_CORE_TEXTURES_H

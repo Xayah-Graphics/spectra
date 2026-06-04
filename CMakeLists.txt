@@ -315,8 +315,8 @@ set(SPECTRA_GPU_UTIL_SOURCE
         spectra/pathtracer/util/vecmath.cu
 )
 set(SPECTRA_GPU_DEVICE_SOURCE
-        spectra/pathtracer/gpu/memory.cu
         spectra/pathtracer/gpu/util.cu
+        spectra/pathtracer/memory/memory.cu
 )
 
 add_library(spectra_gpu_optix_input OBJECT spectra/pathtracer/optix/optix.cu)
