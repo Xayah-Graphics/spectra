@@ -1,7 +1,7 @@
-export module cloth;
+export module xayah.projects.cloth;
 import std;
 
-namespace spectra {
+namespace xayah::projects::cloth {
     export struct ClothVertex {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
@@ -107,4 +107,4 @@ namespace spectra {
         void compute_normals();
         [[nodiscard]] const std::vector<ClothVertex>& download_vertices() const;
     };
-} // namespace spectra
+} // namespace xayah::projects::cloth

@@ -47,8 +47,19 @@ target_include_directories(vendor_imgui PUBLIC ${SPECTRA_ROOT_DIR}/vendor/imgui)
 add_subdirectory(spectra)
 add_subdirectory(pathtracer)
 add_subdirectory(rasterizer)
+add_subdirectory(projects)
 
 add_executable(spectra_gui main.cpp)
 add_executable(spectra::gui ALIAS spectra_gui)
-target_link_libraries(spectra_gui PRIVATE spectra::core spectra::pathtracer spectra::rasterizer)
+target_link_libraries(
+        spectra_gui
+        PRIVATE
+        spectra::core
+        spectra::pathtracer
+        spectra::rasterizer
+        xayah::bouncing_ball
+        xayah::sparkles
+        xayah::cloth
+        xayah::pyro
+)
 set_property(TARGET spectra_gui PROPERTY CXX_MODULE_STD ON)

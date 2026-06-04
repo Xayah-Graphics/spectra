@@ -1,10 +1,10 @@
-#ifndef SPECTRA_PYRO_H
-#define SPECTRA_PYRO_H
+#ifndef SPECTRA_PROJECT_PYRO_H
+#define SPECTRA_PROJECT_PYRO_H
 
 #include <cstdint>
 #include <cuda_runtime.h>
 
-namespace spectra::pyro_cuda {
+namespace xayah::projects::pyro::cuda {
     void launch_fill_float(cudaStream_t stream, unsigned grid, unsigned block, float* field, float value, std::uint64_t count);
     void launch_fill_int(cudaStream_t stream, unsigned grid, unsigned block, int* field, int value, std::uint64_t count);
     void launch_add_scaled(cudaStream_t stream, unsigned grid, unsigned block, float* destination, const float* current, const float* source, float scale, std::uint64_t count);
@@ -25,6 +25,6 @@ namespace spectra::pyro_cuda {
     void launch_compute_ratio(cudaStream_t stream, float* destination, const float* numerator, const float* denominator);
     void launch_negate_scalar(cudaStream_t stream, float* destination, const float* source);
     void launch_project_staggered_component(cudaStream_t stream, dim3 grid, dim3 block, std::uint32_t axis, float* velocity_component, const float* pressure, const std::uint8_t* occupancy, const float* solid_velocity_component, int nx, int ny, int nz, float h, float dt, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure);
-} // namespace spectra::pyro_cuda
+} // namespace xayah::projects::pyro::cuda
 
-#endif // SPECTRA_PYRO_H
+#endif // SPECTRA_PROJECT_PYRO_H

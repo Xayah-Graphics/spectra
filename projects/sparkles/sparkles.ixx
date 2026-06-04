@@ -1,7 +1,7 @@
-export module sparkles;
+export module xayah.projects.sparkles;
 import std;
 
-namespace spectra {
+namespace xayah::projects::sparkles {
     export struct SparklesParticle {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         float radius{0.02f};
@@ -79,4 +79,4 @@ namespace spectra {
         [[nodiscard]] float random_range(float minimum, float maximum);
         [[nodiscard]] std::array<float, 3> random_sphere_direction();
     };
-} // namespace spectra
+} // namespace xayah::projects::sparkles

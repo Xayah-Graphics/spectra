@@ -1,8 +1,8 @@
-module bouncingball;
+module xayah.projects.bouncing_ball;
 import std;
 
 namespace {
-    void validate_config(const spectra::BouncingBallConfig& config) {
+    void validate_config(const xayah::projects::bouncing_ball::BouncingBallConfig& config) {
         if (config.radius <= 0.0f) throw std::runtime_error("BouncingBall radius must be positive");
         if (config.restitution < 0.0f || config.restitution > 1.0f) throw std::runtime_error("BouncingBall restitution must be in [0, 1]");
         if (config.latitude_segments < 3u) throw std::runtime_error("BouncingBall latitude_segments must be at least 3");
@@ -10,17 +10,17 @@ namespace {
         if (config.start_position[1] < config.floor_y + config.radius) throw std::runtime_error("BouncingBall start_position penetrates the floor");
     }
 
-    [[nodiscard]] spectra::BouncingBallVertex sphere_vertex(const float radius, const float theta, const float phi) {
+    [[nodiscard]] xayah::projects::bouncing_ball::BouncingBallVertex sphere_vertex(const float radius, const float theta, const float phi) {
         const float sin_phi = std::sin(phi);
         const std::array normal{std::cos(theta) * sin_phi, std::cos(phi), std::sin(theta) * sin_phi};
-        return spectra::BouncingBallVertex{
+        return xayah::projects::bouncing_ball::BouncingBallVertex{
             {normal[0] * radius, normal[1] * radius, normal[2] * radius},
             normal,
         };
     }
 } // namespace
 
-namespace spectra {
+namespace xayah::projects::bouncing_ball {
     BouncingBallSolver::BouncingBallSolver(const BouncingBallConfig& config) : config{config} {
         validate_config(this->config);
         const std::uint32_t latitude_count  = this->config.latitude_segments + 1u;
@@ -90,4 +90,4 @@ namespace spectra {
     const std::vector<std::uint32_t>& BouncingBallSolver::mesh_indices() const {
         return this->indices;
     }
-} // namespace spectra
+} // namespace xayah::projects::bouncing_ball

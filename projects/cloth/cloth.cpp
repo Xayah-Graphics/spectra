@@ -3,7 +3,7 @@ module;
 
 #include <cuda_runtime.h>
 
-module cloth;
+module xayah.projects.cloth;
 import std;
 
 namespace {
@@ -19,7 +19,7 @@ namespace {
         return (value + divisor - 1u) / divisor;
     }
 
-    void validate_config(const spectra::ClothConfig& config, const spectra::ClothSphereCollider& collider) {
+    void validate_config(const xayah::projects::cloth::ClothConfig& config, const xayah::projects::cloth::ClothSphereCollider& collider) {
         if (config.columns < 3u || config.rows < 3u) throw std::runtime_error("CUDA cloth grid must be at least 3 x 3");
         if (config.width <= 0.0f || config.depth <= 0.0f) throw std::runtime_error("Cloth size must be positive");
         if (config.velocity_damping < 0.0f || config.velocity_damping > 1.0f) throw std::runtime_error("Cloth velocity_damping must be in [0, 1]");
@@ -47,7 +47,7 @@ namespace {
     }
 } // namespace
 
-namespace spectra {
+namespace xayah::projects::cloth {
     ClothSolver::ClothSolver(const ClothConfig& config, const ClothSphereCollider& collider) : config{config}, collider{collider} {
         validate_config(this->config, this->collider);
 
@@ -172,13 +172,13 @@ namespace spectra {
 
     void ClothSolver::solve_constraint_batch(const std::uint32_t kind, const std::uint32_t color, float* lambda, const std::uint32_t count, const float compliance, const float rest_length, const float substep_seconds) {
         if (count == 0u) return;
-        spectra::cloth_cuda::launch_solve_distance_constraints(cloth_stream(this->device.stream), ceil_div_u32(count, this->host.block_size), this->host.block_size, kind, color, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, lambda, this->device.error_flag, count, this->host.columns, this->host.rows, rest_length, compliance, substep_seconds);
+        xayah::projects::cloth::cuda::launch_solve_distance_constraints(cloth_stream(this->device.stream), ceil_div_u32(count, this->host.block_size), this->host.block_size, kind, color, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, lambda, this->device.error_flag, count, this->host.columns, this->host.rows, rest_length, compliance, substep_seconds);
     }
 
     void ClothSolver::reset() {
         if (this->device.stream == nullptr) throw std::runtime_error("Cannot reset cloth before CUDA device creation");
         check_cuda(cudaMemsetAsync(this->device.error_flag, 0, sizeof(int), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth error_flag");
-        spectra::cloth_cuda::launch_reset(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.columns, this->host.rows, this->config.origin[0], this->config.origin[1], this->config.origin[2], this->host.dx, this->host.dz);
+        xayah::projects::cloth::cuda::launch_reset(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.columns, this->host.rows, this->config.origin[0], this->config.origin[1], this->config.origin[2], this->host.dx, this->host.dz);
         this->compute_normals();
     }
 
@@ -193,7 +193,7 @@ namespace spectra {
             const float substep_seconds = std::min(remaining_seconds, this->config.max_substep_seconds);
             remaining_seconds -= substep_seconds;
             const float damping = std::pow(this->config.velocity_damping, substep_seconds * 60.0f);
-            spectra::cloth_cuda::launch_integrate(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, this->config.gravity[0], this->config.gravity[1], this->config.gravity[2], substep_seconds, damping);
+            xayah::projects::cloth::cuda::launch_integrate(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, this->config.gravity[0], this->config.gravity[1], this->config.gravity[2], substep_seconds, damping);
 
             this->clear_constraint_lambdas(this->device.horizontal_lambda, this->host.horizontal_constraint_count);
             this->clear_constraint_lambdas(this->device.vertical_lambda, this->host.vertical_constraint_count);
@@ -213,9 +213,9 @@ namespace spectra {
                     this->solve_constraint_batch(4u, color, this->device.horizontal_bend_lambda, this->host.horizontal_bend_constraint_count, this->config.bend_compliance, this->host.dx * 2.0f, substep_seconds);
                     this->solve_constraint_batch(5u, color, this->device.vertical_bend_lambda, this->host.vertical_bend_constraint_count, this->config.bend_compliance, this->host.dz * 2.0f, substep_seconds);
                 }
-                spectra::cloth_cuda::launch_solve_sphere_collision(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, this->device.error_flag, this->host.vertex_count, this->collider.center[0], this->collider.center[1], this->collider.center[2], this->collider.radius + this->config.collision_margin);
+                xayah::projects::cloth::cuda::launch_solve_sphere_collision(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, this->device.error_flag, this->host.vertex_count, this->collider.center[0], this->collider.center[1], this->collider.center[2], this->collider.radius + this->config.collision_margin);
             }
-            spectra::cloth_cuda::launch_update_velocities(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, substep_seconds);
+            xayah::projects::cloth::cuda::launch_update_velocities(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, substep_seconds);
         }
         this->compute_normals();
     }
@@ -224,8 +224,8 @@ namespace spectra {
         check_cuda(cudaMemsetAsync(this->device.normal_x, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_x");
         check_cuda(cudaMemsetAsync(this->device.normal_y, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_y");
         check_cuda(cudaMemsetAsync(this->device.normal_z, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_z");
-        spectra::cloth_cuda::launch_accumulate_normals(cloth_stream(this->device.stream), this->host.triangle_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.indices, this->device.error_flag, this->host.triangle_count);
-        spectra::cloth_cuda::launch_normalize_normals(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.error_flag, this->host.vertex_count);
+        xayah::projects::cloth::cuda::launch_accumulate_normals(cloth_stream(this->device.stream), this->host.triangle_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.indices, this->device.error_flag, this->host.triangle_count);
+        xayah::projects::cloth::cuda::launch_normalize_normals(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.error_flag, this->host.vertex_count);
     }
 
     const std::vector<ClothVertex>& ClothSolver::download_vertices() const {
@@ -255,4 +255,4 @@ namespace spectra {
     const std::vector<std::uint32_t>& ClothSolver::mesh_indices() const {
         return this->host.indices;
     }
-} // namespace spectra
+} // namespace xayah::projects::cloth

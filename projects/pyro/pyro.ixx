@@ -4,10 +4,10 @@ module;
 #include <cuda_runtime.h>
 #include <cusparse.h>
 
-export module pyro;
+export module xayah.projects.pyro;
 import std;
 
-namespace spectra {
+namespace xayah::projects::pyro {
     export enum class PyroFlowBoundaryType : std::uint32_t {
         no_slip_wall   = 0,
         free_slip_wall = 1,
@@ -189,4 +189,4 @@ namespace spectra {
         void solve_pressure(float delta_seconds);
         void reset_moved_from() noexcept;
     };
-} // namespace spectra
+} // namespace xayah::projects::pyro

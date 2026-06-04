@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace spectra::pyro_cuda {
+namespace xayah::projects::pyro::cuda {
     constexpr std::uint32_t SMOKE_SIMULATION_FLOW_BOUNDARY_NO_SLIP_WALL   = 0;
     constexpr std::uint32_t SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL = 1;
     constexpr std::uint32_t SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW        = 2;
@@ -1665,4 +1665,4 @@ namespace spectra::pyro_cuda {
         check_cuda(cudaGetLastError(), "project_staggered_component_kernel");
     }
 
-} // namespace spectra::pyro_cuda
+} // namespace xayah::projects::pyro::cuda
