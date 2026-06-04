@@ -223,6 +223,22 @@ namespace spectra::pathtracer {
                 });
             }
 
+            [[nodiscard]] bool HasIntegerParameter(const scene::SceneEntity& entity, const std::string_view name) const {
+                for (const scene::SceneParameter& parameter : entity.parameters) {
+                    if (parameter.type == "integer" && parameter.name == name) return true;
+                }
+                return false;
+            }
+
+            void ApplySamplerDefaults(scene::SceneEntity* sampler) const {
+                if (sampler == nullptr) throw std::runtime_error("Spectra pathtracer sampler defaults require a sampler entity.");
+                if (!this->renderConfig.default_pixel_samples.has_value()) return;
+                if (this->renderConfig.pixel_samples.has_value()) return;
+                if (this->HasIntegerParameter(*sampler, "pixelsamples")) return;
+                if (*this->renderConfig.default_pixel_samples <= 0) throw std::runtime_error("Spectra pathtracer default sampler SPP must be positive.");
+                this->OverrideIntegerParameter(sampler, "pixelsamples", *this->renderConfig.default_pixel_samples);
+            }
+
             void RequireRenderSettings() const {
                 if (!this->renderSettingsReady) throw std::runtime_error(std::format("{} scene render settings must be configured before adding world content.", this->source.source));
             }
@@ -311,13 +327,15 @@ namespace spectra::pathtracer {
 
                 PathtracerSceneEntity filterEntity = this->MakeEntity(settings.filter);
                 scene::SceneEntity film            = settings.film;
+                scene::SceneEntity sampler         = settings.sampler;
+                this->ApplySamplerDefaults(&sampler);
                 if (this->filmResolutionOverride.has_value()) {
                     if (this->filmResolutionOverride->x <= 0 || this->filmResolutionOverride->y <= 0) throw std::runtime_error("Spectra interactive film resolution must be positive.");
                     this->OverrideIntegerParameter(&film, "xresolution", this->filmResolutionOverride->x);
                     this->OverrideIntegerParameter(&film, "yresolution", this->filmResolutionOverride->y);
                 }
                 PathtracerSceneEntity filmEntity   = this->MakeEntity(film);
-                this->samplerEntity                = this->MakeEntity(settings.sampler);
+                this->samplerEntity                = this->MakeEntity(sampler);
                 this->compiled.integrator          = this->MakeEntity(settings.integrator);
                 this->compiled.accelerator         = this->MakeEntity(settings.accelerator);
                 PathtracerSceneEntity cameraEntity = this->MakeEntity(settings.camera);

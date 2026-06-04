@@ -36,6 +36,8 @@ import std;
 import xayah.spectra.pathtracer.scene;
 
 namespace {
+    constexpr int interactive_default_pixel_samples = 256;
+
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
         const vk::ImageMemoryBarrier2 image_memory_barrier{
             src_stage,
@@ -73,6 +75,13 @@ namespace {
         for (std::size_t axis = 0; axis < 3; ++axis) {
             if (bounds.pMin[axis] > bounds.pMax[axis]) throw std::runtime_error(message);
         }
+    }
+
+    [[nodiscard]] bool scene_entity_has_integer_parameter(const spectra::scene::SceneEntity& entity, const std::string_view name) {
+        for (const spectra::scene::SceneParameter& parameter : entity.parameters) {
+            if (parameter.type == "integer" && parameter.name == name) return true;
+        }
+        return false;
     }
 
 } // namespace
@@ -981,13 +990,17 @@ namespace xayah {
 
         void unload_scene_noexcept() noexcept;
         void create_pathtracer_for_resolution(const std::array<int, 2>& resolution);
-        void rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution);
+        void rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution, bool force = false, bool preserve_target_samples = true);
+        void rebuild_pathtracer_for_sample_config();
         void unload_pathtracer_noexcept() noexcept;
         void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
         void synchronize_render_resolution();
         [[nodiscard]] bool pathtracer_ready() const;
         [[nodiscard]] std::array<int, 2> pathtracer_sample_range() const;
         void request_pathtracer_accumulation_reset();
+        void set_default_pixel_samples(int sample_count);
+        void set_override_pixel_samples(std::optional<int> sample_count);
+        [[nodiscard]] std::string sample_source_text() const;
         void initialize_camera_state();
         void set_camera_speed(float speed);
         void reset_camera();
@@ -1015,10 +1028,11 @@ namespace xayah {
         std::shared_ptr<const spectra::scene::SceneSnapshot> scene_snapshot{};
         std::optional<spectra::scene::SceneInfo> scene_info{};
         spectra::pathtracer::RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
-        spectra::pathtracer::RenderConfig render_config{.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld};
+        spectra::pathtracer::RenderConfig render_config{.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld, .default_pixel_samples = interactive_default_pixel_samples};
         std::array<int, 2> scene_film_resolution{0, 0};
         spectra::Transform scene_camera_from_world{};
         int scene_sampler_sample_count{0};
+        int override_pixel_samples_input{interactive_default_pixel_samples};
         std::unique_ptr<pathtracer::RenderPipeline> render_pipeline{};
         std::unique_ptr<spectra::pathtracer::GpuRuntime> gpu_runtime{};
 
@@ -1300,15 +1314,15 @@ namespace xayah {
         }
     }
 
-    void SpectraPathtracer::Impl::rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
+    void SpectraPathtracer::Impl::rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution, const bool force, const bool preserve_target_samples) {
         if (this->render_resolution_sync.rebuilding) throw std::runtime_error("Spectra pathtracer resolution rebuild is already active");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild Spectra pathtracer with a non-positive resolution");
-        if (this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
+        if (!force && this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
 
         const bool preserve_camera = this->camera.initialized;
         const pathtracer::InteractiveCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
         const float preserved_speed             = this->camera.speed;
-        const int preserved_samples             = this->render_pipeline == nullptr ? 0 : this->render_pipeline->target_sample_count();
+        const int preserved_samples             = preserve_target_samples && this->render_pipeline != nullptr ? this->render_pipeline->target_sample_count() : 0;
         const float preserved_exposure          = this->render_pipeline == nullptr ? 1.0f : this->render_pipeline->current_exposure();
         this->render_resolution_sync.rebuilding = true;
         try {
@@ -1340,6 +1354,11 @@ namespace xayah {
             this->render_resolution_sync.rebuilding = false;
             throw;
         }
+    }
+
+    void SpectraPathtracer::Impl::rebuild_pathtracer_for_sample_config() {
+        if (!this->render_resolution_sync.pathtracer_created) throw std::runtime_error("Cannot rebuild Spectra pathtracer sample configuration before the render pipeline is created");
+        this->rebuild_pathtracer_for_resolution(this->render_resolution_sync.active_resolution, true, false);
     }
 
     void SpectraPathtracer::Impl::unload_pathtracer_noexcept() noexcept {
@@ -1384,6 +1403,31 @@ namespace xayah {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot reset Spectra pathtracer accumulation without an active render pipeline");
         this->render_pipeline->request_reset_accumulation();
         this->clear_pathtracer_throughput_statistics();
+    }
+
+    void SpectraPathtracer::Impl::set_default_pixel_samples(const int sample_count) {
+        if (sample_count <= 0) throw std::runtime_error("Spectra pathtracer default SPP must be positive");
+        if (this->render_config.default_pixel_samples.has_value() && *this->render_config.default_pixel_samples == sample_count) return;
+        this->render_config.default_pixel_samples = sample_count;
+        if (this->render_config.pixel_samples.has_value()) return;
+        if (this->scene_snapshot == nullptr) throw std::runtime_error("Cannot apply Spectra pathtracer default SPP without an active scene snapshot");
+        if (scene_entity_has_integer_parameter(this->scene_snapshot->renderSettings.sampler, "pixelsamples")) return;
+        this->rebuild_pathtracer_for_sample_config();
+    }
+
+    void SpectraPathtracer::Impl::set_override_pixel_samples(const std::optional<int> sample_count) {
+        if (sample_count.has_value() && *sample_count <= 0) throw std::runtime_error("Spectra pathtracer override SPP must be positive");
+        if (this->render_config.pixel_samples == sample_count) return;
+        this->render_config.pixel_samples = sample_count;
+        if (sample_count.has_value()) this->override_pixel_samples_input = *sample_count;
+        this->rebuild_pathtracer_for_sample_config();
+    }
+
+    std::string SpectraPathtracer::Impl::sample_source_text() const {
+        if (this->render_config.pixel_samples.has_value()) return "Override";
+        if (this->scene_snapshot != nullptr && scene_entity_has_integer_parameter(this->scene_snapshot->renderSettings.sampler, "pixelsamples")) return "Scene";
+        if (this->render_config.default_pixel_samples.has_value()) return "Spectra Default";
+        return "PBRT Default";
     }
 
     void SpectraPathtracer::Impl::initialize_camera_state() {
@@ -1726,9 +1770,38 @@ namespace xayah {
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Spectra Pathtracer Sampler SPP");
+            ImGui::TextUnformatted("Render SPP");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(positive_int_text(this->scene_sampler_sample_count).c_str());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("SPP Source");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(this->sample_source_text().c_str());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Default SPP");
+            ImGui::TableSetColumnIndex(1);
+            int default_sample_count = this->render_config.default_pixel_samples.value_or(interactive_default_pixel_samples);
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputInt("##DefaultSamplerSPP", &default_sample_count, 16, 64)) this->set_default_pixel_samples(default_sample_count);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Override SPP");
+            ImGui::TableSetColumnIndex(1);
+            bool override_enabled = this->render_config.pixel_samples.has_value();
+            const bool override_changed = ImGui::Checkbox("##OverrideSamplerSPPEnabled", &override_enabled);
+            if (override_changed && override_enabled) this->set_override_pixel_samples(this->override_pixel_samples_input);
+            if (override_changed && !override_enabled) this->set_override_pixel_samples(std::nullopt);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!override_enabled);
+            int override_sample_count = this->override_pixel_samples_input;
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputInt("##OverrideSamplerSPP", &override_sample_count, 16, 64)) this->set_override_pixel_samples(override_sample_count);
+            ImGui::EndDisabled();
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);

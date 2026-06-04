@@ -22,6 +22,7 @@ namespace spectra::pathtracer {
         bool disable_texture_filtering{};
         RenderingSpace rendering_space{RenderingSpace::CameraWorld};
         std::optional<int> pixel_samples{};
+        std::optional<int> default_pixel_samples{};
         std::string output_file{};
         std::optional<Bounds2f> crop_window{};
         std::optional<Bounds2i> pixel_bounds{};
