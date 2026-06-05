@@ -381,11 +381,6 @@ export namespace spectra::rasterizer {
 
     enum class RasterizerDockSlot {
         Center,
-        Left,
-        LeftBottom,
-        Right,
-        RightBottom,
-        Bottom,
         Floating,
     };
 

@@ -234,6 +234,11 @@ namespace spectra {
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
         if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
         if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");
+        switch (panel.dock_slot) {
+        case SpectraDockSlot::Center:
+        case SpectraDockSlot::Floating: break;
+        default: throw std::runtime_error("Spectra panel dock slot is invalid");
+        }
         for (const SpectraPanel& existing_panel : this->panels) {
             if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
             if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
@@ -972,12 +977,8 @@ namespace spectra {
             if (!this->panel_belongs_to_active_renderer(panel)) continue;
             switch (panel.dock_slot) {
             case SpectraDockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
-            case SpectraDockSlot::Left:
-            case SpectraDockSlot::LeftBottom:
-            case SpectraDockSlot::Right:
-            case SpectraDockSlot::RightBottom:
-            case SpectraDockSlot::Bottom: throw std::runtime_error("Spectra non-center dock panels are obsolete; use sidebar tabs instead");
             case SpectraDockSlot::Floating: break;
+            default: throw std::runtime_error("Spectra panel dock slot is invalid");
             }
         }
         const auto hide_tab_bar = [](const ImGuiID node_id) {

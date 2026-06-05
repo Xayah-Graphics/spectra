@@ -16,12 +16,12 @@ namespace spectra::app {
     [[nodiscard]] SpectraDockSlot ToSpectraDockSlot(const pathtracer::PathtracerDockSlot dockSlot) {
         switch (dockSlot) {
         case pathtracer::PathtracerDockSlot::Center: return SpectraDockSlot::Center;
-        case pathtracer::PathtracerDockSlot::Left: return SpectraDockSlot::Left;
-        case pathtracer::PathtracerDockSlot::LeftBottom: return SpectraDockSlot::LeftBottom;
-        case pathtracer::PathtracerDockSlot::Right: return SpectraDockSlot::Right;
-        case pathtracer::PathtracerDockSlot::RightBottom: return SpectraDockSlot::RightBottom;
-        case pathtracer::PathtracerDockSlot::Bottom: return SpectraDockSlot::Bottom;
         case pathtracer::PathtracerDockSlot::Floating: return SpectraDockSlot::Floating;
+        case pathtracer::PathtracerDockSlot::Left:
+        case pathtracer::PathtracerDockSlot::LeftBottom:
+        case pathtracer::PathtracerDockSlot::Right:
+        case pathtracer::PathtracerDockSlot::RightBottom:
+        case pathtracer::PathtracerDockSlot::Bottom: throw std::runtime_error("Pathtracer non-center dock panels are not supported by Spectra; use sidebar tabs instead");
         }
         throw std::runtime_error("Unknown pathtracer dock slot");
     }
@@ -29,11 +29,6 @@ namespace spectra::app {
     [[nodiscard]] SpectraDockSlot ToSpectraDockSlot(const rasterizer::RasterizerDockSlot dockSlot) {
         switch (dockSlot) {
         case rasterizer::RasterizerDockSlot::Center: return SpectraDockSlot::Center;
-        case rasterizer::RasterizerDockSlot::Left: return SpectraDockSlot::Left;
-        case rasterizer::RasterizerDockSlot::LeftBottom: return SpectraDockSlot::LeftBottom;
-        case rasterizer::RasterizerDockSlot::Right: return SpectraDockSlot::Right;
-        case rasterizer::RasterizerDockSlot::RightBottom: return SpectraDockSlot::RightBottom;
-        case rasterizer::RasterizerDockSlot::Bottom: return SpectraDockSlot::Bottom;
         case rasterizer::RasterizerDockSlot::Floating: return SpectraDockSlot::Floating;
         }
         throw std::runtime_error("Unknown rasterizer dock slot");

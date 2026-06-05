@@ -19,11 +19,6 @@ import std;
 export namespace spectra {
     enum class SpectraDockSlot {
         Center,
-        Left,
-        LeftBottom,
-        Right,
-        RightBottom,
-        Bottom,
         Floating,
     };
 
