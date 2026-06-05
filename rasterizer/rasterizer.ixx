@@ -380,8 +380,8 @@ export namespace spectra::rasterizer {
     };
 
     enum class RasterizerDockSlot {
-        Center,
-        Floating,
+        Center = 0,
+        Floating = 1,
     };
 
     struct RasterizerPanel {

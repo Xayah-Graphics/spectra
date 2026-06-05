@@ -13,68 +13,12 @@ import xayah.projects.sparkles;
 import spectra.rasterizer;
 
 namespace spectra::app {
-    [[nodiscard]] SpectraDockSlot ToSpectraDockSlot(const pathtracer::PathtracerDockSlot dockSlot) {
-        switch (dockSlot) {
-        case pathtracer::PathtracerDockSlot::Center: return SpectraDockSlot::Center;
-        case pathtracer::PathtracerDockSlot::Floating: return SpectraDockSlot::Floating;
-        case pathtracer::PathtracerDockSlot::Left:
-        case pathtracer::PathtracerDockSlot::LeftBottom:
-        case pathtracer::PathtracerDockSlot::Right:
-        case pathtracer::PathtracerDockSlot::RightBottom:
-        case pathtracer::PathtracerDockSlot::Bottom: throw std::runtime_error("Pathtracer non-center dock panels are not supported by Spectra; use sidebar tabs instead");
-        }
-        throw std::runtime_error("Unknown pathtracer dock slot");
-    }
-
-    [[nodiscard]] SpectraDockSlot ToSpectraDockSlot(const rasterizer::RasterizerDockSlot dockSlot) {
-        switch (dockSlot) {
-        case rasterizer::RasterizerDockSlot::Center: return SpectraDockSlot::Center;
-        case rasterizer::RasterizerDockSlot::Floating: return SpectraDockSlot::Floating;
-        }
-        throw std::runtime_error("Unknown rasterizer dock slot");
-    }
-
-    [[nodiscard]] SpectraPanel ToSpectraPanel(pathtracer::PathtracerPanel panel) {
-        return SpectraPanel{
-            .id                  = std::move(panel.id),
-            .title               = std::move(panel.title),
-            .icon                = std::move(panel.icon),
-            .owner_renderer      = std::string{pathtracer::PathtracerRenderer::target_name()},
-            .shortcut_label      = std::move(panel.shortcut_label),
-            .shortcut_key        = panel.shortcut_key,
-            .dock_slot           = ToSpectraDockSlot(panel.dock_slot),
-            .window_flags        = panel.window_flags,
-            .visible             = panel.visible,
-            .closable            = panel.closable,
-            .zero_window_padding = panel.zero_window_padding,
-            .draw                = std::move(panel.draw),
-        };
-    }
-
-    [[nodiscard]] SpectraSidebarTab ToSpectraSidebarTab(pathtracer::PathtracerSidebarTab tab) {
-        return SpectraSidebarTab{
-            .id             = std::move(tab.id),
-            .title          = std::move(tab.title),
-            .icon           = std::move(tab.icon),
-            .owner_renderer = std::string{pathtracer::PathtracerRenderer::target_name()},
-            .shortcut_label = std::move(tab.shortcut_label),
-            .shortcut_key   = tab.shortcut_key,
-            .draw           = std::move(tab.draw),
-        };
-    }
-
-    [[nodiscard]] SpectraToolbarAction ToSpectraToolbarAction(pathtracer::PathtracerToolbarAction action) {
-        return SpectraToolbarAction{
-            .id             = std::move(action.id),
-            .title          = std::move(action.title),
-            .icon           = std::move(action.icon),
-            .owner_renderer = std::string{pathtracer::PathtracerRenderer::target_name()},
-            .shortcut_label = std::move(action.shortcut_label),
-            .shortcut_key   = action.shortcut_key,
-            .active         = std::move(action.active),
-            .trigger        = std::move(action.trigger),
-        };
-    }
+    static_assert(pathtracer::PathtracerHost<Spectra>);
+    static_assert(rasterizer::RasterizerHost<Spectra>);
+    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(pathtracer::PathtracerDockSlot::Center) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Center));
+    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(pathtracer::PathtracerDockSlot::Floating) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Floating));
+    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(rasterizer::RasterizerDockSlot::Center) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Center));
+    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(rasterizer::RasterizerDockSlot::Floating) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Floating));
 
     struct RasterizerProjectFrameInfo {
         double delta_seconds{};
@@ -866,111 +810,6 @@ namespace spectra::app {
         }
     };
 
-    [[nodiscard]] SpectraPanel ToSpectraPanel(rasterizer::RasterizerPanel panel) {
-        return SpectraPanel{
-            .id                  = std::move(panel.id),
-            .title               = std::move(panel.title),
-            .icon                = std::move(panel.icon),
-            .owner_renderer      = std::string{rasterizer::RasterizerRenderer::target_name()},
-            .shortcut_label      = std::move(panel.shortcut_label),
-            .shortcut_key        = panel.shortcut_key,
-            .dock_slot           = ToSpectraDockSlot(panel.dock_slot),
-            .window_flags        = panel.window_flags,
-            .visible             = panel.visible,
-            .closable            = panel.closable,
-            .zero_window_padding = panel.zero_window_padding,
-            .draw                = std::move(panel.draw),
-        };
-    }
-
-    [[nodiscard]] SpectraSidebarTab ToSpectraSidebarTab(rasterizer::RasterizerSidebarTab tab) {
-        return SpectraSidebarTab{
-            .id             = std::move(tab.id),
-            .title          = std::move(tab.title),
-            .icon           = std::move(tab.icon),
-            .owner_renderer = std::string{rasterizer::RasterizerRenderer::target_name()},
-            .shortcut_label = std::move(tab.shortcut_label),
-            .shortcut_key   = tab.shortcut_key,
-            .draw           = std::move(tab.draw),
-        };
-    }
-
-    class PathtracerSpectraHost final {
-    public:
-        explicit PathtracerSpectraHost(Spectra& host) : host(&host) {}
-
-        [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const {
-            return this->host->physical_device();
-        }
-
-        [[nodiscard]] const vk::raii::Device& device() const {
-            return this->host->device();
-        }
-
-        [[nodiscard]] std::uint32_t frame_count() const {
-            return this->host->frame_count();
-        }
-
-        [[nodiscard]] vk::Extent2D swapchain_extent() const {
-            return this->host->swapchain_extent();
-        }
-
-        void register_panel(pathtracer::PathtracerPanel panel) const {
-            this->host->register_panel(ToSpectraPanel(std::move(panel)));
-        }
-
-        void register_sidebar_tab(pathtracer::PathtracerSidebarTab tab) const {
-            this->host->register_sidebar_tab(ToSpectraSidebarTab(std::move(tab)));
-        }
-
-        void register_toolbar_action(pathtracer::PathtracerToolbarAction action) const {
-            this->host->register_toolbar_action(ToSpectraToolbarAction(std::move(action)));
-        }
-
-        void set_window_detail(std::string detail) const {
-            this->host->set_window_detail(std::move(detail));
-        }
-
-    private:
-        Spectra* host{};
-    };
-
-    class RasterizerSpectraHost final {
-    public:
-        explicit RasterizerSpectraHost(Spectra& host) : host(&host) {}
-
-        [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const {
-            return this->host->physical_device();
-        }
-
-        [[nodiscard]] const vk::raii::Device& device() const {
-            return this->host->device();
-        }
-
-        [[nodiscard]] std::uint32_t frame_count() const {
-            return this->host->frame_count();
-        }
-
-        [[nodiscard]] vk::Extent2D swapchain_extent() const {
-            return this->host->swapchain_extent();
-        }
-
-        void register_panel(rasterizer::RasterizerPanel panel) const {
-            this->host->register_panel(ToSpectraPanel(std::move(panel)));
-        }
-
-        void register_sidebar_tab(rasterizer::RasterizerSidebarTab tab) const {
-            this->host->register_sidebar_tab(ToSpectraSidebarTab(std::move(tab)));
-        }
-
-        void set_window_detail(std::string detail) const {
-            this->host->set_window_detail(std::move(detail));
-        }
-
-    private:
-        Spectra* host{};
-    };
-
     class PathtracerSpectraRenderer final {
     public:
         explicit PathtracerSpectraRenderer(std::shared_ptr<pathtracer::PbrtSceneLibrary> sceneLibrary) : scene_library(std::move(sceneLibrary)) {
@@ -989,33 +828,25 @@ namespace spectra::app {
         }
 
         void attach(Spectra& host) {
-            PathtracerSpectraHost pathtracerHost{host};
-            this->scene_library->attach(pathtracerHost);
-            this->renderer->attach(pathtracerHost);
+            this->scene_library->attach(host);
+            this->renderer->attach(host);
         }
 
         void detach(Spectra& host) noexcept {
-            PathtracerSpectraHost pathtracerHost{host};
-            this->renderer->detach(pathtracerHost);
+            this->renderer->detach(host);
             this->scene_library->detach();
         }
 
         void before_imgui_shutdown(Spectra& host) noexcept {
-            PathtracerSpectraHost pathtracerHost{host};
-            this->renderer->before_imgui_shutdown(pathtracerHost);
+            this->renderer->before_imgui_shutdown(host);
         }
 
         void after_imgui_created(Spectra& host) {
-            PathtracerSpectraHost pathtracerHost{host};
-            this->renderer->after_imgui_created(pathtracerHost);
+            this->renderer->after_imgui_created(host);
         }
 
         [[nodiscard]] SpectraFrameResult begin_frame(Spectra& host, const SpectraFrameInfo& frame) {
-            PathtracerSpectraHost pathtracerHost{host};
-            pathtracer::PathtracerFrameResult result = this->renderer->begin_frame(pathtracerHost, pathtracer::PathtracerFrameInfo{
-                                                                                                        .frame_index = frame.frame_index,
-                                                                                                        .image_index = frame.image_index,
-                                                                                                    });
+            pathtracer::PathtracerFrameResult result = this->renderer->begin_frame(host, frame);
             return SpectraFrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,
@@ -1050,35 +881,25 @@ namespace spectra::app {
         }
 
         void attach(Spectra& host) {
-            RasterizerSpectraHost rasterizerHost{host};
-            this->renderer->attach(rasterizerHost);
+            this->renderer->attach(host);
         }
 
         void detach(Spectra& host) noexcept {
-            RasterizerSpectraHost rasterizerHost{host};
-            this->renderer->detach(rasterizerHost);
+            this->renderer->detach(host);
         }
 
         void before_imgui_shutdown(Spectra& host) noexcept {
-            RasterizerSpectraHost rasterizerHost{host};
-            this->renderer->before_imgui_shutdown(rasterizerHost);
+            this->renderer->before_imgui_shutdown(host);
         }
 
         void after_imgui_created(Spectra& host) {
-            RasterizerSpectraHost rasterizerHost{host};
-            this->renderer->after_imgui_created(rasterizerHost);
+            this->renderer->after_imgui_created(host);
         }
 
         [[nodiscard]] SpectraFrameResult begin_frame(Spectra& host, const SpectraFrameInfo& frame) {
-            RasterizerSpectraHost rasterizerHost{host};
             this->project_manager->apply_pending_workspace(*this->renderer);
             this->project_manager->drive_simulation(frame);
-            rasterizer::RasterizerFrameResult result = this->renderer->begin_frame(rasterizerHost, rasterizer::RasterizerFrameInfo{
-                                                                                                      .frame_index = frame.frame_index,
-                                                                                                      .image_index = frame.image_index,
-                                                                                                      .frame_number = frame.frame_number,
-                                                                                                      .delta_seconds = frame.delta_seconds,
-                                                                                                  });
+            rasterizer::RasterizerFrameResult result = this->renderer->begin_frame(host, frame);
             return SpectraFrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,

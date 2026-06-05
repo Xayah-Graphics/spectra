@@ -192,6 +192,10 @@ namespace {
         ImGui::PopStyleVar();
     }
 
+    [[nodiscard]] bool owner_scopes_overlap(const std::string& left, const std::string& right) {
+        return left.empty() || right.empty() || left == right;
+    }
+
 } // namespace
 
 namespace spectra {
@@ -240,6 +244,7 @@ namespace spectra {
         default: throw std::runtime_error("Spectra panel dock slot is invalid");
         }
         for (const SpectraPanel& existing_panel : this->panels) {
+            if (!owner_scopes_overlap(existing_panel.owner_renderer, panel.owner_renderer)) continue;
             if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
             if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
         }
@@ -252,6 +257,7 @@ namespace spectra {
         if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
         if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
         for (const SpectraSidebarTab& existing_tab : this->sidebar_tabs) {
+            if (!owner_scopes_overlap(existing_tab.owner_renderer, tab.owner_renderer)) continue;
             if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
             if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
         }
@@ -270,6 +276,7 @@ namespace spectra {
         if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
         if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
         for (const SpectraToolbarAction& existing_action : this->toolbar_actions) {
+            if (!owner_scopes_overlap(existing_action.owner_renderer, action.owner_renderer)) continue;
             if (existing_action.id == action.id) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action id: "} + action.id);
             if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
         }
@@ -500,8 +507,16 @@ namespace spectra {
             const SpectraRendererAvailability availability = this->renderer_availability(renderer.name);
             if (!availability.available) throw std::runtime_error(availability.detail);
         }
-        renderer.attach(*this);
-        if (this->imgui.initialized) renderer.after_imgui_created(*this);
+        if (this->registering_renderer_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
+        this->registering_renderer_name = std::string{renderer_name};
+        try {
+            renderer.attach(*this);
+            if (this->imgui.initialized) renderer.after_imgui_created(*this);
+        } catch (...) {
+            this->registering_renderer_name.reset();
+            throw;
+        }
+        this->registering_renderer_name.reset();
         this->renderers.push_back(std::move(renderer));
         if (first_renderer) {
             this->active_renderer_index = 0;

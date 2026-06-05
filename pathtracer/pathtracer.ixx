@@ -404,13 +404,8 @@ export namespace spectra::pathtracer {
     }
 
     enum class PathtracerDockSlot {
-        Center,
-        Left,
-        LeftBottom,
-        Right,
-        RightBottom,
-        Bottom,
-        Floating,
+        Center = 0,
+        Floating = 1,
     };
 
     struct PathtracerPanel {
