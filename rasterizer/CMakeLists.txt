@@ -3,23 +3,25 @@ add_library(spectra::rasterizer ALIAS spectra_rasterizer)
 
 find_program(SLANGC_EXECUTABLE NAMES slangc REQUIRED)
 set(SPECTRA_RASTERIZER_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-set(SPECTRA_RASTERIZER_MESH_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/shaders/mesh.slang")
-set(SPECTRA_RASTERIZER_MESH_VERTEX_HEADER "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_mesh_vertex_spv.h")
-set(SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_mesh_fragment_spv.h")
-add_custom_command(
-        OUTPUT "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_RASTERIZER_GENERATED_DIR}"
-        COMMAND "${SLANGC_EXECUTABLE}" "${SPECTRA_RASTERIZER_MESH_SHADER}" -target spirv -profile glsl_460 -entry vertex_main -stage vertex -matrix-layout-row-major -source-embed-style u32 -source-embed-name spectra_rasterizer_mesh_vertex_spv -o "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
-        DEPENDS "${SPECTRA_RASTERIZER_MESH_SHADER}"
-        VERBATIM
-)
-add_custom_command(
-        OUTPUT "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_RASTERIZER_GENERATED_DIR}"
-        COMMAND "${SLANGC_EXECUTABLE}" "${SPECTRA_RASTERIZER_MESH_SHADER}" -target spirv -profile glsl_460 -entry fragment_main -stage fragment -matrix-layout-row-major -source-embed-style u32 -source-embed-name spectra_rasterizer_mesh_fragment_spv -o "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"
-        DEPENDS "${SPECTRA_RASTERIZER_MESH_SHADER}"
-        VERBATIM
-)
+function(spectra_rasterizer_shader output_variable shader_name stage entry embed_name)
+        set(shader_file "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader_name}.slang")
+        set(output_file "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_${shader_name}_${stage}_spv.h")
+        add_custom_command(
+                OUTPUT "${output_file}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_RASTERIZER_GENERATED_DIR}"
+                COMMAND "${SLANGC_EXECUTABLE}" "${shader_file}" -target spirv -profile glsl_460 -entry "${entry}" -stage "${stage}" -matrix-layout-row-major -source-embed-style u32 -source-embed-name "${embed_name}" -o "${output_file}"
+                DEPENDS "${shader_file}"
+                VERBATIM
+        )
+        set("${output_variable}" "${output_file}" PARENT_SCOPE)
+endfunction()
+
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_VERTEX_HEADER mesh vertex vertex_main spectra_rasterizer_mesh_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER mesh fragment fragment_main spectra_rasterizer_mesh_fragment_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_VERTEX_HEADER particle vertex vertex_main spectra_rasterizer_particle_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_FRAGMENT_HEADER particle fragment fragment_main spectra_rasterizer_particle_fragment_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER volume vertex vertex_main spectra_rasterizer_volume_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER volume fragment fragment_main spectra_rasterizer_volume_fragment_spv)
 target_sources(
         spectra_rasterizer
         PUBLIC
@@ -29,6 +31,10 @@ target_sources(
         rasterizer.cpp
         "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_PARTICLE_VERTEX_HEADER}"
+        "${SPECTRA_RASTERIZER_PARTICLE_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER}"
+        "${SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER}"
 )
 target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui)
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)

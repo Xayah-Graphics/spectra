@@ -129,6 +129,7 @@ export namespace spectra::rasterizer {
         std::vector<SceneVector3> positions{};
         std::vector<SceneVector3> velocities{};
         std::vector<float> radii{};
+        std::vector<SceneVector4> colors{};
         std::string materialName{};
         SceneTransform transform{};
         float mass{1.0f};
@@ -143,6 +144,20 @@ export namespace spectra::rasterizer {
         GasVelocity,
     };
 
+    enum class SceneVolumeChannelLayout {
+        CellCentered,
+        FaceX,
+        FaceY,
+        FaceZ,
+    };
+
+    struct SceneVolumeChannel {
+        std::string name{};
+        SceneVolumeChannelLayout layout{SceneVolumeChannelLayout::CellCentered};
+        std::array<std::uint32_t, 3> dimensions{};
+        std::vector<float> values{};
+    };
+
     struct SceneVolumeGrid {
         std::string name{};
         SceneVolumeKind kind{SceneVolumeKind::GasDensity};
@@ -150,6 +165,7 @@ export namespace spectra::rasterizer {
         SceneVector3 origin{};
         SceneVector3 voxelSize{1.0f, 1.0f, 1.0f};
         std::vector<std::string> channelNames{};
+        std::vector<SceneVolumeChannel> channels{};
         std::string materialName{};
         bool dynamic{true};
         SceneSourceLocation source{};
@@ -489,6 +505,8 @@ export namespace spectra::rasterizer {
 
         [[nodiscard]] static std::string_view target_name();
         [[nodiscard]] std::string_view name() const;
+        void set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace);
+        void set_control_panel_extension(std::move_only_function<void()> draw);
 
         template <RasterizerHost Host>
         void attach(Host& host) {
@@ -531,6 +549,8 @@ export namespace spectra::rasterizer {
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
+        void set_scene_workspace_impl(std::shared_ptr<SceneWorkspace> scene_workspace);
+        void set_control_panel_extension_impl(std::move_only_function<void()> draw);
         [[nodiscard]] RasterizerFrameResult begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame);
     };
 } // namespace spectra::rasterizer

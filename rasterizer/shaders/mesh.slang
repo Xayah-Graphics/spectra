@@ -6,6 +6,10 @@ struct CameraUniform {
     float _pad1;
     float3 lightColor;
     float lightIntensity;
+    float3 cameraRight;
+    float _pad2;
+    float3 cameraUp;
+    float _pad3;
 };
 
 struct DrawPushConstants {

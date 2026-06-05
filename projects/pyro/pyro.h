@@ -1,5 +1,5 @@
-#ifndef SPECTRA_PROJECT_PYRO_H
-#define SPECTRA_PROJECT_PYRO_H
+#ifndef XAYAH_PROJECTS_PYRO_H
+#define XAYAH_PROJECTS_PYRO_H
 
 #include <cstdint>
 #include <cuda_runtime.h>
@@ -27,4 +27,4 @@ namespace xayah::projects::pyro::cuda {
     void launch_project_staggered_component(cudaStream_t stream, dim3 grid, dim3 block, std::uint32_t axis, float* velocity_component, const float* pressure, const std::uint8_t* occupancy, const float* solid_velocity_component, int nx, int ny, int nz, float h, float dt, const std::uint32_t* flow_boundary_types, const float* flow_boundary_velocity, const float* flow_boundary_pressure);
 } // namespace xayah::projects::pyro::cuda
 
-#endif // SPECTRA_PROJECT_PYRO_H
+#endif // XAYAH_PROJECTS_PYRO_H

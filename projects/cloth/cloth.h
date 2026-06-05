@@ -1,5 +1,5 @@
-#ifndef SPECTRA_PROJECT_CLOTH_H
-#define SPECTRA_PROJECT_CLOTH_H
+#ifndef XAYAH_PROJECTS_CLOTH_H
+#define XAYAH_PROJECTS_CLOTH_H
 
 #include <cstdint>
 #include <cuda_runtime.h>
@@ -14,4 +14,4 @@ namespace xayah::projects::cloth::cuda {
     void launch_normalize_normals(cudaStream_t stream, unsigned grid, unsigned block, float* normal_x, float* normal_y, float* normal_z, int* error_flag, std::uint32_t vertex_count);
 } // namespace xayah::projects::cloth::cuda
 
-#endif // SPECTRA_PROJECT_CLOTH_H
+#endif // XAYAH_PROJECTS_CLOTH_H
