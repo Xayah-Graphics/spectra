@@ -1,6 +1,6 @@
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for the Spectra pathtracer" OFF)
 set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for the Spectra pathtracer")
-set(SPECTRA_OPTIX_GPU_ARCH "sm_120" CACHE STRING "CUDA architecture used when compiling spectra OptiX-IR")
+set(SPECTRA_OPTIX_GPU_ARCH "" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
 set(SPECTRA_OPTIX_CACHE_DIR "${SPECTRA_BINARY_ROOT_DIR}/optix-cache" CACHE PATH "OptiX disk cache directory for the Spectra pathtracer")
 set(SPECTRA_OPTIX_CACHE_SIZE_MB 512 CACHE STRING "OptiX disk cache high-water size in MiB for the Spectra pathtracer")
 
@@ -37,6 +37,18 @@ endif ()
 if (SPECTRA_OPTIX_PATH STREQUAL "")
     message(FATAL_ERROR "SPECTRA_OPTIX_PATH must point to an OptiX SDK root; no default installation was found.")
 endif ()
+if (SPECTRA_OPTIX_GPU_ARCH STREQUAL "")
+    list(GET CMAKE_CUDA_ARCHITECTURES 0 SPECTRA_OPTIX_DERIVED_GPU_ARCH)
+    if (SPECTRA_OPTIX_DERIVED_GPU_ARCH MATCHES "^([0-9]+)")
+        set(SPECTRA_OPTIX_GPU_ARCH "sm_${CMAKE_MATCH_1}")
+        if (CMAKE_MATCH_1 GREATER_EQUAL 100)
+            set(SPECTRA_OPTIX_GPU_ARCH "sm_80")
+        endif ()
+    else ()
+        message(FATAL_ERROR "Unable to derive SPECTRA_OPTIX_GPU_ARCH from CMAKE_CUDA_ARCHITECTURES='${CMAKE_CUDA_ARCHITECTURES}'.")
+    endif ()
+endif ()
+message(STATUS "Spectra OptiX PTX CUDA Architecture: ${SPECTRA_OPTIX_GPU_ARCH}")
 math(EXPR SPECTRA_OPTIX_CACHE_SIZE_BYTES "${SPECTRA_OPTIX_CACHE_SIZE_MB} * 1024 * 1024")
 
 set(SPECTRA_PATHTRACER_DEFINITIONS
@@ -145,7 +157,7 @@ set(file_contents)
 foreach(obj IN LISTS OBJECTS)
     get_filename_component(obj_ext "${obj}" EXT)
     get_filename_component(obj_dir "${obj}" DIRECTORY)
-    if(obj_ext MATCHES "\\.optixir$")
+    if(obj_ext MATCHES "\\.(optixir|ptx)$")
         execute_process(
                 COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
                 WORKING_DIRECTORY "${obj_dir}"
@@ -161,7 +173,7 @@ foreach(obj IN LISTS OBJECTS)
     endif()
 endforeach()
 if(file_contents STREQUAL "")
-    message(FATAL_ERROR "No OptiX-IR input was passed to bin2c: ${OBJECTS}")
+    message(FATAL_ERROR "No OptiX input was passed to bin2c: ${OBJECTS}")
 endif()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
@@ -279,7 +291,7 @@ set(SPECTRA_PATHTRACER_DEVICE_SOURCE
 )
 
 add_library(spectra_pathtracer_optix_input OBJECT optix/optix.cu)
-set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_OPTIX_COMPILATION ON)
+set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_PTX_COMPILATION ON)
 set_property(TARGET spectra_pathtracer_optix_input PROPERTY CUDA_ARCHITECTURES OFF)
 target_compile_definitions(spectra_pathtracer_optix_input PRIVATE ${SPECTRA_PATHTRACER_DEFINITIONS} CCCL_DISABLE_INT128_SUPPORT)
 target_include_directories(spectra_pathtracer_optix_input PRIVATE ${SPECTRA_PATHTRACER_INCLUDE_DIRS})
@@ -294,7 +306,7 @@ target_compile_options(
 )
 add_dependencies(spectra_pathtracer_optix_input spectra_pathtracer_soa_generated)
 
-set(SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/optix.cu.optixir_embedded.c)
+set(SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/optix.cu.ptx_embedded.c)
 add_custom_command(
         OUTPUT ${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SPECTRA_PATHTRACER_GENERATED_DIR}

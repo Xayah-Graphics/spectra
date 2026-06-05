@@ -617,6 +617,31 @@ namespace spectra {
         int streamIndex, sampleIndex;
     };
 
+    __host__ __device__ inline void Sampler::StartPixelSample(Point2i p, int sampleIndex, int dimension) {
+        auto start = [&](auto ptr) { return ptr->StartPixelSample(p, sampleIndex, dimension); };
+        return Dispatch(start);
+    }
+
+    __host__ __device__ inline int Sampler::SamplesPerPixel() const {
+        auto spp = [&](auto ptr) { return ptr->SamplesPerPixel(); };
+        return Dispatch(spp);
+    }
+
+    __host__ __device__ inline Float Sampler::Get1D() {
+        auto get = [&](auto ptr) { return ptr->Get1D(); };
+        return Dispatch(get);
+    }
+
+    __host__ __device__ inline Point2f Sampler::Get2D() {
+        auto get = [&](auto ptr) { return ptr->Get2D(); };
+        return Dispatch(get);
+    }
+
+    __host__ __device__ inline Point2f Sampler::GetPixel2D() {
+        auto get = [&](auto ptr) { return ptr->GetPixel2D(); };
+        return Dispatch(get);
+    }
+
     // Sampler Inline Functions
     template <typename S>
     inline __host__ __device__ CameraSample GetCameraSample(S sampler, Point2i pPixel, Filter filter) {

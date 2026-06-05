@@ -620,7 +620,26 @@ namespace spectra {
 
     std::string FindMatchingNamedSpectrum(Spectrum s);
 
-    __host__ __device__ Float InnerProduct(Spectrum f, Spectrum g);
+    __host__ __device__ inline Float InnerProduct(Spectrum f, Spectrum g) {
+        Float integral = 0;
+        for (Float lambda = Lambda_min; lambda <= Lambda_max; ++lambda) integral += f(lambda) * g(lambda);
+        return integral;
+    }
+
+    __host__ __device__ inline Float Spectrum::operator()(Float lambda) const {
+        auto op = [&](auto ptr) { return (*ptr)(lambda); };
+        return Dispatch(op);
+    }
+
+    __host__ __device__ inline SampledSpectrum Spectrum::Sample(const SampledWavelengths& lambda) const {
+        auto samp = [&](auto ptr) { return ptr->Sample(lambda); };
+        return Dispatch(samp);
+    }
+
+    __host__ __device__ inline Float Spectrum::MaxValue() const {
+        auto max = [&](auto ptr) { return ptr->MaxValue(); };
+        return Dispatch(max);
+    }
 
 } // namespace spectra
 

@@ -199,6 +199,26 @@ namespace spectra {
     private:
         Vector2f radius;
     };
+
+    __host__ __device__ inline Float Filter::Evaluate(Point2f p) const {
+        auto eval = [&](auto ptr) { return ptr->Evaluate(p); };
+        return Dispatch(eval);
+    }
+
+    __host__ __device__ inline FilterSample Filter::Sample(Point2f u) const {
+        auto sample = [&](auto ptr) { return ptr->Sample(u); };
+        return Dispatch(sample);
+    }
+
+    __host__ __device__ inline Vector2f Filter::Radius() const {
+        auto radius = [&](auto ptr) { return ptr->Radius(); };
+        return Dispatch(radius);
+    }
+
+    __host__ __device__ inline Float Filter::Integral() const {
+        auto integral = [&](auto ptr) { return ptr->Integral(); };
+        return Dispatch(integral);
+    }
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_CORE_FILTERS_H

@@ -14,35 +14,6 @@
 #include <pathtracer/util/parallel.cuh>
 
 namespace spectra {
-    __host__ __device__ pstd::optional<CameraRay> Camera::GenerateRay(CameraSample sample, SampledWavelengths& lambda) const {
-        auto generate = [&](auto ptr) { return ptr->GenerateRay(sample, lambda); };
-        return Dispatch(generate);
-    }
-
-    __host__ __device__ Film Camera::GetFilm() const {
-        auto getfilm = [&](auto ptr) { return ptr->GetFilm(); };
-        return Dispatch(getfilm);
-    }
-
-    __host__ __device__ Float Camera::SampleTime(Float u) const {
-        auto sample = [&](auto ptr) { return ptr->SampleTime(u); };
-        return Dispatch(sample);
-    }
-
-    __host__ __device__ const CameraTransform& Camera::GetCameraTransform() const {
-        auto gtc = [&](auto ptr) -> const CameraTransform& { return ptr->GetCameraTransform(); };
-        return Dispatch(gtc);
-    }
-
-    __host__ __device__ void Camera::Approximate_dp_dxy(Point3f p, Normal3f n, Float time, int samplesPerPixel, Vector3f* dpdx, Vector3f* dpdy) const {
-        if constexpr (AllInheritFrom<CameraBase>(Types())) {
-            return ((const CameraBase*) ptr())->Approximate_dp_dxy(p, n, time, samplesPerPixel, dpdx, dpdy);
-        } else {
-            auto approx = [&](auto ptr) { return ptr->Approximate_dp_dxy(p, n, time, samplesPerPixel, dpdx, dpdy); };
-            return Dispatch(approx);
-        }
-    }
-
     // CameraTransform Method Definitions
     CameraTransform::CameraTransform(const AnimatedTransform& worldFromCamera, const pathtracer::RenderingSpace renderingSpace) {
         switch (renderingSpace) {

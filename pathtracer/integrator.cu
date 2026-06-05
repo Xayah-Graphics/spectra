@@ -352,13 +352,21 @@ namespace spectra::pathtracer {
     void WavefrontPathtracer::RenderSample(Bounds2i pixelBounds, Transform cameraMotion, int sampleIndex) {
         for (int y0 = pixelBounds.pMin.y; y0 < pixelBounds.pMax.y; y0 += scanlinesPerPass) {
             RayQueue* cameraRayQueue = CurrentRayQueue(0);
-            Do([=, *this] __host__ __device__() mutable { cameraRayQueue->Reset(); });
+            Do([=] __host__ __device__() mutable { cameraRayQueue->Reset(); });
 
             GenerateCameraRays(y0, cameraMotion, sampleIndex);
 
             for (int wavefrontDepth = 0; true; ++wavefrontDepth) {
                 RayQueue* nextQueue = NextRayQueue(wavefrontDepth);
-                Do([=, *this] __host__ __device__() mutable {
+                MediumSampleQueue* mediumSampleQueue                     = this->mediumSampleQueue;
+                MediumScatterQueue* mediumScatterQueue                   = this->mediumScatterQueue;
+                EscapedRayQueue* escapedRayQueue                         = this->escapedRayQueue;
+                HitAreaLightQueue* hitAreaLightQueue                     = this->hitAreaLightQueue;
+                MaterialEvalQueue* basicEvalMaterialQueue                = this->basicEvalMaterialQueue;
+                MaterialEvalQueue* universalEvalMaterialQueue            = this->universalEvalMaterialQueue;
+                GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue               = this->bssrdfEvalQueue;
+                SubsurfaceScatterQueue* subsurfaceScatterQueue           = this->subsurfaceScatterQueue;
+                Do([=] __host__ __device__() mutable {
                     nextQueue->Reset();
                     if (mediumSampleQueue) mediumSampleQueue->Reset();
                     if (mediumScatterQueue) mediumScatterQueue->Reset();
@@ -398,7 +406,8 @@ namespace spectra::pathtracer {
 
     void WavefrontPathtracer::ResetFilm(Bounds2i pixelBounds) {
         Vector2i resolution = pixelBounds.Diagonal();
-        ParallelFor(resolution.x * resolution.y, [=, *this] __host__ __device__(int i) mutable {
+        Film film = this->film;
+        ParallelFor(resolution.x * resolution.y, [=] __host__ __device__(int i) mutable {
             int x = i % resolution.x, y = i / resolution.x;
             film.ResetPixel(pixelBounds.pMin + Vector2i(x, y));
         });
@@ -406,7 +415,12 @@ namespace spectra::pathtracer {
 
     void WavefrontPathtracer::HandleEscapedRays() {
         if (!escapedRayQueue) return;
-        ForAllQueued(escapedRayQueue, maxQueueSize, [=, *this] __host__ __device__(const EscapedRayWorkItem w) mutable {
+        EscapedRayQueue* escapedRayQueue        = this->escapedRayQueue;
+        int maxQueueSize                        = this->maxQueueSize;
+        pstd::vector<Light>* infiniteLights     = this->infiniteLights;
+        LightSampler lightSampler               = this->lightSampler;
+        SOA<PixelSampleState> pixelSampleState  = this->pixelSampleState;
+        ForAllQueued(escapedRayQueue, maxQueueSize, [=] __host__ __device__(const EscapedRayWorkItem w) mutable {
             // Compute weighted radiance for escaped ray
             SampledSpectrum L(0.f);
             for (const auto& light : *infiniteLights) {
@@ -434,7 +448,11 @@ namespace spectra::pathtracer {
     }
 
     void WavefrontPathtracer::HandleEmissiveIntersection() {
-        ForAllQueued(hitAreaLightQueue, maxQueueSize, [=, *this] __host__ __device__(const HitAreaLightWorkItem w) mutable {
+        HitAreaLightQueue* hitAreaLightQueue    = this->hitAreaLightQueue;
+        int maxQueueSize                        = this->maxQueueSize;
+        LightSampler lightSampler               = this->lightSampler;
+        SOA<PixelSampleState> pixelSampleState  = this->pixelSampleState;
+        ForAllQueued(hitAreaLightQueue, maxQueueSize, [=] __host__ __device__(const HitAreaLightWorkItem w) mutable {
             // Find emitted radiance from surface that ray hit
             SampledSpectrum Le = w.areaLight.L(w.p, w.n, w.uv, w.wo, w.lambda);
             if (!Le) return;
@@ -468,7 +486,8 @@ namespace spectra::pathtracer {
         else
             aggregate->IntersectShadow(maxQueueSize, shadowRayQueue, &pixelSampleState);
         // Reset shadow ray queue
-        Do([=, *this] __host__ __device__() mutable { shadowRayQueue->Reset(); });
+        ShadowRayQueue* shadowRayQueue = this->shadowRayQueue;
+        Do([=] __host__ __device__() mutable { shadowRayQueue->Reset(); });
     }
 
     void WavefrontPathtracer::PrefetchGPUAllocations() {
@@ -514,8 +533,15 @@ namespace spectra::pathtracer {
 
     template <typename ConcreteSampler>
     void WavefrontPathtracer::GenerateCameraRays(int y0, Transform movingFromCamera, int sampleIndex) {
-        RayQueue* rayQueue = CurrentRayQueue(0);
-        ParallelFor(maxQueueSize, [=, *this] __host__ __device__(int pixelIndex) mutable {
+        RayQueue* rayQueue                         = CurrentRayQueue(0);
+        int maxQueueSize                           = this->maxQueueSize;
+        Film film                                  = this->film;
+        Sampler sampler                            = this->sampler;
+        Filter filter                              = this->filter;
+        Camera camera                              = this->camera;
+        bool initializeVisibleSurface              = this->initializeVisibleSurface;
+        SOA<PixelSampleState> pixelSampleState     = this->pixelSampleState;
+        ParallelFor(maxQueueSize, [=] __host__ __device__(int pixelIndex) mutable {
             // Enqueue camera ray and set pixel state for sample
             // Compute pixel coordinates for _pixelIndex_
             Bounds2i pixelBounds = film.PixelBounds();
@@ -564,8 +590,12 @@ namespace spectra::pathtracer {
 
     template <typename ConcreteSampler>
     void WavefrontPathtracer::GenerateRaySamples(int wavefrontDepth, int sampleIndex) {
-        RayQueue* rayQueue = CurrentRayQueue(wavefrontDepth);
-        spectra::ForAllQueued(rayQueue, maxQueueSize, [=, *this] __host__ __device__(const RayWorkItem w) mutable {
+        RayQueue* rayQueue                         = CurrentRayQueue(wavefrontDepth);
+        int maxQueueSize                           = this->maxQueueSize;
+        bool haveSubsurface                        = this->haveSubsurface;
+        Sampler sampler                            = this->sampler;
+        SOA<PixelSampleState> pixelSampleState     = this->pixelSampleState;
+        spectra::ForAllQueued(rayQueue, maxQueueSize, [=] __host__ __device__(const RayWorkItem w) mutable {
             // Generate samples for ray segment at current sample index
             // Find first sample dimension
             int dimension = 6 + 7 * w.depth;
@@ -621,9 +651,19 @@ namespace spectra::pathtracer {
     template <typename ConcreteMaterial, typename TextureEvaluator>
     void WavefrontPathtracer::EvaluateMaterialAndBSDF(MaterialEvalQueue* evalQueue, Transform movingFromCamera, int wavefrontDepth) {
         // Get BSDF for items in _evalQueue_ and sample illumination
-        RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
-        auto queue             = evalQueue->Get<MaterialEvalWorkItem<ConcreteMaterial>>();
-        spectra::ForAllQueued(queue, maxQueueSize, [=, *this] __host__ __device__(const MaterialEvalWorkItem<ConcreteMaterial> w) mutable {
+        RayQueue* nextRayQueue                              = NextRayQueue(wavefrontDepth);
+        auto queue                                          = evalQueue->Get<MaterialEvalWorkItem<ConcreteMaterial>>();
+        int maxQueueSize                                    = this->maxQueueSize;
+        Camera camera                                       = this->camera;
+        int samplesPerPixel                                 = this->samplesPerPixel;
+        SOA<PixelSampleState> pixelSampleState              = this->pixelSampleState;
+        bool regularize                                     = this->regularize;
+        bool initializeVisibleSurface                       = this->initializeVisibleSurface;
+        bool haveMedia                                      = this->haveMedia;
+        GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue          = this->bssrdfEvalQueue;
+        ShadowRayQueue* shadowRayQueue                      = this->shadowRayQueue;
+        LightSampler lightSampler                           = this->lightSampler;
+        spectra::ForAllQueued(queue, maxQueueSize, [=] __host__ __device__(const MaterialEvalWorkItem<ConcreteMaterial> w) mutable {
             // Evaluate material and BSDF for ray intersection
             TextureEvaluator texEval;
             // Compute differentials for position and $(u,v)$ at intersection point
@@ -818,8 +858,17 @@ namespace spectra::pathtracer {
     void WavefrontPathtracer::SampleMediumInteraction(int wavefrontDepth) {
         if (!haveMedia) return;
 
-        RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
-        ForAllQueued(mediumSampleQueue, maxQueueSize, [=, *this] __host__ __device__(MediumSampleWorkItem w) mutable {
+        RayQueue* nextRayQueue                         = NextRayQueue(wavefrontDepth);
+        int maxQueueSize                               = this->maxQueueSize;
+        int maxDepth                                   = this->maxDepth;
+        MediumSampleQueue* mediumSampleQueue           = this->mediumSampleQueue;
+        MediumScatterQueue* mediumScatterQueue         = this->mediumScatterQueue;
+        EscapedRayQueue* escapedRayQueue               = this->escapedRayQueue;
+        HitAreaLightQueue* hitAreaLightQueue           = this->hitAreaLightQueue;
+        MaterialEvalQueue* basicEvalMaterialQueue      = this->basicEvalMaterialQueue;
+        MaterialEvalQueue* universalEvalMaterialQueue  = this->universalEvalMaterialQueue;
+        SOA<PixelSampleState> pixelSampleState         = this->pixelSampleState;
+        ForAllQueued(mediumSampleQueue, maxQueueSize, [=] __host__ __device__(MediumSampleWorkItem w) mutable {
             Ray ray    = w.ray;
             Float tMax = w.tMax;
 
@@ -872,7 +921,7 @@ namespace spectra::pathtracer {
                     r_u *= T_maj * mp.sigma_s / pr;
 
                     // Enqueue medium scattering work.
-                    auto enqueue = [=, this](auto ptr) { mediumScatterQueue->Push(spectra::MediumScatterWorkItem<std::remove_const_t<std::remove_reference_t<decltype(*ptr)>>>{p, w.depth, lambda, beta, r_u, ptr, -ray.d, ray.time, w.etaScale, ray.medium, w.pixelIndex}); };
+                    auto enqueue = [=](auto ptr) { mediumScatterQueue->Push(spectra::MediumScatterWorkItem<std::remove_const_t<std::remove_reference_t<decltype(*ptr)>>>{p, w.depth, lambda, beta, r_u, ptr, -ray.d, ray.time, w.etaScale, ray.medium, w.pixelIndex}); };
                     if (beta && r_u) mp.phase.Dispatch(enqueue);
 
                     scattered = true;
@@ -958,10 +1007,14 @@ namespace spectra::pathtracer {
 
     template <typename ConcretePhaseFunction>
     void WavefrontPathtracer::SampleMediumScattering(int wavefrontDepth) {
-        RayQueue* currentRayQueue = CurrentRayQueue(wavefrontDepth);
-        RayQueue* nextRayQueue    = NextRayQueue(wavefrontDepth);
+        RayQueue* nextRayQueue                         = NextRayQueue(wavefrontDepth);
+        int maxQueueSize                               = this->maxQueueSize;
+        MediumScatterQueue* mediumScatterQueue         = this->mediumScatterQueue;
+        ShadowRayQueue* shadowRayQueue                 = this->shadowRayQueue;
+        LightSampler lightSampler                      = this->lightSampler;
+        SOA<PixelSampleState> pixelSampleState         = this->pixelSampleState;
 
-        spectra::ForAllQueued(mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(), maxQueueSize, [=, *this] __host__ __device__(const MediumScatterWorkItem<ConcretePhaseFunction> w) mutable {
+        spectra::ForAllQueued(mediumScatterQueue->Get<MediumScatterWorkItem<ConcretePhaseFunction>>(), maxQueueSize, [=] __host__ __device__(const MediumScatterWorkItem<ConcretePhaseFunction> w) mutable {
             RaySamples raySamples = pixelSampleState.samples[w.pixelIndex];
             Vector3f wo           = w.wo;
 
@@ -1023,9 +1076,13 @@ namespace spectra::pathtracer {
     void WavefrontPathtracer::SampleSubsurface(int wavefrontDepth) {
         if (!haveSubsurface) return;
 
-        RayQueue* nextRayQueue = NextRayQueue(wavefrontDepth);
+        RayQueue* nextRayQueue                               = NextRayQueue(wavefrontDepth);
+        int maxQueueSize                                     = this->maxQueueSize;
+        GetBSSRDFAndProbeRayQueue* bssrdfEvalQueue           = this->bssrdfEvalQueue;
+        SubsurfaceScatterQueue* subsurfaceScatterQueue       = this->subsurfaceScatterQueue;
+        SOA<PixelSampleState> pixelSampleState               = this->pixelSampleState;
 
-        ForAllQueued(bssrdfEvalQueue, maxQueueSize, [=, *this] __host__ __device__(const GetBSSRDFAndProbeRayWorkItem w) mutable {
+        ForAllQueued(bssrdfEvalQueue, maxQueueSize, [=] __host__ __device__(const GetBSSRDFAndProbeRayWorkItem w) mutable {
             const SubsurfaceMaterial* material = w.material.Cast<SubsurfaceMaterial>();
             MaterialEvalContext ctx            = w.GetMaterialEvalContext();
             SampledWavelengths lambda          = w.lambda;
@@ -1041,7 +1098,10 @@ namespace spectra::pathtracer {
 
         aggregate->IntersectOneRandom(maxQueueSize, subsurfaceScatterQueue);
 
-        ForAllQueued(subsurfaceScatterQueue, maxQueueSize, [=, *this] __host__ __device__(SubsurfaceScatterWorkItem w) mutable {
+        bool haveMedia                                      = this->haveMedia;
+        LightSampler lightSampler                           = this->lightSampler;
+        ShadowRayQueue* shadowRayQueue                      = this->shadowRayQueue;
+        ForAllQueued(subsurfaceScatterQueue, maxQueueSize, [=] __host__ __device__(SubsurfaceScatterWorkItem w) mutable {
             if (w.reservoirPDF == 0) return;
 
             TabulatedBSSRDF bssrdf = w.bssrdf;
@@ -1144,7 +1204,11 @@ namespace spectra::pathtracer {
     }
 
     void WavefrontPathtracer::UpdateFilm() {
-        ParallelFor(maxQueueSize, [=, *this] __host__ __device__(int pixelIndex) mutable {
+        int maxQueueSize                            = this->maxQueueSize;
+        Film film                                   = this->film;
+        bool initializeVisibleSurface               = this->initializeVisibleSurface;
+        SOA<PixelSampleState> pixelSampleState      = this->pixelSampleState;
+        ParallelFor(maxQueueSize, [=] __host__ __device__(int pixelIndex) mutable {
             // Check pixel against film bounds
             Point2i pPixel = pixelSampleState.pPixel[pixelIndex];
             if (!InsideExclusive(pPixel, film.PixelBounds())) return;
@@ -1166,7 +1230,8 @@ namespace spectra::pathtracer {
 
     void WavefrontPathtracer::UpdateFramebufferFromFilm(Bounds2i pixelBounds, Float exposure, float* rgba) {
         Vector2i resolution = pixelBounds.Diagonal();
-        ParallelFor(resolution.x * resolution.y, [=, *this] __host__ __device__(int index) mutable {
+        Film film = this->film;
+        ParallelFor(resolution.x * resolution.y, [=] __host__ __device__(int index) mutable {
             Point2i p(index % resolution.x, index / resolution.x);
             RGB rgb          = exposure * film.GetPixelRGB(p + pixelBounds.pMin);
             int offset       = 4 * index;

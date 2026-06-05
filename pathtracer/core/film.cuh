@@ -452,6 +452,66 @@ namespace spectra {
         Array2D<Pixel> pixels;
         SquareMatrix<3> outputRGBFromSensorRGB;
     };
+
+    __host__ __device__ inline SampledWavelengths Film::SampleWavelengths(Float u) const {
+        auto sample = [&](auto ptr) { return ptr->SampleWavelengths(u); };
+        return Dispatch(sample);
+    }
+
+    __host__ __device__ inline Bounds2f Film::SampleBounds() const {
+        auto sb = [&](auto ptr) { return ptr->SampleBounds(); };
+        return Dispatch(sb);
+    }
+
+    __host__ __device__ inline Bounds2i Film::PixelBounds() const {
+        auto pb = [&](auto ptr) { return ptr->PixelBounds(); };
+        return Dispatch(pb);
+    }
+
+    __host__ __device__ inline Point2i Film::FullResolution() const {
+        auto fr = [&](auto ptr) { return ptr->FullResolution(); };
+        return Dispatch(fr);
+    }
+
+    __host__ __device__ inline Float Film::Diagonal() const {
+        auto diag = [&](auto ptr) { return ptr->Diagonal(); };
+        return Dispatch(diag);
+    }
+
+    __host__ __device__ inline Filter Film::GetFilter() const {
+        auto filter = [&](auto ptr) { return ptr->GetFilter(); };
+        return Dispatch(filter);
+    }
+
+    __host__ __device__ inline bool Film::UsesVisibleSurface() const {
+        auto uses = [&](auto ptr) { return ptr->UsesVisibleSurface(); };
+        return Dispatch(uses);
+    }
+
+    __host__ __device__ inline RGB Film::GetPixelRGB(Point2i p, Float splatScale) const {
+        auto get = [&](auto ptr) { return ptr->GetPixelRGB(p, splatScale); };
+        return Dispatch(get);
+    }
+
+    __host__ __device__ inline RGB Film::ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
+        auto out = [&](auto ptr) { return ptr->ToOutputRGB(L, lambda); };
+        return Dispatch(out);
+    }
+
+    __host__ __device__ inline void Film::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
+        auto add = [&](auto ptr) { return ptr->AddSample(pFilm, L, lambda, visibleSurface, weight); };
+        return Dispatch(add);
+    }
+
+    __host__ __device__ inline const PixelSensor* Film::GetPixelSensor() const {
+        auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
+        return Dispatch(filter);
+    }
+
+    __host__ __device__ inline void Film::ResetPixel(Point2i p) {
+        auto rp = [&](auto ptr) { ptr->ResetPixel(p); };
+        return Dispatch(rp);
+    }
 } // namespace spectra
 
 #endif // SPECTRA_PATHTRACER_CORE_FILM_H

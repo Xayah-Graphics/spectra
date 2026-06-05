@@ -3,27 +3,6 @@
 #include <pathtracer/util/rng.cuh>
 
 namespace spectra {
-    __host__ __device__ Float Filter::Evaluate(Point2f p) const {
-        auto eval = [&](auto ptr) { return ptr->Evaluate(p); };
-        return Dispatch(eval);
-    }
-
-    __host__ __device__ FilterSample Filter::Sample(Point2f u) const {
-        auto sample = [&](auto ptr) { return ptr->Sample(u); };
-        return Dispatch(sample);
-    }
-
-    __host__ __device__ Vector2f Filter::Radius() const {
-        auto radius = [&](auto ptr) { return ptr->Radius(); };
-        return Dispatch(radius);
-    }
-
-    __host__ __device__ Float Filter::Integral() const {
-        auto integral = [&](auto ptr) { return ptr->Integral(); };
-        return Dispatch(integral);
-    }
-
-
     // Box Filter Method Definitions
 
     BoxFilter* BoxFilter::Create(const ParameterDictionary& parameters, const FileLoc* loc, Allocator alloc) {

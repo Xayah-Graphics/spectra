@@ -15,27 +15,6 @@
 #include <vector>
 
 namespace spectra {
-    __host__ __device__ pstd::optional<SampledLight> LightSampler::Sample(const LightSampleContext& ctx, Float u) const {
-        auto s = [&](auto ptr) { return ptr->Sample(ctx, u); };
-        return Dispatch(s);
-    }
-
-    __host__ __device__ Float LightSampler::PMF(const LightSampleContext& ctx, Light light) const {
-        auto pdf = [&](auto ptr) { return ptr->PMF(ctx, light); };
-        return Dispatch(pdf);
-    }
-
-    __host__ __device__ pstd::optional<SampledLight> LightSampler::Sample(Float u) const {
-        auto sample = [&](auto ptr) { return ptr->Sample(u); };
-        return Dispatch(sample);
-    }
-
-    __host__ __device__ Float LightSampler::PMF(Light light) const {
-        auto pdf = [&](auto ptr) { return ptr->PMF(light); };
-        return Dispatch(pdf);
-    }
-
-
     LightSampler LightSampler::Create(const std::string& name, pstd::span<const Light> lights, Allocator alloc) {
         if (name == "uniform")
             return alloc.new_object<UniformLightSampler>(lights, alloc);

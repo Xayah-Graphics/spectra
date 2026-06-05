@@ -323,9 +323,45 @@ namespace spectra::optix {
         BVH bvh(nMeshes);
         std::vector<OptixBuildInput> optixBuildInputs(nMeshes);
         std::vector<CUdeviceptr> pDeviceDevicePtrs(nMeshes);
-        std::vector<pathtracer::PathtracerDeviceBuffer> vertexBuffers(nMeshes);
-        std::vector<pathtracer::PathtracerDeviceBuffer> indexBuffers(nMeshes);
+        std::vector<size_t> vertexOffsets(nMeshes);
+        std::vector<size_t> indexTripletOffsets(nMeshes);
         std::vector<uint32_t> triangleInputFlags(nMeshes);
+        size_t totalVertices      = 0;
+        size_t totalIndexTriplets = 0;
+        for (size_t meshIndex = 0; meshIndex < nMeshes; ++meshIndex) {
+            vertexOffsets[meshIndex]       = totalVertices;
+            indexTripletOffsets[meshIndex] = totalIndexTriplets;
+            totalVertices += meshes[meshIndex]->nVertices;
+            totalIndexTriplets += meshes[meshIndex]->nTriangles;
+        }
+
+#ifdef SPECTRA_FLOAT_AS_DOUBLE
+        // OptiX geometry is float-only, so double-precision vertices are staged as float3.
+        std::vector<float> vertexStaging(3 * totalVertices);
+#else
+        std::vector<Point3f> vertexStaging(totalVertices);
+#endif
+        std::vector<int> indexStaging(3 * totalIndexTriplets);
+        for (size_t meshIndex = 0; meshIndex < nMeshes; ++meshIndex) {
+            const TriangleMesh* mesh        = meshes[meshIndex];
+            const size_t vertexOffset       = vertexOffsets[meshIndex];
+            const size_t indexTripletOffset = indexTripletOffsets[meshIndex];
+#ifdef SPECTRA_FLOAT_AS_DOUBLE
+            for (int vertexIndex = 0; vertexIndex < mesh->nVertices; ++vertexIndex) {
+                vertexStaging[3 * (vertexOffset + vertexIndex)]     = mesh->p[vertexIndex].x;
+                vertexStaging[3 * (vertexOffset + vertexIndex) + 1] = mesh->p[vertexIndex].y;
+                vertexStaging[3 * (vertexOffset + vertexIndex) + 2] = mesh->p[vertexIndex].z;
+            }
+#else
+            std::memcpy(vertexStaging.data() + vertexOffset, mesh->p, mesh->nVertices * sizeof(Point3f));
+#endif
+            std::memcpy(indexStaging.data() + 3 * indexTripletOffset, mesh->vertexIndices, mesh->nTriangles * 3 * sizeof(int));
+        }
+
+        pathtracer::PathtracerDeviceBuffer vertexBuffer(vertexStaging.size() * sizeof(vertexStaging[0]));
+        SPECTRA_CUDA_CHECK(cudaMemcpy(vertexBuffer.data(), vertexStaging.data(), vertexBuffer.size_bytes(), cudaMemcpyHostToDevice));
+        pathtracer::PathtracerDeviceBuffer indexBuffer(indexStaging.size() * sizeof(indexStaging[0]));
+        SPECTRA_CUDA_CHECK(cudaMemcpy(indexBuffer.data(), indexStaging.data(), indexBuffer.size_bytes(), cudaMemcpyHostToDevice));
 
         std::mutex boundsMutex;
         ParallelFor(0, nMeshes, [&](int64_t startIndex, int64_t endIndex) {
@@ -344,35 +380,18 @@ namespace spectra::optix {
                 input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
                 input.triangleArray.numVertices  = mesh->nVertices;
 #ifdef SPECTRA_FLOAT_AS_DOUBLE
-                // Convert the vertex positions to 32-bit floats before giving
-                // them to OptiX, since it doesn't support double-precision
-                // geometry.
                 input.triangleArray.vertexStrideInBytes = 3 * sizeof(float);
-                std::vector<float> p32(3 * mesh->nVertices);
-                for (int i = 0; i < mesh->nVertices; i++) {
-                    p32[3 * i]     = mesh->p[i].x;
-                    p32[3 * i + 1] = mesh->p[i].y;
-                    p32[3 * i + 2] = mesh->p[i].z;
-                }
-                pathtracer::PathtracerDeviceBuffer vertexBuffer(mesh->nVertices * 3 * sizeof(float));
-                SPECTRA_CUDA_CHECK(cudaMemcpy(vertexBuffer.data(), p32.data(), mesh->nVertices * 3 * sizeof(float), cudaMemcpyHostToDevice));
+                pDeviceDevicePtrs[meshIndex]      = vertexBuffer.device_ptr() + vertexOffsets[meshIndex] * 3 * sizeof(float);
 #else
                 input.triangleArray.vertexStrideInBytes = sizeof(Point3f);
-                pathtracer::PathtracerDeviceBuffer vertexBuffer(mesh->nVertices * sizeof(spectra::Point3f));
-                SPECTRA_CUDA_CHECK(cudaMemcpy(vertexBuffer.data(), mesh->p, mesh->nVertices * sizeof(spectra::Point3f),
-                    cudaMemcpyHostToDevice));
+                pDeviceDevicePtrs[meshIndex]      = vertexBuffer.device_ptr() + vertexOffsets[meshIndex] * sizeof(Point3f);
 #endif
-                vertexBuffers[meshIndex]          = std::move(vertexBuffer);
-                pDeviceDevicePtrs[meshIndex]      = vertexBuffers[meshIndex].device_ptr();
                 input.triangleArray.vertexBuffers = &pDeviceDevicePtrs[meshIndex];
 
                 input.triangleArray.indexFormat        = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
                 input.triangleArray.indexStrideInBytes = 3 * sizeof(int);
                 input.triangleArray.numIndexTriplets   = mesh->nTriangles;
-                pathtracer::PathtracerDeviceBuffer indexBuffer(mesh->nTriangles * 3 * sizeof(int));
-                SPECTRA_CUDA_CHECK(cudaMemcpy(indexBuffer.data(), mesh->vertexIndices, mesh->nTriangles * 3 * sizeof(int), cudaMemcpyHostToDevice));
-                indexBuffers[meshIndex]          = std::move(indexBuffer);
-                input.triangleArray.indexBuffer = indexBuffers[meshIndex].device_ptr();
+                input.triangleArray.indexBuffer         = indexBuffer.device_ptr() + indexTripletOffsets[meshIndex] * 3 * sizeof(int);
 
                 FloatTexture alphaTexture     = getAlphaTexture(shape, floatTextures, alloc);
                 Material material             = getMaterial(shape, materials);

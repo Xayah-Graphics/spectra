@@ -25,66 +25,6 @@
 #include <pathtracer/util/transform.cuh>
 
 namespace spectra {
-    __host__ __device__ SampledWavelengths Film::SampleWavelengths(Float u) const {
-        auto sample = [&](auto ptr) { return ptr->SampleWavelengths(u); };
-        return Dispatch(sample);
-    }
-
-    __host__ __device__ Bounds2f Film::SampleBounds() const {
-        auto sb = [&](auto ptr) { return ptr->SampleBounds(); };
-        return Dispatch(sb);
-    }
-
-    __host__ __device__ Bounds2i Film::PixelBounds() const {
-        auto pb = [&](auto ptr) { return ptr->PixelBounds(); };
-        return Dispatch(pb);
-    }
-
-    __host__ __device__ Point2i Film::FullResolution() const {
-        auto fr = [&](auto ptr) { return ptr->FullResolution(); };
-        return Dispatch(fr);
-    }
-
-    __host__ __device__ Float Film::Diagonal() const {
-        auto diag = [&](auto ptr) { return ptr->Diagonal(); };
-        return Dispatch(diag);
-    }
-
-    __host__ __device__ Filter Film::GetFilter() const {
-        auto filter = [&](auto ptr) { return ptr->GetFilter(); };
-        return Dispatch(filter);
-    }
-
-    __host__ __device__ bool Film::UsesVisibleSurface() const {
-        auto uses = [&](auto ptr) { return ptr->UsesVisibleSurface(); };
-        return Dispatch(uses);
-    }
-
-    __host__ __device__ RGB Film::GetPixelRGB(Point2i p, Float splatScale) const {
-        auto get = [&](auto ptr) { return ptr->GetPixelRGB(p, splatScale); };
-        return Dispatch(get);
-    }
-
-    __host__ __device__ RGB Film::ToOutputRGB(SampledSpectrum L, const SampledWavelengths& lambda) const {
-        auto out = [&](auto ptr) { return ptr->ToOutputRGB(L, lambda); };
-        return Dispatch(out);
-    }
-
-    __host__ __device__ void Film::AddSample(Point2i pFilm, SampledSpectrum L, const SampledWavelengths& lambda, const VisibleSurface* visibleSurface, Float weight) {
-        auto add = [&](auto ptr) { return ptr->AddSample(pFilm, L, lambda, visibleSurface, weight); };
-        return Dispatch(add);
-    }
-
-    __host__ __device__ const PixelSensor* Film::GetPixelSensor() const {
-        auto filter = [&](auto ptr) { return ptr->GetPixelSensor(); };
-        return Dispatch(filter);
-    }
-
-    __host__ __device__ void Film::ResetPixel(Point2i p) {
-        auto rp = [&](auto ptr) { ptr->ResetPixel(p); };
-        return Dispatch(rp);
-    }
-
     __host__ __device__ void Film::AddSplat(Point2f p, SampledSpectrum v, const SampledWavelengths& lambda) {
         auto splat = [&](auto ptr) { return ptr->AddSplat(p, v, lambda); };
         return Dispatch(splat);

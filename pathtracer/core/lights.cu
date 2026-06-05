@@ -23,32 +23,6 @@
 namespace spectra {
     // Light Method Definitions
 
-    __host__ __device__ pstd::optional<LightLiSample> Light::SampleLi(LightSampleContext ctx, Point2f u, SampledWavelengths lambda, bool allowIncompletePDF) const {
-        auto sample = [&](auto ptr) { return ptr->SampleLi(ctx, u, lambda, allowIncompletePDF); };
-        return Dispatch(sample);
-    }
-
-    __host__ __device__ Float Light::PDF_Li(LightSampleContext ctx, Vector3f wi, bool allowIncompletePDF) const {
-        auto pdf = [&](auto ptr) { return ptr->PDF_Li(ctx, wi, allowIncompletePDF); };
-        return Dispatch(pdf);
-    }
-
-    __host__ __device__ SampledSpectrum Light::L(Point3f p, Normal3f n, Point2f uv, Vector3f w, const SampledWavelengths& lambda) const {
-        CHECK(Type() == LightType::Area);
-        auto l = [&](auto ptr) { return ptr->L(p, n, uv, w, lambda); };
-        return Dispatch(l);
-    }
-
-    __host__ __device__ SampledSpectrum Light::Le(const Ray& ray, const SampledWavelengths& lambda) const {
-        auto le = [&](auto ptr) { return ptr->Le(ray, lambda); };
-        return Dispatch(le);
-    }
-
-    __host__ __device__ LightType Light::Type() const {
-        auto t = [&](auto ptr) { return ptr->Type(); };
-        return Dispatch(t);
-    }
-
     // LightBase Method Definitions
     LightBase::LightBase(LightType type, const Transform& renderFromLight, const MediumInterface& mediumInterface) : type(type), mediumInterface(mediumInterface), renderFromLight(renderFromLight) {}
 
