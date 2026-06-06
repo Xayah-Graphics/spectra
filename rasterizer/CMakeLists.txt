@@ -38,5 +38,4 @@ target_sources(
 )
 target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui)
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(spectra_rasterizer PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")

@@ -347,7 +347,7 @@ target_sources(
 )
 add_dependencies(spectra_pathtracer spectra_pathtracer_soa_generated)
 target_compile_definitions(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_compile_definitions(spectra_pathtracer PRIVATE "SPECTRA_PBRT_SCENE_ROOT=\"${SPECTRA_PBRT_SCENE_ROOT}\"" IMGUI_DEFINE_MATH_OPERATORS)
+target_compile_definitions(spectra_pathtracer PRIVATE "SPECTRA_PBRT_SCENE_ROOT=\"${SPECTRA_PBRT_SCENE_ROOT}\"")
 target_include_directories(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_INCLUDE_DIRS} PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
 target_compile_options(
         spectra_pathtracer

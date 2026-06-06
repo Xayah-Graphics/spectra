@@ -76,10 +76,6 @@ namespace {
         io.FontDefault = default_font;
     }
 
-    [[nodiscard]] ImVec4 ui_rgba(const int red, const int green, const int blue, const float alpha = 1.0f) {
-        return ImVec4{static_cast<float>(red) / 255.0f, static_cast<float>(green) / 255.0f, static_cast<float>(blue) / 255.0f, alpha};
-    }
-
     void apply_imgui_style() {
         ImGui::StyleColorsDark();
         ImGuiStyle& style                  = ImGui::GetStyle();
@@ -107,55 +103,55 @@ namespace {
         style.SeparatorTextPadding         = ImVec2{8.0f, 4.0f};
         style.SelectableTextAlign          = ImVec2{0.0f, 0.5f};
 
-        style.Colors[ImGuiCol_Text]                  = ui_rgba(232, 236, 243);
-        style.Colors[ImGuiCol_TextDisabled]          = ui_rgba(132, 143, 156);
-        style.Colors[ImGuiCol_WindowBg]              = ui_rgba(16, 18, 21);
-        style.Colors[ImGuiCol_ChildBg]               = ui_rgba(20, 23, 27);
-        style.Colors[ImGuiCol_PopupBg]               = ui_rgba(24, 28, 33);
-        style.Colors[ImGuiCol_Border]                = ui_rgba(48, 55, 63);
-        style.Colors[ImGuiCol_BorderShadow]          = ui_rgba(0, 0, 0, 0.0f);
-        style.Colors[ImGuiCol_FrameBg]               = ui_rgba(29, 34, 40);
-        style.Colors[ImGuiCol_FrameBgHovered]        = ui_rgba(38, 47, 55);
-        style.Colors[ImGuiCol_FrameBgActive]         = ui_rgba(47, 62, 72);
-        style.Colors[ImGuiCol_TitleBg]               = ui_rgba(15, 17, 20);
-        style.Colors[ImGuiCol_TitleBgActive]         = ui_rgba(21, 25, 30);
-        style.Colors[ImGuiCol_TitleBgCollapsed]      = ui_rgba(15, 17, 20);
-        style.Colors[ImGuiCol_MenuBarBg]             = ui_rgba(16, 18, 21);
-        style.Colors[ImGuiCol_ScrollbarBg]           = ui_rgba(17, 20, 23);
-        style.Colors[ImGuiCol_ScrollbarGrab]         = ui_rgba(49, 57, 66);
-        style.Colors[ImGuiCol_ScrollbarGrabHovered]  = ui_rgba(67, 78, 90);
-        style.Colors[ImGuiCol_ScrollbarGrabActive]   = ui_rgba(83, 98, 114);
-        style.Colors[ImGuiCol_CheckMark]             = ui_rgba(91, 197, 184);
-        style.Colors[ImGuiCol_SliderGrab]            = ui_rgba(91, 166, 230);
-        style.Colors[ImGuiCol_SliderGrabActive]      = ui_rgba(118, 195, 245);
-        style.Colors[ImGuiCol_Button]                = ui_rgba(31, 37, 43);
-        style.Colors[ImGuiCol_ButtonHovered]         = ui_rgba(43, 55, 64);
-        style.Colors[ImGuiCol_ButtonActive]          = ui_rgba(47, 78, 95);
-        style.Colors[ImGuiCol_Header]                = ui_rgba(31, 38, 45);
-        style.Colors[ImGuiCol_HeaderHovered]         = ui_rgba(43, 58, 70);
-        style.Colors[ImGuiCol_HeaderActive]          = ui_rgba(48, 79, 96);
-        style.Colors[ImGuiCol_Separator]             = ui_rgba(47, 54, 62);
-        style.Colors[ImGuiCol_SeparatorHovered]      = ui_rgba(78, 112, 132);
-        style.Colors[ImGuiCol_SeparatorActive]       = ui_rgba(92, 145, 169);
-        style.Colors[ImGuiCol_ResizeGrip]            = ui_rgba(47, 54, 62, 0.7f);
-        style.Colors[ImGuiCol_ResizeGripHovered]     = ui_rgba(78, 112, 132, 0.8f);
-        style.Colors[ImGuiCol_ResizeGripActive]      = ui_rgba(92, 145, 169, 0.95f);
-        style.Colors[ImGuiCol_Tab]                   = ui_rgba(22, 25, 29);
-        style.Colors[ImGuiCol_TabHovered]            = ui_rgba(42, 57, 69);
-        style.Colors[ImGuiCol_TabActive]             = ui_rgba(35, 43, 51);
-        style.Colors[ImGuiCol_TabUnfocused]          = ui_rgba(18, 21, 24);
-        style.Colors[ImGuiCol_TabUnfocusedActive]    = ui_rgba(27, 32, 38);
-        style.Colors[ImGuiCol_DockingPreview]        = ui_rgba(91, 166, 230, 0.42f);
-        style.Colors[ImGuiCol_DockingEmptyBg]        = ui_rgba(14, 16, 19);
-        style.Colors[ImGuiCol_TableHeaderBg]         = ui_rgba(26, 31, 36);
-        style.Colors[ImGuiCol_TableBorderStrong]     = ui_rgba(50, 58, 67);
-        style.Colors[ImGuiCol_TableBorderLight]      = ui_rgba(39, 46, 53);
-        style.Colors[ImGuiCol_TableRowBg]            = ui_rgba(0, 0, 0, 0.0f);
-        style.Colors[ImGuiCol_TableRowBgAlt]         = ui_rgba(24, 28, 33, 0.58f);
-        style.Colors[ImGuiCol_TextSelectedBg]        = ui_rgba(64, 124, 163, 0.45f);
-        style.Colors[ImGuiCol_DragDropTarget]        = ui_rgba(91, 197, 184, 0.9f);
-        style.Colors[ImGuiCol_NavHighlight]          = ui_rgba(91, 166, 230, 0.7f);
-        style.Colors[ImGuiCol_ModalWindowDimBg]      = ui_rgba(5, 7, 10, 0.68f);
+        style.Colors[ImGuiCol_Text]                  = ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TextDisabled]          = ImVec4{132.0f / 255.0f, 143.0f / 255.0f, 156.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_WindowBg]              = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ChildBg]               = ImVec4{20.0f / 255.0f, 23.0f / 255.0f, 27.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_PopupBg]               = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Border]                = ImVec4{48.0f / 255.0f, 55.0f / 255.0f, 63.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_BorderShadow]          = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
+        style.Colors[ImGuiCol_FrameBg]               = ImVec4{29.0f / 255.0f, 34.0f / 255.0f, 40.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBgHovered]        = ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 55.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBgActive]         = ImVec4{47.0f / 255.0f, 62.0f / 255.0f, 72.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TitleBg]               = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TitleBgActive]         = ImVec4{21.0f / 255.0f, 25.0f / 255.0f, 30.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TitleBgCollapsed]      = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_MenuBarBg]             = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarBg]           = ImVec4{17.0f / 255.0f, 20.0f / 255.0f, 23.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarGrab]         = ImVec4{49.0f / 255.0f, 57.0f / 255.0f, 66.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4{67.0f / 255.0f, 78.0f / 255.0f, 90.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4{83.0f / 255.0f, 98.0f / 255.0f, 114.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_CheckMark]             = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SliderGrab]            = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SliderGrabActive]      = ImVec4{118.0f / 255.0f, 195.0f / 255.0f, 245.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Button]                = ImVec4{31.0f / 255.0f, 37.0f / 255.0f, 43.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ButtonHovered]         = ImVec4{43.0f / 255.0f, 55.0f / 255.0f, 64.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ButtonActive]          = ImVec4{47.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Header]                = ImVec4{31.0f / 255.0f, 38.0f / 255.0f, 45.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_HeaderHovered]         = ImVec4{43.0f / 255.0f, 58.0f / 255.0f, 70.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_HeaderActive]          = ImVec4{48.0f / 255.0f, 79.0f / 255.0f, 96.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Separator]             = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SeparatorHovered]      = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SeparatorActive]       = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ResizeGrip]            = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 0.7f};
+        style.Colors[ImGuiCol_ResizeGripHovered]     = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 0.8f};
+        style.Colors[ImGuiCol_ResizeGripActive]      = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 0.95f};
+        style.Colors[ImGuiCol_Tab]                   = ImVec4{22.0f / 255.0f, 25.0f / 255.0f, 29.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabHovered]            = ImVec4{42.0f / 255.0f, 57.0f / 255.0f, 69.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabActive]             = ImVec4{35.0f / 255.0f, 43.0f / 255.0f, 51.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabUnfocused]          = ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 24.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabUnfocusedActive]    = ImVec4{27.0f / 255.0f, 32.0f / 255.0f, 38.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_DockingPreview]        = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.42f};
+        style.Colors[ImGuiCol_DockingEmptyBg]        = ImVec4{14.0f / 255.0f, 16.0f / 255.0f, 19.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableHeaderBg]         = ImVec4{26.0f / 255.0f, 31.0f / 255.0f, 36.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableBorderStrong]     = ImVec4{50.0f / 255.0f, 58.0f / 255.0f, 67.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableBorderLight]      = ImVec4{39.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableRowBg]            = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
+        style.Colors[ImGuiCol_TableRowBgAlt]         = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 0.58f};
+        style.Colors[ImGuiCol_TextSelectedBg]        = ImVec4{64.0f / 255.0f, 124.0f / 255.0f, 163.0f / 255.0f, 0.45f};
+        style.Colors[ImGuiCol_DragDropTarget]        = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 0.9f};
+        style.Colors[ImGuiCol_NavHighlight]          = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.7f};
+        style.Colors[ImGuiCol_ModalWindowDimBg]      = ImVec4{5.0f / 255.0f, 7.0f / 255.0f, 10.0f / 255.0f, 0.68f};
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
 
@@ -168,9 +164,9 @@ namespace {
         const ImGuiStyle& style = ImGui::GetStyle();
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
         ImGui::PushStyleColor(ImGuiCol_Button, active ? style.Colors[ImGuiCol_HeaderActive] : style.Colors[ImGuiCol_Button]);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ui_rgba(59, 96, 116) : style.Colors[ImGuiCol_ButtonHovered]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ImVec4{59.0f / 255.0f, 96.0f / 255.0f, 116.0f / 255.0f, 1.0f} : style.Colors[ImGuiCol_ButtonHovered]);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_ButtonActive]);
-        ImGui::PushStyleColor(ImGuiCol_Border, active ? ui_rgba(91, 166, 230, 0.95f) : style.Colors[ImGuiCol_Border]);
+        ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.95f} : style.Colors[ImGuiCol_Border]);
     }
 
     void pop_toolbar_button_style() {
@@ -181,10 +177,10 @@ namespace {
     void push_renderer_button_style(const bool active) {
         const ImGuiStyle& style = ImGui::GetStyle();
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, active ? ui_rgba(49, 78, 95) : ui_rgba(28, 33, 39));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ui_rgba(60, 97, 116) : ui_rgba(39, 49, 57));
+        ImGui::PushStyleColor(ImGuiCol_Button, active ? ImVec4{49.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f} : ImVec4{28.0f / 255.0f, 33.0f / 255.0f, 39.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ImVec4{60.0f / 255.0f, 97.0f / 255.0f, 116.0f / 255.0f, 1.0f} : ImVec4{39.0f / 255.0f, 49.0f / 255.0f, 57.0f / 255.0f, 1.0f});
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_ButtonActive]);
-        ImGui::PushStyleColor(ImGuiCol_Border, active ? ui_rgba(91, 166, 230, 0.85f) : ui_rgba(49, 57, 65));
+        ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.85f} : ImVec4{49.0f / 255.0f, 57.0f / 255.0f, 65.0f / 255.0f, 1.0f});
     }
 
     void pop_renderer_button_style() {
@@ -861,8 +857,8 @@ namespace spectra {
             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 7.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ui_rgba(13, 15, 18, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ui_rgba(42, 48, 55, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{13.0f / 255.0f, 15.0f / 255.0f, 18.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{42.0f / 255.0f, 48.0f / 255.0f, 55.0f / 255.0f, 1.0f});
         const bool began = ImGui::Begin("SpectraCommandBar", nullptr, command_bar_flags);
         if (!began) {
             ImGui::End();
@@ -872,7 +868,7 @@ namespace spectra {
         }
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ui_rgba(232, 236, 243), "Spectra");
+        ImGui::TextColored(ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f}, "Spectra");
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 10.0f);
@@ -1019,10 +1015,10 @@ namespace spectra {
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 10.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{8.0f, 8.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ui_rgba(18, 21, 25, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Tab, ui_rgba(24, 28, 33, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TabActive, ui_rgba(38, 47, 56, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TabHovered, ui_rgba(48, 66, 78, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 25.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 56.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4{48.0f / 255.0f, 66.0f / 255.0f, 78.0f / 255.0f, 1.0f});
         const bool began = ImGui::Begin("Sidebar", nullptr, ImGuiWindowFlags_NoCollapse);
         if (!began) {
             ImGui::End();

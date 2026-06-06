@@ -10,5 +10,4 @@ target_sources(
 )
 target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw vendor::imgui)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
-target_compile_definitions(spectra_core PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_include_directories(spectra_core PUBLIC ${SPECTRA_ROOT_DIR}/vendor/imgui PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
