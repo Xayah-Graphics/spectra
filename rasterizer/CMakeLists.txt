@@ -26,13 +26,6 @@ target_sources(
         spectra_rasterizer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        common.ixx
-        mesh.ixx
-        particles.ixx
-        volume.ixx
-        curves.ixx
-        splats.ixx
-        debug.ixx
         scene.ixx
         ui.ixx
         frame.ixx

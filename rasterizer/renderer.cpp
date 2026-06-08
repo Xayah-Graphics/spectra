@@ -166,11 +166,11 @@ namespace spectra::rasterizer {
 
     Renderer::~Renderer() noexcept = default;
 
-    Renderer::Renderer(Renderer&& other) : Renderer() {
+    Renderer::Renderer(Renderer&& other) noexcept(false) : Renderer() {
         *this = std::move(other);
     }
 
-    Renderer& Renderer::operator=(Renderer&& other) {
+    Renderer& Renderer::operator=(Renderer&& other) noexcept(false) {
         if (this == &other) return *this;
         this->assert_movable();
         other.assert_movable();

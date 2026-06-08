@@ -611,7 +611,6 @@ namespace spectra::app {
                 .dimensions   = this->resolution,
                 .origin       = rasterizer::SceneVector3{0.0f, 0.0f, 0.0f},
                 .voxelSize    = rasterizer::SceneVector3{this->cell_size, this->cell_size, this->cell_size},
-                .channelNames = {"density", "temperature", "velocity_x", "velocity_y", "velocity_z"},
                 .materialName = "smoke",
                 .dynamic      = true,
             };

@@ -24,9 +24,9 @@ namespace spectra::rasterizer {
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
-        Renderer(Renderer&& other);
+        Renderer(Renderer&& other) noexcept(false);
         Renderer& operator=(const Renderer& other) = delete;
-        Renderer& operator=(Renderer&& other);
+        Renderer& operator=(Renderer&& other) noexcept(false);
 
         [[nodiscard]] static std::string_view target_name();
         [[nodiscard]] std::string_view name() const;
