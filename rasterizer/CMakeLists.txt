@@ -28,6 +28,9 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         rasterizer.ixx
         PRIVATE
+        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
+        math.ixx
+        PRIVATE
         rasterizer.cpp
         "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"

@@ -507,9 +507,9 @@ namespace spectra::rasterizer {
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
-        Renderer(Renderer&& other) noexcept;
+        Renderer(Renderer&& other);
         Renderer& operator=(const Renderer& other) = delete;
-        Renderer& operator=(Renderer&& other) noexcept;
+        Renderer& operator=(Renderer&& other);
 
         [[nodiscard]] static std::string_view target_name();
         [[nodiscard]] std::string_view name() const;
@@ -550,15 +550,182 @@ namespace spectra::rasterizer {
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
-        class Impl;
-        std::unique_ptr<Impl> impl;
+        struct GpuBuffer {
+            vk::raii::Buffer buffer{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            void* mapped{};
+            vk::DeviceSize capacity{};
+        };
 
+        struct GpuImage3D {
+            vk::raii::Image image{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::raii::ImageView view{nullptr};
+            vk::Extent3D extent{};
+            vk::ImageLayout layout{vk::ImageLayout::eUndefined};
+        };
+
+        struct RenderDrawCommand {
+            std::string name{};
+            std::uint32_t firstIndex{};
+            std::uint32_t indexCount{};
+            SceneTransform transform{};
+            SceneMaterial material{};
+        };
+
+        struct ParticleDrawCommand {
+            std::uint32_t firstInstance{};
+            std::uint32_t instanceCount{};
+        };
+
+        struct VolumeDrawCommand {
+            SceneVolumeGrid volume{};
+            SceneMaterial material{};
+        };
+
+        struct FrameSceneResources {
+            GpuBuffer vertexBuffer{};
+            GpuBuffer indexBuffer{};
+            SceneRevision uploadedRevision{};
+            std::vector<RenderDrawCommand> drawCommands{};
+        };
+
+        struct FrameParticleResources {
+            GpuBuffer instanceBuffer{};
+            SceneRevision uploadedRevision{};
+            std::vector<ParticleDrawCommand> drawCommands{};
+        };
+
+        struct FrameVolumeResources {
+            GpuBuffer densityStagingBuffer{};
+            GpuBuffer temperatureStagingBuffer{};
+            GpuImage3D densityImage{};
+            GpuImage3D temperatureImage{};
+            SceneRevision uploadedRevision{};
+            bool uploadPending{};
+            bool descriptorValid{};
+            VolumeDrawCommand drawCommand{};
+        };
+
+        Renderer() = default;
+        void assert_movable() const;
         void attach(HostView host);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        void set_scene_workspace_impl(std::shared_ptr<SceneWorkspace> scene_workspace);
-        void set_control_panel_extension_impl(std::move_only_function<void()> draw);
         [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
+
+        void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
+        void wait_device_idle_for_cleanup() noexcept;
+        void register_workspace_contributions(HostView& host);
+        [[nodiscard]] std::string window_detail() const;
+
+        void create_viewport_resources(vk::Extent2D extent);
+        void destroy_imgui_descriptor() noexcept;
+        void destroy_viewport_resources() noexcept;
+        void ensure_viewport_resources();
+        void create_imgui_descriptor();
+
+        void destroy_host_buffer(GpuBuffer& buffer) noexcept;
+        void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
+        void create_volume_image(GpuImage3D& image, vk::Extent3D extent);
+        void destroy_volume_image(GpuImage3D& image) noexcept;
+        void destroy_mesh_resources() noexcept;
+        void destroy_particle_resources() noexcept;
+        void destroy_volume_resources() noexcept;
+        void ensure_mesh_resources();
+        void ensure_particle_resources();
+        void ensure_volume_resources();
+
+        [[nodiscard]] std::vector<SceneMesh> collect_render_meshes() const;
+        [[nodiscard]] std::vector<SceneParticleSet> collect_render_particle_sets() const;
+        [[nodiscard]] std::vector<SceneVolumeGrid> collect_render_volumes() const;
+        [[nodiscard]] SceneMaterial resolve_material(std::string_view material_name) const;
+        [[nodiscard]] const SceneVolumeChannel& require_volume_channel(const SceneVolumeGrid& volume, std::string_view channel_name, SceneVolumeChannelLayout layout) const;
+        [[nodiscard]] const SceneVolumeGrid* select_render_volume_grid(const std::vector<SceneVolumeGrid>& volumes) const;
+
+        void upload_scene_resources(std::uint32_t frame_index);
+        void upload_particle_resources(std::uint32_t frame_index);
+        void upload_volume_resources(std::uint32_t frame_index);
+        void record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume);
+        void update_camera_uniform(std::uint32_t frame_index);
+
+        void record_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
+
+        void draw_viewport_window();
+        void draw_rasterizer_window();
+        void commit_timeline_from_ui(SimulationTimeline timeline);
+        [[nodiscard]] bool timeline_playing() const;
+        void toggle_timeline_playback();
+        void request_timeline_reset();
+
+        struct {
+            const vk::raii::PhysicalDevice* physical_device{};
+            const vk::raii::Device* device{};
+            vk::Extent2D swapchain_extent{};
+            std::uint32_t frame_count{};
+        } host;
+
+        struct {
+            std::uint32_t active_frame_index{};
+            bool attached{false};
+            bool imgui_ready{false};
+        } lifecycle;
+
+        struct {
+            std::shared_ptr<SceneWorkspace> workspace{};
+        } scene;
+
+        struct {
+            vk::Extent2D requested_extent{};
+            std::move_only_function<void()> control_panel_extension{};
+        } ui;
+
+        struct {
+            vk::Extent2D extent{};
+            vk::Format format{vk::Format::eR16G16B16A16Sfloat};
+            vk::ImageLayout layout{vk::ImageLayout::eUndefined};
+            vk::raii::Image image{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::raii::ImageView view{nullptr};
+            vk::raii::Sampler sampler{nullptr};
+            VkDescriptorSet imgui_descriptor{VK_NULL_HANDLE};
+            vk::Format depth_format{vk::Format::eD32Sfloat};
+            vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
+            vk::raii::Image depth_image{nullptr};
+            vk::raii::DeviceMemory depth_memory{nullptr};
+            vk::raii::ImageView depth_view{nullptr};
+        } viewport;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::vector<GpuBuffer> uniform_buffers{};
+            std::vector<FrameSceneResources> frame_scenes{};
+        } mesh_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::vector<FrameParticleResources> frame_particles{};
+        } particle_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            vk::raii::Sampler sampler{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+            std::vector<FrameVolumeResources> frame_volumes{};
+        } volume_pass;
     };
 } // namespace spectra::rasterizer
