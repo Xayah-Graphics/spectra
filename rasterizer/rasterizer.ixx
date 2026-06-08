@@ -15,14 +15,14 @@ export module spectra.rasterizer;
 
 import std;
 
-export namespace spectra::rasterizer {
-    struct SceneRevision {
+namespace spectra::rasterizer {
+    export struct SceneRevision {
         std::uint64_t value{};
 
         friend auto operator<=>(const SceneRevision&, const SceneRevision&) = default;
     };
 
-    enum class SceneDirtyFlags : std::uint32_t {
+    export enum class SceneDirtyFlags : std::uint32_t {
         None            = 0,
         Document        = 1u << 0u,
         Timeline        = 1u << 1u,
@@ -30,52 +30,52 @@ export namespace spectra::rasterizer {
         RenderResources = 1u << 3u,
     };
 
-    [[nodiscard]] constexpr SceneDirtyFlags operator|(const SceneDirtyFlags lhs, const SceneDirtyFlags rhs) {
+    export [[nodiscard]] constexpr SceneDirtyFlags operator|(const SceneDirtyFlags lhs, const SceneDirtyFlags rhs) {
         return static_cast<SceneDirtyFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
     }
 
-    [[nodiscard]] constexpr bool HasSceneDirtyFlag(const SceneDirtyFlags flags, const SceneDirtyFlags flag) {
+    export [[nodiscard]] constexpr bool HasSceneDirtyFlag(const SceneDirtyFlags flags, const SceneDirtyFlags flag) {
         return (static_cast<std::uint32_t>(flags) & static_cast<std::uint32_t>(flag)) != 0u;
     }
 
-    struct SceneSourceLocation {
+    export struct SceneSourceLocation {
         std::string filename{};
         int line{1};
         int column{1};
     };
 
-    struct SceneVector2 {
+    export struct SceneVector2 {
         float x{};
         float y{};
     };
 
-    struct SceneVector3 {
-        float x{};
-        float y{};
-        float z{};
-    };
-
-    struct SceneVector4 {
+    export struct SceneVector3 {
         float x{};
         float y{};
         float z{};
-        float w{1.0f};
     };
 
-    struct SceneQuaternion {
+    export struct SceneVector4 {
         float x{};
         float y{};
         float z{};
         float w{1.0f};
     };
 
-    struct SceneTransform {
+    export struct SceneQuaternion {
+        float x{};
+        float y{};
+        float z{};
+        float w{1.0f};
+    };
+
+    export struct SceneTransform {
         SceneVector3 position{};
         SceneQuaternion rotation{};
         SceneVector3 scale{1.0f, 1.0f, 1.0f};
     };
 
-    struct SceneMaterial {
+    export struct SceneMaterial {
         std::string name{};
         SceneVector4 baseColor{0.8f, 0.8f, 0.8f, 1.0f};
         SceneVector3 emissionColor{};
@@ -84,7 +84,7 @@ export namespace spectra::rasterizer {
         float metallic{};
     };
 
-    enum class SceneLightKind {
+    export enum class SceneLightKind {
         Directional,
         Point,
         Spot,
@@ -92,7 +92,7 @@ export namespace spectra::rasterizer {
         Environment,
     };
 
-    struct SceneLight {
+    export struct SceneLight {
         std::string name{};
         SceneLightKind kind{SceneLightKind::Directional};
         SceneTransform transform{};
@@ -102,7 +102,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneCamera {
+    export struct SceneCamera {
         std::string name{};
         SceneTransform transform{};
         SceneVector3 target{};
@@ -112,7 +112,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneMesh {
+    export struct SceneMesh {
         std::string name{};
         std::vector<SceneVector3> positions{};
         std::vector<SceneVector3> normals{};
@@ -124,7 +124,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneParticleSet {
+    export struct SceneParticleSet {
         std::string name{};
         std::vector<SceneVector3> positions{};
         std::vector<SceneVector3> velocities{};
@@ -137,28 +137,28 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    enum class SceneVolumeKind {
+    export enum class SceneVolumeKind {
         LiquidLevelSet,
         GasDensity,
         GasTemperature,
         GasVelocity,
     };
 
-    enum class SceneVolumeChannelLayout {
+    export enum class SceneVolumeChannelLayout {
         CellCentered,
         FaceX,
         FaceY,
         FaceZ,
     };
 
-    struct SceneVolumeChannel {
+    export struct SceneVolumeChannel {
         std::string name{};
         SceneVolumeChannelLayout layout{SceneVolumeChannelLayout::CellCentered};
         std::array<std::uint32_t, 3> dimensions{};
         std::vector<float> values{};
     };
 
-    struct SceneVolumeGrid {
+    export struct SceneVolumeGrid {
         std::string name{};
         SceneVolumeKind kind{SceneVolumeKind::GasDensity};
         std::array<std::uint32_t, 3> dimensions{};
@@ -171,7 +171,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneCloth {
+    export struct SceneCloth {
         std::string name{};
         std::string meshName{};
         std::string materialName{};
@@ -183,7 +183,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneRigidBody {
+    export struct SceneRigidBody {
         std::string name{};
         std::string meshName{};
         std::string materialName{};
@@ -195,7 +195,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneCollider {
+    export struct SceneCollider {
         std::string name{};
         std::string meshName{};
         SceneTransform transform{};
@@ -204,7 +204,7 @@ export namespace spectra::rasterizer {
         SceneSourceLocation source{};
     };
 
-    struct SceneDocument {
+    export struct SceneDocument {
         SceneRevision revision{};
         std::string name{};
         std::string title{};
@@ -222,18 +222,18 @@ export namespace spectra::rasterizer {
         std::vector<SceneCollider> colliders{};
     };
 
-    enum class SimulationTimelineMode {
+    export enum class SimulationTimelineMode {
         Live,
         Record,
         Playback,
     };
 
-    struct FrameCursor {
+    export struct FrameCursor {
         std::uint64_t frameIndex{};
         double timeSeconds{};
     };
 
-    struct SceneFrameSnapshot {
+    export struct SceneFrameSnapshot {
         SceneRevision revision{};
         FrameCursor cursor{};
         std::vector<SceneMesh> meshes{};
@@ -243,7 +243,7 @@ export namespace spectra::rasterizer {
         std::vector<SceneRigidBody> rigidBodies{};
     };
 
-    struct SimulationTimeline {
+    export struct SimulationTimeline {
         SimulationTimelineMode mode{SimulationTimelineMode::Playback};
         double framesPerSecond{24.0};
         bool playing{true};
@@ -256,13 +256,13 @@ export namespace spectra::rasterizer {
         std::vector<SceneFrameSnapshot> recordedFrames{};
     };
 
-    struct SceneEditBatch {
+    export struct SceneEditBatch {
         SceneRevision beforeRevision{};
         SceneRevision afterRevision{};
         SceneDirtyFlags dirty{SceneDirtyFlags::None};
     };
 
-    class SceneEditBuilder {
+    export class SceneEditBuilder {
     public:
         void replaceDocument(SceneDocument document) {
             this->documentReplacement = std::move(document);
@@ -288,7 +288,7 @@ export namespace spectra::rasterizer {
         friend class SceneWorkspace;
     };
 
-    class SceneWorkspace {
+    export class SceneWorkspace {
     public:
         SceneWorkspace() = default;
 
@@ -379,19 +379,19 @@ export namespace spectra::rasterizer {
         std::optional<SceneEditBatch> lastEdit{};
     };
 
-    enum class RasterizerDockSlot {
+    export enum class DockSlot : std::uint8_t {
         Center = 0,
         Floating = 1,
     };
 
-    struct RasterizerPanel {
+    export struct Panel {
         std::string id{};
         std::string title{};
         std::string icon{};
         std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
-        RasterizerDockSlot dock_slot{RasterizerDockSlot::Floating};
+        DockSlot dock_slot{DockSlot::Floating};
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
@@ -399,7 +399,7 @@ export namespace spectra::rasterizer {
         std::move_only_function<void()> draw{};
     };
 
-    struct RasterizerSidebarTab {
+    export struct SidebarTab {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -409,47 +409,59 @@ export namespace spectra::rasterizer {
         std::move_only_function<void()> draw{};
     };
 
-    struct RasterizerFrameInfo {
+    export struct ToolbarAction {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string owner_renderer{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<bool()> active{};
+        std::move_only_function<void()> trigger{};
+    };
+
+    export struct FrameContext {
         std::uint32_t frame_index{};
         std::uint32_t image_index{};
         std::uint64_t frame_number{};
         double delta_seconds{};
     };
 
-    struct RasterizerFrameResult {
+    export struct FrameResult {
         std::optional<vk::Semaphore> completion_semaphore{};
         bool close_requested{false};
         std::optional<std::string> window_detail{};
     };
 
-    template <typename Frame>
-    concept RasterizerFrameInfoLike = requires(const Frame& frame) {
+    export template <typename Frame>
+    concept FrameContextLike = requires(const Frame& frame) {
         { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
         { frame.image_index } -> std::convertible_to<std::uint32_t>;
         { frame.frame_number } -> std::convertible_to<std::uint64_t>;
         { frame.delta_seconds } -> std::convertible_to<double>;
     };
 
-    template <typename Host>
-    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, RasterizerSidebarTab tab) {
+    export template <typename HostType>
+    concept Host = requires(HostType& host, Panel panel, SidebarTab tab, ToolbarAction action) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
         { host.swapchain_extent() } -> std::same_as<vk::Extent2D>;
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
         { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
+        { host.register_toolbar_action(std::move(action)) } -> std::same_as<void>;
     };
 
-    class RasterizerHostView {
+    export class HostView {
     public:
-        template <RasterizerHost Host>
-        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](RasterizerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }) {}
+        template <Host HostType>
+        explicit HostView(HostType& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](Panel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](SidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), registerToolbarActionCallback([&host](ToolbarAction action) { host.register_toolbar_action(std::move(action)); }) {}
 
-        RasterizerHostView(const RasterizerHostView& other)                = delete;
-        RasterizerHostView(RasterizerHostView&& other) noexcept            = default;
-        RasterizerHostView& operator=(const RasterizerHostView& other)     = delete;
-        RasterizerHostView& operator=(RasterizerHostView&& other) noexcept = default;
-        ~RasterizerHostView() noexcept                                     = default;
+        HostView(const HostView& other)                = delete;
+        HostView(HostView&& other) noexcept            = default;
+        HostView& operator=(const HostView& other)     = delete;
+        HostView& operator=(HostView&& other) noexcept = default;
+        ~HostView() noexcept                                     = default;
 
         [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() {
             return this->physicalDeviceCallback();
@@ -467,12 +479,16 @@ export namespace spectra::rasterizer {
             return this->swapchainExtentCallback();
         }
 
-        void register_panel(RasterizerPanel panel) {
+        void register_panel(Panel panel) {
             this->registerPanelCallback(std::move(panel));
         }
 
-        void register_sidebar_tab(RasterizerSidebarTab tab) {
+        void register_sidebar_tab(SidebarTab tab) {
             this->registerSidebarTabCallback(std::move(tab));
+        }
+
+        void register_toolbar_action(ToolbarAction action) {
+            this->registerToolbarActionCallback(std::move(action));
         }
 
     private:
@@ -480,49 +496,50 @@ export namespace spectra::rasterizer {
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
-        std::move_only_function<void(RasterizerPanel)> registerPanelCallback{};
-        std::move_only_function<void(RasterizerSidebarTab)> registerSidebarTabCallback{};
+        std::move_only_function<void(Panel)> registerPanelCallback{};
+        std::move_only_function<void(SidebarTab)> registerSidebarTabCallback{};
+        std::move_only_function<void(ToolbarAction)> registerToolbarActionCallback{};
     };
 
-    class RasterizerRenderer final {
+    export class Renderer final {
     public:
-        explicit RasterizerRenderer(std::shared_ptr<SceneWorkspace> scene_workspace);
-        ~RasterizerRenderer() noexcept;
+        explicit Renderer(std::shared_ptr<SceneWorkspace> scene_workspace);
+        ~Renderer() noexcept;
 
-        RasterizerRenderer(const RasterizerRenderer& other) = delete;
-        RasterizerRenderer(RasterizerRenderer&& other) noexcept;
-        RasterizerRenderer& operator=(const RasterizerRenderer& other) = delete;
-        RasterizerRenderer& operator=(RasterizerRenderer&& other) noexcept;
+        Renderer(const Renderer& other) = delete;
+        Renderer(Renderer&& other) noexcept;
+        Renderer& operator=(const Renderer& other) = delete;
+        Renderer& operator=(Renderer&& other) noexcept;
 
         [[nodiscard]] static std::string_view target_name();
         [[nodiscard]] std::string_view name() const;
         void set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace);
         void set_control_panel_extension(std::move_only_function<void()> draw);
 
-        template <RasterizerHost Host>
-        void attach(Host& host) {
-            this->attach(RasterizerHostView{host});
+        template <Host HostType>
+        void attach(HostType& host) {
+            this->attach(HostView{host});
         }
 
-        template <RasterizerHost Host>
-        void detach(Host&) noexcept {
+        template <Host HostType>
+        void detach(HostType&) noexcept {
             this->detach();
         }
 
-        template <RasterizerHost Host>
-        void before_imgui_shutdown(Host&) noexcept {
+        template <Host HostType>
+        void before_imgui_shutdown(HostType&) noexcept {
             this->before_imgui_shutdown();
         }
 
-        template <RasterizerHost Host>
-        void after_imgui_created(Host&) {
+        template <Host HostType>
+        void after_imgui_created(HostType&) {
             this->after_imgui_created();
         }
 
-        template <RasterizerHost Host, typename Frame>
-            requires RasterizerFrameInfoLike<Frame>
-        [[nodiscard]] RasterizerFrameResult begin_frame(Host& host, const Frame& frame) {
-            return this->begin_frame(RasterizerHostView{host}, RasterizerFrameInfo{
+        template <Host HostType, typename Frame>
+            requires FrameContextLike<Frame>
+        [[nodiscard]] FrameResult begin_frame(HostType& host, const Frame& frame) {
+            return this->begin_frame(HostView{host}, FrameContext{
                                                                    .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
                                                                    .image_index   = static_cast<std::uint32_t>(frame.image_index),
                                                                    .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
@@ -536,12 +553,12 @@ export namespace spectra::rasterizer {
         class Impl;
         std::unique_ptr<Impl> impl;
 
-        void attach(RasterizerHostView host);
+        void attach(HostView host);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
         void set_scene_workspace_impl(std::shared_ptr<SceneWorkspace> scene_workspace);
         void set_control_panel_extension_impl(std::move_only_function<void()> draw);
-        [[nodiscard]] RasterizerFrameResult begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame);
+        [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
     };
 } // namespace spectra::rasterizer

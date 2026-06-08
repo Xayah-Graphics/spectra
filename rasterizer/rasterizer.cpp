@@ -107,7 +107,6 @@ namespace {
     struct ParticleDrawCommand {
         std::uint32_t firstInstance{};
         std::uint32_t instanceCount{};
-        spectra::rasterizer::SceneMaterial material{};
     };
 
     struct VolumeDrawCommand {
@@ -333,7 +332,7 @@ namespace {
 } // namespace
 
 namespace spectra::rasterizer {
-    class RasterizerRenderer::Impl {
+    class Renderer::Impl {
     public:
         explicit Impl(std::shared_ptr<SceneWorkspace> scene_workspace);
         ~Impl() noexcept;
@@ -341,11 +340,11 @@ namespace spectra::rasterizer {
         [[nodiscard]] std::string_view name() const;
         void set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace);
         void set_control_panel_extension(std::move_only_function<void()> draw);
-        void attach(RasterizerHostView host);
+        void attach(HostView host);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
-        [[nodiscard]] RasterizerFrameResult begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame);
+        [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
@@ -359,7 +358,6 @@ namespace spectra::rasterizer {
         struct FrameParticleResources {
             GpuBuffer instanceBuffer{};
             SceneRevision uploadedRevision{};
-            std::uint32_t instanceCount{};
             std::vector<ParticleDrawCommand> drawCommands{};
         };
 
@@ -375,35 +373,40 @@ namespace spectra::rasterizer {
         };
 
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
-        void register_panels(RasterizerHostView& host);
+        void wait_device_idle_for_cleanup() noexcept;
+        void register_workspace_contributions(HostView& host);
         [[nodiscard]] std::string window_detail() const;
 
         void create_viewport_resources(vk::Extent2D extent);
-        void destroy_viewport_resources_noexcept() noexcept;
         void ensure_viewport_resources();
+        void destroy_viewport_resources() noexcept;
         void create_imgui_descriptor();
-        void destroy_imgui_descriptor_noexcept() noexcept;
+        void destroy_imgui_descriptor() noexcept;
 
         void ensure_mesh_resources();
-        void destroy_mesh_resources_noexcept() noexcept;
+        void destroy_mesh_resources() noexcept;
         void ensure_particle_resources();
-        void destroy_particle_resources_noexcept() noexcept;
+        void destroy_particle_resources() noexcept;
         void ensure_volume_resources();
-        void destroy_volume_resources_noexcept() noexcept;
+        void destroy_volume_resources() noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
-        void destroy_host_buffer_noexcept(GpuBuffer& buffer) noexcept;
+        void destroy_host_buffer(GpuBuffer& buffer) noexcept;
         void create_volume_image(GpuImage3D& image, vk::Extent3D extent);
-        void destroy_volume_image_noexcept(GpuImage3D& image) noexcept;
-        void upload_scene_resources(std::uint32_t frame_index);
-        void upload_particle_resources(std::uint32_t frame_index);
-        void upload_volume_resources(std::uint32_t frame_index);
-        void update_camera_uniform(std::uint32_t frame_index);
+        void destroy_volume_image(GpuImage3D& image) noexcept;
+
         [[nodiscard]] std::vector<SceneMesh> collect_render_meshes() const;
         [[nodiscard]] std::vector<SceneParticleSet> collect_render_particle_sets() const;
         [[nodiscard]] std::vector<SceneVolumeGrid> collect_render_volumes() const;
         [[nodiscard]] SceneMaterial resolve_material(std::string_view material_name) const;
         [[nodiscard]] const SceneVolumeChannel& require_volume_channel(const SceneVolumeGrid& volume, std::string_view channel_name, SceneVolumeChannelLayout layout) const;
+        [[nodiscard]] const SceneVolumeGrid* select_render_volume_grid(const std::vector<SceneVolumeGrid>& volumes) const;
+
+        void upload_scene_resources(std::uint32_t frame_index);
+        void upload_particle_resources(std::uint32_t frame_index);
+        void upload_volume_resources(std::uint32_t frame_index);
+        void update_camera_uniform(std::uint32_t frame_index);
         void record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume);
+
         void record_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
@@ -411,19 +414,30 @@ namespace spectra::rasterizer {
         void draw_viewport_window();
         void draw_rasterizer_window();
         void commit_timeline_from_ui(SimulationTimeline timeline);
+        [[nodiscard]] bool timeline_playing() const;
+        void toggle_timeline_playback();
+        void request_timeline_reset();
 
-        const vk::raii::PhysicalDevice* physical_device{};
-        const vk::raii::Device* device{};
-        vk::Extent2D swapchain_extent{};
-        std::uint32_t frame_count{};
-        std::uint32_t active_frame_index{};
-        bool attached{false};
-        bool imgui_ready{false};
-        std::shared_ptr<SceneWorkspace> scene_workspace{};
-        std::move_only_function<void()> control_panel_extension{};
+        struct {
+            const vk::raii::PhysicalDevice* physical_device{};
+            const vk::raii::Device* device{};
+            vk::Extent2D swapchain_extent{};
+            std::uint32_t frame_count{};
+        } host;
+
+        struct {
+            std::uint32_t active_frame_index{};
+            bool attached{false};
+            bool imgui_ready{false};
+        } lifecycle;
+
+        struct {
+            std::shared_ptr<SceneWorkspace> workspace{};
+        } scene;
 
         struct {
             vk::Extent2D requested_extent{};
+            std::move_only_function<void()> control_panel_extension{};
         } ui;
 
         struct {
@@ -472,111 +486,149 @@ namespace spectra::rasterizer {
         } volume_pass;
     };
 
-    RasterizerRenderer::RasterizerRenderer(std::shared_ptr<SceneWorkspace> scene_workspace) : impl(std::make_unique<Impl>(std::move(scene_workspace))) {}
+    Renderer::Renderer(std::shared_ptr<SceneWorkspace> scene_workspace) : impl(std::make_unique<Impl>(std::move(scene_workspace))) {}
 
-    RasterizerRenderer::~RasterizerRenderer() noexcept = default;
+    Renderer::~Renderer() noexcept = default;
 
-    RasterizerRenderer::RasterizerRenderer(RasterizerRenderer&& other) noexcept = default;
+    Renderer::Renderer(Renderer&& other) noexcept = default;
 
-    RasterizerRenderer& RasterizerRenderer::operator=(RasterizerRenderer&& other) noexcept = default;
+    Renderer& Renderer::operator=(Renderer&& other) noexcept = default;
 
-    std::string_view RasterizerRenderer::target_name() {
+    std::string_view Renderer::target_name() {
         return "Spectra Rasterizer";
     }
 
-    std::string_view RasterizerRenderer::name() const {
+    std::string_view Renderer::name() const {
         return this->impl->name();
     }
 
-    void RasterizerRenderer::set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace) {
+    void Renderer::set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace) {
         this->set_scene_workspace_impl(std::move(scene_workspace));
     }
 
-    void RasterizerRenderer::set_control_panel_extension(std::move_only_function<void()> draw) {
+    void Renderer::set_control_panel_extension(std::move_only_function<void()> draw) {
         this->set_control_panel_extension_impl(std::move(draw));
     }
 
-    void RasterizerRenderer::attach(RasterizerHostView host) {
+    void Renderer::attach(HostView host) {
         this->impl->attach(std::move(host));
     }
 
-    void RasterizerRenderer::detach() noexcept {
+    void Renderer::detach() noexcept {
         this->impl->detach();
     }
 
-    void RasterizerRenderer::before_imgui_shutdown() noexcept {
+    void Renderer::before_imgui_shutdown() noexcept {
         this->impl->before_imgui_shutdown();
     }
 
-    void RasterizerRenderer::after_imgui_created() {
+    void Renderer::after_imgui_created() {
         this->impl->after_imgui_created();
     }
 
-    void RasterizerRenderer::set_scene_workspace_impl(std::shared_ptr<SceneWorkspace> scene_workspace) {
+    void Renderer::set_scene_workspace_impl(std::shared_ptr<SceneWorkspace> scene_workspace) {
         this->impl->set_scene_workspace(std::move(scene_workspace));
     }
 
-    void RasterizerRenderer::set_control_panel_extension_impl(std::move_only_function<void()> draw) {
+    void Renderer::set_control_panel_extension_impl(std::move_only_function<void()> draw) {
         this->impl->set_control_panel_extension(std::move(draw));
     }
 
-    RasterizerFrameResult RasterizerRenderer::begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame) {
+    FrameResult Renderer::begin_frame(HostView host, const FrameContext& frame) {
         return this->impl->begin_frame(std::move(host), frame);
     }
 
-    void RasterizerRenderer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+    void Renderer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         this->impl->record_frame(command_buffer);
     }
 
-    RasterizerRenderer::Impl::Impl(std::shared_ptr<SceneWorkspace> scene_workspace) : scene_workspace(std::move(scene_workspace)) {
-        if (this->scene_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
-        if (!this->scene_workspace->loaded()) throw std::runtime_error("Spectra rasterizer requires a loaded scene workspace");
+    Renderer::Impl::Impl(std::shared_ptr<SceneWorkspace> scene_workspace) {
+        this->scene.workspace = std::move(scene_workspace);
+        if (this->scene.workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
+        if (!this->scene.workspace->loaded()) throw std::runtime_error("Spectra rasterizer requires a loaded scene workspace");
     }
 
-    RasterizerRenderer::Impl::~Impl() noexcept = default;
+    Renderer::Impl::~Impl() noexcept = default;
 
-    std::string_view RasterizerRenderer::Impl::name() const {
+    std::string_view Renderer::Impl::name() const {
         return "Spectra Rasterizer";
     }
 
-    void RasterizerRenderer::Impl::set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace) {
+    void Renderer::Impl::set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace) {
         if (scene_workspace == nullptr) throw std::runtime_error("Spectra rasterizer scene workspace must not be null");
         if (!scene_workspace->loaded()) throw std::runtime_error("Spectra rasterizer scene workspace must be loaded");
-        if (this->device != nullptr) this->device->waitIdle();
-        this->destroy_mesh_resources_noexcept();
-        this->destroy_particle_resources_noexcept();
-        this->destroy_volume_resources_noexcept();
-        this->scene_workspace = std::move(scene_workspace);
+        if (this->host.device != nullptr) this->host.device->waitIdle();
+        this->destroy_mesh_resources();
+        this->destroy_particle_resources();
+        this->destroy_volume_resources();
+        this->scene.workspace = std::move(scene_workspace);
     }
 
-    void RasterizerRenderer::Impl::set_control_panel_extension(std::move_only_function<void()> draw) {
-        this->control_panel_extension = std::move(draw);
+    void Renderer::Impl::set_control_panel_extension(std::move_only_function<void()> draw) {
+        this->ui.control_panel_extension = std::move(draw);
     }
 
-    void RasterizerRenderer::Impl::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
+    void Renderer::Impl::attach(HostView host) {
+        if (this->lifecycle.attached) throw std::runtime_error("Spectra rasterizer plugin is already attached");
+        this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
+        this->register_workspace_contributions(host);
+        this->lifecycle.attached = true;
+    }
+
+    void Renderer::Impl::detach() noexcept {
+        this->destroy_viewport_resources();
+        this->destroy_mesh_resources();
+        this->destroy_particle_resources();
+        this->destroy_volume_resources();
+        this->host.physical_device  = nullptr;
+        this->host.device           = nullptr;
+        this->host.swapchain_extent = vk::Extent2D{};
+        this->host.frame_count      = 0;
+        this->lifecycle.attached    = false;
+        this->lifecycle.imgui_ready = false;
+    }
+
+    void Renderer::Impl::before_imgui_shutdown() noexcept {
+        this->destroy_imgui_descriptor();
+        this->lifecycle.imgui_ready = false;
+    }
+
+    void Renderer::Impl::after_imgui_created() {
+        this->lifecycle.imgui_ready = true;
+        if (*this->viewport.image && this->viewport.imgui_descriptor == VK_NULL_HANDLE) this->create_imgui_descriptor();
+    }
+
+    void Renderer::Impl::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
         if (frame_count == 0) throw std::runtime_error("Spectra rasterizer host frame count must be positive");
         if (swapchain_extent.width == 0 || swapchain_extent.height == 0) throw std::runtime_error("Spectra rasterizer host swapchain extent must be positive");
-        this->physical_device  = &physical_device;
-        this->device           = &device;
-        this->swapchain_extent = swapchain_extent;
-        this->frame_count      = frame_count;
+        this->host.physical_device  = &physical_device;
+        this->host.device           = &device;
+        this->host.swapchain_extent = swapchain_extent;
+        this->host.frame_count      = frame_count;
         if (this->ui.requested_extent.width == 0 || this->ui.requested_extent.height == 0) this->ui.requested_extent = swapchain_extent;
     }
 
-    void RasterizerRenderer::Impl::register_panels(RasterizerHostView& host) {
-        host.register_panel(RasterizerPanel{
+    void Renderer::Impl::wait_device_idle_for_cleanup() noexcept {
+        try {
+            if (this->host.device != nullptr) this->host.device->waitIdle();
+        } catch (...) {
+        }
+    }
+
+    void Renderer::Impl::register_workspace_contributions(HostView& host) {
+        host.register_panel(Panel{
             .id                  = "rasterizer.viewport",
             .title               = "Rasterizer Viewport",
             .icon                = ICON_MS_GRID_VIEW,
             .shortcut_label      = "F7",
             .shortcut_key        = ImGuiKey_F7,
-            .dock_slot           = RasterizerDockSlot::Center,
+            .dock_slot           = DockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
             .closable            = false,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_sidebar_tab(RasterizerSidebarTab{
+        host.register_sidebar_tab(SidebarTab{
             .id             = "rasterizer.panel",
             .title          = "Rasterizer",
             .icon           = ICON_MS_TUNE,
@@ -584,18 +636,36 @@ namespace spectra::rasterizer {
             .shortcut_key   = ImGuiKey_F8,
             .draw           = [this] { this->draw_rasterizer_window(); },
         });
+        host.register_toolbar_action(ToolbarAction{
+            .id             = "rasterizer.timeline.play_pause",
+            .title          = "Play / Pause",
+            .icon           = ICON_MS_PLAY_PAUSE,
+            .shortcut_label = "Space",
+            .shortcut_key   = ImGuiKey_Space,
+            .active         = [this] { return this->timeline_playing(); },
+            .trigger        = [this] { this->toggle_timeline_playback(); },
+        });
+        host.register_toolbar_action(ToolbarAction{
+            .id             = "rasterizer.timeline.reset",
+            .title          = "Reset",
+            .icon           = ICON_MS_RESTART_ALT,
+            .shortcut_label = "R",
+            .shortcut_key   = ImGuiKey_R,
+            .active         = [] { return false; },
+            .trigger        = [this] { this->request_timeline_reset(); },
+        });
     }
 
-    std::string RasterizerRenderer::Impl::window_detail() const {
-        const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->swapchain_extent.width;
-        const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->swapchain_extent.height;
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
-        const SimulationTimeline timeline = this->scene_workspace->timeline();
+    std::string Renderer::Impl::window_detail() const {
+        const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->host.swapchain_extent.width;
+        const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
+        const SimulationTimeline timeline = this->scene.workspace->timeline();
         return std::format("{} | {} | {}x{}", scene->title.empty() ? scene->name : scene->title, timeline_mode_text(timeline.mode), width, height);
     }
 
-    void RasterizerRenderer::Impl::create_viewport_resources(const vk::Extent2D extent) {
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport without Vulkan handles");
+    void Renderer::Impl::create_viewport_resources(const vk::Extent2D extent) {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport without Vulkan handles");
         if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot create Spectra rasterizer viewport with a zero extent");
         const vk::ImageCreateInfo image_create_info{
             {},
@@ -612,15 +682,15 @@ namespace spectra::rasterizer {
             nullptr,
             vk::ImageLayout::eUndefined,
         };
-        this->viewport.image                             = vk::raii::Image{*this->device, image_create_info};
+        this->viewport.image                             = vk::raii::Image{*this->host.device, image_create_info};
         const vk::MemoryRequirements memory_requirements = this->viewport.image.getMemoryRequirements();
-        const std::uint32_t memory_type                  = find_memory_type_index(*this->physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        const std::uint32_t memory_type                  = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
         const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
-        this->viewport.memory = vk::raii::DeviceMemory{*this->device, memory_allocate_info};
+        this->viewport.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
         this->viewport.image.bindMemory(*this->viewport.memory, 0);
 
         const vk::ImageViewCreateInfo image_view_create_info{{}, *this->viewport.image, vk::ImageViewType::e2D, this->viewport.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-        this->viewport.view = vk::raii::ImageView{*this->device, image_view_create_info};
+        this->viewport.view = vk::raii::ImageView{*this->host.device, image_view_create_info};
         const vk::SamplerCreateInfo sampler_create_info{
             {},
             vk::Filter::eLinear,
@@ -639,7 +709,7 @@ namespace spectra::rasterizer {
             vk::BorderColor::eFloatOpaqueBlack,
             VK_FALSE,
         };
-        this->viewport.sampler = vk::raii::Sampler{*this->device, sampler_create_info};
+        this->viewport.sampler = vk::raii::Sampler{*this->host.device, sampler_create_info};
 
         const vk::ImageCreateInfo depth_image_create_info{
             {},
@@ -656,36 +726,30 @@ namespace spectra::rasterizer {
             nullptr,
             vk::ImageLayout::eUndefined,
         };
-        this->viewport.depth_image                             = vk::raii::Image{*this->device, depth_image_create_info};
+        this->viewport.depth_image                             = vk::raii::Image{*this->host.device, depth_image_create_info};
         const vk::MemoryRequirements depth_memory_requirements = this->viewport.depth_image.getMemoryRequirements();
-        const std::uint32_t depth_memory_type                  = find_memory_type_index(*this->physical_device, depth_memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        const std::uint32_t depth_memory_type                  = find_memory_type_index(*this->host.physical_device, depth_memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
         const vk::MemoryAllocateInfo depth_memory_allocate_info{depth_memory_requirements.size, depth_memory_type};
-        this->viewport.depth_memory = vk::raii::DeviceMemory{*this->device, depth_memory_allocate_info};
+        this->viewport.depth_memory = vk::raii::DeviceMemory{*this->host.device, depth_memory_allocate_info};
         this->viewport.depth_image.bindMemory(*this->viewport.depth_memory, 0);
         const vk::ImageViewCreateInfo depth_view_create_info{{}, *this->viewport.depth_image, vk::ImageViewType::e2D, this->viewport.depth_format, {}, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}};
-        this->viewport.depth_view = vk::raii::ImageView{*this->device, depth_view_create_info};
+        this->viewport.depth_view = vk::raii::ImageView{*this->host.device, depth_view_create_info};
 
         this->viewport.extent       = extent;
         this->viewport.layout       = vk::ImageLayout::eUndefined;
         this->viewport.depth_layout = vk::ImageLayout::eUndefined;
-        if (this->imgui_ready) this->create_imgui_descriptor();
+        if (this->lifecycle.imgui_ready) this->create_imgui_descriptor();
     }
 
-    void RasterizerRenderer::Impl::destroy_imgui_descriptor_noexcept() noexcept {
+    void Renderer::Impl::destroy_imgui_descriptor() noexcept {
         if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) return;
-        try {
-            if (this->device != nullptr) this->device->waitIdle();
-        } catch (...) {
-        }
+        this->wait_device_idle_for_cleanup();
         ImGui_ImplVulkan_RemoveTexture(this->viewport.imgui_descriptor);
         this->viewport.imgui_descriptor = VK_NULL_HANDLE;
     }
 
-    void RasterizerRenderer::Impl::destroy_viewport_resources_noexcept() noexcept {
-        try {
-            this->destroy_imgui_descriptor_noexcept();
-        } catch (...) {
-        }
+    void Renderer::Impl::destroy_viewport_resources() noexcept {
+        this->destroy_imgui_descriptor();
         this->viewport.depth_view   = nullptr;
         this->viewport.depth_image  = nullptr;
         this->viewport.depth_memory = nullptr;
@@ -698,87 +762,49 @@ namespace spectra::rasterizer {
         this->viewport.depth_layout = vk::ImageLayout::eUndefined;
     }
 
-    void RasterizerRenderer::Impl::ensure_viewport_resources() {
+    void Renderer::Impl::ensure_viewport_resources() {
         if (this->ui.requested_extent.width == 0 || this->ui.requested_extent.height == 0) return;
         if (*this->viewport.image && this->viewport.extent.width == this->ui.requested_extent.width && this->viewport.extent.height == this->ui.requested_extent.height) return;
-        this->destroy_viewport_resources_noexcept();
+        this->destroy_viewport_resources();
         this->create_viewport_resources(this->ui.requested_extent);
     }
 
-    void RasterizerRenderer::Impl::create_imgui_descriptor() {
+    void Renderer::Impl::create_imgui_descriptor() {
         if (!*this->viewport.sampler || !*this->viewport.view) throw std::runtime_error("Cannot create Spectra rasterizer descriptor before viewport resources exist");
         if (this->viewport.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra rasterizer viewport descriptor is already allocated");
         this->viewport.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*this->viewport.sampler), static_cast<VkImageView>(*this->viewport.view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra rasterizer viewport descriptor");
     }
 
-    void RasterizerRenderer::Impl::attach(RasterizerHostView host) {
-        if (this->attached) throw std::runtime_error("Spectra rasterizer plugin is already attached");
-        this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
-        this->attached = true;
-        try {
-            this->register_panels(host);
-        } catch (...) {
-            this->detach();
-            throw;
-        }
-    }
-
-    void RasterizerRenderer::Impl::detach() noexcept {
-        this->destroy_viewport_resources_noexcept();
-        this->destroy_mesh_resources_noexcept();
-        this->destroy_particle_resources_noexcept();
-        this->destroy_volume_resources_noexcept();
-        this->physical_device  = nullptr;
-        this->device           = nullptr;
-        this->swapchain_extent = vk::Extent2D{};
-        this->frame_count      = 0;
-        this->attached         = false;
-        this->imgui_ready      = false;
-    }
-
-    void RasterizerRenderer::Impl::before_imgui_shutdown() noexcept {
-        this->destroy_imgui_descriptor_noexcept();
-        this->imgui_ready = false;
-    }
-
-    void RasterizerRenderer::Impl::after_imgui_created() {
-        this->imgui_ready = true;
-        if (*this->viewport.image && this->viewport.imgui_descriptor == VK_NULL_HANDLE) this->create_imgui_descriptor();
-    }
-
-    void RasterizerRenderer::Impl::destroy_host_buffer_noexcept(GpuBuffer& buffer) noexcept {
-        try {
-            if (buffer.mapped != nullptr && this->device != nullptr && *buffer.memory) vkUnmapMemory(static_cast<VkDevice>(**this->device), static_cast<VkDeviceMemory>(*buffer.memory));
-        } catch (...) {
-        }
+    void Renderer::Impl::destroy_host_buffer(GpuBuffer& buffer) noexcept {
+        if (buffer.mapped != nullptr && this->host.device != nullptr && *buffer.memory) vkUnmapMemory(static_cast<VkDevice>(**this->host.device), static_cast<VkDeviceMemory>(*buffer.memory));
         buffer.mapped   = nullptr;
         buffer.buffer   = nullptr;
         buffer.memory   = nullptr;
         buffer.capacity = 0;
     }
 
-    void RasterizerRenderer::Impl::ensure_host_buffer(GpuBuffer& buffer, const vk::DeviceSize required_size, const vk::BufferUsageFlags usage) {
+    void Renderer::Impl::ensure_host_buffer(GpuBuffer& buffer, const vk::DeviceSize required_size, const vk::BufferUsageFlags usage) {
         if (required_size == 0) throw std::runtime_error("Cannot allocate an empty Spectra rasterizer buffer");
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot allocate Spectra rasterizer buffers without Vulkan handles");
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot allocate Spectra rasterizer buffers without Vulkan handles");
         if (*buffer.buffer && buffer.capacity >= required_size) return;
-        this->destroy_host_buffer_noexcept(buffer);
+        this->destroy_host_buffer(buffer);
         const vk::BufferCreateInfo buffer_create_info{{}, required_size, usage, vk::SharingMode::eExclusive};
-        buffer.buffer = vk::raii::Buffer{*this->device, buffer_create_info};
+        buffer.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
         const vk::MemoryRequirements memory_requirements = buffer.buffer.getMemoryRequirements();
-        const std::uint32_t memory_type                  = find_memory_type_index(*this->physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        const std::uint32_t memory_type                  = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
         const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
-        buffer.memory = vk::raii::DeviceMemory{*this->device, memory_allocate_info};
+        buffer.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
         buffer.buffer.bindMemory(*buffer.memory, 0);
-        if (vkMapMemory(static_cast<VkDevice>(**this->device), static_cast<VkDeviceMemory>(*buffer.memory), 0, required_size, 0, &buffer.mapped) != VK_SUCCESS) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
+        if (vkMapMemory(static_cast<VkDevice>(**this->host.device), static_cast<VkDeviceMemory>(*buffer.memory), 0, required_size, 0, &buffer.mapped) != VK_SUCCESS) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
         buffer.capacity = required_size;
         if (buffer.mapped == nullptr) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
     }
 
-    void RasterizerRenderer::Impl::create_volume_image(GpuImage3D& image, const vk::Extent3D extent) {
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer volume image without Vulkan handles");
+    void Renderer::Impl::create_volume_image(GpuImage3D& image, const vk::Extent3D extent) {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer volume image without Vulkan handles");
         if (extent.width == 0 || extent.height == 0 || extent.depth == 0) throw std::runtime_error("Cannot create Spectra rasterizer volume image with zero dimensions");
-        this->destroy_volume_image_noexcept(image);
+        this->destroy_volume_image(image);
         const vk::ImageCreateInfo image_create_info{
             {},
             vk::ImageType::e3D,
@@ -794,19 +820,19 @@ namespace spectra::rasterizer {
             nullptr,
             vk::ImageLayout::eUndefined,
         };
-        image.image                                      = vk::raii::Image{*this->device, image_create_info};
+        image.image                                      = vk::raii::Image{*this->host.device, image_create_info};
         const vk::MemoryRequirements memory_requirements = image.image.getMemoryRequirements();
-        const std::uint32_t memory_type                  = find_memory_type_index(*this->physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        const std::uint32_t memory_type                  = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
         const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
-        image.memory = vk::raii::DeviceMemory{*this->device, memory_allocate_info};
+        image.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
         image.image.bindMemory(*image.memory, 0);
         const vk::ImageViewCreateInfo image_view_create_info{{}, *image.image, vk::ImageViewType::e3D, vk::Format::eR32Sfloat, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-        image.view   = vk::raii::ImageView{*this->device, image_view_create_info};
+        image.view   = vk::raii::ImageView{*this->host.device, image_view_create_info};
         image.extent = extent;
         image.layout = vk::ImageLayout::eUndefined;
     }
 
-    void RasterizerRenderer::Impl::destroy_volume_image_noexcept(GpuImage3D& image) noexcept {
+    void Renderer::Impl::destroy_volume_image(GpuImage3D& image) noexcept {
         image.view   = nullptr;
         image.image  = nullptr;
         image.memory = nullptr;
@@ -814,15 +840,12 @@ namespace spectra::rasterizer {
         image.layout = vk::ImageLayout::eUndefined;
     }
 
-    void RasterizerRenderer::Impl::destroy_mesh_resources_noexcept() noexcept {
-        try {
-            if (this->device != nullptr) this->device->waitIdle();
-        } catch (...) {
-        }
-        for (GpuBuffer& uniform_buffer : this->mesh_pass.uniform_buffers) this->destroy_host_buffer_noexcept(uniform_buffer);
+    void Renderer::Impl::destroy_mesh_resources() noexcept {
+        this->wait_device_idle_for_cleanup();
+        for (GpuBuffer& uniform_buffer : this->mesh_pass.uniform_buffers) this->destroy_host_buffer(uniform_buffer);
         for (FrameSceneResources& frame_scene : this->mesh_pass.frame_scenes) {
-            this->destroy_host_buffer_noexcept(frame_scene.vertexBuffer);
-            this->destroy_host_buffer_noexcept(frame_scene.indexBuffer);
+            this->destroy_host_buffer(frame_scene.vertexBuffer);
+            this->destroy_host_buffer(frame_scene.indexBuffer);
         }
         this->mesh_pass.frame_scenes.clear();
         this->mesh_pass.uniform_buffers.clear();
@@ -834,28 +857,22 @@ namespace spectra::rasterizer {
         this->mesh_pass.frame_count       = 0;
     }
 
-    void RasterizerRenderer::Impl::destroy_particle_resources_noexcept() noexcept {
-        try {
-            if (this->device != nullptr) this->device->waitIdle();
-        } catch (...) {
-        }
-        for (FrameParticleResources& frame_particles : this->particle_pass.frame_particles) this->destroy_host_buffer_noexcept(frame_particles.instanceBuffer);
+    void Renderer::Impl::destroy_particle_resources() noexcept {
+        this->wait_device_idle_for_cleanup();
+        for (FrameParticleResources& frame_particles : this->particle_pass.frame_particles) this->destroy_host_buffer(frame_particles.instanceBuffer);
         this->particle_pass.frame_particles.clear();
         this->particle_pass.pipeline        = nullptr;
         this->particle_pass.pipeline_layout = nullptr;
         this->particle_pass.frame_count     = 0;
     }
 
-    void RasterizerRenderer::Impl::destroy_volume_resources_noexcept() noexcept {
-        try {
-            if (this->device != nullptr) this->device->waitIdle();
-        } catch (...) {
-        }
+    void Renderer::Impl::destroy_volume_resources() noexcept {
+        this->wait_device_idle_for_cleanup();
         for (FrameVolumeResources& frame_volume : this->volume_pass.frame_volumes) {
-            this->destroy_host_buffer_noexcept(frame_volume.densityStagingBuffer);
-            this->destroy_host_buffer_noexcept(frame_volume.temperatureStagingBuffer);
-            this->destroy_volume_image_noexcept(frame_volume.densityImage);
-            this->destroy_volume_image_noexcept(frame_volume.temperatureImage);
+            this->destroy_host_buffer(frame_volume.densityStagingBuffer);
+            this->destroy_host_buffer(frame_volume.temperatureStagingBuffer);
+            this->destroy_volume_image(frame_volume.densityImage);
+            this->destroy_volume_image(frame_volume.temperatureImage);
         }
         this->volume_pass.frame_volumes.clear();
         this->volume_pass.pipeline              = nullptr;
@@ -867,43 +884,43 @@ namespace spectra::rasterizer {
         this->volume_pass.frame_count           = 0;
     }
 
-    void RasterizerRenderer::Impl::ensure_mesh_resources() {
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer mesh resources without Vulkan handles");
-        if (this->frame_count == 0) throw std::runtime_error("Spectra rasterizer frame count must be positive");
-        if (*this->mesh_pass.pipeline && this->mesh_pass.frame_count == this->frame_count) return;
-        this->destroy_mesh_resources_noexcept();
+    void Renderer::Impl::ensure_mesh_resources() {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer mesh resources without Vulkan handles");
+        if (this->host.frame_count == 0) throw std::runtime_error("Spectra rasterizer frame count must be positive");
+        if (*this->mesh_pass.pipeline && this->mesh_pass.frame_count == this->host.frame_count) return;
+        this->destroy_mesh_resources();
 
         const vk::DescriptorSetLayoutBinding camera_binding{0u, vk::DescriptorType::eUniformBuffer, 1u, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment};
         const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, 1u, &camera_binding};
-        this->mesh_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->device, descriptor_set_layout_create_info};
+        this->mesh_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, descriptor_set_layout_create_info};
 
-        const vk::DescriptorPoolSize descriptor_pool_size{vk::DescriptorType::eUniformBuffer, this->frame_count};
-        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->frame_count, 1u, &descriptor_pool_size};
-        this->mesh_pass.descriptor_pool = vk::raii::DescriptorPool{*this->device, descriptor_pool_create_info};
+        const vk::DescriptorPoolSize descriptor_pool_size{vk::DescriptorType::eUniformBuffer, this->host.frame_count};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->host.frame_count, 1u, &descriptor_pool_size};
+        this->mesh_pass.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
         const vk::DescriptorSetLayout descriptor_set_layout = *this->mesh_pass.descriptor_set_layout;
-        std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(this->frame_count, descriptor_set_layout);
-        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->mesh_pass.descriptor_pool, this->frame_count, descriptor_set_layouts.data()};
-        this->mesh_pass.descriptor_sets = vk::raii::DescriptorSets{*this->device, descriptor_set_allocate_info};
-        if (this->mesh_pass.descriptor_sets.size() != this->frame_count) throw std::runtime_error("Failed to allocate Spectra rasterizer descriptor sets");
+        std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(this->host.frame_count, descriptor_set_layout);
+        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->mesh_pass.descriptor_pool, this->host.frame_count, descriptor_set_layouts.data()};
+        this->mesh_pass.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+        if (this->mesh_pass.descriptor_sets.size() != this->host.frame_count) throw std::runtime_error("Failed to allocate Spectra rasterizer descriptor sets");
 
-        this->mesh_pass.uniform_buffers.resize(this->frame_count);
-        this->mesh_pass.frame_scenes.resize(this->frame_count);
+        this->mesh_pass.uniform_buffers.resize(this->host.frame_count);
+        this->mesh_pass.frame_scenes.resize(this->host.frame_count);
         for (GpuBuffer& uniform_buffer : this->mesh_pass.uniform_buffers) this->ensure_host_buffer(uniform_buffer, sizeof(CameraUniformData), vk::BufferUsageFlagBits::eUniformBuffer);
 
         std::vector<vk::DescriptorBufferInfo> buffer_infos{};
         std::vector<vk::WriteDescriptorSet> descriptor_writes{};
-        buffer_infos.reserve(this->frame_count);
-        descriptor_writes.reserve(this->frame_count);
-        for (std::uint32_t frame_index = 0; frame_index < this->frame_count; ++frame_index) {
+        buffer_infos.reserve(this->host.frame_count);
+        descriptor_writes.reserve(this->host.frame_count);
+        for (std::uint32_t frame_index = 0; frame_index < this->host.frame_count; ++frame_index) {
             buffer_infos.emplace_back(*this->mesh_pass.uniform_buffers.at(frame_index).buffer, 0, sizeof(CameraUniformData));
             descriptor_writes.emplace_back(*this->mesh_pass.descriptor_sets.at(frame_index), 0u, 0u, 1u, vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos.back(), nullptr);
         }
-        this->device->updateDescriptorSets(descriptor_writes, {});
+        this->host.device->updateDescriptorSets(descriptor_writes, {});
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_mesh_vertex_spv_sizeInBytes, spectra_rasterizer_mesh_vertex_spv};
         const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_mesh_fragment_spv_sizeInBytes, spectra_rasterizer_mesh_fragment_spv};
-        const vk::raii::ShaderModule vertex_shader{*this->device, vertex_shader_create_info};
-        const vk::raii::ShaderModule fragment_shader{*this->device, fragment_shader_create_info};
+        const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
+        const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
         const std::array shader_stages{
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
@@ -935,7 +952,7 @@ namespace spectra::rasterizer {
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(DrawPushConstantsData)};
         const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 1u, &push_constant_range};
-        this->mesh_pass.pipeline_layout = vk::raii::PipelineLayout{*this->device, pipeline_layout_create_info};
+        this->mesh_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
         const vk::Format color_format = this->viewport.format;
         const vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{{}, 1u, &color_format, this->viewport.depth_format};
         vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{};
@@ -951,24 +968,24 @@ namespace spectra::rasterizer {
         graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
         graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
         graphics_pipeline_create_info.setLayout(*this->mesh_pass.pipeline_layout);
-        this->mesh_pass.pipeline    = vk::raii::Pipeline{*this->device, nullptr, graphics_pipeline_create_info};
-        this->mesh_pass.frame_count = this->frame_count;
+        this->mesh_pass.pipeline    = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        this->mesh_pass.frame_count = this->host.frame_count;
     }
 
-    void RasterizerRenderer::Impl::ensure_particle_resources() {
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer particle resources without Vulkan handles");
+    void Renderer::Impl::ensure_particle_resources() {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer particle resources without Vulkan handles");
         if (!*this->mesh_pass.descriptor_set_layout) throw std::runtime_error("Spectra rasterizer particle pass requires mesh camera descriptors");
-        if (*this->particle_pass.pipeline && this->particle_pass.frame_count == this->frame_count) return;
-        this->destroy_particle_resources_noexcept();
+        if (*this->particle_pass.pipeline && this->particle_pass.frame_count == this->host.frame_count) return;
+        this->destroy_particle_resources();
 
         const vk::DescriptorSetLayout descriptor_set_layout = *this->mesh_pass.descriptor_set_layout;
         const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 0u, nullptr};
-        this->particle_pass.pipeline_layout = vk::raii::PipelineLayout{*this->device, pipeline_layout_create_info};
+        this->particle_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_particle_vertex_spv_sizeInBytes, spectra_rasterizer_particle_vertex_spv};
         const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_particle_fragment_spv_sizeInBytes, spectra_rasterizer_particle_fragment_spv};
-        const vk::raii::ShaderModule vertex_shader{*this->device, vertex_shader_create_info};
-        const vk::raii::ShaderModule fragment_shader{*this->device, fragment_shader_create_info};
+        const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
+        const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
         const std::array shader_stages{
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
@@ -1013,15 +1030,15 @@ namespace spectra::rasterizer {
         graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
         graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
         graphics_pipeline_create_info.setLayout(*this->particle_pass.pipeline_layout);
-        this->particle_pass.pipeline    = vk::raii::Pipeline{*this->device, nullptr, graphics_pipeline_create_info};
-        this->particle_pass.frame_count = this->frame_count;
-        this->particle_pass.frame_particles.resize(this->frame_count);
+        this->particle_pass.pipeline    = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        this->particle_pass.frame_count = this->host.frame_count;
+        this->particle_pass.frame_particles.resize(this->host.frame_count);
     }
 
-    void RasterizerRenderer::Impl::ensure_volume_resources() {
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer volume resources without Vulkan handles");
-        if (*this->volume_pass.pipeline && this->volume_pass.frame_count == this->frame_count) return;
-        this->destroy_volume_resources_noexcept();
+    void Renderer::Impl::ensure_volume_resources() {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer volume resources without Vulkan handles");
+        if (*this->volume_pass.pipeline && this->volume_pass.frame_count == this->host.frame_count) return;
+        this->destroy_volume_resources();
 
         const std::array descriptor_bindings{
             vk::DescriptorSetLayoutBinding{0u, vk::DescriptorType::eUniformBuffer, 1u, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
@@ -1030,19 +1047,19 @@ namespace spectra::rasterizer {
             vk::DescriptorSetLayoutBinding{3u, vk::DescriptorType::eSampler, 1u, vk::ShaderStageFlagBits::eFragment},
         };
         const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(descriptor_bindings.size()), descriptor_bindings.data()};
-        this->volume_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->device, descriptor_set_layout_create_info};
+        this->volume_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, descriptor_set_layout_create_info};
         const std::array descriptor_pool_sizes{
-            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, this->frame_count},
-            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, this->frame_count * 2u},
-            vk::DescriptorPoolSize{vk::DescriptorType::eSampler, this->frame_count},
+            vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, this->host.frame_count},
+            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, this->host.frame_count * 2u},
+            vk::DescriptorPoolSize{vk::DescriptorType::eSampler, this->host.frame_count},
         };
-        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->frame_count, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
-        this->volume_pass.descriptor_pool = vk::raii::DescriptorPool{*this->device, descriptor_pool_create_info};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->host.frame_count, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+        this->volume_pass.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
         const vk::DescriptorSetLayout descriptor_set_layout = *this->volume_pass.descriptor_set_layout;
-        std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(this->frame_count, descriptor_set_layout);
-        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->volume_pass.descriptor_pool, this->frame_count, descriptor_set_layouts.data()};
-        this->volume_pass.descriptor_sets = vk::raii::DescriptorSets{*this->device, descriptor_set_allocate_info};
-        if (this->volume_pass.descriptor_sets.size() != this->frame_count) throw std::runtime_error("Failed to allocate Spectra rasterizer volume descriptor sets");
+        std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(this->host.frame_count, descriptor_set_layout);
+        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->volume_pass.descriptor_pool, this->host.frame_count, descriptor_set_layouts.data()};
+        this->volume_pass.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+        if (this->volume_pass.descriptor_sets.size() != this->host.frame_count) throw std::runtime_error("Failed to allocate Spectra rasterizer volume descriptor sets");
 
         const vk::SamplerCreateInfo sampler_create_info{
             {},
@@ -1062,17 +1079,17 @@ namespace spectra::rasterizer {
             vk::BorderColor::eFloatTransparentBlack,
             VK_FALSE,
         };
-        this->volume_pass.sampler = vk::raii::Sampler{*this->device, sampler_create_info};
+        this->volume_pass.sampler = vk::raii::Sampler{*this->host.device, sampler_create_info};
 
         const vk::DescriptorSetLayout volume_descriptor_set_layout = *this->volume_pass.descriptor_set_layout;
         const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(VolumePushConstantsData)};
         const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &volume_descriptor_set_layout, 1u, &push_constant_range};
-        this->volume_pass.pipeline_layout = vk::raii::PipelineLayout{*this->device, pipeline_layout_create_info};
+        this->volume_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_volume_vertex_spv_sizeInBytes, spectra_rasterizer_volume_vertex_spv};
         const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_volume_fragment_spv_sizeInBytes, spectra_rasterizer_volume_fragment_spv};
-        const vk::raii::ShaderModule vertex_shader{*this->device, vertex_shader_create_info};
-        const vk::raii::ShaderModule fragment_shader{*this->device, fragment_shader_create_info};
+        const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
+        const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
         const std::array shader_stages{
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
@@ -1112,15 +1129,15 @@ namespace spectra::rasterizer {
         graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
         graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
         graphics_pipeline_create_info.setLayout(*this->volume_pass.pipeline_layout);
-        this->volume_pass.pipeline    = vk::raii::Pipeline{*this->device, nullptr, graphics_pipeline_create_info};
-        this->volume_pass.frame_count = this->frame_count;
-        this->volume_pass.frame_volumes.resize(this->frame_count);
+        this->volume_pass.pipeline    = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        this->volume_pass.frame_count = this->host.frame_count;
+        this->volume_pass.frame_volumes.resize(this->host.frame_count);
     }
 
-    std::vector<SceneMesh> RasterizerRenderer::Impl::collect_render_meshes() const {
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+    std::vector<SceneMesh> Renderer::Impl::collect_render_meshes() const {
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         std::vector<SceneMesh> meshes = scene->meshes;
-        const std::optional<SceneFrameSnapshot> frame = this->scene_workspace->frame();
+        const std::optional<SceneFrameSnapshot> frame = this->scene.workspace->frame();
         if (!frame.has_value()) return meshes;
         for (const SceneMesh& frame_mesh : frame->meshes) {
             bool replaced = false;
@@ -1135,10 +1152,10 @@ namespace spectra::rasterizer {
         return meshes;
     }
 
-    std::vector<SceneParticleSet> RasterizerRenderer::Impl::collect_render_particle_sets() const {
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+    std::vector<SceneParticleSet> Renderer::Impl::collect_render_particle_sets() const {
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         std::vector<SceneParticleSet> particle_sets = scene->particleSets;
-        const std::optional<SceneFrameSnapshot> frame = this->scene_workspace->frame();
+        const std::optional<SceneFrameSnapshot> frame = this->scene.workspace->frame();
         if (!frame.has_value()) return particle_sets;
         for (const SceneParticleSet& frame_particle_set : frame->particleSets) {
             bool replaced = false;
@@ -1153,10 +1170,10 @@ namespace spectra::rasterizer {
         return particle_sets;
     }
 
-    std::vector<SceneVolumeGrid> RasterizerRenderer::Impl::collect_render_volumes() const {
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+    std::vector<SceneVolumeGrid> Renderer::Impl::collect_render_volumes() const {
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         std::vector<SceneVolumeGrid> volumes = scene->volumes;
-        const std::optional<SceneFrameSnapshot> frame = this->scene_workspace->frame();
+        const std::optional<SceneFrameSnapshot> frame = this->scene.workspace->frame();
         if (!frame.has_value()) return volumes;
         for (const SceneVolumeGrid& frame_volume : frame->volumes) {
             bool replaced = false;
@@ -1171,16 +1188,16 @@ namespace spectra::rasterizer {
         return volumes;
     }
 
-    SceneMaterial RasterizerRenderer::Impl::resolve_material(const std::string_view material_name) const {
-        if (material_name.empty()) throw std::runtime_error("Rasterizer mesh material name must not be empty");
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+    SceneMaterial Renderer::Impl::resolve_material(const std::string_view material_name) const {
+        if (material_name.empty()) throw std::runtime_error("Rasterizer material name must not be empty");
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         for (const SceneMaterial& material : scene->materials) {
             if (material.name == material_name) return material;
         }
         throw std::runtime_error(std::format("Rasterizer material \"{}\" does not exist", material_name));
     }
 
-    const SceneVolumeChannel& RasterizerRenderer::Impl::require_volume_channel(const SceneVolumeGrid& volume, const std::string_view channel_name, const SceneVolumeChannelLayout layout) const {
+    const SceneVolumeChannel& Renderer::Impl::require_volume_channel(const SceneVolumeGrid& volume, const std::string_view channel_name, const SceneVolumeChannelLayout layout) const {
         for (const SceneVolumeChannel& channel : volume.channels) {
             if (channel.name != channel_name) continue;
             if (channel.layout != layout) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" has the wrong layout", channel.name));
@@ -1192,10 +1209,16 @@ namespace spectra::rasterizer {
         throw std::runtime_error(std::format("Rasterizer volume \"{}\" does not contain required channel \"{}\"", volume.name, channel_name));
     }
 
-    void RasterizerRenderer::Impl::upload_scene_resources(const std::uint32_t frame_index) {
+    const SceneVolumeGrid* Renderer::Impl::select_render_volume_grid(const std::vector<SceneVolumeGrid>& volumes) const {
+        if (volumes.empty()) return nullptr;
+        if (volumes.size() != 1u) throw std::runtime_error("Spectra rasterizer first-stage volume pass supports exactly one volume grid");
+        return &volumes.front();
+    }
+
+    void Renderer::Impl::upload_scene_resources(const std::uint32_t frame_index) {
         if (frame_index >= this->mesh_pass.frame_scenes.size()) throw std::runtime_error("Spectra rasterizer frame scene index is out of range");
         FrameSceneResources& frame_scene = this->mesh_pass.frame_scenes.at(frame_index);
-        const SceneRevision scene_revision = this->scene_workspace->revision();
+        const SceneRevision scene_revision = this->scene.workspace->revision();
         if (frame_scene.uploadedRevision == scene_revision) return;
 
         std::vector<RasterizerVertex> vertices{};
@@ -1247,10 +1270,10 @@ namespace spectra::rasterizer {
         frame_scene.uploadedRevision = scene_revision;
     }
 
-    void RasterizerRenderer::Impl::upload_particle_resources(const std::uint32_t frame_index) {
+    void Renderer::Impl::upload_particle_resources(const std::uint32_t frame_index) {
         if (frame_index >= this->particle_pass.frame_particles.size()) throw std::runtime_error("Spectra rasterizer particle frame index is out of range");
         FrameParticleResources& frame_particles = this->particle_pass.frame_particles.at(frame_index);
-        const SceneRevision scene_revision = this->scene_workspace->revision();
+        const SceneRevision scene_revision = this->scene.workspace->revision();
         if (frame_particles.uploadedRevision == scene_revision) return;
 
         std::vector<ParticleInstance> instances{};
@@ -1278,14 +1301,13 @@ namespace spectra::rasterizer {
                     .a = color.w,
                 });
             }
+            static_cast<void>(this->resolve_material(particle_set.materialName));
             draw_commands.push_back(ParticleDrawCommand{
                 .firstInstance = first_instance,
                 .instanceCount = static_cast<std::uint32_t>(particle_set.positions.size()),
-                .material      = this->resolve_material(particle_set.materialName),
             });
         }
 
-        frame_particles.instanceCount = static_cast<std::uint32_t>(instances.size());
         frame_particles.drawCommands = std::move(draw_commands);
         if (!instances.empty()) {
             const vk::DeviceSize instance_bytes = static_cast<vk::DeviceSize>(instances.size() * sizeof(ParticleInstance));
@@ -1295,22 +1317,22 @@ namespace spectra::rasterizer {
         frame_particles.uploadedRevision = scene_revision;
     }
 
-    void RasterizerRenderer::Impl::upload_volume_resources(const std::uint32_t frame_index) {
+    void Renderer::Impl::upload_volume_resources(const std::uint32_t frame_index) {
         if (frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer volume frame index is out of range");
         FrameVolumeResources& frame_volume = this->volume_pass.frame_volumes.at(frame_index);
-        const SceneRevision scene_revision = this->scene_workspace->revision();
+        const SceneRevision scene_revision = this->scene.workspace->revision();
         if (frame_volume.uploadedRevision == scene_revision) return;
 
         const std::vector<SceneVolumeGrid> volumes = this->collect_render_volumes();
-        if (volumes.empty()) {
+        const SceneVolumeGrid* selected_volume = this->select_render_volume_grid(volumes);
+        if (selected_volume == nullptr) {
             frame_volume.uploadedRevision = scene_revision;
             frame_volume.uploadPending    = false;
             frame_volume.descriptorValid  = false;
             frame_volume.drawCommand      = VolumeDrawCommand{};
             return;
         }
-        if (volumes.size() != 1u) throw std::runtime_error("Spectra rasterizer volume pass currently expects exactly one volume grid");
-        const SceneVolumeGrid& volume = volumes.front();
+        const SceneVolumeGrid& volume = *selected_volume;
         if (volume.dimensions[0] == 0 || volume.dimensions[1] == 0 || volume.dimensions[2] == 0) throw std::runtime_error(std::format("Rasterizer volume \"{}\" has zero dimensions", volume.name));
         const SceneVolumeChannel& density_channel = this->require_volume_channel(volume, "density", SceneVolumeChannelLayout::CellCentered);
         const SceneVolumeChannel& temperature_channel = this->require_volume_channel(volume, "temperature", SceneVolumeChannelLayout::CellCentered);
@@ -1340,7 +1362,7 @@ namespace spectra::rasterizer {
                 vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 2u, 0u, 1u, vk::DescriptorType::eSampledImage, &temperature_image_info, nullptr, nullptr},
                 vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 3u, 0u, 1u, vk::DescriptorType::eSampler, &sampler_info, nullptr, nullptr},
             };
-            this->device->updateDescriptorSets(descriptor_writes, {});
+            this->host.device->updateDescriptorSets(descriptor_writes, {});
             frame_volume.descriptorValid = true;
         }
         frame_volume.drawCommand = VolumeDrawCommand{
@@ -1351,7 +1373,7 @@ namespace spectra::rasterizer {
         frame_volume.uploadedRevision = scene_revision;
     }
 
-    void RasterizerRenderer::Impl::record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume) {
+    void Renderer::Impl::record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume) {
         if (!frame_volume.uploadPending) return;
         if (!*frame_volume.densityImage.image || !*frame_volume.temperatureImage.image) throw std::runtime_error("Spectra rasterizer volume upload is missing GPU images");
         if (!*frame_volume.densityStagingBuffer.buffer || !*frame_volume.temperatureStagingBuffer.buffer) throw std::runtime_error("Spectra rasterizer volume upload is missing staging buffers");
@@ -1379,18 +1401,18 @@ namespace spectra::rasterizer {
         frame_volume.uploadPending = false;
     }
 
-    void RasterizerRenderer::Impl::update_camera_uniform(const std::uint32_t frame_index) {
+    void Renderer::Impl::update_camera_uniform(const std::uint32_t frame_index) {
         if (frame_index >= this->mesh_pass.uniform_buffers.size()) throw std::runtime_error("Spectra rasterizer uniform frame index is out of range");
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         const CameraUniformData camera_uniform = make_camera_uniform(*scene, this->viewport.extent);
         std::memcpy(this->mesh_pass.uniform_buffers.at(frame_index).mapped, &camera_uniform, sizeof(camera_uniform));
     }
 
-    RasterizerFrameResult RasterizerRenderer::Impl::begin_frame(RasterizerHostView host, const RasterizerFrameInfo& frame) {
+    FrameResult Renderer::Impl::begin_frame(HostView host, const FrameContext& frame) {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
-        if (frame.frame_index >= this->frame_count) throw std::runtime_error("Spectra rasterizer frame index is out of range");
-        this->active_frame_index = frame.frame_index;
-        RasterizerFrameResult result{};
+        if (frame.frame_index >= this->host.frame_count) throw std::runtime_error("Spectra rasterizer frame index is out of range");
+        this->lifecycle.active_frame_index = frame.frame_index;
+        FrameResult result{};
         this->ensure_viewport_resources();
         this->ensure_mesh_resources();
         this->ensure_particle_resources();
@@ -1403,15 +1425,15 @@ namespace spectra::rasterizer {
         return result;
     }
 
-    void RasterizerRenderer::Impl::record_mesh_pass(const vk::raii::CommandBuffer& command_buffer) {
-        FrameSceneResources& frame_scene = this->mesh_pass.frame_scenes.at(this->active_frame_index);
+    void Renderer::Impl::record_mesh_pass(const vk::raii::CommandBuffer& command_buffer) {
+        FrameSceneResources& frame_scene = this->mesh_pass.frame_scenes.at(this->lifecycle.active_frame_index);
         if (frame_scene.drawCommands.empty()) return;
         const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
         const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
         command_buffer.setViewport(0u, viewport);
         command_buffer.setScissor(0u, scissor);
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.pipeline);
-        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.pipeline_layout, 0u, *this->mesh_pass.descriptor_sets.at(this->active_frame_index), {});
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.pipeline_layout, 0u, *this->mesh_pass.descriptor_sets.at(this->lifecycle.active_frame_index), {});
         const std::array<vk::Buffer, 1> vertex_buffers{*frame_scene.vertexBuffer.buffer};
         constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
         command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
@@ -1428,9 +1450,9 @@ namespace spectra::rasterizer {
         }
     }
 
-    void RasterizerRenderer::Impl::record_volume_pass(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->active_frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer active volume frame index is out of range");
-        FrameVolumeResources& frame_volume = this->volume_pass.frame_volumes.at(this->active_frame_index);
+    void Renderer::Impl::record_volume_pass(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer active volume frame index is out of range");
+        FrameVolumeResources& frame_volume = this->volume_pass.frame_volumes.at(this->lifecycle.active_frame_index);
         if (!frame_volume.descriptorValid || frame_volume.drawCommand.volume.name.empty()) return;
         const SceneVolumeGrid& volume = frame_volume.drawCommand.volume;
         const SceneMaterial& material = frame_volume.drawCommand.material;
@@ -1439,7 +1461,7 @@ namespace spectra::rasterizer {
         command_buffer.setViewport(0u, viewport);
         command_buffer.setScissor(0u, scissor);
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_pass.pipeline);
-        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_pass.pipeline_layout, 0u, *this->volume_pass.descriptor_sets.at(this->active_frame_index), {});
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_pass.pipeline_layout, 0u, *this->volume_pass.descriptor_sets.at(this->lifecycle.active_frame_index), {});
         const VolumePushConstantsData push_constants{
             .originDensityScale = {volume.origin.x, volume.origin.y, volume.origin.z, 1.0f},
             .extentStepScale    = {volume.voxelSize.x * static_cast<float>(volume.dimensions[0]), volume.voxelSize.y * static_cast<float>(volume.dimensions[1]), volume.voxelSize.z * static_cast<float>(volume.dimensions[2]), 1.0f},
@@ -1450,27 +1472,27 @@ namespace spectra::rasterizer {
         command_buffer.draw(36u, 1u, 0u, 0u);
     }
 
-    void RasterizerRenderer::Impl::record_particle_pass(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->active_frame_index >= this->particle_pass.frame_particles.size()) throw std::runtime_error("Spectra rasterizer active particle frame index is out of range");
-        FrameParticleResources& frame_particles = this->particle_pass.frame_particles.at(this->active_frame_index);
+    void Renderer::Impl::record_particle_pass(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->particle_pass.frame_particles.size()) throw std::runtime_error("Spectra rasterizer active particle frame index is out of range");
+        FrameParticleResources& frame_particles = this->particle_pass.frame_particles.at(this->lifecycle.active_frame_index);
         if (frame_particles.drawCommands.empty()) return;
         const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
         const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
         command_buffer.setViewport(0u, viewport);
         command_buffer.setScissor(0u, scissor);
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->particle_pass.pipeline);
-        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->particle_pass.pipeline_layout, 0u, *this->mesh_pass.descriptor_sets.at(this->active_frame_index), {});
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->particle_pass.pipeline_layout, 0u, *this->mesh_pass.descriptor_sets.at(this->lifecycle.active_frame_index), {});
         const std::array<vk::Buffer, 1> vertex_buffers{*frame_particles.instanceBuffer.buffer};
         constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
         command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
         for (const ParticleDrawCommand& draw_command : frame_particles.drawCommands) command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
     }
 
-    void RasterizerRenderer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
+    void Renderer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         if (!*this->viewport.image) return;
-        if (this->active_frame_index >= this->mesh_pass.frame_scenes.size()) throw std::runtime_error("Spectra rasterizer active frame index is out of range");
-        if (this->active_frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer active frame volume index is out of range");
-        this->record_pending_volume_upload(command_buffer, this->volume_pass.frame_volumes.at(this->active_frame_index));
+        if (this->lifecycle.active_frame_index >= this->mesh_pass.frame_scenes.size()) throw std::runtime_error("Spectra rasterizer active frame index is out of range");
+        if (this->lifecycle.active_frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer active frame volume index is out of range");
+        this->record_pending_volume_upload(command_buffer, this->volume_pass.frame_volumes.at(this->lifecycle.active_frame_index));
 
         transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eColorAttachmentOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
         this->viewport.layout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -1511,13 +1533,13 @@ namespace spectra::rasterizer {
         this->viewport.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
-    void RasterizerRenderer::Impl::draw_viewport_window() {
+    void Renderer::Impl::draw_viewport_window() {
         const ImVec2 available = ImGui::GetContentRegionAvail();
         if (available.x > 1.0f && available.y > 1.0f) this->ui.requested_extent = vk::Extent2D{static_cast<std::uint32_t>(available.x), static_cast<std::uint32_t>(available.y)};
         if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) return;
         ImGui::Image(reinterpret_cast<ImTextureID>(this->viewport.imgui_descriptor), available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
 
-        const SimulationTimeline timeline = this->scene_workspace->timeline();
+        const SimulationTimeline timeline = this->scene.workspace->timeline();
         const std::string overlay_text = std::format("{}  frame {}  {:.2f}s  recorded {}", timeline_mode_text(timeline.mode), timeline.cursor.frameIndex, timeline.cursor.timeSeconds, timeline.recordedFrames.size());
         const ImVec2 image_min = ImGui::GetItemRectMin();
         const ImVec2 padding{10.0f, 8.0f};
@@ -1529,21 +1551,37 @@ namespace spectra::rasterizer {
         draw_list->AddText(ImVec2{box_min.x + padding.x, box_min.y + padding.y}, IM_COL32(232, 236, 238, 255), overlay_text.c_str());
     }
 
-    void RasterizerRenderer::Impl::commit_timeline_from_ui(SimulationTimeline timeline) {
+    void Renderer::Impl::commit_timeline_from_ui(SimulationTimeline timeline) {
         SceneEditBuilder edit{};
         edit.replaceTimeline(std::move(timeline));
-        const SceneEditBatch batch = this->scene_workspace->commit(std::move(edit));
+        const SceneEditBatch batch = this->scene.workspace->commit(std::move(edit));
         if (!HasSceneDirtyFlag(batch.dirty, SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer timeline UI edit did not mark the timeline dirty");
     }
 
-    void RasterizerRenderer::Impl::draw_rasterizer_window() {
+    bool Renderer::Impl::timeline_playing() const {
+        return this->scene.workspace->timeline().playing;
+    }
+
+    void Renderer::Impl::toggle_timeline_playback() {
+        SimulationTimeline timeline = this->scene.workspace->timeline();
+        timeline.playing = !timeline.playing;
+        this->commit_timeline_from_ui(std::move(timeline));
+    }
+
+    void Renderer::Impl::request_timeline_reset() {
+        SimulationTimeline timeline = this->scene.workspace->timeline();
+        ++timeline.resetRequestSerial;
+        this->commit_timeline_from_ui(std::move(timeline));
+    }
+
+    void Renderer::Impl::draw_rasterizer_window() {
         constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
-        if (this->control_panel_extension) {
-            this->control_panel_extension();
+        if (this->ui.control_panel_extension) {
+            this->ui.control_panel_extension();
             ImGui::Separator();
         }
-        const std::shared_ptr<const SceneDocument> scene = this->scene_workspace->document();
-        SimulationTimeline timeline = this->scene_workspace->timeline();
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
+        SimulationTimeline timeline = this->scene.workspace->timeline();
         bool timeline_changed = false;
 
         ImGui::TextUnformatted("Rasterizer");
@@ -1601,7 +1639,7 @@ namespace spectra::rasterizer {
         ImGui::EndDisabled();
         if (timeline_changed) this->commit_timeline_from_ui(std::move(timeline));
 
-        const SimulationTimeline current_timeline = this->scene_workspace->timeline();
+        const SimulationTimeline current_timeline = this->scene.workspace->timeline();
         ImGui::SeparatorText("Status");
         if (ImGui::BeginTable("SpectraRasterizerStatus", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
@@ -1612,7 +1650,7 @@ namespace spectra::rasterizer {
             draw_status_row("Frame", std::format("{} / {:.3f}s", current_timeline.cursor.frameIndex, current_timeline.cursor.timeSeconds));
             draw_status_row("Recorded", std::format("{}", current_timeline.recordedFrames.size()));
             draw_status_row("Viewport", std::format("{} x {}", this->viewport.extent.width, this->viewport.extent.height));
-            draw_status_row("Swapchain", std::format("{} x {}", this->swapchain_extent.width, this->swapchain_extent.height));
+            draw_status_row("Swapchain", std::format("{} x {}", this->host.swapchain_extent.width, this->host.swapchain_extent.height));
             ImGui::EndTable();
         }
 
