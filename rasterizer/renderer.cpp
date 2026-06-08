@@ -45,15 +45,6 @@ namespace {
         float a{};
     };
 
-    struct CameraUniformData {
-        std::array<float, 16> viewProjection{};
-        std::array<float, 4> cameraPosition{};
-        std::array<float, 4> lightDirection{};
-        std::array<float, 4> lightColorIntensity{};
-        std::array<float, 4> cameraRight{};
-        std::array<float, 4> cameraUp{};
-    };
-
     struct DrawPushConstantsData {
         std::array<float, 16> model{};
         std::array<float, 4> baseColor{};
@@ -83,32 +74,45 @@ namespace {
         };
     }
 
-    [[nodiscard]] CameraUniformData make_camera_uniform(const spectra::rasterizer::SceneDocument& scene, const vk::Extent2D extent) {
-        if (!scene.camera.has_value()) throw std::runtime_error("Rasterizer mesh rendering requires a scene camera");
-        const spectra::rasterizer::SceneCamera& camera = *scene.camera;
-        const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(to_render_vector(camera.transform.position), to_render_vector(camera.target));
-        const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::multiply_matrix(spectra::rasterizer::math::look_at_matrix(basis.eye, basis.target), spectra::rasterizer::math::perspective_matrix(camera.verticalFovDegrees, aspect, camera.nearPlane, camera.farPlane));
+    [[nodiscard]] spectra::rasterizer::SceneVector3 to_scene_vector(const spectra::rasterizer::math::Vector3& value) {
+        return spectra::rasterizer::SceneVector3{value.x, value.y, value.z};
+    }
 
-        spectra::rasterizer::math::Vector3 light_direction{-0.35f, -0.8f, -0.45f};
-        spectra::rasterizer::math::Vector3 light_color{1.0f, 1.0f, 1.0f};
-        float light_intensity = 1.0f;
+    struct LightUniformData {
+        spectra::rasterizer::math::Vector3 direction{-0.35f, -0.8f, -0.45f};
+        spectra::rasterizer::math::Vector3 color{1.0f, 1.0f, 1.0f};
+        float intensity{1.0f};
+    };
+
+    [[nodiscard]] LightUniformData scene_light_uniform(const spectra::rasterizer::SceneDocument& scene) {
+        LightUniformData data{};
         for (const spectra::rasterizer::SceneLight& light : scene.lights) {
             if (light.kind != spectra::rasterizer::SceneLightKind::Directional) continue;
-            light_color     = to_render_vector(light.color);
-            light_intensity = light.intensity;
+            data.color      = to_render_vector(light.color);
+            data.intensity  = light.intensity;
             break;
         }
+        return data;
+    }
 
-        const spectra::rasterizer::math::Vector3 normalized_light_direction = spectra::rasterizer::math::normalize_vector(light_direction);
-        return CameraUniformData{
-            .viewProjection      = view_projection.values,
-            .cameraPosition      = {basis.eye.x, basis.eye.y, basis.eye.z, 0.0f},
-            .lightDirection      = {normalized_light_direction.x, normalized_light_direction.y, normalized_light_direction.z, 0.0f},
-            .lightColorIntensity = {light_color.x, light_color.y, light_color.z, light_intensity},
-            .cameraRight         = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
-            .cameraUp            = {basis.up.x, basis.up.y, basis.up.z, 0.0f},
-        };
+    [[nodiscard]] float clamp_viewport_pitch(const float pitch) {
+        constexpr float limit = std::numbers::pi_v<float> * 0.49f;
+        return std::clamp(pitch, -limit, limit);
+    }
+
+    void draw_tooltip(const char* text) {
+        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) return;
+        ImGui::SetTooltip("%s", text);
+    }
+
+    [[nodiscard]] float nice_viewport_grid_step(const float target_step) {
+        if (!std::isfinite(target_step) || target_step <= 0.0f) throw std::runtime_error("Rasterizer viewport grid target step must be positive");
+        const float exponent = std::floor(std::log10(target_step));
+        const float base = std::pow(10.0f, exponent);
+        const float scaled = target_step / base;
+        if (scaled >= 5.0f) return base * 5.0f;
+        if (scaled >= 2.0f) return base * 2.0f;
+        return base;
     }
 
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageAspectFlags aspect, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -162,6 +166,7 @@ namespace spectra::rasterizer {
         this->scene.workspace = std::move(scene_workspace);
         if (this->scene.workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
         if (!this->scene.workspace->loaded()) throw std::runtime_error("Spectra rasterizer requires a loaded scene workspace");
+        this->reset_viewport_camera_from_scene();
     }
 
     Renderer::~Renderer() noexcept = default;
@@ -211,6 +216,7 @@ namespace spectra::rasterizer {
         this->destroy_particle_resources();
         this->destroy_volume_resources();
         this->scene.workspace = std::move(scene_workspace);
+        this->reset_viewport_camera_from_scene();
     }
 
     void Renderer::set_control_panel_extension(std::move_only_function<void()> draw) {
@@ -498,12 +504,13 @@ namespace spectra::rasterizer {
         }
         this->mesh_pass.frame_scenes.clear();
         this->mesh_pass.uniform_buffers.clear();
-        this->mesh_pass.pipeline          = nullptr;
-        this->mesh_pass.pipeline_layout   = nullptr;
-        this->mesh_pass.descriptor_sets   = nullptr;
-        this->mesh_pass.descriptor_pool   = nullptr;
+        this->mesh_pass.viewport_grid_pipeline = nullptr;
+        this->mesh_pass.pipeline               = nullptr;
+        this->mesh_pass.pipeline_layout        = nullptr;
+        this->mesh_pass.descriptor_sets        = nullptr;
+        this->mesh_pass.descriptor_pool        = nullptr;
         this->mesh_pass.descriptor_set_layout = nullptr;
-        this->mesh_pass.frame_count       = 0;
+        this->mesh_pass.frame_count           = 0;
     }
 
     void Renderer::destroy_particle_resources() noexcept {
@@ -536,7 +543,7 @@ namespace spectra::rasterizer {
     void Renderer::ensure_mesh_resources() {
         if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer mesh resources without Vulkan handles");
         if (this->host.frame_count == 0) throw std::runtime_error("Spectra rasterizer frame count must be positive");
-        if (*this->mesh_pass.pipeline && this->mesh_pass.frame_count == this->host.frame_count) return;
+        if (*this->mesh_pass.pipeline && *this->mesh_pass.viewport_grid_pipeline && this->mesh_pass.frame_count == this->host.frame_count) return;
         this->destroy_mesh_resources();
 
         const vk::DescriptorSetLayoutBinding camera_binding{0u, vk::DescriptorType::eUniformBuffer, 1u, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment};
@@ -618,6 +625,22 @@ namespace spectra::rasterizer {
         graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
         graphics_pipeline_create_info.setLayout(*this->mesh_pass.pipeline_layout);
         this->mesh_pass.pipeline    = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+
+        const vk::PipelineDepthStencilStateCreateInfo grid_depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineColorBlendAttachmentState grid_color_blend_attachment{
+            VK_TRUE,
+            vk::BlendFactor::eSrcAlpha,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        };
+        const vk::PipelineColorBlendStateCreateInfo grid_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &grid_color_blend_attachment};
+        graphics_pipeline_create_info.setPDepthStencilState(&grid_depth_stencil_state);
+        graphics_pipeline_create_info.setPColorBlendState(&grid_color_blend_state);
+        this->mesh_pass.viewport_grid_pipeline = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
         this->mesh_pass.frame_count = this->host.frame_count;
     }
 
@@ -907,6 +930,110 @@ namespace spectra::rasterizer {
             });
         }
 
+        if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
+        const SceneBounds bounds = this->scene_bounds();
+        float grid_radius = this->viewport.camera_distance;
+        if (bounds.valid) {
+            const spectra::rasterizer::math::Vector3 diagonal = spectra::rasterizer::math::subtract_vector(to_render_vector(bounds.maximum), to_render_vector(bounds.minimum));
+            grid_radius = std::max(1.0f, spectra::rasterizer::math::length_vector(diagonal) * 0.5f);
+        }
+        if (!std::isfinite(grid_radius) || grid_radius <= 0.0f) throw std::runtime_error("Rasterizer viewport grid radius must be positive");
+
+        const float grid_step = nice_viewport_grid_step(grid_radius / 12.0f);
+        const int grid_half_line_count = std::clamp(static_cast<int>(std::ceil(grid_radius * 1.35f / grid_step)), 8, 48);
+        const float grid_extent = static_cast<float>(grid_half_line_count) * grid_step;
+        const float minor_half_width = std::max(grid_step * 0.004f, 0.004f);
+        const float major_half_width = minor_half_width * 1.6f;
+        const float axis_half_width = minor_half_width * 2.2f;
+        constexpr float grid_y = 0.003f;
+
+        const SceneMaterial minor_grid_material{
+            .name             = "viewport.grid.minor",
+            .baseColor        = SceneVector4{0.0f, 0.0f, 0.0f, 0.48f},
+            .emissionColor    = SceneVector3{0.055f, 0.062f, 0.070f},
+            .emissionStrength = 1.0f,
+        };
+        const SceneMaterial major_grid_material{
+            .name             = "viewport.grid.major",
+            .baseColor        = SceneVector4{0.0f, 0.0f, 0.0f, 0.62f},
+            .emissionColor    = SceneVector3{0.095f, 0.105f, 0.118f},
+            .emissionStrength = 1.0f,
+        };
+        const SceneMaterial x_axis_material{
+            .name             = "viewport.grid.axis.x",
+            .baseColor        = SceneVector4{0.0f, 0.0f, 0.0f, 0.78f},
+            .emissionColor    = SceneVector3{0.50f, 0.09f, 0.075f},
+            .emissionStrength = 1.0f,
+        };
+        const SceneMaterial z_axis_material{
+            .name             = "viewport.grid.axis.z",
+            .baseColor        = SceneVector4{0.0f, 0.0f, 0.0f, 0.78f},
+            .emissionColor    = SceneVector3{0.08f, 0.20f, 0.54f},
+            .emissionStrength = 1.0f,
+        };
+
+        const auto append_grid_quad = [&vertices, &indices, &draw_commands](std::string name, const std::array<SceneVector3, 4>& corners, const SceneMaterial& material) {
+            if (vertices.size() + corners.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport grid vertex count exceeds uint32 range");
+            if (indices.size() + 6u > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport grid index count exceeds uint32 range");
+            const std::uint32_t first_vertex = static_cast<std::uint32_t>(vertices.size());
+            const std::uint32_t first_index = static_cast<std::uint32_t>(indices.size());
+            for (const SceneVector3& corner : corners) {
+                vertices.push_back(RasterizerVertex{
+                    .px = corner.x,
+                    .py = corner.y,
+                    .pz = corner.z,
+                    .nx = 0.0f,
+                    .ny = 1.0f,
+                    .nz = 0.0f,
+                });
+            }
+            indices.push_back(first_vertex + 0u);
+            indices.push_back(first_vertex + 1u);
+            indices.push_back(first_vertex + 2u);
+            indices.push_back(first_vertex + 2u);
+            indices.push_back(first_vertex + 3u);
+            indices.push_back(first_vertex + 0u);
+            draw_commands.push_back(RenderDrawCommand{
+                .kind       = RenderDrawKind::ViewportGrid,
+                .name       = std::move(name),
+                .firstIndex = first_index,
+                .indexCount = 6u,
+                .transform  = SceneTransform{},
+                .material   = material,
+            });
+        };
+
+        const auto append_x_grid_line = [&append_grid_quad, grid_extent, grid_y](std::string name, const float z, const float half_width, const SceneMaterial& material) {
+            append_grid_quad(std::move(name), std::array{
+                                               SceneVector3{-grid_extent, grid_y, z - half_width},
+                                               SceneVector3{grid_extent, grid_y, z - half_width},
+                                               SceneVector3{grid_extent, grid_y, z + half_width},
+                                               SceneVector3{-grid_extent, grid_y, z + half_width},
+                                           },
+                             material);
+        };
+        const auto append_z_grid_line = [&append_grid_quad, grid_extent, grid_y](std::string name, const float x, const float half_width, const SceneMaterial& material) {
+            append_grid_quad(std::move(name), std::array{
+                                               SceneVector3{x - half_width, grid_y, -grid_extent},
+                                               SceneVector3{x + half_width, grid_y, -grid_extent},
+                                               SceneVector3{x + half_width, grid_y, grid_extent},
+                                               SceneVector3{x - half_width, grid_y, grid_extent},
+                                           },
+                             material);
+        };
+
+        for (int line_index = -grid_half_line_count; line_index <= grid_half_line_count; ++line_index) {
+            if (line_index == 0) continue;
+            const float coordinate = static_cast<float>(line_index) * grid_step;
+            const bool major_line = line_index % 5 == 0;
+            const float half_width = major_line ? major_half_width : minor_half_width;
+            const SceneMaterial& material = major_line ? major_grid_material : minor_grid_material;
+            append_x_grid_line(std::format("viewport.grid.x.{}", line_index), coordinate, half_width, material);
+            append_z_grid_line(std::format("viewport.grid.z.{}", line_index), coordinate, half_width, material);
+        }
+        append_x_grid_line("viewport.grid.axis.x", 0.0f, axis_half_width, x_axis_material);
+        append_z_grid_line("viewport.grid.axis.z", 0.0f, axis_half_width, z_axis_material);
+
         if (!vertices.empty()) {
             const vk::DeviceSize vertex_bytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(RasterizerVertex));
             const vk::DeviceSize index_bytes  = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
@@ -1051,10 +1178,151 @@ namespace spectra::rasterizer {
         frame_volume.uploadPending = false;
     }
 
+    void Renderer::reset_viewport_camera_from_scene() {
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
+        if (!scene->camera.has_value()) throw std::runtime_error("Spectra rasterizer viewport requires a scene camera");
+        const SceneCamera& camera = *scene->camera;
+        const spectra::rasterizer::math::Vector3 eye = to_render_vector(camera.transform.position);
+        const spectra::rasterizer::math::Vector3 target = to_render_vector(camera.target);
+        const spectra::rasterizer::math::Vector3 offset = spectra::rasterizer::math::subtract_vector(eye, target);
+        const float distance = spectra::rasterizer::math::length_vector(offset);
+        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Spectra rasterizer scene camera must not be located at its target");
+        this->viewport.camera_target = camera.target;
+        this->viewport.camera_distance = std::max(distance, 0.02f);
+        this->viewport.camera_yaw = std::atan2(offset.x, offset.z);
+        this->viewport.camera_pitch = clamp_viewport_pitch(std::asin(std::clamp(offset.y / distance, -1.0f, 1.0f)));
+        this->viewport.camera_vertical_fov_degrees = camera.verticalFovDegrees;
+        this->viewport.camera_near_plane = camera.nearPlane;
+        this->viewport.camera_far_plane = camera.farPlane;
+        this->viewport.projection = ViewProjection::Perspective;
+        this->viewport.camera_initialized = true;
+    }
+
+    Renderer::SceneBounds Renderer::scene_bounds() const {
+        SceneBounds bounds{};
+        const auto include_point = [&bounds](const SceneVector3& point) {
+            if (!bounds.valid) {
+                bounds.minimum = point;
+                bounds.maximum = point;
+                bounds.valid = true;
+                return;
+            }
+            bounds.minimum.x = std::min(bounds.minimum.x, point.x);
+            bounds.minimum.y = std::min(bounds.minimum.y, point.y);
+            bounds.minimum.z = std::min(bounds.minimum.z, point.z);
+            bounds.maximum.x = std::max(bounds.maximum.x, point.x);
+            bounds.maximum.y = std::max(bounds.maximum.y, point.y);
+            bounds.maximum.z = std::max(bounds.maximum.z, point.z);
+        };
+        const auto include_transformed_point = [&include_point](const SceneVector3& point, const SceneTransform& transform) {
+            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
+            include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
+        };
+
+        for (const SceneMesh& mesh : this->collect_render_meshes()) {
+            for (const SceneVector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
+        }
+        for (const SceneParticleSet& particle_set : this->collect_render_particle_sets()) {
+            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
+            for (std::size_t index = 0; index < particle_set.positions.size(); ++index) {
+                const SceneVector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(particle_set.positions.at(index))));
+                const float radius = index < particle_set.radii.size() ? std::max(0.0f, particle_set.radii.at(index)) : 0.0f;
+                include_point(SceneVector3{center.x - radius, center.y - radius, center.z - radius});
+                include_point(SceneVector3{center.x + radius, center.y + radius, center.z + radius});
+            }
+        }
+        for (const SceneVolumeGrid& volume : this->collect_render_volumes()) {
+            include_point(volume.origin);
+            include_point(SceneVector3{
+                volume.origin.x + volume.voxelSize.x * static_cast<float>(volume.dimensions[0]),
+                volume.origin.y + volume.voxelSize.y * static_cast<float>(volume.dimensions[1]),
+                volume.origin.z + volume.voxelSize.z * static_cast<float>(volume.dimensions[2]),
+            });
+        }
+        return bounds;
+    }
+
+    void Renderer::frame_viewport_scene() {
+        const SceneBounds bounds = this->scene_bounds();
+        if (!bounds.valid) {
+            this->reset_viewport_camera_from_scene();
+            return;
+        }
+        const SceneVector3 center{
+            (bounds.minimum.x + bounds.maximum.x) * 0.5f,
+            (bounds.minimum.y + bounds.maximum.y) * 0.5f,
+            (bounds.minimum.z + bounds.maximum.z) * 0.5f,
+        };
+        const spectra::rasterizer::math::Vector3 diagonal = spectra::rasterizer::math::subtract_vector(to_render_vector(bounds.maximum), to_render_vector(bounds.minimum));
+        const float radius = std::max(0.1f, spectra::rasterizer::math::length_vector(diagonal) * 0.5f);
+        this->viewport.camera_target = center;
+        this->viewport.camera_distance = std::clamp(radius * 2.6f, 0.02f, 1000000.0f);
+        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, this->viewport.camera_distance + radius * 6.0f);
+        this->viewport.camera_initialized = true;
+    }
+
+    void Renderer::set_viewport_axis_view(const SceneVector3 direction) {
+        const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize_vector(to_render_vector(direction));
+        this->viewport.camera_yaw = std::atan2(normalized.x, normalized.z);
+        this->viewport.camera_pitch = clamp_viewport_pitch(std::asin(std::clamp(normalized.y, -1.0f, 1.0f)));
+        this->viewport.camera_initialized = true;
+    }
+
+    void Renderer::toggle_viewport_projection() {
+        this->viewport.projection = this->viewport.projection == ViewProjection::Perspective ? ViewProjection::Orthographic : ViewProjection::Perspective;
+    }
+
+    void Renderer::orbit_viewport_camera(const ViewportDragDelta delta) {
+        constexpr float orbit_radians_per_pixel = 0.006f;
+        this->viewport.camera_yaw -= delta.x * orbit_radians_per_pixel;
+        this->viewport.camera_pitch = clamp_viewport_pitch(this->viewport.camera_pitch + delta.y * orbit_radians_per_pixel);
+    }
+
+    void Renderer::pan_viewport_camera(const ViewportDragDelta delta, const float viewport_height) {
+        if (!std::isfinite(viewport_height) || viewport_height <= 0.0f) throw std::runtime_error("Rasterizer viewport pan requires a positive viewport height");
+        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
+        const float pan_scale = this->viewport.projection == ViewProjection::Perspective
+                                    ? spectra::rasterizer::math::perspective_pan_scale(this->viewport.camera_distance, this->viewport.camera_vertical_fov_degrees, viewport_height)
+                                    : std::max(0.02f, this->viewport.camera_distance) / viewport_height;
+        spectra::rasterizer::math::Vector3 target = to_render_vector(this->viewport.camera_target);
+        target = spectra::rasterizer::math::add_vector(target, spectra::rasterizer::math::scale_vector(basis.side, -delta.x * pan_scale));
+        target = spectra::rasterizer::math::add_vector(target, spectra::rasterizer::math::scale_vector(basis.up, delta.y * pan_scale));
+        this->viewport.camera_target = to_scene_vector(target);
+    }
+
+    void Renderer::zoom_viewport_camera(const float steps) {
+        if (!std::isfinite(steps)) throw std::runtime_error("Rasterizer viewport zoom input must be finite");
+        const float zoom_factor = std::pow(0.88f, steps);
+        this->viewport.camera_distance = std::clamp(this->viewport.camera_distance * zoom_factor, 0.02f, 1000000.0f);
+    }
+
+    Renderer::CameraUniformData Renderer::make_viewport_camera_uniform() const {
+        if (!this->viewport.camera_initialized) throw std::runtime_error("Spectra rasterizer viewport camera is not initialized");
+        if (this->viewport.extent.width == 0 || this->viewport.extent.height == 0) throw std::runtime_error("Cannot create Spectra rasterizer camera uniform without a viewport extent");
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
+        const float aspect = static_cast<float>(this->viewport.extent.width) / static_cast<float>(this->viewport.extent.height);
+        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
+        const float far_plane = std::max(this->viewport.camera_far_plane, this->viewport.camera_distance * 4.0f);
+        const spectra::rasterizer::math::Matrix4 projection = this->viewport.projection == ViewProjection::Perspective
+                                                                  ? spectra::rasterizer::math::perspective_matrix(this->viewport.camera_vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane)
+                                                                  : spectra::rasterizer::math::orthographic_matrix(std::max(0.02f, this->viewport.camera_distance), aspect, this->viewport.camera_near_plane, far_plane);
+        const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::multiply_matrix(spectra::rasterizer::math::look_at_matrix(basis.eye, basis.target), projection);
+        const LightUniformData light = scene_light_uniform(*scene);
+        const spectra::rasterizer::math::Vector3 normalized_light_direction = spectra::rasterizer::math::normalize_vector(light.direction);
+        return CameraUniformData{
+            .viewProjection      = view_projection.values,
+            .cameraPosition      = {basis.eye.x, basis.eye.y, basis.eye.z, 0.0f},
+            .lightDirection      = {normalized_light_direction.x, normalized_light_direction.y, normalized_light_direction.z, 0.0f},
+            .lightColorIntensity = {light.color.x, light.color.y, light.color.z, light.intensity},
+            .cameraRight         = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
+            .cameraUp            = {basis.up.x, basis.up.y, basis.up.z, 0.0f},
+        };
+    }
+
     void Renderer::update_camera_uniform(const std::uint32_t frame_index) {
         if (frame_index >= this->mesh_pass.uniform_buffers.size()) throw std::runtime_error("Spectra rasterizer uniform frame index is out of range");
-        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
-        const CameraUniformData camera_uniform = make_camera_uniform(*scene, this->viewport.extent);
+        if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
+        const CameraUniformData camera_uniform = this->make_viewport_camera_uniform();
         std::memcpy(this->mesh_pass.uniform_buffers.at(frame_index).mapped, &camera_uniform, sizeof(camera_uniform));
     }
 
@@ -1089,9 +1357,36 @@ namespace spectra::rasterizer {
         command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
         command_buffer.bindIndexBuffer(*frame_scene.indexBuffer.buffer, 0, vk::IndexType::eUint32);
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
+            if (draw_command.kind != RenderDrawKind::Scene) continue;
             const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform));
             const DrawPushConstantsData push_constants{
                 .model     = model_matrix.values,
+                .baseColor = {draw_command.material.baseColor.x, draw_command.material.baseColor.y, draw_command.material.baseColor.z, draw_command.material.baseColor.w},
+                .emission  = {draw_command.material.emissionColor.x * draw_command.material.emissionStrength, draw_command.material.emissionColor.y * draw_command.material.emissionStrength, draw_command.material.emissionColor.z * draw_command.material.emissionStrength, 0.0f},
+            };
+            command_buffer.pushConstants(*this->mesh_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
+            command_buffer.drawIndexed(draw_command.indexCount, 1u, draw_command.firstIndex, 0, 0u);
+        }
+    }
+
+    void Renderer::record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer) {
+        if (!this->viewport.grid_visible) return;
+        FrameSceneResources& frame_scene = this->mesh_pass.frame_scenes.at(this->lifecycle.active_frame_index);
+        if (frame_scene.drawCommands.empty()) return;
+        const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
+        command_buffer.setViewport(0u, viewport);
+        command_buffer.setScissor(0u, scissor);
+        command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.viewport_grid_pipeline);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.pipeline_layout, 0u, *this->mesh_pass.descriptor_sets.at(this->lifecycle.active_frame_index), {});
+        const std::array<vk::Buffer, 1> vertex_buffers{*frame_scene.vertexBuffer.buffer};
+        constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
+        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+        command_buffer.bindIndexBuffer(*frame_scene.indexBuffer.buffer, 0, vk::IndexType::eUint32);
+        for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
+            if (draw_command.kind != RenderDrawKind::ViewportGrid) continue;
+            const DrawPushConstantsData push_constants{
+                .model     = spectra::rasterizer::math::identity_matrix().values,
                 .baseColor = {draw_command.material.baseColor.x, draw_command.material.baseColor.y, draw_command.material.baseColor.z, draw_command.material.baseColor.w},
                 .emission  = {draw_command.material.emissionColor.x * draw_command.material.emissionStrength, draw_command.material.emissionColor.y * draw_command.material.emissionStrength, draw_command.material.emissionColor.z * draw_command.material.emissionStrength, 0.0f},
             };
@@ -1149,7 +1444,7 @@ namespace spectra::rasterizer {
         transition_image_layout(command_buffer, *this->viewport.depth_image, vk::ImageAspectFlagBits::eDepth, this->viewport.depth_layout, vk::ImageLayout::eDepthAttachmentOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite);
         this->viewport.depth_layout = vk::ImageLayout::eDepthAttachmentOptimal;
 
-        constexpr std::array<float, 4> clear_color{0.06f, 0.065f, 0.062f, 1.0f};
+        constexpr std::array<float, 4> clear_color{0.035f, 0.038f, 0.043f, 1.0f};
         const vk::ClearValue clear_value{vk::ClearColorValue{clear_color}};
         const vk::ClearValue depth_clear_value{vk::ClearDepthStencilValue{1.0f, 0u}};
         const vk::RenderingAttachmentInfo color_attachment{
@@ -1175,6 +1470,7 @@ namespace spectra::rasterizer {
         const vk::RenderingInfo rendering_info{{}, {{0, 0}, this->viewport.extent}, 1, 0, 1, &color_attachment, &depth_attachment, nullptr};
         command_buffer.beginRendering(rendering_info);
         this->record_mesh_pass(command_buffer);
+        this->record_viewport_grid_pass(command_buffer);
         this->record_volume_pass(command_buffer);
         this->record_particle_pass(command_buffer);
         command_buffer.endRendering();
@@ -1183,22 +1479,183 @@ namespace spectra::rasterizer {
         this->viewport.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
+    void Renderer::handle_viewport_input(const ViewportImageRect image_rect) {
+        const ImVec2 image_min{image_rect.x, image_rect.y};
+        const ImVec2 image_size{image_rect.width, image_rect.height};
+        const ImVec2 image_max{image_min.x + image_size.x, image_min.y + image_size.y};
+        this->viewport.hovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(image_min, image_max);
+        if (!this->viewport.hovered) return;
+        if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
+
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.MouseWheel != 0.0f) this->zoom_viewport_camera(io.MouseWheel);
+
+        const ViewportDragDelta delta{
+            .x = io.MouseDelta.x,
+            .y = io.MouseDelta.y,
+        };
+        const float viewport_height = std::max(1.0f, image_size.y);
+        if (io.KeyAlt) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) this->orbit_viewport_camera(delta);
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) this->pan_viewport_camera(delta, viewport_height);
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) this->zoom_viewport_camera(-delta.y * 0.035f);
+        } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+            if (io.KeyShift) this->pan_viewport_camera(delta, viewport_height);
+            else if (io.KeyCtrl) this->zoom_viewport_camera(-delta.y * 0.035f);
+            else this->orbit_viewport_camera(delta);
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_F, false) || ImGui::IsKeyPressed(ImGuiKey_Home, false)) this->frame_viewport_scene();
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->set_viewport_axis_view(SceneVector3{0.0f, 0.0f, 1.0f});
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->set_viewport_axis_view(SceneVector3{1.0f, 0.0f, 0.0f});
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->set_viewport_axis_view(SceneVector3{0.0f, 1.0f, 0.0f});
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad5, false)) this->toggle_viewport_projection();
+    }
+
+    void Renderer::draw_viewport_toolbar(const ViewportImageRect image_rect) {
+        if (image_rect.width < 230.0f || image_rect.height < 54.0f) return;
+        const ImVec2 image_min{image_rect.x, image_rect.y};
+        const ImVec2 image_max{image_rect.x + image_rect.width, image_rect.y + image_rect.height};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        constexpr float button_size = 30.0f;
+        constexpr float gap = 4.0f;
+        const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
+        const ImVec2 padding{6.0f, 5.0f};
+        const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 6.0f + gap * 5.0f, origin.y + padding.y * 2.0f + button_size};
+        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 208), 7.0f);
+        draw_list->AddRect(origin, background_max, IM_COL32(92, 102, 112, 96), 7.0f);
+
+        ImGui::PushClipRect(image_min, image_max, true);
+        ImGui::PushID("SpectraRasterizerViewportToolbar");
+        const auto draw_button = [button_size](const char* label, const char* tooltip, const bool active) {
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.16f, 0.28f, 0.34f, 1.0f});
+            const bool clicked = ImGui::Button(label, ImVec2{button_size, button_size});
+            if (active) ImGui::PopStyleColor();
+            draw_tooltip(tooltip);
+            return clicked;
+        };
+
+        ImGui::SetCursorScreenPos(ImVec2{origin.x + padding.x, origin.y + padding.y});
+        if (draw_button(ICON_MS_RESET_FOCUS "##reset_view", "Reset View", false)) this->reset_viewport_camera_from_scene();
+        ImGui::SameLine(0.0f, gap);
+        if (draw_button(ICON_MS_CENTER_FOCUS_STRONG "##frame_all", "Frame All", false)) this->frame_viewport_scene();
+        ImGui::SameLine(0.0f, gap);
+        if (draw_button(ICON_MS_PUBLIC "##projection", this->viewport.projection == ViewProjection::Perspective ? "Perspective" : "Orthographic", this->viewport.projection == ViewProjection::Orthographic)) this->toggle_viewport_projection();
+        ImGui::SameLine(0.0f, gap);
+        if (draw_button(this->viewport.grid_visible ? ICON_MS_GRID_ON "##grid" : ICON_MS_GRID_OFF "##grid", "Grid", this->viewport.grid_visible)) this->viewport.grid_visible = !this->viewport.grid_visible;
+        ImGui::SameLine(0.0f, gap);
+        if (draw_button(this->viewport.overlays_visible ? ICON_MS_VISIBILITY "##overlays" : ICON_MS_VISIBILITY_OFF "##overlays", "Overlays", this->viewport.overlays_visible)) this->viewport.overlays_visible = !this->viewport.overlays_visible;
+        ImGui::SameLine(0.0f, gap);
+        ImGui::BeginDisabled();
+        ImGui::Button(ICON_MS_SCREENSHOT "##screenshot", ImVec2{button_size, button_size});
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", "Screenshot");
+        ImGui::PopID();
+        ImGui::PopClipRect();
+    }
+
+    void Renderer::draw_orientation_gizmo(const ViewportImageRect image_rect) {
+        if (!this->viewport.camera_initialized) return;
+        if (image_rect.width < 130.0f || image_rect.height < 110.0f) return;
+        const ImVec2 image_min{image_rect.x, image_rect.y};
+        const ImVec2 image_size{image_rect.width, image_rect.height};
+        const ImVec2 origin{image_min.x + image_size.x - 94.0f, image_min.y + 14.0f};
+        const ImVec2 size{78.0f, 78.0f};
+        const ImVec2 center{origin.x + size.x * 0.5f, origin.y + size.y * 0.5f};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(13, 15, 18, 186), 9.0f);
+        draw_list->AddRect(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(96, 106, 116, 90), 9.0f);
+
+        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
+        const auto axis_endpoint = [&basis, &center](const spectra::rasterizer::math::Vector3 axis) {
+            spectra::rasterizer::math::Vector3 projected{spectra::rasterizer::math::dot_vector(axis, basis.side), -spectra::rasterizer::math::dot_vector(axis, basis.up), 0.0f};
+            const float length = spectra::rasterizer::math::length_vector(projected);
+            if (length > 0.0001f) projected = spectra::rasterizer::math::scale_vector(projected, 1.0f / length);
+            return ImVec2{center.x + projected.x * 25.0f, center.y + projected.y * 25.0f};
+        };
+        const ImVec2 x_end = axis_endpoint(spectra::rasterizer::math::Vector3{1.0f, 0.0f, 0.0f});
+        const ImVec2 y_end = axis_endpoint(spectra::rasterizer::math::Vector3{0.0f, 1.0f, 0.0f});
+        const ImVec2 z_end = axis_endpoint(spectra::rasterizer::math::Vector3{0.0f, 0.0f, 1.0f});
+        draw_list->AddLine(center, x_end, IM_COL32(232, 94, 82, 230), 2.0f);
+        draw_list->AddLine(center, y_end, IM_COL32(112, 202, 124, 230), 2.0f);
+        draw_list->AddLine(center, z_end, IM_COL32(96, 152, 238, 230), 2.0f);
+        draw_list->AddText(ImVec2{x_end.x - 4.0f, x_end.y - 7.0f}, IM_COL32(255, 136, 128, 255), "X");
+        draw_list->AddText(ImVec2{y_end.x - 4.0f, y_end.y - 7.0f}, IM_COL32(154, 226, 166, 255), "Y");
+        draw_list->AddText(ImVec2{z_end.x - 4.0f, z_end.y - 7.0f}, IM_COL32(136, 178, 255, 255), "Z");
+
+        ImGui::PushID("SpectraRasterizerOrientationGizmo");
+        ImGui::SetCursorScreenPos(ImVec2{x_end.x - 10.0f, x_end.y - 10.0f});
+        if (ImGui::InvisibleButton("x", ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(SceneVector3{1.0f, 0.0f, 0.0f});
+        ImGui::SetCursorScreenPos(ImVec2{y_end.x - 10.0f, y_end.y - 10.0f});
+        if (ImGui::InvisibleButton("y", ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(SceneVector3{0.0f, 1.0f, 0.0f});
+        ImGui::SetCursorScreenPos(ImVec2{z_end.x - 10.0f, z_end.y - 10.0f});
+        if (ImGui::InvisibleButton("z", ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(SceneVector3{0.0f, 0.0f, 1.0f});
+        ImGui::PopID();
+    }
+
+    void Renderer::draw_viewport_overlays(const ViewportImageRect image_rect) {
+        if (!this->viewport.overlays_visible) return;
+        if (image_rect.width <= 1.0f || image_rect.height <= 1.0f) return;
+        const ImVec2 image_min{image_rect.x, image_rect.y};
+        const ImVec2 image_size{image_rect.width, image_rect.height};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const ImVec2 image_max{image_min.x + image_size.x, image_min.y + image_size.y};
+
+        ImGui::PushClipRect(image_min, image_max, true);
+        const SimulationTimeline timeline = this->scene.workspace->timeline();
+        const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
+        const char* projection_text = this->viewport.projection == ViewProjection::Perspective ? "Perspective" : "Orthographic";
+        std::string hud = std::format("{} | frame {} | {:.2f}s | {}x{} | {}", timeline_mode_text(timeline.mode), timeline.cursor.frameIndex, timeline.cursor.timeSeconds, this->viewport.extent.width, this->viewport.extent.height, projection_text);
+        const ImVec2 hud_padding{10.0f, 7.0f};
+        ImVec2 hud_text = ImGui::CalcTextSize(hud.c_str());
+        if (hud_text.x + hud_padding.x * 2.0f > image_size.x - 24.0f) {
+            hud = std::format("{} | f{} | {}", timeline_mode_text(timeline.mode), timeline.cursor.frameIndex, projection_text);
+            hud_text = ImGui::CalcTextSize(hud.c_str());
+        }
+        const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
+        const ImVec2 hud_max{hud_min.x + hud_text.x + hud_padding.x * 2.0f, hud_min.y + hud_text.y + hud_padding.y * 2.0f};
+        draw_list->AddRectFilled(hud_min, hud_max, IM_COL32(15, 18, 22, 184), 7.0f);
+        draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
+
+        const std::size_t primitive_count = scene->meshes.size() + scene->particleSets.size() + scene->pointClouds.size() + scene->volumes.size() + scene->curveSets.size() + scene->splatSets.size() + scene->lineSets.size() + scene->debugPrimitives.size() + scene->vectorFields.size();
+        std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, this->viewport.camera_distance);
+        const ImVec2 chip_padding{10.0f, 7.0f};
+        ImVec2 chip_text = ImGui::CalcTextSize(chip.c_str());
+        if (chip_text.x + chip_padding.x * 2.0f > image_size.x - 24.0f) {
+            chip = std::format("rev {} | dist {:.2f}", this->scene.workspace->revision().value, this->viewport.camera_distance);
+            chip_text = ImGui::CalcTextSize(chip.c_str());
+        }
+        const ImVec2 chip_min{image_max.x - chip_text.x - chip_padding.x * 2.0f - 12.0f, image_max.y - chip_text.y - chip_padding.y * 2.0f - 12.0f};
+        const ImVec2 chip_max{chip_min.x + chip_text.x + chip_padding.x * 2.0f, chip_min.y + chip_text.y + chip_padding.y * 2.0f};
+        draw_list->AddRectFilled(chip_min, chip_max, IM_COL32(15, 18, 22, 164), 7.0f);
+        draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, IM_COL32(206, 214, 220, 255), chip.c_str());
+
+        this->draw_orientation_gizmo(image_rect);
+        ImGui::PopClipRect();
+    }
+
     void Renderer::draw_viewport_window() {
         const ImVec2 available = ImGui::GetContentRegionAvail();
         if (available.x > 1.0f && available.y > 1.0f) this->ui.requested_extent = vk::Extent2D{static_cast<std::uint32_t>(available.x), static_cast<std::uint32_t>(available.y)};
-        if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) return;
-        ImGui::Image(reinterpret_cast<ImTextureID>(this->viewport.imgui_descriptor), available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
-
-        const SimulationTimeline timeline = this->scene.workspace->timeline();
-        const std::string overlay_text = std::format("{}  frame {}  {:.2f}s  recorded {}", timeline_mode_text(timeline.mode), timeline.cursor.frameIndex, timeline.cursor.timeSeconds, timeline.recordedFrames.size());
-        const ImVec2 image_min = ImGui::GetItemRectMin();
-        const ImVec2 padding{10.0f, 8.0f};
-        const ImVec2 text_size = ImGui::CalcTextSize(overlay_text.c_str());
-        const ImVec2 box_min{image_min.x + 12.0f, image_min.y + 12.0f};
-        const ImVec2 box_max{box_min.x + text_size.x + padding.x * 2.0f, box_min.y + text_size.y + padding.y * 2.0f};
+        const ImVec2 image_min = ImGui::GetCursorScreenPos();
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        draw_list->AddRectFilled(box_min, box_max, IM_COL32(18, 22, 24, 176), 6.0f);
-        draw_list->AddText(ImVec2{box_min.x + padding.x, box_min.y + padding.y}, IM_COL32(232, 236, 238, 255), overlay_text.c_str());
+        draw_list->AddRectFilled(image_min, ImVec2{image_min.x + available.x, image_min.y + available.y}, IM_COL32(9, 11, 14, 255));
+        if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) {
+            ImGui::Dummy(available);
+            return;
+        }
+        ImGui::Image(reinterpret_cast<ImTextureID>(this->viewport.imgui_descriptor), available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
+        const ImVec2 item_min = ImGui::GetItemRectMin();
+        const ImVec2 item_size = ImGui::GetItemRectSize();
+        const ViewportImageRect image_rect{
+            .x      = item_min.x,
+            .y      = item_min.y,
+            .width  = item_size.x,
+            .height = item_size.y,
+        };
+        this->handle_viewport_input(image_rect);
+        this->draw_viewport_overlays(image_rect);
+        this->draw_viewport_toolbar(image_rect);
     }
 
     void Renderer::commit_timeline_from_ui(SimulationTimeline timeline) {

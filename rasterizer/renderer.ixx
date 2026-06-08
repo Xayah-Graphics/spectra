@@ -82,7 +82,22 @@ namespace spectra::rasterizer {
             vk::ImageLayout layout{vk::ImageLayout::eUndefined};
         };
 
+        struct CameraUniformData {
+            std::array<float, 16> viewProjection{};
+            std::array<float, 4> cameraPosition{};
+            std::array<float, 4> lightDirection{};
+            std::array<float, 4> lightColorIntensity{};
+            std::array<float, 4> cameraRight{};
+            std::array<float, 4> cameraUp{};
+        };
+
+        enum class RenderDrawKind {
+            Scene,
+            ViewportGrid,
+        };
+
         struct RenderDrawCommand {
+            RenderDrawKind kind{RenderDrawKind::Scene};
             std::string name{};
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
@@ -98,6 +113,29 @@ namespace spectra::rasterizer {
         struct VolumeDrawCommand {
             SceneVolumeGrid volume{};
             SceneMaterial material{};
+        };
+
+        enum class ViewProjection {
+            Perspective,
+            Orthographic,
+        };
+
+        struct SceneBounds {
+            SceneVector3 minimum{};
+            SceneVector3 maximum{};
+            bool valid{false};
+        };
+
+        struct ViewportImageRect {
+            float x{};
+            float y{};
+            float width{};
+            float height{};
+        };
+
+        struct ViewportDragDelta {
+            float x{};
+            float y{};
         };
 
         struct FrameSceneResources {
@@ -168,8 +206,23 @@ namespace spectra::rasterizer {
         void update_camera_uniform(std::uint32_t frame_index);
 
         void record_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
+
+        void reset_viewport_camera_from_scene();
+        void frame_viewport_scene();
+        void set_viewport_axis_view(SceneVector3 direction);
+        void toggle_viewport_projection();
+        void orbit_viewport_camera(ViewportDragDelta delta);
+        void pan_viewport_camera(ViewportDragDelta delta, float viewport_height);
+        void zoom_viewport_camera(float steps);
+        void handle_viewport_input(ViewportImageRect image_rect);
+        void draw_viewport_overlays(ViewportImageRect image_rect);
+        void draw_viewport_toolbar(ViewportImageRect image_rect);
+        void draw_orientation_gizmo(ViewportImageRect image_rect);
+        [[nodiscard]] SceneBounds scene_bounds() const;
+        [[nodiscard]] CameraUniformData make_viewport_camera_uniform() const;
 
         void draw_viewport_window();
         void draw_rasterizer_window();
@@ -214,6 +267,18 @@ namespace spectra::rasterizer {
             vk::raii::Image depth_image{nullptr};
             vk::raii::DeviceMemory depth_memory{nullptr};
             vk::raii::ImageView depth_view{nullptr};
+            SceneVector3 camera_target{};
+            float camera_distance{1.0f};
+            float camera_yaw{};
+            float camera_pitch{};
+            float camera_vertical_fov_degrees{45.0f};
+            float camera_near_plane{0.01f};
+            float camera_far_plane{200.0f};
+            ViewProjection projection{ViewProjection::Perspective};
+            bool camera_initialized{false};
+            bool overlays_visible{true};
+            bool grid_visible{true};
+            bool hovered{false};
         } viewport;
 
         struct {
@@ -223,6 +288,7 @@ namespace spectra::rasterizer {
             vk::raii::DescriptorSets descriptor_sets{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
+            vk::raii::Pipeline viewport_grid_pipeline{nullptr};
             std::vector<GpuBuffer> uniform_buffers{};
             std::vector<FrameSceneResources> frame_scenes{};
         } mesh_pass;

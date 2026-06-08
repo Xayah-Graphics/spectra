@@ -77,8 +77,20 @@ namespace spectra::rasterizer::math {
         return Vector3{lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
     }
 
+    export [[nodiscard]] Vector3 add_vector(const Vector3 lhs, const Vector3 rhs) {
+        return Vector3{lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
+    }
+
+    export [[nodiscard]] Vector3 scale_vector(const Vector3 value, const float scale) {
+        return Vector3{value.x * scale, value.y * scale, value.z * scale};
+    }
+
+    export [[nodiscard]] float length_vector(const Vector3 value) {
+        return std::sqrt(dot_vector(value, value));
+    }
+
     export [[nodiscard]] Vector3 normalize_vector(const Vector3 value) {
-        const float length = std::sqrt(dot_vector(value, value));
+        const float length = length_vector(value);
         if (!std::isfinite(length) || length <= 0.0f) throw std::runtime_error("Cannot normalize a zero-length rasterizer vector");
         return Vector3{value.x / length, value.y / length, value.z / length};
     }
@@ -92,6 +104,17 @@ namespace spectra::rasterizer::math {
         basis.side = normalize_vector(cross_vector(basis.forward, world_up));
         basis.up   = cross_vector(basis.side, basis.forward);
         return basis;
+    }
+
+    export [[nodiscard]] CameraBasis orbit_camera_basis(const Vector3 target, const float yaw_radians, const float pitch_radians, const float distance) {
+        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Rasterizer viewport camera distance must be positive");
+        const float cos_pitch = std::cos(pitch_radians);
+        const Vector3 direction{
+            std::sin(yaw_radians) * cos_pitch,
+            std::sin(pitch_radians),
+            std::cos(yaw_radians) * cos_pitch,
+        };
+        return camera_basis(add_vector(target, scale_vector(direction, distance)), target);
     }
 
     export [[nodiscard]] Matrix4 transform_matrix(const Transform& transform) {
@@ -157,6 +180,26 @@ namespace spectra::rasterizer::math {
         projection.at(2u, 3u) = -1.0f;
         projection.at(3u, 2u) = -(far_plane * near_plane) / (far_plane - near_plane);
         return projection;
+    }
+
+    export [[nodiscard]] Matrix4 orthographic_matrix(const float vertical_size, const float aspect, const float near_plane, const float far_plane) {
+        if (!std::isfinite(vertical_size) || vertical_size <= 0.0f) throw std::runtime_error("Rasterizer orthographic vertical size must be positive");
+        if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
+        if (!std::isfinite(near_plane) || !std::isfinite(far_plane) || near_plane <= 0.0f || far_plane <= near_plane) throw std::runtime_error("Rasterizer camera clipping planes are invalid");
+        const float horizontal_size = vertical_size * aspect;
+        Matrix4 projection = identity_matrix();
+        projection.at(0u, 0u) = 2.0f / horizontal_size;
+        projection.at(1u, 1u) = -2.0f / vertical_size;
+        projection.at(2u, 2u) = 1.0f / (near_plane - far_plane);
+        projection.at(3u, 2u) = near_plane / (near_plane - far_plane);
+        return projection;
+    }
+
+    export [[nodiscard]] float perspective_pan_scale(const float distance, const float vertical_fov_degrees, const float viewport_height) {
+        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Rasterizer viewport camera distance must be positive");
+        if (!std::isfinite(viewport_height) || viewport_height <= 0.0f) throw std::runtime_error("Rasterizer viewport height must be positive");
+        if (!std::isfinite(vertical_fov_degrees) || vertical_fov_degrees <= 0.0f || vertical_fov_degrees >= 179.0f) throw std::runtime_error("Rasterizer camera vertical FOV must be in (0, 179)");
+        return 2.0f * distance * std::tan(vertical_fov_degrees * std::numbers::pi_v<float> / 360.0f) / viewport_height;
     }
 
     export [[nodiscard]] Vector3 transform_point(const Matrix4& matrix, const Vector3 point) {
