@@ -15,10 +15,10 @@ import spectra.rasterizer;
 namespace spectra::app {
     static_assert(pathtracer::PathtracerHost<Spectra>);
     static_assert(rasterizer::RasterizerHost<Spectra>);
-    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(pathtracer::PathtracerDockSlot::Center) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Center));
-    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(pathtracer::PathtracerDockSlot::Floating) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Floating));
-    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(rasterizer::RasterizerDockSlot::Center) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Center));
-    static_assert(static_cast<std::underlying_type_t<SpectraDockSlot>>(rasterizer::RasterizerDockSlot::Floating) == static_cast<std::underlying_type_t<SpectraDockSlot>>(SpectraDockSlot::Floating));
+    static_assert(static_cast<std::underlying_type_t<DockSlot>>(pathtracer::PathtracerDockSlot::Center) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Center));
+    static_assert(static_cast<std::underlying_type_t<DockSlot>>(pathtracer::PathtracerDockSlot::Floating) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Floating));
+    static_assert(static_cast<std::underlying_type_t<DockSlot>>(rasterizer::RasterizerDockSlot::Center) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Center));
+    static_assert(static_cast<std::underlying_type_t<DockSlot>>(rasterizer::RasterizerDockSlot::Floating) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Floating));
 
     struct RasterizerProjectFrameInfo {
         double delta_seconds{};
@@ -713,7 +713,7 @@ namespace spectra::app {
             if (this->pending_active_index.has_value() && *this->pending_active_index != this->active_index) ImGui::TextDisabled("Switching on next frame");
         }
 
-        void drive_simulation(const SpectraFrameInfo& frame) {
+        void drive_simulation(const FrameContext& frame) {
             RasterizerProjectSlot& slot = this->ensure_slot(this->active_index);
             const std::shared_ptr<const rasterizer::SceneDocument> document = slot.workspace->document();
             if (document->framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer project scene frame rate must be positive");
@@ -845,9 +845,9 @@ namespace spectra::app {
             this->renderer->after_imgui_created(host);
         }
 
-        [[nodiscard]] SpectraFrameResult begin_frame(Spectra& host, const SpectraFrameInfo& frame) {
+        [[nodiscard]] FrameResult begin_frame(Spectra& host, const FrameContext& frame) {
             pathtracer::PathtracerFrameResult result = this->renderer->begin_frame(host, frame);
-            return SpectraFrameResult{
+            return FrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,
                 .window_detail        = std::move(result.window_detail),
@@ -896,11 +896,11 @@ namespace spectra::app {
             this->renderer->after_imgui_created(host);
         }
 
-        [[nodiscard]] SpectraFrameResult begin_frame(Spectra& host, const SpectraFrameInfo& frame) {
+        [[nodiscard]] FrameResult begin_frame(Spectra& host, const FrameContext& frame) {
             this->project_manager->apply_pending_workspace(*this->renderer);
             this->project_manager->drive_simulation(frame);
             rasterizer::RasterizerFrameResult result = this->renderer->begin_frame(host, frame);
-            return SpectraFrameResult{
+            return FrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,
                 .window_detail        = std::move(result.window_detail),
@@ -916,8 +916,8 @@ namespace spectra::app {
         std::unique_ptr<rasterizer::RasterizerRenderer> renderer{};
     };
 
-    static_assert(SpectraRendererForHost<PathtracerSpectraRenderer, Spectra>);
-    static_assert(SpectraRendererForHost<RasterizerSpectraRenderer, Spectra>);
+    static_assert(RendererFor<PathtracerSpectraRenderer, Spectra>);
+    static_assert(RendererFor<RasterizerSpectraRenderer, Spectra>);
 
     void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, RasterizerProjectRegistry rasterizerProjectRegistry) {
         app.register_renderer(RasterizerSpectraRenderer{std::move(rasterizerProjectRegistry)});

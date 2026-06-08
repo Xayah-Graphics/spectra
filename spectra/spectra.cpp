@@ -228,9 +228,21 @@ namespace spectra {
         return this->swapchain.extent;
     }
 
+    void Spectra::set_window_detail(std::string detail) {
+        this->window_title.detail = std::move(detail);
+    }
+
+    void Spectra::set_renderer_availability_callback(std::move_only_function<RendererAvailability(std::string_view)> callback) {
+        this->renderer_availability_callback = std::move(callback);
+    }
+
+    void Spectra::set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback) {
+        this->renderer_activation_callback = std::move(callback);
+    }
+
     void Spectra::activate_renderer(const std::size_t renderer_index) {
         if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
+        const RendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
         if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available", this->renderers[renderer_index].name) : availability.detail);
         this->active_renderer_index = renderer_index;
         this->dock_layout_initialized = false;
@@ -238,16 +250,44 @@ namespace spectra {
         if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers[renderer_index].name);
     }
 
-    void Spectra::store_panel(SpectraPanel panel) {
+    void Spectra::store_renderer(RendererSlot renderer) {
+        const std::string_view renderer_name = renderer.name;
+        if (renderer_name.empty()) throw std::runtime_error("Spectra renderer name must not be empty");
+        for (const RendererSlot& existing_renderer : this->renderers) {
+            if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
+        }
+        const bool first_renderer = this->renderers.empty();
+        if (first_renderer) {
+            const RendererAvailability availability = this->renderer_availability(renderer.name);
+            if (!availability.available) throw std::runtime_error(availability.detail);
+        }
+        if (this->registering_renderer_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
+        this->registering_renderer_name = std::string{renderer_name};
+        try {
+            renderer.attach(*this);
+            if (this->imgui.initialized) renderer.after_imgui_created(*this);
+        } catch (...) {
+            this->registering_renderer_name.reset();
+            throw;
+        }
+        this->registering_renderer_name.reset();
+        this->renderers.push_back(std::move(renderer));
+        if (first_renderer) {
+            this->active_renderer_index = 0;
+            if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers.front().name);
+        }
+    }
+
+    void Spectra::store_panel(Panel panel) {
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
         if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
         if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");
         switch (panel.dock_slot) {
-        case SpectraDockSlot::Center:
-        case SpectraDockSlot::Floating: break;
+        case DockSlot::Center:
+        case DockSlot::Floating: break;
         default: throw std::runtime_error("Spectra panel dock slot is invalid");
         }
-        for (const SpectraPanel& existing_panel : this->panels) {
+        for (const Panel& existing_panel : this->panels) {
             if (!owner_scopes_overlap(existing_panel.owner_renderer, panel.owner_renderer)) continue;
             if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
             if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
@@ -256,11 +296,11 @@ namespace spectra {
         this->dock_layout_initialized = false;
     }
 
-    void Spectra::store_sidebar_tab(SpectraSidebarTab tab) {
+    void Spectra::store_sidebar_tab(SidebarTab tab) {
         if (tab.id.empty()) throw std::runtime_error("Spectra sidebar tab id must not be empty");
         if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
         if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
-        for (const SpectraSidebarTab& existing_tab : this->sidebar_tabs) {
+        for (const SidebarTab& existing_tab : this->sidebar_tabs) {
             if (!owner_scopes_overlap(existing_tab.owner_renderer, tab.owner_renderer)) continue;
             if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
             if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
@@ -273,13 +313,13 @@ namespace spectra {
         this->dock_layout_initialized = false;
     }
 
-    void Spectra::store_toolbar_action(SpectraToolbarAction action) {
+    void Spectra::store_toolbar_action(ToolbarAction action) {
         if (action.id.empty()) throw std::runtime_error("Spectra toolbar action id must not be empty");
         if (action.title.empty()) throw std::runtime_error("Spectra toolbar action title must not be empty");
         if (action.icon.empty()) throw std::runtime_error("Spectra toolbar action icon must not be empty");
         if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
         if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
-        for (const SpectraToolbarAction& existing_action : this->toolbar_actions) {
+        for (const ToolbarAction& existing_action : this->toolbar_actions) {
             if (!owner_scopes_overlap(existing_action.owner_renderer, action.owner_renderer)) continue;
             if (existing_action.id == action.id) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action id: "} + action.id);
             if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
@@ -287,21 +327,9 @@ namespace spectra {
         this->toolbar_actions.push_back(std::move(action));
     }
 
-    void Spectra::set_window_detail(std::string detail) {
-        this->window_title.detail = std::move(detail);
-    }
-
-    void Spectra::set_renderer_availability_callback(std::move_only_function<SpectraRendererAvailability(std::string_view)> callback) {
-        this->renderer_availability_callback = std::move(callback);
-    }
-
-    void Spectra::set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback) {
-        this->renderer_activation_callback = std::move(callback);
-    }
-
-    SpectraRendererAvailability Spectra::renderer_availability(const std::string_view renderer_name) {
-        if (!this->renderer_availability_callback) return SpectraRendererAvailability{};
-        SpectraRendererAvailability availability = this->renderer_availability_callback(renderer_name);
+    RendererAvailability Spectra::renderer_availability(const std::string_view renderer_name) {
+        if (!this->renderer_availability_callback) return RendererAvailability{};
+        RendererAvailability availability = this->renderer_availability_callback(renderer_name);
         if (!availability.available && availability.detail.empty()) availability.detail = std::format("Renderer \"{}\" is not available", renderer_name);
         return availability;
     }
@@ -312,24 +340,24 @@ namespace spectra {
         return this->renderers[this->active_renderer_index].name;
     }
 
-    bool Spectra::panel_belongs_to_active_renderer(const SpectraPanel& panel) const {
+    bool Spectra::panel_belongs_to_active_renderer(const Panel& panel) const {
         return panel.owner_renderer.empty() || panel.owner_renderer == this->active_renderer_name();
     }
 
-    bool Spectra::sidebar_tab_belongs_to_active_renderer(const SpectraSidebarTab& tab) const {
+    bool Spectra::sidebar_tab_belongs_to_active_renderer(const SidebarTab& tab) const {
         return tab.owner_renderer.empty() || tab.owner_renderer == this->active_renderer_name();
     }
 
-    bool Spectra::toolbar_action_belongs_to_active_renderer(const SpectraToolbarAction& action) const {
+    bool Spectra::toolbar_action_belongs_to_active_renderer(const ToolbarAction& action) const {
         return action.owner_renderer.empty() || action.owner_renderer == this->active_renderer_name();
     }
 
     void Spectra::sync_active_sidebar_tab() {
-        for (const SpectraSidebarTab& tab : this->sidebar_tabs) {
+        for (const SidebarTab& tab : this->sidebar_tabs) {
             if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
             if (tab.id == this->active_sidebar_tab_id) return;
         }
-        for (const SpectraSidebarTab& tab : this->sidebar_tabs) {
+        for (const SidebarTab& tab : this->sidebar_tabs) {
             if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
             this->active_sidebar_tab_id = tab.id;
             this->sidebar_visible       = true;
@@ -541,34 +569,6 @@ namespace spectra {
         this->surface.glfw_initialized = false;
     }
 
-    void Spectra::register_renderer(RegisteredRenderer renderer) {
-        const std::string_view renderer_name = renderer.name;
-        if (renderer_name.empty()) throw std::runtime_error("Spectra renderer name must not be empty");
-        for (const RegisteredRenderer& existing_renderer : this->renderers) {
-            if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
-        }
-        const bool first_renderer = this->renderers.empty();
-        if (first_renderer) {
-            const SpectraRendererAvailability availability = this->renderer_availability(renderer.name);
-            if (!availability.available) throw std::runtime_error(availability.detail);
-        }
-        if (this->registering_renderer_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
-        this->registering_renderer_name = std::string{renderer_name};
-        try {
-            renderer.attach(*this);
-            if (this->imgui.initialized) renderer.after_imgui_created(*this);
-        } catch (...) {
-            this->registering_renderer_name.reset();
-            throw;
-        }
-        this->registering_renderer_name.reset();
-        this->renderers.push_back(std::move(renderer));
-        if (first_renderer) {
-            this->active_renderer_index = 0;
-            if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers.front().name);
-        }
-    }
-
     void Spectra::run() {
         while (!glfwWindowShouldClose(this->surface.window.get())) {
             FrameState frame{};
@@ -642,7 +642,7 @@ namespace spectra {
             vulkan_backend_initialized    = true;
             this->imgui.initialized       = true;
             this->imgui_shutdown_notified = false;
-            for (RegisteredRenderer& renderer : this->renderers) renderer.after_imgui_created(*this);
+            for (RendererSlot& renderer : this->renderers) renderer.after_imgui_created(*this);
         } catch (...) {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
@@ -736,13 +736,13 @@ namespace spectra {
 
         if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
         if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        const SpectraFrameInfo frame_info{
+        const FrameContext frame_info{
             .frame_index   = frame.frame_index,
             .image_index   = frame.image_index,
             .frame_number  = frame.frame_number,
             .delta_seconds = frame.delta_seconds,
         };
-        SpectraFrameResult frame_result = this->renderers[this->active_renderer_index].begin_frame(*this, frame_info);
+        FrameResult frame_result = this->renderers[this->active_renderer_index].begin_frame(*this, frame_info);
         if (frame_result.completion_semaphore.has_value()) {
             if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
             frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
@@ -869,12 +869,12 @@ namespace spectra {
     void Spectra::draw_command_bar() {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
-            for (SpectraPanel& panel : this->panels) {
+            for (Panel& panel : this->panels) {
                 if (!this->panel_belongs_to_active_renderer(panel)) continue;
                 if (panel.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(panel.shortcut_key, false)) panel.visible = !panel.visible;
             }
             this->sync_active_sidebar_tab();
-            for (SpectraSidebarTab& tab : this->sidebar_tabs) {
+            for (SidebarTab& tab : this->sidebar_tabs) {
                 if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
                 if (tab.shortcut_key == ImGuiKey_None || !ImGui::IsKeyPressed(tab.shortcut_key, false)) continue;
                 const bool selected = this->sidebar_visible && tab.id == this->active_sidebar_tab_id;
@@ -883,7 +883,7 @@ namespace spectra {
                 this->sidebar_tab_selection_requested = true;
                 this->dock_layout_initialized = false;
             }
-            for (SpectraToolbarAction& action : this->toolbar_actions) {
+            for (ToolbarAction& action : this->toolbar_actions) {
                 if (!this->toolbar_action_belongs_to_active_renderer(action)) continue;
                 if (action.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(action.shortcut_key, false)) action.trigger();
             }
@@ -917,7 +917,7 @@ namespace spectra {
         ImGui::SameLine(0.0f, 10.0f);
         for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
             const bool selected = renderer_index == this->active_renderer_index;
-            const SpectraRendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
+            const RendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
             push_renderer_button_style(selected);
             ImGui::BeginDisabled(!availability.available);
             if (ImGui::Button(this->renderers[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) this->activate_renderer(renderer_index);
@@ -927,13 +927,13 @@ namespace spectra {
             if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 6.0f);
         }
 
-        std::vector<SpectraSidebarTab*> visible_tabs{};
-        for (SpectraSidebarTab& tab : this->sidebar_tabs) {
+        std::vector<SidebarTab*> visible_tabs{};
+        for (SidebarTab& tab : this->sidebar_tabs) {
             if (this->sidebar_tab_belongs_to_active_renderer(tab)) visible_tabs.push_back(&tab);
         }
 
-        std::vector<SpectraToolbarAction*> visible_actions{};
-        for (SpectraToolbarAction& action : this->toolbar_actions) {
+        std::vector<ToolbarAction*> visible_actions{};
+        for (ToolbarAction& action : this->toolbar_actions) {
             if (this->toolbar_action_belongs_to_active_renderer(action)) visible_actions.push_back(&action);
         }
 
@@ -953,7 +953,7 @@ namespace spectra {
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 6.0f);
         std::size_t button_index = 0;
-        for (SpectraSidebarTab* tab : visible_tabs) {
+        for (SidebarTab* tab : visible_tabs) {
             const bool selected = this->sidebar_visible && tab->id == this->active_sidebar_tab_id;
             const char* label   = tab->icon.empty() ? tab->title.c_str() : tab->icon.c_str();
             push_toolbar_button_style(selected);
@@ -969,7 +969,7 @@ namespace spectra {
             ++button_index;
             if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
         }
-        for (SpectraToolbarAction* action : visible_actions) {
+        for (ToolbarAction* action : visible_actions) {
             const bool active = action->active();
             push_toolbar_button_style(active);
             if (ImGui::Button(action->icon.c_str(), ImVec2{button_size, button_size})) action->trigger();
@@ -1027,11 +1027,11 @@ namespace spectra {
             ImGui::DockBuilderDockWindow("Sidebar", right_id);
         }
 
-        for (const SpectraPanel& panel : this->panels) {
+        for (const Panel& panel : this->panels) {
             if (!this->panel_belongs_to_active_renderer(panel)) continue;
             switch (panel.dock_slot) {
-            case SpectraDockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
-            case SpectraDockSlot::Floating: break;
+            case DockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
+            case DockSlot::Floating: break;
             default: throw std::runtime_error("Spectra panel dock slot is invalid");
             }
         }
@@ -1050,8 +1050,8 @@ namespace spectra {
         this->sync_active_sidebar_tab();
         if (!this->sidebar_visible || this->active_sidebar_tab_id.empty()) return;
 
-        std::vector<SpectraSidebarTab*> visible_tabs{};
-        for (SpectraSidebarTab& tab : this->sidebar_tabs) {
+        std::vector<SidebarTab*> visible_tabs{};
+        for (SidebarTab& tab : this->sidebar_tabs) {
             if (this->sidebar_tab_belongs_to_active_renderer(tab)) visible_tabs.push_back(&tab);
         }
         if (visible_tabs.empty()) return;
@@ -1069,8 +1069,8 @@ namespace spectra {
             ImGui::PopStyleVar(2);
             return;
         }
-        if (ImGui::BeginTabBar("SpectraSidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
-            for (SpectraSidebarTab* tab : visible_tabs) {
+        if (ImGui::BeginTabBar("SidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            for (SidebarTab* tab : visible_tabs) {
                 const ImGuiTabItemFlags tab_flags = this->sidebar_tab_selection_requested && tab->id == this->active_sidebar_tab_id ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
                 const std::string label = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
                 if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
@@ -1089,7 +1089,7 @@ namespace spectra {
     }
 
     void Spectra::draw_registered_panels() {
-        for (SpectraPanel& panel : this->panels) {
+        for (Panel& panel : this->panels) {
             if (!this->panel_belongs_to_active_renderer(panel)) continue;
             if (!panel.visible) continue;
             if (panel.zero_window_padding) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
