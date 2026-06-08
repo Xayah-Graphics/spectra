@@ -59,15 +59,15 @@ namespace {
         std::array<float, 4> emission{};
     };
 
-    [[nodiscard]] spectra::rasterizer::math::Vector3 to_render_vector(const spectra::rasterizer::SceneVector3& value) {
+    [[nodiscard]] spectra::rasterizer::math::Vector3 to_render_vector(const spectra::rasterizer::Vector3& value) {
         return spectra::rasterizer::math::Vector3{value.x, value.y, value.z};
     }
 
-    [[nodiscard]] spectra::rasterizer::math::Quaternion to_render_quaternion(const spectra::rasterizer::SceneQuaternion& value) {
+    [[nodiscard]] spectra::rasterizer::math::Quaternion to_render_quaternion(const spectra::rasterizer::Quaternion& value) {
         return spectra::rasterizer::math::Quaternion{value.x, value.y, value.z, value.w};
     }
 
-    [[nodiscard]] spectra::rasterizer::math::Transform to_render_transform(const spectra::rasterizer::SceneTransform& value) {
+    [[nodiscard]] spectra::rasterizer::math::Transform to_render_transform(const spectra::rasterizer::Transform& value) {
         return spectra::rasterizer::math::Transform{
             .position = to_render_vector(value.position),
             .rotation = to_render_quaternion(value.rotation),
@@ -75,8 +75,8 @@ namespace {
         };
     }
 
-    [[nodiscard]] spectra::rasterizer::SceneVector3 to_scene_vector(const spectra::rasterizer::math::Vector3& value) {
-        return spectra::rasterizer::SceneVector3{value.x, value.y, value.z};
+    [[nodiscard]] spectra::rasterizer::Vector3 to_scene_vector(const spectra::rasterizer::math::Vector3& value) {
+        return spectra::rasterizer::Vector3{value.x, value.y, value.z};
     }
 
     struct LightUniformData {
@@ -1100,8 +1100,8 @@ namespace spectra::rasterizer {
             const std::uint32_t vertex_offset = static_cast<std::uint32_t>(vertices.size());
             vertices.reserve(vertices.size() + mesh.positions.size());
             for (std::size_t vertex_index = 0; vertex_index < mesh.positions.size(); ++vertex_index) {
-                const SceneVector3 position = mesh.positions.at(vertex_index);
-                const SceneVector3 normal   = mesh.normals.at(vertex_index);
+                const Vector3 position = mesh.positions.at(vertex_index);
+                const Vector3 normal   = mesh.normals.at(vertex_index);
                 vertices.push_back(RasterizerVertex{
                     .px = position.x,
                     .py = position.y,
@@ -1157,7 +1157,7 @@ namespace spectra::rasterizer {
             for (std::size_t particle_index = 0; particle_index < particle_set.positions.size(); ++particle_index) {
                 if (!std::isfinite(particle_set.radii.at(particle_index)) || particle_set.radii.at(particle_index) <= 0.0f) throw std::runtime_error(std::format("Rasterizer particle set \"{}\" contains an invalid radius", particle_set.name));
                 const spectra::rasterizer::math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(particle_set.positions.at(particle_index)));
-                const SceneVector4 color = particle_set.colors.at(particle_index);
+                const Vector4 color = particle_set.colors.at(particle_index);
                 instances.push_back(ParticleInstance{
                     .px = position.x,
                     .py = position.y,
@@ -1292,7 +1292,7 @@ namespace spectra::rasterizer {
 
     Renderer::SceneBounds Renderer::scene_bounds() const {
         SceneBounds bounds{};
-        const auto include_point = [&bounds](const SceneVector3& point) {
+        const auto include_point = [&bounds](const Vector3& point) {
             if (!bounds.valid) {
                 bounds.minimum = point;
                 bounds.maximum = point;
@@ -1306,26 +1306,26 @@ namespace spectra::rasterizer {
             bounds.maximum.y = std::max(bounds.maximum.y, point.y);
             bounds.maximum.z = std::max(bounds.maximum.z, point.z);
         };
-        const auto include_transformed_point = [&include_point](const SceneVector3& point, const SceneTransform& transform) {
+        const auto include_transformed_point = [&include_point](const Vector3& point, const Transform& transform) {
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
 
         for (const SceneMesh& mesh : this->collect_render_meshes()) {
-            for (const SceneVector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
+            for (const Vector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
         }
         for (const SceneParticleSet& particle_set : this->collect_render_particle_sets()) {
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
             for (std::size_t index = 0; index < particle_set.positions.size(); ++index) {
-                const SceneVector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(particle_set.positions.at(index))));
+                const Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(particle_set.positions.at(index))));
                 const float radius = index < particle_set.radii.size() ? std::max(0.0f, particle_set.radii.at(index)) : 0.0f;
-                include_point(SceneVector3{center.x - radius, center.y - radius, center.z - radius});
-                include_point(SceneVector3{center.x + radius, center.y + radius, center.z + radius});
+                include_point(Vector3{center.x - radius, center.y - radius, center.z - radius});
+                include_point(Vector3{center.x + radius, center.y + radius, center.z + radius});
             }
         }
         for (const SceneVolumeGrid& volume : this->collect_render_volumes()) {
             include_point(volume.origin);
-            include_point(SceneVector3{
+            include_point(Vector3{
                 volume.origin.x + volume.voxelSize.x * static_cast<float>(volume.dimensions[0]),
                 volume.origin.y + volume.voxelSize.y * static_cast<float>(volume.dimensions[1]),
                 volume.origin.z + volume.voxelSize.z * static_cast<float>(volume.dimensions[2]),
@@ -1340,7 +1340,7 @@ namespace spectra::rasterizer {
             this->reset_viewport_camera_from_scene();
             return;
         }
-        const SceneVector3 center{
+        const Vector3 center{
             (bounds.minimum.x + bounds.maximum.x) * 0.5f,
             (bounds.minimum.y + bounds.maximum.y) * 0.5f,
             (bounds.minimum.z + bounds.maximum.z) * 0.5f,
@@ -1353,7 +1353,7 @@ namespace spectra::rasterizer {
         this->viewport.camera_initialized = true;
     }
 
-    void Renderer::set_viewport_axis_view(const SceneVector3 direction) {
+    void Renderer::set_viewport_axis_view(const Vector3 direction) {
         const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize(to_render_vector(direction));
         this->viewport.camera_yaw = std::atan2(normalized.x, normalized.z);
         this->viewport.camera_pitch = clamp_viewport_pitch(std::asin(std::clamp(normalized.y, -1.0f, 1.0f)));
@@ -1646,9 +1646,9 @@ namespace spectra::rasterizer {
         }
 
         if (ImGui::IsKeyPressed(ImGuiKey_F, false) || ImGui::IsKeyPressed(ImGuiKey_Home, false)) this->frame_viewport_scene();
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->set_viewport_axis_view(SceneVector3{0.0f, 0.0f, 1.0f});
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->set_viewport_axis_view(SceneVector3{1.0f, 0.0f, 0.0f});
-        if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->set_viewport_axis_view(SceneVector3{0.0f, 1.0f, 0.0f});
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) this->set_viewport_axis_view(Vector3{0.0f, 0.0f, 1.0f});
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) this->set_viewport_axis_view(Vector3{1.0f, 0.0f, 0.0f});
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad7, false)) this->set_viewport_axis_view(Vector3{0.0f, 1.0f, 0.0f});
         if (ImGui::IsKeyPressed(ImGuiKey_Keypad5, false)) this->toggle_viewport_projection();
     }
 
@@ -1711,7 +1711,7 @@ namespace spectra::rasterizer {
             const char* id{};
             const char* label{};
             spectra::rasterizer::math::Vector3 axis{};
-            SceneVector3 view_direction{};
+            Vector3 view_direction{};
             std::uint8_t line_red{};
             std::uint8_t line_green{};
             std::uint8_t line_blue{};
@@ -1749,7 +1749,7 @@ namespace spectra::rasterizer {
                 .id             = "x",
                 .label          = "X",
                 .axis           = spectra::rasterizer::math::Vector3{1.0f, 0.0f, 0.0f},
-                .view_direction = SceneVector3{1.0f, 0.0f, 0.0f},
+                .view_direction = Vector3{1.0f, 0.0f, 0.0f},
                 .line_red       = 232,
                 .line_green     = 94,
                 .line_blue      = 82,
@@ -1761,7 +1761,7 @@ namespace spectra::rasterizer {
                 .id             = "y",
                 .label          = "Y",
                 .axis           = spectra::rasterizer::math::Vector3{0.0f, 1.0f, 0.0f},
-                .view_direction = SceneVector3{0.0f, 1.0f, 0.0f},
+                .view_direction = Vector3{0.0f, 1.0f, 0.0f},
                 .line_red       = 112,
                 .line_green     = 202,
                 .line_blue      = 124,
@@ -1773,7 +1773,7 @@ namespace spectra::rasterizer {
                 .id             = "z",
                 .label          = "Z",
                 .axis           = spectra::rasterizer::math::Vector3{0.0f, 0.0f, 1.0f},
-                .view_direction = SceneVector3{0.0f, 0.0f, 1.0f},
+                .view_direction = Vector3{0.0f, 0.0f, 1.0f},
                 .line_red       = 96,
                 .line_green     = 152,
                 .line_blue      = 238,

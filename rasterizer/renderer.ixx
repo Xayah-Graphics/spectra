@@ -69,7 +69,7 @@ namespace spectra::rasterizer {
             std::string name{};
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
-            SceneTransform transform{};
+            Transform transform{};
             SceneMaterial material{};
         };
 
@@ -89,8 +89,8 @@ namespace spectra::rasterizer {
         };
 
         struct SceneBounds {
-            SceneVector3 minimum{};
-            SceneVector3 maximum{};
+            Vector3 minimum{};
+            Vector3 maximum{};
             bool valid{false};
         };
 
@@ -180,7 +180,7 @@ namespace spectra::rasterizer {
 
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
-        void set_viewport_axis_view(SceneVector3 direction);
+        void set_viewport_axis_view(Vector3 direction);
         void toggle_viewport_projection();
         void orbit_viewport_camera(ViewportDragDelta delta);
         void pan_viewport_camera(ViewportDragDelta delta, float viewport_height);
@@ -235,7 +235,7 @@ namespace spectra::rasterizer {
             vk::raii::Image depth_image{nullptr};
             vk::raii::DeviceMemory depth_memory{nullptr};
             vk::raii::ImageView depth_view{nullptr};
-            SceneVector3 camera_target{};
+            Vector3 camera_target{};
             float camera_distance{1.0f};
             float camera_yaw{};
             float camera_pitch{};

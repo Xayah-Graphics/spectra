@@ -120,8 +120,8 @@ namespace spectra::app {
         std::vector<RasterizerProjectEntry> entries{};
     };
 
-    [[nodiscard]] rasterizer::SceneVector3 ToRasterizerVector3(const std::array<float, 3>& value) {
-        return rasterizer::SceneVector3{value[0], value[1], value[2]};
+    [[nodiscard]] rasterizer::Vector3 ToRasterizerVector3(const std::array<float, 3>& value) {
+        return rasterizer::Vector3{value[0], value[1], value[2]};
     }
 
     [[nodiscard]] rasterizer::SceneDocument MakeRasterizerProjectDocument(std::string name, std::string title, std::string source) {
@@ -195,25 +195,25 @@ namespace spectra::app {
             rasterizer::SceneDocument document = MakeRasterizerProjectDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name      = "ball",
-                .baseColor = rasterizer::SceneVector4{0.95f, 0.28f, 0.18f, 1.0f},
+                .baseColor = rasterizer::Vector4{0.95f, 0.28f, 0.18f, 1.0f},
                 .roughness = 0.42f,
             });
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name      = "floor",
-                .baseColor = rasterizer::SceneVector4{0.38f, 0.43f, 0.38f, 1.0f},
+                .baseColor = rasterizer::Vector4{0.38f, 0.43f, 0.38f, 1.0f},
                 .roughness = 0.74f,
             });
             document.lights.push_back(rasterizer::SceneLight{
                 .name      = "key",
                 .kind      = rasterizer::SceneLightKind::Directional,
-                .transform = rasterizer::SceneTransform{.rotation = rasterizer::SceneQuaternion{0.35f, 0.0f, 0.0f, 0.94f}},
-                .color     = rasterizer::SceneVector3{1.0f, 0.97f, 0.92f},
+                .transform = rasterizer::Transform{.rotation = rasterizer::Quaternion{0.35f, 0.0f, 0.0f, 0.94f}},
+                .color     = rasterizer::Vector3{1.0f, 0.97f, 0.92f},
                 .intensity = 3.0f,
             });
             document.camera = rasterizer::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::SceneTransform{.position = rasterizer::SceneVector3{4.4f, 2.7f, 5.8f}},
-                .target    = rasterizer::SceneVector3{0.0f, 1.25f, 0.0f},
+                .transform = rasterizer::Transform{.position = rasterizer::Vector3{4.4f, 2.7f, 5.8f}},
+                .target    = rasterizer::Vector3{0.0f, 1.25f, 0.0f},
                 .verticalFovDegrees = 42.0f,
                 .nearPlane = 0.05f,
                 .farPlane  = 80.0f,
@@ -224,7 +224,7 @@ namespace spectra::app {
                 .name         = "ball.body",
                 .meshName     = "ball.mesh",
                 .materialName = "ball",
-                .transform    = rasterizer::SceneTransform{.position = ToRasterizerVector3(this->solver.current_position())},
+                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->solver.current_position())},
                 .mass         = 1.0f,
             });
             return document;
@@ -247,16 +247,16 @@ namespace spectra::app {
             return rasterizer::SceneMesh{
                 .name         = "floor.mesh",
                 .positions    = {
-                    rasterizer::SceneVector3{-5.5f, 0.0f, -5.5f},
-                    rasterizer::SceneVector3{5.5f, 0.0f, -5.5f},
-                    rasterizer::SceneVector3{5.5f, 0.0f, 5.5f},
-                    rasterizer::SceneVector3{-5.5f, 0.0f, 5.5f},
+                    rasterizer::Vector3{-5.5f, 0.0f, -5.5f},
+                    rasterizer::Vector3{5.5f, 0.0f, -5.5f},
+                    rasterizer::Vector3{5.5f, 0.0f, 5.5f},
+                    rasterizer::Vector3{-5.5f, 0.0f, 5.5f},
                 },
                 .normals      = {
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
                 },
                 .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
                 .materialName = "floor",
@@ -268,7 +268,7 @@ namespace spectra::app {
             rasterizer::SceneMesh mesh{
                 .name         = "ball.mesh",
                 .materialName = "ball",
-                .transform    = rasterizer::SceneTransform{.position = ToRasterizerVector3(this->solver.current_position())},
+                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->solver.current_position())},
                 .dynamic      = true,
             };
             const std::vector<xayah::projects::bouncing_ball::BouncingBallVertex>& vertices = this->solver.mesh_vertices();
@@ -291,7 +291,7 @@ namespace spectra::app {
                 .name         = "ball.body",
                 .meshName     = "ball.mesh",
                 .materialName = "ball",
-                .transform    = rasterizer::SceneTransform{.position = ToRasterizerVector3(this->solver.current_position())},
+                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->solver.current_position())},
                 .mass         = 1.0f,
             });
             return snapshot;
@@ -312,21 +312,21 @@ namespace spectra::app {
             rasterizer::SceneDocument document = MakeRasterizerProjectDocument("project.sparkles", "Sparkles", "project://sparkles");
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name             = "sparkle",
-                .baseColor        = rasterizer::SceneVector4{1.0f, 0.78f, 0.24f, 1.0f},
-                .emissionColor    = rasterizer::SceneVector3{1.0f, 0.54f, 0.12f},
+                .baseColor        = rasterizer::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
+                .emissionColor    = rasterizer::Vector3{1.0f, 0.54f, 0.12f},
                 .emissionStrength = 2.4f,
                 .roughness        = 0.2f,
             });
             document.lights.push_back(rasterizer::SceneLight{
                 .name      = "environment",
                 .kind      = rasterizer::SceneLightKind::Environment,
-                .color     = rasterizer::SceneVector3{0.22f, 0.26f, 0.34f},
+                .color     = rasterizer::Vector3{0.22f, 0.26f, 0.34f},
                 .intensity = 0.8f,
             });
             document.camera = rasterizer::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::SceneTransform{.position = rasterizer::SceneVector3{4.6f, 3.1f, 6.0f}},
-                .target    = rasterizer::SceneVector3{0.0f, 1.9f, 0.0f},
+                .transform = rasterizer::Transform{.position = rasterizer::Vector3{4.6f, 3.1f, 6.0f}},
+                .target    = rasterizer::Vector3{0.0f, 1.9f, 0.0f},
                 .verticalFovDegrees = 42.0f,
                 .nearPlane = 0.05f,
                 .farPlane  = 90.0f,
@@ -361,7 +361,7 @@ namespace spectra::app {
             for (const xayah::projects::sparkles::SparklesParticle& particle : visibleParticles) {
                 particles.positions.push_back(ToRasterizerVector3(particle.position));
                 particles.radii.push_back(particle.radius);
-                particles.colors.push_back(rasterizer::SceneVector4{particle.color[0], particle.color[1], particle.color[2], 1.0f});
+                particles.colors.push_back(rasterizer::Vector4{particle.color[0], particle.color[1], particle.color[2], 1.0f});
             }
             return particles;
         }
@@ -391,30 +391,30 @@ namespace spectra::app {
             rasterizer::SceneDocument document = MakeRasterizerProjectDocument("project.cloth", "Cloth", "project://cloth");
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name      = "cloth",
-                .baseColor = rasterizer::SceneVector4{0.18f, 0.42f, 0.88f, 1.0f},
+                .baseColor = rasterizer::Vector4{0.18f, 0.42f, 0.88f, 1.0f},
                 .roughness = 0.64f,
             });
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name      = "cloth.floor",
-                .baseColor = rasterizer::SceneVector4{0.34f, 0.38f, 0.36f, 1.0f},
+                .baseColor = rasterizer::Vector4{0.34f, 0.38f, 0.36f, 1.0f},
                 .roughness = 0.78f,
             });
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name      = "cloth.collider",
-                .baseColor = rasterizer::SceneVector4{0.90f, 0.44f, 0.28f, 1.0f},
+                .baseColor = rasterizer::Vector4{0.90f, 0.44f, 0.28f, 1.0f},
                 .roughness = 0.46f,
             });
             document.lights.push_back(rasterizer::SceneLight{
                 .name      = "key",
                 .kind      = rasterizer::SceneLightKind::Directional,
-                .transform = rasterizer::SceneTransform{.rotation = rasterizer::SceneQuaternion{0.45f, 0.18f, 0.0f, 0.87f}},
-                .color     = rasterizer::SceneVector3{0.92f, 0.96f, 1.0f},
+                .transform = rasterizer::Transform{.rotation = rasterizer::Quaternion{0.45f, 0.18f, 0.0f, 0.87f}},
+                .color     = rasterizer::Vector3{0.92f, 0.96f, 1.0f},
                 .intensity = 3.6f,
             });
             document.camera = rasterizer::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::SceneTransform{.position = rasterizer::SceneVector3{3.8f, 2.8f, 5.2f}},
-                .target    = rasterizer::SceneVector3{0.0f, 1.05f, 0.0f},
+                .transform = rasterizer::Transform{.position = rasterizer::Vector3{3.8f, 2.8f, 5.2f}},
+                .target    = rasterizer::Vector3{0.0f, 1.05f, 0.0f},
                 .verticalFovDegrees = 42.0f,
                 .nearPlane = 0.05f,
                 .farPlane  = 90.0f,
@@ -431,7 +431,7 @@ namespace spectra::app {
             document.colliders.push_back(rasterizer::SceneCollider{
                 .name      = "cloth.collider",
                 .meshName  = "cloth.collider.mesh",
-                .transform = rasterizer::SceneTransform{.position = ToRasterizerVector3(this->collider.center)},
+                .transform = rasterizer::Transform{.position = ToRasterizerVector3(this->collider.center)},
                 .friction  = 0.54f,
             });
             return document;
@@ -456,16 +456,16 @@ namespace spectra::app {
             return rasterizer::SceneMesh{
                 .name         = "cloth.floor.mesh",
                 .positions    = {
-                    rasterizer::SceneVector3{-3.8f, -0.02f, -3.2f},
-                    rasterizer::SceneVector3{3.8f, -0.02f, -3.2f},
-                    rasterizer::SceneVector3{3.8f, -0.02f, 3.2f},
-                    rasterizer::SceneVector3{-3.8f, -0.02f, 3.2f},
+                    rasterizer::Vector3{-3.8f, -0.02f, -3.2f},
+                    rasterizer::Vector3{3.8f, -0.02f, -3.2f},
+                    rasterizer::Vector3{3.8f, -0.02f, 3.2f},
+                    rasterizer::Vector3{-3.8f, -0.02f, 3.2f},
                 },
                 .normals      = {
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::SceneVector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
                 },
                 .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
                 .materialName = "cloth.floor",
@@ -477,7 +477,7 @@ namespace spectra::app {
             rasterizer::SceneMesh mesh{
                 .name         = "cloth.collider.mesh",
                 .materialName = "cloth.collider",
-                .transform    = rasterizer::SceneTransform{.position = ToRasterizerVector3(this->collider.center)},
+                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->collider.center)},
                 .dynamic      = false,
             };
             constexpr std::uint32_t latitude_segments = 18u;
@@ -488,8 +488,8 @@ namespace spectra::app {
                 const float ring = std::sin(theta);
                 for (std::uint32_t longitude = 0; longitude < longitude_segments; ++longitude) {
                     const float phi = 2.0f * std::numbers::pi_v<float> * static_cast<float>(longitude) / static_cast<float>(longitude_segments);
-                    const rasterizer::SceneVector3 normal{ring * std::cos(phi), y, ring * std::sin(phi)};
-                    mesh.positions.push_back(rasterizer::SceneVector3{normal.x * this->collider.radius, normal.y * this->collider.radius, normal.z * this->collider.radius});
+                    const rasterizer::Vector3 normal{ring * std::cos(phi), y, ring * std::sin(phi)};
+                    mesh.positions.push_back(rasterizer::Vector3{normal.x * this->collider.radius, normal.y * this->collider.radius, normal.z * this->collider.radius});
                     mesh.normals.push_back(normal);
                 }
             }
@@ -557,21 +557,21 @@ namespace spectra::app {
             rasterizer::SceneDocument document = MakeRasterizerProjectDocument("project.pyro", "Pyro", "project://pyro");
             document.materials.push_back(rasterizer::SceneMaterial{
                 .name             = "smoke",
-                .baseColor        = rasterizer::SceneVector4{0.58f, 0.62f, 0.68f, 0.72f},
-                .emissionColor    = rasterizer::SceneVector3{0.95f, 0.48f, 0.18f},
+                .baseColor        = rasterizer::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
+                .emissionColor    = rasterizer::Vector3{0.95f, 0.48f, 0.18f},
                 .emissionStrength = 0.3f,
                 .roughness        = 0.9f,
             });
             document.lights.push_back(rasterizer::SceneLight{
                 .name      = "environment",
                 .kind      = rasterizer::SceneLightKind::Environment,
-                .color     = rasterizer::SceneVector3{0.24f, 0.26f, 0.30f},
+                .color     = rasterizer::Vector3{0.24f, 0.26f, 0.30f},
                 .intensity = 0.7f,
             });
             document.camera = rasterizer::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::SceneTransform{.position = rasterizer::SceneVector3{2.35f, 1.65f, 2.8f}},
-                .target    = rasterizer::SceneVector3{0.6f, 0.86f, 0.6f},
+                .transform = rasterizer::Transform{.position = rasterizer::Vector3{2.35f, 1.65f, 2.8f}},
+                .target    = rasterizer::Vector3{0.6f, 0.86f, 0.6f},
                 .verticalFovDegrees = 39.0f,
                 .nearPlane = 0.03f,
                 .farPlane  = 80.0f,
@@ -609,8 +609,8 @@ namespace spectra::app {
                 .name         = "pyro.volume",
                 .kind         = rasterizer::SceneVolumeKind::GasDensity,
                 .dimensions   = this->resolution,
-                .origin       = rasterizer::SceneVector3{0.0f, 0.0f, 0.0f},
-                .voxelSize    = rasterizer::SceneVector3{this->cell_size, this->cell_size, this->cell_size},
+                .origin       = rasterizer::Vector3{0.0f, 0.0f, 0.0f},
+                .voxelSize    = rasterizer::Vector3{this->cell_size, this->cell_size, this->cell_size},
                 .materialName = "smoke",
                 .dynamic      = true,
             };
@@ -619,7 +619,7 @@ namespace spectra::app {
         [[nodiscard]] rasterizer::SceneVolumeGrid make_volume(const xayah::projects::pyro::PyroFrame& frame) const {
             rasterizer::SceneVolumeGrid volume = this->make_volume_metadata(static_cast<std::uint64_t>(frame.frame_index));
             volume.dimensions = frame.resolution;
-            volume.voxelSize = rasterizer::SceneVector3{frame.cell_size, frame.cell_size, frame.cell_size};
+            volume.voxelSize = rasterizer::Vector3{frame.cell_size, frame.cell_size, frame.cell_size};
             volume.channels.push_back(this->make_volume_channel("density", rasterizer::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.density));
             volume.channels.push_back(this->make_volume_channel("temperature", rasterizer::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.temperature));
             volume.channels.push_back(this->make_volume_channel("velocity_x", rasterizer::SceneVolumeChannelLayout::FaceX, std::array<std::uint32_t, 3>{frame.resolution[0] + 1u, frame.resolution[1], frame.resolution[2]}, frame.velocity_x));

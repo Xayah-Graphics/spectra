@@ -30,36 +30,36 @@ namespace spectra::rasterizer {
         int column{1};
     };
 
-    export struct SceneVector3 {
+    export struct Vector3 {
         float x{};
         float y{};
         float z{};
     };
 
-    export struct SceneVector4 {
-        float x{};
-        float y{};
-        float z{};
-        float w{1.0f};
-    };
-
-    export struct SceneQuaternion {
+    export struct Vector4 {
         float x{};
         float y{};
         float z{};
         float w{1.0f};
     };
 
-    export struct SceneTransform {
-        SceneVector3 position{};
-        SceneQuaternion rotation{};
-        SceneVector3 scale{1.0f, 1.0f, 1.0f};
+    export struct Quaternion {
+        float x{};
+        float y{};
+        float z{};
+        float w{1.0f};
+    };
+
+    export struct Transform {
+        Vector3 position{};
+        Quaternion rotation{};
+        Vector3 scale{1.0f, 1.0f, 1.0f};
     };
 
     export struct SceneMaterial {
         std::string name{};
-        SceneVector4 baseColor{0.8f, 0.8f, 0.8f, 1.0f};
-        SceneVector3 emissionColor{};
+        Vector4 baseColor{0.8f, 0.8f, 0.8f, 1.0f};
+        Vector3 emissionColor{};
         float emissionStrength{};
         float roughness{0.5f};
         float metallic{};
@@ -76,8 +76,8 @@ namespace spectra::rasterizer {
     export struct SceneLight {
         std::string name{};
         SceneLightKind kind{SceneLightKind::Directional};
-        SceneTransform transform{};
-        SceneVector3 color{1.0f, 1.0f, 1.0f};
+        Transform transform{};
+        Vector3 color{1.0f, 1.0f, 1.0f};
         float intensity{1.0f};
         float coneAngleDegrees{45.0f};
         SceneSourceLocation source{};
@@ -85,8 +85,8 @@ namespace spectra::rasterizer {
 
     export struct SceneCamera {
         std::string name{};
-        SceneTransform transform{};
-        SceneVector3 target{};
+        Transform transform{};
+        Vector3 target{};
         float verticalFovDegrees{45.0f};
         float nearPlane{0.01f};
         float farPlane{200.0f};
@@ -95,23 +95,23 @@ namespace spectra::rasterizer {
 
     export struct SceneMesh {
         std::string name{};
-        std::vector<SceneVector3> positions{};
-        std::vector<SceneVector3> normals{};
+        std::vector<Vector3> positions{};
+        std::vector<Vector3> normals{};
         std::vector<std::uint32_t> indices{};
         std::string materialName{};
-        SceneTransform transform{};
+        Transform transform{};
         bool dynamic{false};
         SceneSourceLocation source{};
     };
 
     export struct SceneParticleSet {
         std::string name{};
-        std::vector<SceneVector3> positions{};
-        std::vector<SceneVector3> velocities{};
+        std::vector<Vector3> positions{};
+        std::vector<Vector3> velocities{};
         std::vector<float> radii{};
-        std::vector<SceneVector4> colors{};
+        std::vector<Vector4> colors{};
         std::string materialName{};
-        SceneTransform transform{};
+        Transform transform{};
         float mass{1.0f};
         bool dynamic{true};
         SceneSourceLocation source{};
@@ -119,12 +119,12 @@ namespace spectra::rasterizer {
 
     export struct ScenePointCloud {
         std::string name{};
-        std::vector<SceneVector3> positions{};
-        std::vector<SceneVector3> normals{};
-        std::vector<SceneVector4> colors{};
+        std::vector<Vector3> positions{};
+        std::vector<Vector3> normals{};
+        std::vector<Vector4> colors{};
         std::vector<float> radii{};
         std::string materialName{};
-        SceneTransform transform{};
+        Transform transform{};
         bool dynamic{true};
         SceneSourceLocation source{};
     };
@@ -156,8 +156,8 @@ namespace spectra::rasterizer {
         std::string name{};
         SceneVolumeKind kind{SceneVolumeKind::GasDensity};
         std::array<std::uint32_t, 3> dimensions{};
-        SceneVector3 origin{};
-        SceneVector3 voxelSize{1.0f, 1.0f, 1.0f};
+        Vector3 origin{};
+        Vector3 voxelSize{1.0f, 1.0f, 1.0f};
         std::vector<SceneVolumeChannel> channels{};
         std::string materialName{};
         bool dynamic{true};
@@ -172,35 +172,35 @@ namespace spectra::rasterizer {
     export struct SceneCurveSet {
         std::string name{};
         SceneCurveTopology topology{SceneCurveTopology::Polyline};
-        std::vector<SceneVector3> points{};
+        std::vector<Vector3> points{};
         std::vector<std::uint32_t> curveOffsets{};
         std::vector<float> radii{};
-        std::vector<SceneVector4> colors{};
+        std::vector<Vector4> colors{};
         std::string materialName{};
-        SceneTransform transform{};
+        Transform transform{};
         bool dynamic{true};
         SceneSourceLocation source{};
     };
 
     export struct SceneSplatSet {
         std::string name{};
-        std::vector<SceneVector3> centers{};
-        std::vector<SceneQuaternion> rotations{};
-        std::vector<SceneVector3> scales{};
-        std::vector<SceneVector4> colors{};
+        std::vector<Vector3> centers{};
+        std::vector<Quaternion> rotations{};
+        std::vector<Vector3> scales{};
+        std::vector<Vector4> colors{};
         std::vector<float> opacities{};
         std::string materialName{};
-        SceneTransform transform{};
+        Transform transform{};
         bool dynamic{true};
         SceneSourceLocation source{};
     };
 
     export struct SceneLineSet {
         std::string name{};
-        std::vector<SceneVector3> points{};
+        std::vector<Vector3> points{};
         std::vector<std::uint32_t> indices{};
-        std::vector<SceneVector4> colors{};
-        SceneTransform transform{};
+        std::vector<Vector4> colors{};
+        Transform transform{};
         bool dynamic{true};
         SceneSourceLocation source{};
     };
@@ -215,8 +215,8 @@ namespace spectra::rasterizer {
     export struct SceneDebugPrimitive {
         std::string name{};
         SceneDebugPrimitiveKind kind{SceneDebugPrimitiveKind::Point};
-        SceneTransform transform{};
-        SceneVector4 color{1.0f, 1.0f, 1.0f, 1.0f};
+        Transform transform{};
+        Vector4 color{1.0f, 1.0f, 1.0f, 1.0f};
         float size{1.0f};
         bool dynamic{true};
         SceneSourceLocation source{};
@@ -224,11 +224,11 @@ namespace spectra::rasterizer {
 
     export struct SceneVectorField {
         std::string name{};
-        std::vector<SceneVector3> origins{};
-        std::vector<SceneVector3> vectors{};
-        std::vector<SceneVector4> colors{};
+        std::vector<Vector3> origins{};
+        std::vector<Vector3> vectors{};
+        std::vector<Vector4> colors{};
         float scale{1.0f};
-        SceneTransform transform{};
+        Transform transform{};
         bool dynamic{true};
         SceneSourceLocation source{};
     };
@@ -237,7 +237,7 @@ namespace spectra::rasterizer {
         std::string name{};
         std::string meshName{};
         std::string materialName{};
-        SceneTransform transform{};
+        Transform transform{};
         float massPerArea{1.0f};
         float stretchStiffness{1.0f};
         float bendStiffness{0.2f};
@@ -249,9 +249,9 @@ namespace spectra::rasterizer {
         std::string name{};
         std::string meshName{};
         std::string materialName{};
-        SceneTransform transform{};
-        SceneVector3 linearVelocity{};
-        SceneVector3 angularVelocity{};
+        Transform transform{};
+        Vector3 linearVelocity{};
+        Vector3 angularVelocity{};
         float mass{1.0f};
         bool staticBody{false};
         SceneSourceLocation source{};
@@ -260,7 +260,7 @@ namespace spectra::rasterizer {
     export struct SceneCollider {
         std::string name{};
         std::string meshName{};
-        SceneTransform transform{};
+        Transform transform{};
         float friction{0.5f};
         float restitution{0.1f};
         bool dynamic{false};
@@ -272,7 +272,7 @@ namespace spectra::rasterizer {
         std::string name{};
         std::string title{};
         std::string source{};
-        SceneVector3 gravity{0.0f, -9.8f, 0.0f};
+        Vector3 gravity{0.0f, -9.8f, 0.0f};
         double framesPerSecond{24.0};
         std::optional<SceneCamera> camera{};
         std::vector<SceneMaterial> materials{};
