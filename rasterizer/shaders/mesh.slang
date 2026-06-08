@@ -1,5 +1,6 @@
 struct CameraUniform {
     row_major float4x4 viewProjection;
+    row_major float4x4 inverseViewProjection;
     float3 cameraPosition;
     float _pad0;
     float3 lightDirection;
@@ -10,6 +11,7 @@ struct CameraUniform {
     float _pad2;
     float3 cameraUp;
     float _pad3;
+    float4 viewport;
 };
 
 struct DrawPushConstants {

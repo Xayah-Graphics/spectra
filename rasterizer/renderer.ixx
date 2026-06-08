@@ -84,20 +84,16 @@ namespace spectra::rasterizer {
 
         struct CameraUniformData {
             std::array<float, 16> viewProjection{};
+            std::array<float, 16> inverseViewProjection{};
             std::array<float, 4> cameraPosition{};
             std::array<float, 4> lightDirection{};
             std::array<float, 4> lightColorIntensity{};
             std::array<float, 4> cameraRight{};
             std::array<float, 4> cameraUp{};
-        };
-
-        enum class RenderDrawKind {
-            Scene,
-            ViewportGrid,
+            std::array<float, 4> viewport{};
         };
 
         struct RenderDrawCommand {
-            RenderDrawKind kind{RenderDrawKind::Scene};
             std::string name{};
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
@@ -185,10 +181,14 @@ namespace spectra::rasterizer {
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
         void create_volume_image(GpuImage3D& image, vk::Extent3D extent);
         void destroy_volume_image(GpuImage3D& image) noexcept;
+        void destroy_camera_resources() noexcept;
         void destroy_mesh_resources() noexcept;
+        void destroy_viewport_grid_resources() noexcept;
         void destroy_particle_resources() noexcept;
         void destroy_volume_resources() noexcept;
+        void ensure_camera_resources();
         void ensure_mesh_resources();
+        void ensure_viewport_grid_resources();
         void ensure_particle_resources();
         void ensure_volume_resources();
 
@@ -286,12 +286,21 @@ namespace spectra::rasterizer {
             vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
             vk::raii::DescriptorPool descriptor_pool{nullptr};
             vk::raii::DescriptorSets descriptor_sets{nullptr};
+            std::vector<GpuBuffer> uniform_buffers{};
+        } camera;
+
+        struct {
+            std::uint32_t frame_count{};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
-            vk::raii::Pipeline viewport_grid_pipeline{nullptr};
-            std::vector<GpuBuffer> uniform_buffers{};
             std::vector<FrameSceneResources> frame_scenes{};
         } mesh_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline pipeline{nullptr};
+        } viewport_grid_pass;
 
         struct {
             std::uint32_t frame_count{};

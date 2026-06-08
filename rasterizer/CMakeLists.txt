@@ -22,6 +22,8 @@ spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_VERTEX_HEADER particle ver
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_FRAGMENT_HEADER particle fragment fragment_main spectra_rasterizer_particle_fragment_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER volume vertex vertex_main spectra_rasterizer_volume_vertex_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER volume fragment fragment_main spectra_rasterizer_volume_fragment_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_VIEWPORT_GRID_VERTEX_HEADER viewport_grid vertex vertex_main spectra_rasterizer_viewport_grid_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_VIEWPORT_GRID_FRAGMENT_HEADER viewport_grid fragment fragment_main spectra_rasterizer_viewport_grid_fragment_spv)
 target_sources(
         spectra_rasterizer
         PUBLIC
@@ -44,6 +46,8 @@ target_sources(
         "${SPECTRA_RASTERIZER_PARTICLE_FRAGMENT_HEADER}"
         "${SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_VIEWPORT_GRID_VERTEX_HEADER}"
+        "${SPECTRA_RASTERIZER_VIEWPORT_GRID_FRAGMENT_HEADER}"
 )
 target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui)
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)

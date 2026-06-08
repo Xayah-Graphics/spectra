@@ -168,6 +168,23 @@ namespace spectra::rasterizer::math {
         return view;
     }
 
+    export [[nodiscard]] Matrix4 inverse_look_at_matrix(const CameraBasis& basis) {
+        Matrix4 inverse_view = identity_matrix();
+        inverse_view.at(0u, 0u) = basis.side.x;
+        inverse_view.at(0u, 1u) = basis.side.y;
+        inverse_view.at(0u, 2u) = basis.side.z;
+        inverse_view.at(1u, 0u) = basis.up.x;
+        inverse_view.at(1u, 1u) = basis.up.y;
+        inverse_view.at(1u, 2u) = basis.up.z;
+        inverse_view.at(2u, 0u) = -basis.forward.x;
+        inverse_view.at(2u, 1u) = -basis.forward.y;
+        inverse_view.at(2u, 2u) = -basis.forward.z;
+        inverse_view.at(3u, 0u) = basis.eye.x;
+        inverse_view.at(3u, 1u) = basis.eye.y;
+        inverse_view.at(3u, 2u) = basis.eye.z;
+        return inverse_view;
+    }
+
     export [[nodiscard]] Matrix4 perspective_matrix(const float vertical_fov_degrees, const float aspect, const float near_plane, const float far_plane) {
         if (!std::isfinite(vertical_fov_degrees) || vertical_fov_degrees <= 0.0f || vertical_fov_degrees >= 179.0f) throw std::runtime_error("Rasterizer camera vertical FOV must be in (0, 179)");
         if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
@@ -182,6 +199,21 @@ namespace spectra::rasterizer::math {
         return projection;
     }
 
+    export [[nodiscard]] Matrix4 inverse_perspective_matrix(const float vertical_fov_degrees, const float aspect, const float near_plane, const float far_plane) {
+        if (!std::isfinite(vertical_fov_degrees) || vertical_fov_degrees <= 0.0f || vertical_fov_degrees >= 179.0f) throw std::runtime_error("Rasterizer camera vertical FOV must be in (0, 179)");
+        if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
+        if (!std::isfinite(near_plane) || !std::isfinite(far_plane) || near_plane <= 0.0f || far_plane <= near_plane) throw std::runtime_error("Rasterizer camera clipping planes are invalid");
+        const float f = 1.0f / std::tan(vertical_fov_degrees * std::numbers::pi_v<float> / 360.0f);
+        const float depth_scale = -(far_plane * near_plane) / (far_plane - near_plane);
+        Matrix4 inverse_projection{};
+        inverse_projection.at(0u, 0u) = aspect / f;
+        inverse_projection.at(1u, 1u) = -1.0f / f;
+        inverse_projection.at(2u, 3u) = 1.0f / depth_scale;
+        inverse_projection.at(3u, 2u) = -1.0f;
+        inverse_projection.at(3u, 3u) = far_plane / (near_plane - far_plane) / depth_scale;
+        return inverse_projection;
+    }
+
     export [[nodiscard]] Matrix4 orthographic_matrix(const float vertical_size, const float aspect, const float near_plane, const float far_plane) {
         if (!std::isfinite(vertical_size) || vertical_size <= 0.0f) throw std::runtime_error("Rasterizer orthographic vertical size must be positive");
         if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
@@ -193,6 +225,19 @@ namespace spectra::rasterizer::math {
         projection.at(2u, 2u) = 1.0f / (near_plane - far_plane);
         projection.at(3u, 2u) = near_plane / (near_plane - far_plane);
         return projection;
+    }
+
+    export [[nodiscard]] Matrix4 inverse_orthographic_matrix(const float vertical_size, const float aspect, const float near_plane, const float far_plane) {
+        if (!std::isfinite(vertical_size) || vertical_size <= 0.0f) throw std::runtime_error("Rasterizer orthographic vertical size must be positive");
+        if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
+        if (!std::isfinite(near_plane) || !std::isfinite(far_plane) || near_plane <= 0.0f || far_plane <= near_plane) throw std::runtime_error("Rasterizer camera clipping planes are invalid");
+        const float horizontal_size = vertical_size * aspect;
+        Matrix4 inverse_projection = identity_matrix();
+        inverse_projection.at(0u, 0u) = horizontal_size * 0.5f;
+        inverse_projection.at(1u, 1u) = -vertical_size * 0.5f;
+        inverse_projection.at(2u, 2u) = near_plane - far_plane;
+        inverse_projection.at(3u, 2u) = -near_plane;
+        return inverse_projection;
     }
 
     export [[nodiscard]] float perspective_pan_scale(const float distance, const float vertical_fov_degrees, const float viewport_height) {
