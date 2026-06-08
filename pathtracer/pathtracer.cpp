@@ -1249,7 +1249,6 @@ namespace spectra::pathtracer {
             this->gpu_runtime = std::make_unique<GpuRuntime>(this->runtime_config);
             this->synchronize_scene_workspace();
             this->register_panels(host);
-            host.set_window_detail(this->window_detail());
         } catch (...) {
             this->detach_noexcept();
             throw;

@@ -718,7 +718,6 @@ namespace spectra::rasterizer {
         this->attached = true;
         try {
             this->register_panels(host);
-            host.set_window_detail(this->window_detail());
         } catch (...) {
             this->detach();
             throw;

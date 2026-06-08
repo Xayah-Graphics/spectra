@@ -454,12 +454,12 @@ export namespace spectra::pathtracer {
 
     template <typename Frame>
     concept PathtracerFrameInfoLike = requires(const Frame& frame) {
-        { frame.frame_index } -> std::convertible_to<std::uint32_t>;
+        { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
         { frame.image_index } -> std::convertible_to<std::uint32_t>;
     };
 
     template <typename Host>
-    concept PathtracerHost = requires(Host& host, PathtracerPanel panel, PathtracerSidebarTab tab, PathtracerToolbarAction action, std::string detail) {
+    concept PathtracerHost = requires(Host& host, PathtracerPanel panel, PathtracerSidebarTab tab, PathtracerToolbarAction action) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
@@ -467,13 +467,12 @@ export namespace spectra::pathtracer {
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
         { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
         { host.register_toolbar_action(std::move(action)) } -> std::same_as<void>;
-        { host.set_window_detail(std::move(detail)) } -> std::same_as<void>;
     };
 
     class PathtracerHostView {
     public:
         template <PathtracerHost Host>
-        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](PathtracerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), registerToolbarActionCallback([&host](PathtracerToolbarAction action) { host.register_toolbar_action(std::move(action)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit PathtracerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](PathtracerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](PathtracerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), registerToolbarActionCallback([&host](PathtracerToolbarAction action) { host.register_toolbar_action(std::move(action)); }) {}
 
         PathtracerHostView(const PathtracerHostView& other)                = delete;
         PathtracerHostView(PathtracerHostView&& other) noexcept            = default;
@@ -509,10 +508,6 @@ export namespace spectra::pathtracer {
             this->registerToolbarActionCallback(std::move(action));
         }
 
-        void set_window_detail(std::string detail) {
-            this->setWindowDetailCallback(std::move(detail));
-        }
-
     private:
         std::move_only_function<const vk::raii::PhysicalDevice&()> physicalDeviceCallback{};
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
@@ -521,7 +516,6 @@ export namespace spectra::pathtracer {
         std::move_only_function<void(PathtracerPanel)> registerPanelCallback{};
         std::move_only_function<void(PathtracerSidebarTab)> registerSidebarTabCallback{};
         std::move_only_function<void(PathtracerToolbarAction)> registerToolbarActionCallback{};
-        std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 
     [[nodiscard]] SceneTranslationReport AnalyzePathtracerSceneProbe(const SceneProbeReport& probe);
@@ -565,7 +559,7 @@ export namespace spectra::pathtracer {
             requires PathtracerFrameInfoLike<Frame>
         [[nodiscard]] PathtracerFrameResult begin_frame(Host& host, const Frame& frame) {
             return this->begin_frame(PathtracerHostView{host}, PathtracerFrameInfo{
-                                                                       .frame_index = static_cast<std::uint32_t>(frame.frame_index),
+                                                                       .frame_index = static_cast<std::uint32_t>(frame.frame_slot_index),
                                                                        .image_index = static_cast<std::uint32_t>(frame.image_index),
                                                                    });
         }

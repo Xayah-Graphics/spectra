@@ -204,169 +204,13 @@ namespace {
 
 namespace spectra {
     struct Spectra::FrameState {
-        std::uint32_t frame_index{0};
+        std::uint32_t frame_slot_index{0};
         std::uint32_t image_index{0};
         std::uint64_t frame_number{0};
         double delta_seconds{0.0};
         bool recreate_after_present{false};
         std::vector<vk::SemaphoreSubmitInfo> external_waits{};
     };
-
-    const vk::raii::PhysicalDevice& Spectra::physical_device() const {
-        return this->context.physical_device;
-    }
-
-    const vk::raii::Device& Spectra::device() const {
-        return this->context.device;
-    }
-
-    std::uint32_t Spectra::frame_count() const {
-        return this->sync.frame_count;
-    }
-
-    vk::Extent2D Spectra::swapchain_extent() const {
-        return this->swapchain.extent;
-    }
-
-    void Spectra::set_window_detail(std::string detail) {
-        this->window_title.detail = std::move(detail);
-    }
-
-    void Spectra::set_renderer_availability_callback(std::move_only_function<RendererAvailability(std::string_view)> callback) {
-        this->renderer_availability_callback = std::move(callback);
-    }
-
-    void Spectra::set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback) {
-        this->renderer_activation_callback = std::move(callback);
-    }
-
-    void Spectra::activate_renderer(const std::size_t renderer_index) {
-        if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        const RendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
-        if (!availability.available) throw std::runtime_error(availability.detail.empty() ? std::format("Renderer \"{}\" is not available", this->renderers[renderer_index].name) : availability.detail);
-        this->active_renderer_index = renderer_index;
-        this->dock_layout_initialized = false;
-        this->sync_active_sidebar_tab();
-        if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers[renderer_index].name);
-    }
-
-    void Spectra::store_renderer(RendererSlot renderer) {
-        const std::string_view renderer_name = renderer.name;
-        if (renderer_name.empty()) throw std::runtime_error("Spectra renderer name must not be empty");
-        for (const RendererSlot& existing_renderer : this->renderers) {
-            if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
-        }
-        const bool first_renderer = this->renderers.empty();
-        if (first_renderer) {
-            const RendererAvailability availability = this->renderer_availability(renderer.name);
-            if (!availability.available) throw std::runtime_error(availability.detail);
-        }
-        if (this->registering_renderer_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
-        this->registering_renderer_name = std::string{renderer_name};
-        try {
-            renderer.attach(*this);
-            if (this->imgui.initialized) renderer.after_imgui_created(*this);
-        } catch (...) {
-            this->registering_renderer_name.reset();
-            throw;
-        }
-        this->registering_renderer_name.reset();
-        this->renderers.push_back(std::move(renderer));
-        if (first_renderer) {
-            this->active_renderer_index = 0;
-            if (this->renderer_activation_callback) this->renderer_activation_callback(this->renderers.front().name);
-        }
-    }
-
-    void Spectra::store_panel(Panel panel) {
-        if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
-        if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
-        if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");
-        switch (panel.dock_slot) {
-        case DockSlot::Center:
-        case DockSlot::Floating: break;
-        default: throw std::runtime_error("Spectra panel dock slot is invalid");
-        }
-        for (const Panel& existing_panel : this->panels) {
-            if (!owner_scopes_overlap(existing_panel.owner_renderer, panel.owner_renderer)) continue;
-            if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
-            if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
-        }
-        this->panels.push_back(std::move(panel));
-        this->dock_layout_initialized = false;
-    }
-
-    void Spectra::store_sidebar_tab(SidebarTab tab) {
-        if (tab.id.empty()) throw std::runtime_error("Spectra sidebar tab id must not be empty");
-        if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
-        if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
-        for (const SidebarTab& existing_tab : this->sidebar_tabs) {
-            if (!owner_scopes_overlap(existing_tab.owner_renderer, tab.owner_renderer)) continue;
-            if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
-            if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
-        }
-        if (this->active_sidebar_tab_id.empty()) {
-            this->active_sidebar_tab_id             = tab.id;
-            this->sidebar_tab_selection_requested = true;
-        }
-        this->sidebar_tabs.push_back(std::move(tab));
-        this->dock_layout_initialized = false;
-    }
-
-    void Spectra::store_toolbar_action(ToolbarAction action) {
-        if (action.id.empty()) throw std::runtime_error("Spectra toolbar action id must not be empty");
-        if (action.title.empty()) throw std::runtime_error("Spectra toolbar action title must not be empty");
-        if (action.icon.empty()) throw std::runtime_error("Spectra toolbar action icon must not be empty");
-        if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
-        if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
-        for (const ToolbarAction& existing_action : this->toolbar_actions) {
-            if (!owner_scopes_overlap(existing_action.owner_renderer, action.owner_renderer)) continue;
-            if (existing_action.id == action.id) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action id: "} + action.id);
-            if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
-        }
-        this->toolbar_actions.push_back(std::move(action));
-    }
-
-    RendererAvailability Spectra::renderer_availability(const std::string_view renderer_name) {
-        if (!this->renderer_availability_callback) return RendererAvailability{};
-        RendererAvailability availability = this->renderer_availability_callback(renderer_name);
-        if (!availability.available && availability.detail.empty()) availability.detail = std::format("Renderer \"{}\" is not available", renderer_name);
-        return availability;
-    }
-
-    std::string_view Spectra::active_renderer_name() const {
-        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
-        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        return this->renderers[this->active_renderer_index].name;
-    }
-
-    bool Spectra::panel_belongs_to_active_renderer(const Panel& panel) const {
-        return panel.owner_renderer.empty() || panel.owner_renderer == this->active_renderer_name();
-    }
-
-    bool Spectra::sidebar_tab_belongs_to_active_renderer(const SidebarTab& tab) const {
-        return tab.owner_renderer.empty() || tab.owner_renderer == this->active_renderer_name();
-    }
-
-    bool Spectra::toolbar_action_belongs_to_active_renderer(const ToolbarAction& action) const {
-        return action.owner_renderer.empty() || action.owner_renderer == this->active_renderer_name();
-    }
-
-    void Spectra::sync_active_sidebar_tab() {
-        for (const SidebarTab& tab : this->sidebar_tabs) {
-            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
-            if (tab.id == this->active_sidebar_tab_id) return;
-        }
-        for (const SidebarTab& tab : this->sidebar_tabs) {
-            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
-            this->active_sidebar_tab_id = tab.id;
-            this->sidebar_visible       = true;
-            this->sidebar_tab_selection_requested = true;
-            return;
-        }
-        this->active_sidebar_tab_id.clear();
-        this->sidebar_visible = false;
-    }
 
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
         this->window_title.base = std::string{app_name};
@@ -385,6 +229,42 @@ namespace spectra {
     } catch (...) {
         this->shutdown_runtime();
         throw;
+    }
+
+    Spectra::~Spectra() noexcept {
+        this->shutdown_runtime();
+    }
+
+    void Spectra::run() {
+        while (!glfwWindowShouldClose(this->surface.window.get())) {
+            FrameState frame{};
+            if (!this->begin_frame(frame)) continue;
+            this->record_frame(frame);
+            this->end_frame(frame);
+        }
+    }
+
+    const vk::raii::PhysicalDevice& Spectra::physical_device() const {
+        return this->context.physical_device;
+    }
+
+    const vk::raii::Device& Spectra::device() const {
+        return this->context.device;
+    }
+
+    std::uint32_t Spectra::frame_count() const {
+        return this->sync.frame_count;
+    }
+
+    vk::Extent2D Spectra::swapchain_extent() const {
+        return this->swapchain.extent;
+    }
+
+    void Spectra::activate_renderer(const std::size_t renderer_index) {
+        if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        this->active_renderer_index = renderer_index;
+        this->dock_layout_initialized = false;
+        this->sync_active_sidebar_tab();
     }
 
     void Spectra::initialize_glfw() {
@@ -506,6 +386,87 @@ namespace spectra {
         this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
     }
 
+    void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
+        const std::vector<vk::SurfaceFormatKHR> surface_formats = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
+        if (surface_formats.empty()) throw std::runtime_error("Vulkan surface has no supported formats");
+        const std::vector<vk::PresentModeKHR> present_modes = this->context.physical_device.getSurfacePresentModesKHR(this->surface.surface);
+        if (present_modes.empty()) throw std::runtime_error("Vulkan surface has no supported present modes");
+        const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
+
+        if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined) {
+            this->swapchain.format      = vk::Format::eB8G8R8A8Unorm;
+            this->swapchain.color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
+        } else {
+            this->swapchain.format      = surface_formats.front().format;
+            this->swapchain.color_space = surface_formats.front().colorSpace;
+            bool selected               = false;
+            constexpr std::array preferred_surface_formats{
+                vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+                vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+            };
+            for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_surface_formats) {
+                for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
+                    if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace) {
+                        this->swapchain.format      = surface_format.format;
+                        this->swapchain.color_space = surface_format.colorSpace;
+                        selected                    = true;
+                        break;
+                    }
+                }
+                if (selected) break;
+            }
+        }
+
+        this->swapchain.present_mode = vk::PresentModeKHR::eFifo;
+        for (const vk::PresentModeKHR present_mode : present_modes) {
+            if (present_mode == vk::PresentModeKHR::eMailbox) {
+                this->swapchain.present_mode = present_mode;
+                break;
+            }
+            if (present_mode == vk::PresentModeKHR::eImmediate) this->swapchain.present_mode = present_mode;
+        }
+
+        int framebuffer_width  = 0;
+        int framebuffer_height = 0;
+        glfwGetFramebufferSize(this->surface.window.get(), &framebuffer_width, &framebuffer_height);
+        if (framebuffer_width <= 0 || framebuffer_height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size during swapchain creation");
+        if (surface_capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
+            this->swapchain.extent = surface_capabilities.currentExtent;
+        } else {
+            const std::uint32_t width  = std::clamp(static_cast<std::uint32_t>(framebuffer_width), surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width);
+            const std::uint32_t height = std::clamp(static_cast<std::uint32_t>(framebuffer_height), surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height);
+            this->swapchain.extent     = vk::Extent2D{width, height};
+        }
+        if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Swapchain extent must be positive");
+
+        std::uint32_t image_count = surface_capabilities.minImageCount + 1;
+        if (surface_capabilities.maxImageCount > 0) image_count = std::min(image_count, surface_capabilities.maxImageCount);
+        if (image_count < 2) throw std::runtime_error("Swapchain requires at least two images");
+        const vk::ImageUsageFlags swapchain_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+        if ((surface_capabilities.supportedUsageFlags & swapchain_usage) != swapchain_usage) throw std::runtime_error("Vulkan surface does not support required swapchain image usage");
+
+        const vk::SurfaceTransformFlagBitsKHR pre_transform     = surface_capabilities.currentTransform;
+        constexpr vk::CompositeAlphaFlagBitsKHR composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+        const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
+        this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
+
+        this->swapchain.images = this->swapchain.handle.getImages();
+        if (this->swapchain.images.empty()) throw std::runtime_error("Swapchain returned no images");
+        this->swapchain.image_views.clear();
+        this->swapchain.image_views.reserve(this->swapchain.images.size());
+        this->swapchain.image_layouts.assign(this->swapchain.images.size(), vk::ImageLayout::eUndefined);
+        for (const vk::Image image : this->swapchain.images) {
+            const vk::ImageViewCreateInfo image_view_create_info{{}, image, vk::ImageViewType::e2D, this->swapchain.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            this->swapchain.image_views.emplace_back(this->context.device, image_view_create_info);
+        }
+
+        this->sync.image_in_flight_frame.assign(this->swapchain.images.size(), std::numeric_limits<std::uint32_t>::max());
+        this->sync.render_finished_semaphores.clear();
+        constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
+        this->sync.render_finished_semaphores.reserve(this->swapchain.images.size());
+        for (std::uint32_t image_index = 0; image_index < this->swapchain.images.size(); ++image_index) this->sync.render_finished_semaphores.emplace_back(this->context.device, semaphore_create_info);
+    }
+
     void Spectra::create_frame_sync() {
         constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
         constexpr vk::FenceCreateInfo fence_create_info{vk::FenceCreateFlagBits::eSignaled};
@@ -515,66 +476,9 @@ namespace spectra {
 
         this->sync.image_available_semaphores.reserve(this->sync.frame_count);
         this->sync.in_flight_fences.reserve(this->sync.frame_count);
-        for (std::uint32_t frame_index = 0; frame_index < this->sync.frame_count; ++frame_index) {
+        for (std::uint32_t frame_slot_index = 0; frame_slot_index < this->sync.frame_count; ++frame_slot_index) {
             this->sync.image_available_semaphores.emplace_back(this->context.device, semaphore_create_info);
             this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
-        }
-    }
-
-    Spectra::~Spectra() noexcept {
-        this->shutdown_runtime();
-    }
-
-    void Spectra::shutdown_runtime() noexcept {
-        this->detach_renderers();
-        this->destroy_imgui();
-        this->destroy_frame_sync();
-        this->destroy_swapchain();
-        this->destroy_surface_and_window();
-        this->destroy_vulkan_context();
-        this->terminate_glfw();
-    }
-
-    void Spectra::destroy_frame_sync() noexcept {
-        this->sync.command_buffers.clear();
-        this->sync.in_flight_fences.clear();
-        this->sync.image_in_flight_frame.clear();
-        this->sync.render_finished_semaphores.clear();
-        this->sync.image_available_semaphores.clear();
-    }
-
-    void Spectra::destroy_swapchain() noexcept {
-        this->swapchain.image_views.clear();
-        this->swapchain.handle = nullptr;
-        this->swapchain.image_layouts.clear();
-        this->swapchain.images.clear();
-    }
-
-    void Spectra::destroy_vulkan_context() noexcept {
-        this->context.command_pool     = nullptr;
-        this->context.graphics_queue   = nullptr;
-        this->context.device           = nullptr;
-        this->context.physical_device  = nullptr;
-        this->context.debug_messenger  = nullptr;
-        this->context.instance         = nullptr;
-    }
-
-    void Spectra::destroy_surface_and_window() noexcept {
-        this->surface.surface = nullptr;
-        this->surface.window  = nullptr;
-    }
-
-    void Spectra::terminate_glfw() noexcept {
-        if (this->surface.glfw_initialized) glfwTerminate();
-        this->surface.glfw_initialized = false;
-    }
-
-    void Spectra::run() {
-        while (!glfwWindowShouldClose(this->surface.window.get())) {
-            FrameState frame{};
-            if (!this->begin_frame(frame)) continue;
-            this->record_frame(frame);
-            this->end_frame(frame);
         }
     }
 
@@ -654,45 +558,6 @@ namespace spectra {
         }
     }
 
-    void Spectra::wait_device_idle_for_cleanup() noexcept {
-        try {
-            if (*this->context.device) this->context.device.waitIdle();
-        } catch (...) {
-        }
-    }
-
-    void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
-        if (this->imgui_shutdown_notified) return;
-        this->wait_device_idle_for_cleanup();
-        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
-            renderer->before_imgui_shutdown(*this);
-        }
-        this->imgui_shutdown_notified = true;
-    }
-
-    void Spectra::destroy_imgui() noexcept {
-        this->notify_renderers_before_imgui_shutdown();
-        if (this->imgui.initialized) {
-            ImGui_ImplVulkan_Shutdown();
-            ImGui_ImplGlfw_Shutdown();
-            ImGui::DestroyContext();
-        }
-        this->imgui.descriptor_pool   = nullptr;
-        this->imgui.initialized       = false;
-        this->dock_layout_initialized = false;
-    }
-
-    void Spectra::detach_renderers() noexcept {
-        this->notify_renderers_before_imgui_shutdown();
-        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
-            renderer->detach(*this);
-        }
-        this->renderers.clear();
-        this->panels.clear();
-        this->active_renderer_index   = 0;
-        this->dock_layout_initialized = false;
-    }
-
     bool Spectra::begin_frame(FrameState& frame) {
         glfwPollEvents();
         if (glfwWindowShouldClose(this->surface.window.get())) return false;
@@ -702,17 +567,17 @@ namespace spectra {
         }
 
         frame.recreate_after_present = false;
-        frame.frame_index            = this->sync.frame_index;
+        frame.frame_slot_index       = this->sync.frame_slot_index;
         frame.frame_number           = this->timing.frame_number;
         const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
         if (this->timing.last_frame_time_valid) frame.delta_seconds = std::chrono::duration<double>(now - this->timing.last_frame_time).count();
         this->timing.last_frame_time       = now;
         this->timing.last_frame_time_valid = true;
         if (!std::isfinite(frame.delta_seconds) || frame.delta_seconds < 0.0) throw std::runtime_error("Spectra frame delta time is invalid");
-        if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
+        if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_slot_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
 
         try {
-            const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame.frame_index], nullptr);
+            const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame.frame_slot_index], nullptr);
             if (acquired_image.result != vk::Result::eSuccess && acquired_image.result != vk::Result::eSuboptimalKHR) throw std::runtime_error(std::string{"Failed to acquire swapchain image: "} + vk::to_string(acquired_image.result));
             frame.recreate_after_present = acquired_image.result == vk::Result::eSuboptimalKHR;
             frame.image_index            = acquired_image.value;
@@ -721,11 +586,11 @@ namespace spectra {
             return false;
         }
 
-        if (const std::uint32_t previous_frame_index = this->sync.image_in_flight_frame.at(frame.image_index); previous_frame_index != std::numeric_limits<std::uint32_t>::max()) {
-            if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
+        if (const std::uint32_t previous_frame_slot_index = this->sync.image_in_flight_frame.at(frame.image_index); previous_frame_slot_index != std::numeric_limits<std::uint32_t>::max()) {
+            if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_slot_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
         }
-        this->sync.image_in_flight_frame.at(frame.image_index) = frame.frame_index;
-        this->context.device.resetFences(*this->sync.in_flight_fences[frame.frame_index]);
+        this->sync.image_in_flight_frame.at(frame.image_index) = frame.frame_slot_index;
+        this->context.device.resetFences(*this->sync.in_flight_fences[frame.frame_slot_index]);
         if (!this->imgui.initialized) throw std::runtime_error("ImGui is not initialized");
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -737,10 +602,10 @@ namespace spectra {
         if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
         if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
         const FrameContext frame_info{
-            .frame_index   = frame.frame_index,
-            .image_index   = frame.image_index,
-            .frame_number  = frame.frame_number,
-            .delta_seconds = frame.delta_seconds,
+            .frame_slot_index = frame.frame_slot_index,
+            .image_index      = frame.image_index,
+            .frame_number     = frame.frame_number,
+            .delta_seconds    = frame.delta_seconds,
         };
         FrameResult frame_result = this->renderers[this->active_renderer_index].begin_frame(*this, frame_info);
         if (frame_result.completion_semaphore.has_value()) {
@@ -748,7 +613,7 @@ namespace spectra {
             frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
         }
         if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-        if (frame_result.window_detail.has_value()) this->set_window_detail(std::move(*frame_result.window_detail));
+        if (frame_result.window_detail.has_value()) this->window_title.detail = std::move(*frame_result.window_detail);
         return true;
     }
 
@@ -758,7 +623,7 @@ namespace spectra {
         this->draw_sidebar();
         this->draw_registered_panels();
 
-        const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_index];
+        const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_slot_index];
         command_buffer.reset();
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
@@ -825,12 +690,12 @@ namespace spectra {
     void Spectra::end_frame(FrameState& frame) {
         std::vector<vk::SemaphoreSubmitInfo> wait_semaphore_infos{};
         wait_semaphore_infos.reserve(frame.external_waits.size() + 1u);
-        wait_semaphore_infos.emplace_back(*this->sync.image_available_semaphores[frame.frame_index], 0, vk::PipelineStageFlagBits2::eAllCommands);
+        wait_semaphore_infos.emplace_back(*this->sync.image_available_semaphores[frame.frame_slot_index], 0, vk::PipelineStageFlagBits2::eAllCommands);
         wait_semaphore_infos.insert(wait_semaphore_infos.end(), frame.external_waits.begin(), frame.external_waits.end());
-        const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_index]};
+        const vk::CommandBufferSubmitInfo command_buffer_submit_info{*this->sync.command_buffers[frame.frame_slot_index]};
         const vk::SemaphoreSubmitInfo signal_semaphore_info{*this->sync.render_finished_semaphores[frame.image_index], 0, vk::PipelineStageFlagBits2::eAllCommands};
         const vk::SubmitInfo2 submit_info{{}, static_cast<std::uint32_t>(wait_semaphore_infos.size()), wait_semaphore_infos.data(), 1, &command_buffer_submit_info, 1, &signal_semaphore_info};
-        this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame.frame_index]);
+        this->context.graphics_queue.submit2(submit_info, *this->sync.in_flight_fences[frame.frame_slot_index]);
 
         const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
         const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
@@ -862,8 +727,183 @@ namespace spectra {
         if (frame.recreate_after_present) this->recreate_swapchain();
         if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
 
-        this->sync.frame_index = (this->sync.frame_index + 1) % this->sync.frame_count;
+        this->sync.frame_slot_index = (this->sync.frame_slot_index + 1) % this->sync.frame_count;
         ++this->timing.frame_number;
+    }
+
+    void Spectra::recreate_swapchain() {
+        int width  = 0;
+        int height = 0;
+        while (width == 0 || height == 0) {
+            glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
+            if (width == 0 || height == 0) {
+                glfwWaitEvents();
+                if (glfwWindowShouldClose(this->surface.window.get())) return;
+            }
+        }
+
+        this->context.device.waitIdle();
+        this->destroy_imgui();
+        vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
+        this->swapchain.image_views.clear();
+        this->swapchain.images.clear();
+        this->swapchain.image_layouts.clear();
+        this->create_swapchain(std::move(old_swapchain));
+        this->surface.resize_requested = false;
+        this->create_imgui();
+    }
+
+    void Spectra::shutdown_runtime() noexcept {
+        this->detach_renderers();
+        this->destroy_imgui();
+        this->destroy_frame_sync();
+        this->destroy_swapchain();
+        this->destroy_surface_and_window();
+        this->destroy_vulkan_context();
+        this->terminate_glfw();
+    }
+
+    void Spectra::detach_renderers() noexcept {
+        this->notify_renderers_before_imgui_shutdown();
+        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
+            renderer->detach(*this);
+        }
+        this->renderers.clear();
+        this->panels.clear();
+        this->active_renderer_index   = 0;
+        this->dock_layout_initialized = false;
+    }
+
+    void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
+        if (this->imgui_shutdown_notified) return;
+        this->wait_device_idle_for_cleanup();
+        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
+            renderer->before_imgui_shutdown(*this);
+        }
+        this->imgui_shutdown_notified = true;
+    }
+
+    void Spectra::wait_device_idle_for_cleanup() noexcept {
+        try {
+            if (*this->context.device) this->context.device.waitIdle();
+        } catch (...) {
+        }
+    }
+
+    void Spectra::destroy_imgui() noexcept {
+        this->notify_renderers_before_imgui_shutdown();
+        if (this->imgui.initialized) {
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+        }
+        this->imgui.descriptor_pool   = nullptr;
+        this->imgui.initialized       = false;
+        this->dock_layout_initialized = false;
+    }
+
+    void Spectra::destroy_frame_sync() noexcept {
+        this->sync.command_buffers.clear();
+        this->sync.in_flight_fences.clear();
+        this->sync.image_in_flight_frame.clear();
+        this->sync.render_finished_semaphores.clear();
+        this->sync.image_available_semaphores.clear();
+    }
+
+    void Spectra::destroy_swapchain() noexcept {
+        this->swapchain.image_views.clear();
+        this->swapchain.handle = nullptr;
+        this->swapchain.image_layouts.clear();
+        this->swapchain.images.clear();
+    }
+
+    void Spectra::destroy_surface_and_window() noexcept {
+        this->surface.surface = nullptr;
+        this->surface.window  = nullptr;
+    }
+
+    void Spectra::destroy_vulkan_context() noexcept {
+        this->context.command_pool     = nullptr;
+        this->context.graphics_queue   = nullptr;
+        this->context.device           = nullptr;
+        this->context.physical_device  = nullptr;
+        this->context.debug_messenger  = nullptr;
+        this->context.instance         = nullptr;
+    }
+
+    void Spectra::terminate_glfw() noexcept {
+        if (this->surface.glfw_initialized) glfwTerminate();
+        this->surface.glfw_initialized = false;
+    }
+
+    void Spectra::store_renderer(RendererSlot renderer) {
+        const std::string_view renderer_name = renderer.name;
+        if (renderer_name.empty()) throw std::runtime_error("Spectra renderer name must not be empty");
+        for (const RendererSlot& existing_renderer : this->renderers) {
+            if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
+        }
+        const bool first_renderer = this->renderers.empty();
+        if (this->registering_renderer_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
+        this->registering_renderer_name = std::string{renderer_name};
+        try {
+            renderer.attach(*this);
+            if (this->imgui.initialized) renderer.after_imgui_created(*this);
+        } catch (...) {
+            this->registering_renderer_name.reset();
+            throw;
+        }
+        this->registering_renderer_name.reset();
+        this->renderers.push_back(std::move(renderer));
+        if (first_renderer) this->active_renderer_index = 0;
+    }
+
+    void Spectra::store_panel(Panel panel) {
+        if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
+        if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
+        if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");
+        switch (panel.dock_slot) {
+        case DockSlot::Center:
+        case DockSlot::Floating: break;
+        default: throw std::runtime_error("Spectra panel dock slot is invalid");
+        }
+        for (const Panel& existing_panel : this->panels) {
+            if (!owner_scopes_overlap(existing_panel.owner_renderer, panel.owner_renderer)) continue;
+            if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
+            if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
+        }
+        this->panels.push_back(std::move(panel));
+        this->dock_layout_initialized = false;
+    }
+
+    void Spectra::store_sidebar_tab(SidebarTab tab) {
+        if (tab.id.empty()) throw std::runtime_error("Spectra sidebar tab id must not be empty");
+        if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
+        if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
+        for (const SidebarTab& existing_tab : this->sidebar_tabs) {
+            if (!owner_scopes_overlap(existing_tab.owner_renderer, tab.owner_renderer)) continue;
+            if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
+            if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
+        }
+        if (this->active_sidebar_tab_id.empty()) {
+            this->active_sidebar_tab_id             = tab.id;
+            this->sidebar_tab_selection_requested = true;
+        }
+        this->sidebar_tabs.push_back(std::move(tab));
+        this->dock_layout_initialized = false;
+    }
+
+    void Spectra::store_toolbar_action(ToolbarAction action) {
+        if (action.id.empty()) throw std::runtime_error("Spectra toolbar action id must not be empty");
+        if (action.title.empty()) throw std::runtime_error("Spectra toolbar action title must not be empty");
+        if (action.icon.empty()) throw std::runtime_error("Spectra toolbar action icon must not be empty");
+        if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
+        if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
+        for (const ToolbarAction& existing_action : this->toolbar_actions) {
+            if (!owner_scopes_overlap(existing_action.owner_renderer, action.owner_renderer)) continue;
+            if (existing_action.id == action.id) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action id: "} + action.id);
+            if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
+        }
+        this->toolbar_actions.push_back(std::move(action));
     }
 
     void Spectra::draw_command_bar() {
@@ -917,13 +957,9 @@ namespace spectra {
         ImGui::SameLine(0.0f, 10.0f);
         for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
             const bool selected = renderer_index == this->active_renderer_index;
-            const RendererAvailability availability = this->renderer_availability(this->renderers[renderer_index].name);
             push_renderer_button_style(selected);
-            ImGui::BeginDisabled(!availability.available);
             if (ImGui::Button(this->renderers[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) this->activate_renderer(renderer_index);
-            ImGui::EndDisabled();
             pop_renderer_button_style();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !availability.detail.empty()) ImGui::SetTooltip("%s", availability.detail.c_str());
             if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 6.0f);
         }
 
@@ -1117,106 +1153,38 @@ namespace spectra {
         this->window_title.refresh_timer = 0.0f;
     }
 
-    void Spectra::create_swapchain(vk::raii::SwapchainKHR old_swapchain) {
-        const std::vector<vk::SurfaceFormatKHR> surface_formats = this->context.physical_device.getSurfaceFormatsKHR(this->surface.surface);
-        if (surface_formats.empty()) throw std::runtime_error("Vulkan surface has no supported formats");
-        const std::vector<vk::PresentModeKHR> present_modes = this->context.physical_device.getSurfacePresentModesKHR(this->surface.surface);
-        if (present_modes.empty()) throw std::runtime_error("Vulkan surface has no supported present modes");
-        const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
-
-        if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined) {
-            this->swapchain.format      = vk::Format::eB8G8R8A8Unorm;
-            this->swapchain.color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
-        } else {
-            this->swapchain.format      = surface_formats.front().format;
-            this->swapchain.color_space = surface_formats.front().colorSpace;
-            bool selected               = false;
-            constexpr std::array preferred_surface_formats{
-                vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
-                vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
-            };
-            for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_surface_formats) {
-                for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
-                    if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace) {
-                        this->swapchain.format      = surface_format.format;
-                        this->swapchain.color_space = surface_format.colorSpace;
-                        selected                    = true;
-                        break;
-                    }
-                }
-                if (selected) break;
-            }
-        }
-
-        this->swapchain.present_mode = vk::PresentModeKHR::eFifo;
-        for (const vk::PresentModeKHR present_mode : present_modes) {
-            if (present_mode == vk::PresentModeKHR::eMailbox) {
-                this->swapchain.present_mode = present_mode;
-                break;
-            }
-            if (present_mode == vk::PresentModeKHR::eImmediate) this->swapchain.present_mode = present_mode;
-        }
-
-        int framebuffer_width  = 0;
-        int framebuffer_height = 0;
-        glfwGetFramebufferSize(this->surface.window.get(), &framebuffer_width, &framebuffer_height);
-        if (framebuffer_width <= 0 || framebuffer_height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size during swapchain creation");
-        if (surface_capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max()) {
-            this->swapchain.extent = surface_capabilities.currentExtent;
-        } else {
-            const std::uint32_t width  = std::clamp(static_cast<std::uint32_t>(framebuffer_width), surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width);
-            const std::uint32_t height = std::clamp(static_cast<std::uint32_t>(framebuffer_height), surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height);
-            this->swapchain.extent     = vk::Extent2D{width, height};
-        }
-        if (this->swapchain.extent.width == 0 || this->swapchain.extent.height == 0) throw std::runtime_error("Swapchain extent must be positive");
-
-        std::uint32_t image_count = surface_capabilities.minImageCount + 1;
-        if (surface_capabilities.maxImageCount > 0) image_count = std::min(image_count, surface_capabilities.maxImageCount);
-        if (image_count < 2) throw std::runtime_error("Swapchain requires at least two images");
-        const vk::ImageUsageFlags swapchain_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
-        if ((surface_capabilities.supportedUsageFlags & swapchain_usage) != swapchain_usage) throw std::runtime_error("Vulkan surface does not support required swapchain image usage");
-
-        const vk::SurfaceTransformFlagBitsKHR pre_transform     = surface_capabilities.currentTransform;
-        constexpr vk::CompositeAlphaFlagBitsKHR composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-        const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
-        this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
-
-        this->swapchain.images = this->swapchain.handle.getImages();
-        if (this->swapchain.images.empty()) throw std::runtime_error("Swapchain returned no images");
-        this->swapchain.image_views.clear();
-        this->swapchain.image_views.reserve(this->swapchain.images.size());
-        this->swapchain.image_layouts.assign(this->swapchain.images.size(), vk::ImageLayout::eUndefined);
-        for (const vk::Image image : this->swapchain.images) {
-            const vk::ImageViewCreateInfo image_view_create_info{{}, image, vk::ImageViewType::e2D, this->swapchain.format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-            this->swapchain.image_views.emplace_back(this->context.device, image_view_create_info);
-        }
-
-        this->sync.image_in_flight_frame.assign(this->swapchain.images.size(), std::numeric_limits<std::uint32_t>::max());
-        this->sync.render_finished_semaphores.clear();
-        constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
-        this->sync.render_finished_semaphores.reserve(this->swapchain.images.size());
-        for (std::uint32_t image_index = 0; image_index < this->swapchain.images.size(); ++image_index) this->sync.render_finished_semaphores.emplace_back(this->context.device, semaphore_create_info);
+    std::string_view Spectra::active_renderer_name() const {
+        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        return this->renderers[this->active_renderer_index].name;
     }
 
-    void Spectra::recreate_swapchain() {
-        int width  = 0;
-        int height = 0;
-        while (width == 0 || height == 0) {
-            glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
-            if (width == 0 || height == 0) {
-                glfwWaitEvents();
-                if (glfwWindowShouldClose(this->surface.window.get())) return;
-            }
-        }
-
-        this->context.device.waitIdle();
-        this->destroy_imgui();
-        vk::raii::SwapchainKHR old_swapchain = std::move(this->swapchain.handle);
-        this->swapchain.image_views.clear();
-        this->swapchain.images.clear();
-        this->swapchain.image_layouts.clear();
-        this->create_swapchain(std::move(old_swapchain));
-        this->surface.resize_requested = false;
-        this->create_imgui();
+    bool Spectra::panel_belongs_to_active_renderer(const Panel& panel) const {
+        return panel.owner_renderer.empty() || panel.owner_renderer == this->active_renderer_name();
     }
+
+    bool Spectra::sidebar_tab_belongs_to_active_renderer(const SidebarTab& tab) const {
+        return tab.owner_renderer.empty() || tab.owner_renderer == this->active_renderer_name();
+    }
+
+    bool Spectra::toolbar_action_belongs_to_active_renderer(const ToolbarAction& action) const {
+        return action.owner_renderer.empty() || action.owner_renderer == this->active_renderer_name();
+    }
+
+    void Spectra::sync_active_sidebar_tab() {
+        for (const SidebarTab& tab : this->sidebar_tabs) {
+            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
+            if (tab.id == this->active_sidebar_tab_id) return;
+        }
+        for (const SidebarTab& tab : this->sidebar_tabs) {
+            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
+            this->active_sidebar_tab_id = tab.id;
+            this->sidebar_visible       = true;
+            this->sidebar_tab_selection_requested = true;
+            return;
+        }
+        this->active_sidebar_tab_id.clear();
+        this->sidebar_visible = false;
+    }
+
 } // namespace spectra

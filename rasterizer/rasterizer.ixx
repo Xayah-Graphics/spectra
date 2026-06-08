@@ -422,27 +422,26 @@ export namespace spectra::rasterizer {
 
     template <typename Frame>
     concept RasterizerFrameInfoLike = requires(const Frame& frame) {
-        { frame.frame_index } -> std::convertible_to<std::uint32_t>;
+        { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
         { frame.image_index } -> std::convertible_to<std::uint32_t>;
         { frame.frame_number } -> std::convertible_to<std::uint64_t>;
         { frame.delta_seconds } -> std::convertible_to<double>;
     };
 
     template <typename Host>
-    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, RasterizerSidebarTab tab, std::string detail) {
+    concept RasterizerHost = requires(Host& host, RasterizerPanel panel, RasterizerSidebarTab tab) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
         { host.swapchain_extent() } -> std::same_as<vk::Extent2D>;
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
         { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
-        { host.set_window_detail(std::move(detail)) } -> std::same_as<void>;
     };
 
     class RasterizerHostView {
     public:
         template <RasterizerHost Host>
-        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](RasterizerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), setWindowDetailCallback([&host](std::string detail) { host.set_window_detail(std::move(detail)); }) {}
+        explicit RasterizerHostView(Host& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](RasterizerPanel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](RasterizerSidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }) {}
 
         RasterizerHostView(const RasterizerHostView& other)                = delete;
         RasterizerHostView(RasterizerHostView&& other) noexcept            = default;
@@ -474,10 +473,6 @@ export namespace spectra::rasterizer {
             this->registerSidebarTabCallback(std::move(tab));
         }
 
-        void set_window_detail(std::string detail) {
-            this->setWindowDetailCallback(std::move(detail));
-        }
-
     private:
         std::move_only_function<const vk::raii::PhysicalDevice&()> physicalDeviceCallback{};
         std::move_only_function<const vk::raii::Device&()> deviceCallback{};
@@ -485,7 +480,6 @@ export namespace spectra::rasterizer {
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
         std::move_only_function<void(RasterizerPanel)> registerPanelCallback{};
         std::move_only_function<void(RasterizerSidebarTab)> registerSidebarTabCallback{};
-        std::move_only_function<void(std::string)> setWindowDetailCallback{};
     };
 
     class RasterizerRenderer final {
@@ -527,9 +521,9 @@ export namespace spectra::rasterizer {
             requires RasterizerFrameInfoLike<Frame>
         [[nodiscard]] RasterizerFrameResult begin_frame(Host& host, const Frame& frame) {
             return this->begin_frame(RasterizerHostView{host}, RasterizerFrameInfo{
-                                                                   .frame_index = static_cast<std::uint32_t>(frame.frame_index),
-                                                                   .image_index = static_cast<std::uint32_t>(frame.image_index),
-                                                                   .frame_number = static_cast<std::uint64_t>(frame.frame_number),
+                                                                   .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
+                                                                   .image_index   = static_cast<std::uint32_t>(frame.image_index),
+                                                                   .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
                                                                    .delta_seconds = static_cast<double>(frame.delta_seconds),
                                                                });
         }

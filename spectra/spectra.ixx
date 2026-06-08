@@ -16,13 +16,13 @@ export module spectra;
 
 import std;
 
-export namespace spectra {
-    enum class DockSlot {
+namespace spectra {
+    export enum class DockSlot : std::uint8_t {
         Center,
         Floating,
     };
 
-    struct Panel {
+    export struct Panel {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -37,7 +37,7 @@ export namespace spectra {
         std::move_only_function<void()> draw{};
     };
 
-    struct SidebarTab {
+    export struct SidebarTab {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -47,7 +47,7 @@ export namespace spectra {
         std::move_only_function<void()> draw{};
     };
 
-    struct ToolbarAction {
+    export struct ToolbarAction {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -58,25 +58,20 @@ export namespace spectra {
         std::move_only_function<void()> trigger{};
     };
 
-    struct FrameContext {
-        std::uint32_t frame_index{};
+    export struct FrameContext {
+        std::uint32_t frame_slot_index{};
         std::uint32_t image_index{};
         std::uint64_t frame_number{};
         double delta_seconds{};
     };
 
-    struct FrameResult {
+    export struct FrameResult {
         std::optional<vk::Semaphore> completion_semaphore{};
         bool close_requested{false};
         std::optional<std::string> window_detail{};
     };
 
-    struct RendererAvailability {
-        bool available{true};
-        std::string detail{};
-    };
-
-    template <typename PanelContribution>
+    export template <typename PanelContribution>
     concept PanelLike = requires(PanelContribution panel) {
         std::string{std::move(panel.id)};
         std::string{std::move(panel.title)};
@@ -91,7 +86,7 @@ export namespace spectra {
         std::move_only_function<void()>{std::move(panel.draw)};
     };
 
-    template <typename SidebarTabContribution>
+    export template <typename SidebarTabContribution>
     concept SidebarTabLike = requires(SidebarTabContribution tab) {
         std::string{std::move(tab.id)};
         std::string{std::move(tab.title)};
@@ -101,7 +96,7 @@ export namespace spectra {
         std::move_only_function<void()>{std::move(tab.draw)};
     };
 
-    template <typename ToolbarActionContribution>
+    export template <typename ToolbarActionContribution>
     concept ToolbarActionLike = requires(ToolbarActionContribution action) {
         std::string{std::move(action.id)};
         std::string{std::move(action.title)};
@@ -112,14 +107,14 @@ export namespace spectra {
         std::move_only_function<void()>{std::move(action.trigger)};
     };
 
-    template <typename FrameResultContribution>
+    export template <typename FrameResultContribution>
     concept FrameResultLike = requires(FrameResultContribution result) {
         std::optional<vk::Semaphore>{std::move(result.completion_semaphore)};
         { result.close_requested } -> std::convertible_to<bool>;
         std::optional<std::string>{std::move(result.window_detail)};
     };
 
-    template <typename Renderer, typename Host>
+    export template <typename Renderer, typename Host>
     concept RendererFor = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, const std::remove_cvref_t<Renderer>& constRenderer, Host& host, const FrameContext& frame, const vk::raii::CommandBuffer& commandBuffer) {
         { constRenderer.name() } -> std::convertible_to<std::string_view>;
         { renderer.attach(host) } -> std::same_as<void>;
@@ -130,7 +125,7 @@ export namespace spectra {
         { renderer.record_frame(commandBuffer) } -> std::same_as<void>;
     };
 
-    class Spectra {
+    export class Spectra {
     public:
         explicit Spectra(const std::string_view& app_name = "Spectra", const std::string_view& engine_name = "Spectra Engine", std::uint32_t window_width = 1920, std::uint32_t window_height = 1080);
         ~Spectra() noexcept;
@@ -146,9 +141,6 @@ export namespace spectra {
         [[nodiscard]] const vk::raii::Device& device() const;
         [[nodiscard]] std::uint32_t frame_count() const;
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
-        void set_window_detail(std::string detail);
-        void set_renderer_availability_callback(std::move_only_function<RendererAvailability(std::string_view)> callback);
-        void set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback);
 
         void activate_renderer(std::size_t renderer_index);
         template <typename Renderer>
@@ -245,7 +237,6 @@ export namespace spectra {
         [[nodiscard]] bool sidebar_tab_belongs_to_active_renderer(const SidebarTab& tab) const;
         [[nodiscard]] bool toolbar_action_belongs_to_active_renderer(const ToolbarAction& action) const;
         void sync_active_sidebar_tab();
-        [[nodiscard]] RendererAvailability renderer_availability(std::string_view renderer_name);
 
         struct {
             vk::raii::Context context{};
@@ -283,7 +274,7 @@ export namespace spectra {
 
         struct {
             std::uint32_t frame_count{2};
-            std::uint32_t frame_index{0};
+            std::uint32_t frame_slot_index{0};
             vk::raii::CommandBuffers command_buffers{nullptr};
             std::vector<vk::raii::Semaphore> image_available_semaphores{};
             std::vector<vk::raii::Semaphore> render_finished_semaphores{};
@@ -315,8 +306,6 @@ export namespace spectra {
         std::vector<SidebarTab> sidebar_tabs{};
         std::vector<ToolbarAction> toolbar_actions{};
         std::vector<RendererSlot> renderers{};
-        std::move_only_function<RendererAvailability(std::string_view)> renderer_availability_callback{};
-        std::move_only_function<void(std::string_view)> renderer_activation_callback{};
     };
 
     template <typename Renderer>
