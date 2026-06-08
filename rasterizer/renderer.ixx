@@ -138,6 +138,7 @@ namespace spectra::rasterizer {
         void create_viewport_resources(vk::Extent2D extent);
         void destroy_imgui_descriptor() noexcept;
         void destroy_viewport_resources() noexcept;
+        void destroy_screenshot_resources() noexcept;
         void ensure_viewport_resources();
         void create_imgui_descriptor();
 
@@ -173,6 +174,9 @@ namespace spectra::rasterizer {
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
+        void request_viewport_screenshot();
+        void record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer);
+        void consume_completed_screenshot(std::uint32_t frame_index);
 
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
@@ -243,6 +247,12 @@ namespace spectra::rasterizer {
             bool overlays_visible{true};
             bool grid_visible{true};
             bool hovered{false};
+            bool screenshot_requested{false};
+            bool screenshot_pending{false};
+            std::uint32_t screenshot_frame_index{};
+            vk::Extent2D screenshot_extent{};
+            std::filesystem::path screenshot_path{};
+            GpuBuffer screenshot_buffer{};
         } viewport;
 
         struct {

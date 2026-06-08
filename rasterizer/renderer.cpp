@@ -150,6 +150,161 @@ namespace {
         }
         throw std::runtime_error("Unknown Spectra rasterizer timeline mode");
     }
+
+    [[nodiscard]] float half_to_float(const std::uint16_t value) {
+        const std::uint32_t sign     = (value >> 15u) & 0x1u;
+        const std::uint32_t exponent = (value >> 10u) & 0x1fu;
+        const std::uint32_t mantissa = value & 0x3ffu;
+        float result{};
+        if (exponent == 0u) {
+            result = mantissa == 0u ? 0.0f : std::ldexp(static_cast<float>(mantissa), -24);
+        } else if (exponent == 31u) {
+            result = mantissa == 0u ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+        } else {
+            result = std::ldexp(1.0f + static_cast<float>(mantissa) / 1024.0f, static_cast<int>(exponent) - 15);
+        }
+        return sign == 0u ? result : -result;
+    }
+
+    [[nodiscard]] std::uint8_t float_to_srgb_byte(const float value) {
+        if (!std::isfinite(value)) return 0u;
+        const float linear = std::clamp(value, 0.0f, 1.0f);
+        const float srgb   = linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+        return static_cast<std::uint8_t>(std::clamp(std::lround(srgb * 255.0f), 0l, 255l));
+    }
+
+    [[nodiscard]] std::uint8_t float_to_alpha_byte(const float value) {
+        if (!std::isfinite(value)) return 255u;
+        return static_cast<std::uint8_t>(std::clamp(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f), 0l, 255l));
+    }
+
+    [[nodiscard]] std::vector<std::uint8_t> rgba16_float_to_rgba8(const void* source, const vk::Extent2D extent) {
+        if (source == nullptr) throw std::runtime_error("Cannot encode Spectra rasterizer screenshot from null pixel data");
+        if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot encode an empty Spectra rasterizer screenshot");
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height) * 4u);
+        const std::byte* bytes = static_cast<const std::byte*>(source);
+        for (std::uint32_t y = 0; y < extent.height; ++y) {
+            for (std::uint32_t x = 0; x < extent.width; ++x) {
+                const std::size_t pixel_index = static_cast<std::size_t>(y) * static_cast<std::size_t>(extent.width) + static_cast<std::size_t>(x);
+                const std::size_t source_base = pixel_index * 4u * sizeof(std::uint16_t);
+                std::uint16_t red{};
+                std::uint16_t green{};
+                std::uint16_t blue{};
+                std::uint16_t alpha{};
+                std::memcpy(&red, bytes + source_base, sizeof(red));
+                std::memcpy(&green, bytes + source_base + sizeof(std::uint16_t), sizeof(green));
+                std::memcpy(&blue, bytes + source_base + sizeof(std::uint16_t) * 2u, sizeof(blue));
+                std::memcpy(&alpha, bytes + source_base + sizeof(std::uint16_t) * 3u, sizeof(alpha));
+                const std::size_t destination_base = pixel_index * 4u;
+                pixels[destination_base]           = float_to_srgb_byte(half_to_float(red));
+                pixels[destination_base + 1u]      = float_to_srgb_byte(half_to_float(green));
+                pixels[destination_base + 2u]      = float_to_srgb_byte(half_to_float(blue));
+                pixels[destination_base + 3u]      = float_to_alpha_byte(half_to_float(alpha));
+            }
+        }
+        return pixels;
+    }
+
+    void append_u32_be(std::vector<std::uint8_t>& data, const std::uint32_t value) {
+        data.push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
+        data.push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
+        data.push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
+        data.push_back(static_cast<std::uint8_t>(value & 0xffu));
+    }
+
+    [[nodiscard]] std::uint32_t png_crc32_update(std::uint32_t crc, const std::uint8_t byte) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc & 1u) != 0u ? (crc >> 1u) ^ 0xedb88320u : crc >> 1u;
+        return crc;
+    }
+
+    [[nodiscard]] std::uint32_t png_crc32(const char* type, const std::vector<std::uint8_t>& data) {
+        std::uint32_t crc = 0xffffffffu;
+        for (std::size_t index = 0; index < 4u; ++index) crc = png_crc32_update(crc, static_cast<std::uint8_t>(type[index]));
+        for (const std::uint8_t byte : data) crc = png_crc32_update(crc, byte);
+        return ~crc;
+    }
+
+    void append_png_chunk(std::vector<std::uint8_t>& png, const char* type, const std::vector<std::uint8_t>& data) {
+        append_u32_be(png, static_cast<std::uint32_t>(data.size()));
+        for (std::size_t index = 0; index < 4u; ++index) png.push_back(static_cast<std::uint8_t>(type[index]));
+        png.insert(png.end(), data.begin(), data.end());
+        append_u32_be(png, png_crc32(type, data));
+    }
+
+    [[nodiscard]] std::uint32_t adler32(const std::vector<std::uint8_t>& data) {
+        constexpr std::uint32_t modulus = 65521u;
+        std::uint32_t a                 = 1u;
+        std::uint32_t b                 = 0u;
+        for (const std::uint8_t byte : data) {
+            a = (a + byte) % modulus;
+            b = (b + a) % modulus;
+        }
+        return (b << 16u) | a;
+    }
+
+    [[nodiscard]] std::vector<std::uint8_t> zlib_store(const std::vector<std::uint8_t>& data) {
+        std::vector<std::uint8_t> compressed{};
+        compressed.reserve(data.size() + data.size() / 65535u * 5u + 16u);
+        compressed.push_back(0x78u);
+        compressed.push_back(0x01u);
+        std::size_t offset = 0;
+        while (offset < data.size()) {
+            const std::size_t block_size = std::min<std::size_t>(65535u, data.size() - offset);
+            const bool final_block       = offset + block_size == data.size();
+            compressed.push_back(final_block ? 0x01u : 0x00u);
+            const std::uint16_t length = static_cast<std::uint16_t>(block_size);
+            const std::uint16_t nlength = static_cast<std::uint16_t>(~length);
+            compressed.push_back(static_cast<std::uint8_t>(length & 0xffu));
+            compressed.push_back(static_cast<std::uint8_t>((length >> 8u) & 0xffu));
+            compressed.push_back(static_cast<std::uint8_t>(nlength & 0xffu));
+            compressed.push_back(static_cast<std::uint8_t>((nlength >> 8u) & 0xffu));
+            compressed.insert(compressed.end(), data.begin() + static_cast<std::ptrdiff_t>(offset), data.begin() + static_cast<std::ptrdiff_t>(offset + block_size));
+            offset += block_size;
+        }
+        append_u32_be(compressed, adler32(data));
+        return compressed;
+    }
+
+    void write_png_rgba8(const std::filesystem::path& path, const vk::Extent2D extent, const std::vector<std::uint8_t>& pixels) {
+        if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot write an empty Spectra rasterizer screenshot");
+        const std::size_t expected_size = static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height) * 4u;
+        if (pixels.size() != expected_size) throw std::runtime_error("Spectra rasterizer screenshot pixel buffer has an invalid size");
+
+        std::vector<std::uint8_t> raw{};
+        raw.reserve(static_cast<std::size_t>(extent.height) * (static_cast<std::size_t>(extent.width) * 4u + 1u));
+        for (std::uint32_t y = 0; y < extent.height; ++y) {
+            raw.push_back(0u);
+            const std::size_t row_begin = static_cast<std::size_t>(y) * static_cast<std::size_t>(extent.width) * 4u;
+            raw.insert(raw.end(), pixels.begin() + static_cast<std::ptrdiff_t>(row_begin), pixels.begin() + static_cast<std::ptrdiff_t>(row_begin + static_cast<std::size_t>(extent.width) * 4u));
+        }
+
+        std::vector<std::uint8_t> png{0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au};
+        std::vector<std::uint8_t> ihdr{};
+        append_u32_be(ihdr, extent.width);
+        append_u32_be(ihdr, extent.height);
+        ihdr.push_back(8u);
+        ihdr.push_back(6u);
+        ihdr.push_back(0u);
+        ihdr.push_back(0u);
+        ihdr.push_back(0u);
+        append_png_chunk(png, "IHDR", ihdr);
+        append_png_chunk(png, "IDAT", zlib_store(raw));
+        const std::vector<std::uint8_t> empty_chunk{};
+        append_png_chunk(png, "IEND", empty_chunk);
+
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream output{path, std::ios::binary};
+        if (!output) throw std::runtime_error(std::format("Failed to open Spectra rasterizer screenshot file: {}", path.string()));
+        output.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        if (!output) throw std::runtime_error(std::format("Failed to write Spectra rasterizer screenshot file: {}", path.string()));
+    }
+
+    [[nodiscard]] std::filesystem::path next_screenshot_path() {
+        const std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+        const std::int64_t milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        return std::filesystem::current_path() / "screenshots" / std::format("spectra-rasterizer-{}.png", milliseconds);
+    }
 } // namespace
 
 namespace spectra::rasterizer {
@@ -190,6 +345,7 @@ namespace spectra::rasterizer {
 
     void Renderer::detach() noexcept {
         this->destroy_viewport_resources();
+        this->destroy_screenshot_resources();
         this->destroy_mesh_resources();
         this->destroy_viewport_grid_resources();
         this->destroy_particle_resources();
@@ -291,7 +447,7 @@ namespace spectra::rasterizer {
             1,
             vk::SampleCountFlagBits::e1,
             vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
             vk::SharingMode::eExclusive,
             0,
             nullptr,
@@ -375,6 +531,15 @@ namespace spectra::rasterizer {
         this->viewport.extent       = vk::Extent2D{};
         this->viewport.layout       = vk::ImageLayout::eUndefined;
         this->viewport.depth_layout = vk::ImageLayout::eUndefined;
+    }
+
+    void Renderer::destroy_screenshot_resources() noexcept {
+        this->destroy_host_buffer(this->viewport.screenshot_buffer);
+        this->viewport.screenshot_requested   = false;
+        this->viewport.screenshot_pending     = false;
+        this->viewport.screenshot_frame_index = 0;
+        this->viewport.screenshot_extent      = vk::Extent2D{};
+        this->viewport.screenshot_path.clear();
     }
 
     void Renderer::ensure_viewport_resources() {
@@ -1267,6 +1432,7 @@ namespace spectra::rasterizer {
     FrameResult Renderer::begin_frame(HostView host, const FrameContext& frame) {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         if (frame.frame_index >= this->host.frame_count) throw std::runtime_error("Spectra rasterizer frame index is out of range");
+        this->consume_completed_screenshot(frame.frame_index);
         this->lifecycle.active_frame_index = frame.frame_index;
         FrameResult result{};
         this->ensure_viewport_resources();
@@ -1399,8 +1565,58 @@ namespace spectra::rasterizer {
         this->record_particle_pass(command_buffer);
         command_buffer.endRendering();
 
-        transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
-        this->viewport.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        if (this->viewport.screenshot_requested)
+            this->record_viewport_screenshot_copy(command_buffer);
+        else {
+            transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            this->viewport.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+    }
+
+    void Renderer::request_viewport_screenshot() {
+        if (!*this->viewport.image || this->viewport.extent.width == 0 || this->viewport.extent.height == 0) throw std::runtime_error("Cannot capture a Spectra rasterizer screenshot before viewport rendering exists");
+        if (this->viewport.screenshot_requested || this->viewport.screenshot_pending) throw std::runtime_error("A Spectra rasterizer screenshot is already pending");
+        this->viewport.screenshot_path      = next_screenshot_path();
+        this->viewport.screenshot_requested = true;
+    }
+
+    void Renderer::record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer) {
+        if (!this->viewport.screenshot_requested) return;
+        if (this->viewport.screenshot_pending) throw std::runtime_error("Cannot record a Spectra rasterizer screenshot while another screenshot is pending");
+        if (!*this->viewport.image || this->viewport.extent.width == 0 || this->viewport.extent.height == 0) throw std::runtime_error("Cannot record a Spectra rasterizer screenshot without a viewport image");
+        constexpr vk::DeviceSize bytes_per_pixel = sizeof(std::uint16_t) * 4u;
+        const vk::DeviceSize required_size       = static_cast<vk::DeviceSize>(this->viewport.extent.width) * static_cast<vk::DeviceSize>(this->viewport.extent.height) * bytes_per_pixel;
+        this->ensure_host_buffer(this->viewport.screenshot_buffer, required_size, vk::BufferUsageFlagBits::eTransferDst);
+
+        transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eTransferSrcOptimal, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        this->viewport.layout = vk::ImageLayout::eTransferSrcOptimal;
+        const std::array<vk::BufferImageCopy, 1> copy_regions{vk::BufferImageCopy{
+            0,
+            0,
+            0,
+            vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            vk::Offset3D{0, 0, 0},
+            vk::Extent3D{this->viewport.extent.width, this->viewport.extent.height, 1},
+        }};
+        command_buffer.copyImageToBuffer(*this->viewport.image, vk::ImageLayout::eTransferSrcOptimal, *this->viewport.screenshot_buffer.buffer, copy_regions);
+        transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        this->viewport.layout                 = vk::ImageLayout::eShaderReadOnlyOptimal;
+        this->viewport.screenshot_requested   = false;
+        this->viewport.screenshot_pending     = true;
+        this->viewport.screenshot_frame_index = this->lifecycle.active_frame_index;
+        this->viewport.screenshot_extent      = this->viewport.extent;
+    }
+
+    void Renderer::consume_completed_screenshot(const std::uint32_t frame_index) {
+        if (!this->viewport.screenshot_pending || this->viewport.screenshot_frame_index != frame_index) return;
+        if (this->viewport.screenshot_buffer.mapped == nullptr) throw std::runtime_error("Spectra rasterizer screenshot readback buffer is not mapped");
+        if (this->viewport.screenshot_path.empty()) throw std::runtime_error("Spectra rasterizer screenshot output path is empty");
+        const std::vector<std::uint8_t> pixels = rgba16_float_to_rgba8(this->viewport.screenshot_buffer.mapped, this->viewport.screenshot_extent);
+        write_png_rgba8(this->viewport.screenshot_path, this->viewport.screenshot_extent, pixels);
+        this->viewport.screenshot_pending     = false;
+        this->viewport.screenshot_frame_index = 0;
+        this->viewport.screenshot_extent      = vk::Extent2D{};
+        this->viewport.screenshot_path.clear();
     }
 
     void Renderer::handle_viewport_input(const ViewportImageRect image_rect) {
@@ -1470,10 +1686,11 @@ namespace spectra::rasterizer {
         ImGui::SameLine(0.0f, gap);
         if (draw_button(this->viewport.overlays_visible ? ICON_MS_VISIBILITY "##overlays" : ICON_MS_VISIBILITY_OFF "##overlays", "Overlays", this->viewport.overlays_visible)) this->viewport.overlays_visible = !this->viewport.overlays_visible;
         ImGui::SameLine(0.0f, gap);
-        ImGui::BeginDisabled();
-        ImGui::Button(ICON_MS_SCREENSHOT "##screenshot", ImVec2{button_size, button_size});
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", "Screenshot");
+        const bool screenshot_busy = this->viewport.screenshot_requested || this->viewport.screenshot_pending;
+        if (screenshot_busy) ImGui::BeginDisabled();
+        if (draw_button(ICON_MS_SCREENSHOT "##screenshot", screenshot_busy ? "Screenshot Pending" : "Screenshot", false)) this->request_viewport_screenshot();
+        if (screenshot_busy) ImGui::EndDisabled();
+        if (screenshot_busy && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", "Screenshot Pending");
         ImGui::PopID();
         ImGui::PopClipRect();
     }
