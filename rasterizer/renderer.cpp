@@ -162,43 +162,6 @@ namespace spectra::rasterizer {
 
     Renderer::~Renderer() noexcept = default;
 
-    Renderer::Renderer(Renderer&& other) noexcept(false) {
-        this->move_from(other);
-    }
-
-    Renderer& Renderer::operator=(Renderer&& other) noexcept(false) {
-        if (this == &other) return *this;
-        this->assert_movable();
-        this->move_from(other);
-        return *this;
-    }
-
-    void Renderer::move_from(Renderer& other) {
-        other.assert_movable();
-        this->host               = std::move(other.host);
-        this->lifecycle          = std::move(other.lifecycle);
-        this->scene              = std::move(other.scene);
-        this->ui                 = std::move(other.ui);
-        this->viewport           = std::move(other.viewport);
-        this->camera             = std::move(other.camera);
-        this->mesh_pass          = std::move(other.mesh_pass);
-        this->viewport_grid_pass = std::move(other.viewport_grid_pass);
-        this->particle_pass      = std::move(other.particle_pass);
-        this->volume_pass        = std::move(other.volume_pass);
-    }
-
-    void Renderer::assert_movable() const {
-        if (this->lifecycle.attached) throw std::runtime_error("Cannot move an attached Spectra rasterizer renderer");
-        if (this->lifecycle.imgui_ready) throw std::runtime_error("Cannot move a Spectra rasterizer renderer after ImGui creation");
-        if (this->host.physical_device != nullptr || this->host.device != nullptr || this->host.frame_count != 0) throw std::runtime_error("Cannot move a Spectra rasterizer renderer after host binding");
-        if (*this->viewport.image || *this->viewport.memory || *this->viewport.view || *this->viewport.sampler || *this->viewport.depth_image || *this->viewport.depth_memory || *this->viewport.depth_view || this->viewport.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with viewport resources");
-        if (this->camera.frame_count != 0 || *this->camera.descriptor_set_layout || *this->camera.descriptor_pool || this->camera.descriptor_sets.size() != 0 || !this->camera.uniform_buffers.empty()) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with camera resources");
-        if (this->mesh_pass.frame_count != 0 || *this->mesh_pass.pipeline_layout || *this->mesh_pass.pipeline || !this->mesh_pass.frame_scenes.empty()) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with mesh pass resources");
-        if (this->viewport_grid_pass.frame_count != 0 || *this->viewport_grid_pass.pipeline_layout || *this->viewport_grid_pass.pipeline) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with viewport grid pass resources");
-        if (this->particle_pass.frame_count != 0 || *this->particle_pass.pipeline_layout || *this->particle_pass.pipeline || !this->particle_pass.frame_particles.empty()) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with particle pass resources");
-        if (this->volume_pass.frame_count != 0 || *this->volume_pass.descriptor_set_layout || *this->volume_pass.descriptor_pool || this->volume_pass.descriptor_sets.size() != 0 || *this->volume_pass.sampler || *this->volume_pass.pipeline_layout || *this->volume_pass.pipeline || !this->volume_pass.frame_volumes.empty()) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with volume pass resources");
-    }
-
     std::string_view Renderer::name() {
         return "Spectra Rasterizer";
     }

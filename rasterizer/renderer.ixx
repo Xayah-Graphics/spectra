@@ -23,9 +23,9 @@ namespace spectra::rasterizer {
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
-        Renderer(Renderer&& other) noexcept(false);
+        Renderer(Renderer&& other) = delete;
         Renderer& operator=(const Renderer& other) = delete;
-        Renderer& operator=(Renderer&& other) noexcept(false);
+        Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
         void set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace);
@@ -129,9 +129,6 @@ namespace spectra::rasterizer {
             bool descriptorValid{};
             VolumeDrawCommand drawCommand{};
         };
-
-        void move_from(Renderer& other);
-        void assert_movable() const;
 
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         void wait_device_idle_for_cleanup() noexcept;
