@@ -77,9 +77,7 @@ export namespace spectra {
     };
 
     template <typename Item>
-    concept SpectraOwnerRendererLike = requires(Item item) {
-        std::string{std::move(item.owner_renderer)};
-    };
+    concept SpectraOwnerRendererLike = requires(Item item) { std::string{std::move(item.owner_renderer)}; };
 
     template <typename Panel>
     concept SpectraPanelLike = requires(Panel panel) {
@@ -176,8 +174,40 @@ export namespace spectra {
         void set_renderer_availability_callback(std::move_only_function<SpectraRendererAvailability(std::string_view)> callback);
         void set_renderer_activation_callback(std::move_only_function<void(std::string_view)> callback);
 
-    private:
+    protected:
         struct FrameState;
+
+        void initialize_glfw();
+        void create_vulkan_instance(std::string_view app_name, std::string_view engine_name);
+        void create_debug_messenger();
+        void create_window(std::string_view app_name, std::uint32_t window_width, std::uint32_t window_height);
+        void create_surface();
+        void validate_initial_framebuffer_extent();
+        void select_physical_device();
+        void create_logical_device();
+        void create_command_pool();
+        void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
+        void create_frame_sync();
+        void create_imgui();
+
+        bool begin_frame(FrameState& frame);
+        void record_frame(FrameState& frame);
+        void end_frame(FrameState& frame);
+
+        void recreate_swapchain();
+
+        void shutdown_runtime() noexcept;
+        void detach_renderers() noexcept;
+        void notify_renderers_before_imgui_shutdown() noexcept;
+        void wait_device_idle_for_cleanup() noexcept;
+        void destroy_imgui() noexcept;
+        void destroy_frame_sync() noexcept;
+        void destroy_swapchain() noexcept;
+        void destroy_surface_and_window() noexcept;
+        void destroy_vulkan_context() noexcept;
+        void terminate_glfw() noexcept;
+
+    private:
         struct RegisteredRenderer {
             template <typename Renderer>
                 requires SpectraRendererForHost<Renderer, Spectra>
@@ -185,15 +215,15 @@ export namespace spectra {
                 auto instance               = std::make_shared<Renderer>(std::move(renderer));
                 this->name                  = std::string{instance->name()};
                 this->attach                = [instance](Spectra& spectra) { instance->attach(spectra); };
-                this->detach                = [instance](Spectra& spectra) { instance->detach(spectra); };
-                this->before_imgui_shutdown = [instance](Spectra& spectra) { instance->before_imgui_shutdown(spectra); };
+                this->detach                = [instance](Spectra& spectra) noexcept { instance->detach(spectra); };
+                this->before_imgui_shutdown = [instance](Spectra& spectra) noexcept { instance->before_imgui_shutdown(spectra); };
                 this->after_imgui_created   = [instance](Spectra& spectra) { instance->after_imgui_created(spectra); };
                 this->begin_frame           = [instance](Spectra& spectra, const SpectraFrameInfo& frame) {
                     auto result = instance->begin_frame(spectra, frame);
                     return SpectraFrameResult{
-                        .completion_semaphore = std::optional<vk::Semaphore>{std::move(result.completion_semaphore)},
-                        .close_requested      = static_cast<bool>(result.close_requested),
-                        .window_detail        = std::optional<std::string>{std::move(result.window_detail)},
+                                  .completion_semaphore = std::optional<vk::Semaphore>{std::move(result.completion_semaphore)},
+                                  .close_requested      = static_cast<bool>(result.close_requested),
+                                  .window_detail        = std::optional<std::string>{std::move(result.window_detail)},
                     };
                 };
                 this->record_frame = [instance](const vk::raii::CommandBuffer& command_buffer) { instance->record_frame(command_buffer); };
@@ -201,8 +231,8 @@ export namespace spectra {
 
             std::string name{};
             std::move_only_function<void(Spectra&)> attach{};
-            std::move_only_function<void(Spectra&)> detach{};
-            std::move_only_function<void(Spectra&)> before_imgui_shutdown{};
+            std::move_only_function<void(Spectra&) noexcept> detach{};
+            std::move_only_function<void(Spectra&) noexcept> before_imgui_shutdown{};
             std::move_only_function<void(Spectra&)> after_imgui_created{};
             std::move_only_function<SpectraFrameResult(Spectra&, const SpectraFrameInfo&)> begin_frame{};
             std::move_only_function<void(const vk::raii::CommandBuffer&)> record_frame{};
@@ -214,16 +244,6 @@ export namespace spectra {
         void store_panel(SpectraPanel panel);
         void store_sidebar_tab(SpectraSidebarTab tab);
         void store_toolbar_action(SpectraToolbarAction action);
-
-        void create_imgui();
-        void notify_renderers_before_imgui_shutdown() noexcept;
-        void wait_device_idle_noexcept() noexcept;
-        void destroy_imgui() noexcept;
-        void detach_renderers_noexcept() noexcept;
-
-        bool begin_frame(FrameState& frame);
-        void record_frame(FrameState& frame);
-        void end_frame(FrameState& frame);
 
         void draw_command_bar();
         void draw_dockspace();
@@ -237,9 +257,6 @@ export namespace spectra {
         void sync_active_sidebar_tab();
         [[nodiscard]] SpectraRendererAvailability renderer_availability(std::string_view renderer_name);
 
-        void create_swapchain(vk::raii::SwapchainKHR old_swapchain = nullptr);
-        void recreate_swapchain();
-
         struct {
             vk::raii::Context context{};
             vk::raii::Instance instance{nullptr};
@@ -252,7 +269,7 @@ export namespace spectra {
         } context;
 
         struct {
-            std::shared_ptr<GLFWwindow> window{};
+            std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> window{nullptr, glfwDestroyWindow};
             vk::raii::SurfaceKHR surface{nullptr};
             bool resize_requested{false};
             bool glfw_initialized{false};

@@ -192,6 +192,14 @@ namespace {
         return left.empty() || right.empty() || left == right;
     }
 
+    [[nodiscard]] constexpr std::array<const char*, 5> required_device_extensions() {
+#if defined(_WIN32)
+        return {vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName, vk::KHRExternalMemoryWin32ExtensionName, vk::KHRExternalSemaphoreWin32ExtensionName};
+#else
+        return {vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName, vk::KHRExternalMemoryFdExtensionName, vk::KHRExternalSemaphoreFdExtensionName};
+#endif
+    }
+
 } // namespace
 
 namespace spectra {
@@ -333,21 +341,34 @@ namespace spectra {
     }
 
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
+        this->window_title.base = std::string{app_name};
+        this->initialize_glfw();
+        this->create_vulkan_instance(app_name, engine_name);
+        this->create_debug_messenger();
+        this->create_window(app_name, window_width, window_height);
+        this->create_surface();
+        this->validate_initial_framebuffer_extent();
+        this->select_physical_device();
+        this->create_logical_device();
+        this->create_command_pool();
+        this->create_swapchain();
+        this->create_frame_sync();
+        this->create_imgui();
+    } catch (...) {
+        this->shutdown_runtime();
+        throw;
+    }
+
+    void Spectra::initialize_glfw() {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
+    }
+
+    void Spectra::create_vulkan_instance(const std::string_view app_name, const std::string_view engine_name) {
         const std::string app_name_string{app_name};
         const std::string engine_name_string{engine_name};
-        this->window_title.base = app_name_string;
 
         constexpr std::array<const char*, 1> enabled_instance_layers{"VK_LAYER_KHRONOS_validation"};
-        std::vector<const char*> enabled_device_extensions{vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName};
-#if defined(_WIN32)
-        enabled_device_extensions.push_back(vk::KHRExternalMemoryWin32ExtensionName);
-        enabled_device_extensions.push_back(vk::KHRExternalSemaphoreWin32ExtensionName);
-#else
-        enabled_device_extensions.push_back(vk::KHRExternalMemoryFdExtensionName);
-        enabled_device_extensions.push_back(vk::KHRExternalSemaphoreFdExtensionName);
-#endif
         std::vector<const char*> enabled_instance_extensions{};
 
         {
@@ -370,124 +391,152 @@ namespace spectra {
             const vk::InstanceCreateInfo instance_create_info{{}, &application_info, static_cast<std::uint32_t>(enabled_instance_layers.size()), enabled_instance_layers.data(), static_cast<std::uint32_t>(enabled_instance_extensions.size()), enabled_instance_extensions.data()};
             this->context.instance = vk::raii::Instance{this->context.context, instance_create_info};
         }
-        {
-            constexpr vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_create_info{
-                {},
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
-                &debug_callback,
-            };
-            this->context.debug_messenger = this->context.instance.createDebugUtilsMessengerEXT(debug_messenger_create_info);
-        }
-        {
-            if (window_width == 0 || window_height == 0 || window_width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || window_height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Invalid GLFW window resolution");
-            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-            glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-            this->surface.window = std::shared_ptr<GLFWwindow>{glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr), [](GLFWwindow* window) { glfwDestroyWindow(window); }};
-            if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
-            glfwSetWindowUserPointer(this->surface.window.get(), this);
-            glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
-        }
-        {
-            VkSurfaceKHR surface = VK_NULL_HANDLE;
-            if (glfwCreateWindowSurface(*this->context.instance, this->surface.window.get(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan surface");
-            this->surface.surface = vk::raii::SurfaceKHR{this->context.instance, surface};
-        }
-        {
-            int width  = 0;
-            int height = 0;
-            glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
-            if (width <= 0 || height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size");
-        }
-        {
-            bool selected = false;
-            for (const vk::raii::PhysicalDevice& physical_device : this->context.instance.enumeratePhysicalDevices()) {
-                if (physical_device.getProperties().apiVersion < VK_API_VERSION_1_4) continue;
+    }
 
-                const std::vector<vk::ExtensionProperties> available_extensions = physical_device.enumerateDeviceExtensionProperties();
-                bool required_extensions_available                              = true;
-                for (const char* required_extension : enabled_device_extensions) {
-                    if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) required_extensions_available = false;
-                }
-                if (!required_extensions_available) continue;
+    void Spectra::create_debug_messenger() {
+        constexpr vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_create_info{
+            {},
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
+            &debug_callback,
+        };
+        this->context.debug_messenger = this->context.instance.createDebugUtilsMessengerEXT(debug_messenger_create_info);
+    }
 
-                const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
-                for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
-                    if (!static_cast<bool>(queue_families[queue_family_index].queueFlags & vk::QueueFlagBits::eGraphics)) continue;
-                    if (!physical_device.getSurfaceSupportKHR(queue_family_index, this->surface.surface)) continue;
-                    this->context.physical_device      = physical_device;
-                    this->context.graphics_queue_index = queue_family_index;
-                    selected                           = true;
-                    break;
-                }
-                if (selected) break;
+    void Spectra::create_window(const std::string_view app_name, const std::uint32_t window_width, const std::uint32_t window_height) {
+        if (window_width == 0 || window_height == 0 || window_width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || window_height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Invalid GLFW window resolution");
+        const std::string app_name_string{app_name};
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+        this->surface.window.reset(glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr));
+        if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
+        glfwSetWindowUserPointer(this->surface.window.get(), this);
+        glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
+    }
+
+    void Spectra::create_surface() {
+        VkSurfaceKHR surface = VK_NULL_HANDLE;
+        if (glfwCreateWindowSurface(*this->context.instance, this->surface.window.get(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan surface");
+        this->surface.surface = vk::raii::SurfaceKHR{this->context.instance, surface};
+    }
+
+    void Spectra::validate_initial_framebuffer_extent() {
+        int width  = 0;
+        int height = 0;
+        glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
+        if (width <= 0 || height <= 0) throw std::runtime_error("Invalid GLFW framebuffer size");
+    }
+
+    void Spectra::select_physical_device() {
+        constexpr std::array<const char*, 5> enabled_device_extensions = required_device_extensions();
+        bool selected                                                  = false;
+        for (const vk::raii::PhysicalDevice& physical_device : this->context.instance.enumeratePhysicalDevices()) {
+            if (physical_device.getProperties().apiVersion < VK_API_VERSION_1_4) continue;
+
+            const std::vector<vk::ExtensionProperties> available_extensions = physical_device.enumerateDeviceExtensionProperties();
+            bool required_extensions_available                              = true;
+            for (const char* required_extension : enabled_device_extensions) {
+                if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) required_extensions_available = false;
             }
-            if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, external memory, external semaphore, and graphics-present queue support");
-        }
-        {
-            const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features>();
-            if (!supported_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) throw std::runtime_error("Device does not support shaderDrawParameters");
-            if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
-            if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
+            if (!required_extensions_available) continue;
 
-            vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}};
-            enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = VK_TRUE;
-            enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = VK_TRUE;
-
-            constexpr std::array queue_priorities{1.0f};
-            const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
-            const vk::DeviceCreateInfo device_create_info{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_device_extensions.size()), enabled_device_extensions.data(), nullptr, &enabled_features.get<vk::PhysicalDeviceFeatures2>()};
-            this->context.device         = vk::raii::Device{this->context.physical_device, device_create_info};
-            this->context.graphics_queue = vk::raii::Queue{this->context.device, this->context.graphics_queue_index, 0};
-        }
-        {
-            const vk::CommandPoolCreateInfo command_pool_create_info{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, this->context.graphics_queue_index};
-            this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
-        }
-        this->create_swapchain();
-        {
-            constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
-            constexpr vk::FenceCreateInfo fence_create_info{vk::FenceCreateFlagBits::eSignaled};
-            const vk::CommandBufferAllocateInfo command_buffer_allocate_info{*this->context.command_pool, vk::CommandBufferLevel::ePrimary, this->sync.frame_count};
-            this->sync.command_buffers = vk::raii::CommandBuffers{this->context.device, command_buffer_allocate_info};
-            if (this->sync.command_buffers.size() != this->sync.frame_count) throw std::runtime_error("Failed to allocate per-frame command buffers");
-
-            this->sync.image_available_semaphores.reserve(this->sync.frame_count);
-            this->sync.in_flight_fences.reserve(this->sync.frame_count);
-            for (std::uint32_t frame_index = 0; frame_index < this->sync.frame_count; ++frame_index) {
-                this->sync.image_available_semaphores.emplace_back(this->context.device, semaphore_create_info);
-                this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
+            const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
+            for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
+                if (!static_cast<bool>(queue_families[queue_family_index].queueFlags & vk::QueueFlagBits::eGraphics)) continue;
+                if (!physical_device.getSurfaceSupportKHR(queue_family_index, this->surface.surface)) continue;
+                this->context.physical_device      = physical_device;
+                this->context.graphics_queue_index = queue_family_index;
+                selected                           = true;
+                break;
             }
+            if (selected) break;
         }
-        this->create_imgui();
-    } catch (...) {
-        this->destroy_imgui();
-        if (this->surface.glfw_initialized) glfwTerminate();
-        throw;
+        if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, external memory, external semaphore, and graphics-present queue support");
+    }
+
+    void Spectra::create_logical_device() {
+        const auto supported_features = this->context.physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features>();
+        if (!supported_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters) throw std::runtime_error("Device does not support shaderDrawParameters");
+        if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) throw std::runtime_error("Device does not support synchronization2");
+        if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
+
+        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}};
+        enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = VK_TRUE;
+        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = VK_TRUE;
+        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = VK_TRUE;
+
+        constexpr std::array<const char*, 5> enabled_device_extensions = required_device_extensions();
+        constexpr std::array queue_priorities{1.0f};
+        const vk::DeviceQueueCreateInfo queue_create_info{{}, this->context.graphics_queue_index, 1, queue_priorities.data()};
+        const vk::DeviceCreateInfo device_create_info{{}, 1, &queue_create_info, 0, nullptr, static_cast<std::uint32_t>(enabled_device_extensions.size()), enabled_device_extensions.data(), nullptr, &enabled_features.get<vk::PhysicalDeviceFeatures2>()};
+        this->context.device         = vk::raii::Device{this->context.physical_device, device_create_info};
+        this->context.graphics_queue = vk::raii::Queue{this->context.device, this->context.graphics_queue_index, 0};
+    }
+
+    void Spectra::create_command_pool() {
+        const vk::CommandPoolCreateInfo command_pool_create_info{vk::CommandPoolCreateFlagBits::eResetCommandBuffer, this->context.graphics_queue_index};
+        this->context.command_pool = vk::raii::CommandPool{this->context.device, command_pool_create_info};
+    }
+
+    void Spectra::create_frame_sync() {
+        constexpr vk::SemaphoreCreateInfo semaphore_create_info{};
+        constexpr vk::FenceCreateInfo fence_create_info{vk::FenceCreateFlagBits::eSignaled};
+        const vk::CommandBufferAllocateInfo command_buffer_allocate_info{*this->context.command_pool, vk::CommandBufferLevel::ePrimary, this->sync.frame_count};
+        this->sync.command_buffers = vk::raii::CommandBuffers{this->context.device, command_buffer_allocate_info};
+        if (this->sync.command_buffers.size() != this->sync.frame_count) throw std::runtime_error("Failed to allocate per-frame command buffers");
+
+        this->sync.image_available_semaphores.reserve(this->sync.frame_count);
+        this->sync.in_flight_fences.reserve(this->sync.frame_count);
+        for (std::uint32_t frame_index = 0; frame_index < this->sync.frame_count; ++frame_index) {
+            this->sync.image_available_semaphores.emplace_back(this->context.device, semaphore_create_info);
+            this->sync.in_flight_fences.emplace_back(this->context.device, fence_create_info);
+        }
     }
 
     Spectra::~Spectra() noexcept {
-        this->detach_renderers_noexcept();
+        this->shutdown_runtime();
+    }
 
+    void Spectra::shutdown_runtime() noexcept {
+        this->detach_renderers();
         this->destroy_imgui();
+        this->destroy_frame_sync();
+        this->destroy_swapchain();
+        this->destroy_surface_and_window();
+        this->destroy_vulkan_context();
+        this->terminate_glfw();
+    }
+
+    void Spectra::destroy_frame_sync() noexcept {
         this->sync.command_buffers.clear();
         this->sync.in_flight_fences.clear();
         this->sync.image_in_flight_frame.clear();
         this->sync.render_finished_semaphores.clear();
         this->sync.image_available_semaphores.clear();
-        this->context.command_pool = nullptr;
+    }
+
+    void Spectra::destroy_swapchain() noexcept {
         this->swapchain.image_views.clear();
         this->swapchain.handle = nullptr;
         this->swapchain.image_layouts.clear();
         this->swapchain.images.clear();
-        this->context.graphics_queue  = nullptr;
-        this->context.device          = nullptr;
-        this->surface.surface         = nullptr;
-        this->surface.window          = nullptr;
-        this->context.physical_device = nullptr;
-        this->context.debug_messenger = nullptr;
-        this->context.instance        = nullptr;
+    }
+
+    void Spectra::destroy_vulkan_context() noexcept {
+        this->context.command_pool     = nullptr;
+        this->context.graphics_queue   = nullptr;
+        this->context.device           = nullptr;
+        this->context.physical_device  = nullptr;
+        this->context.debug_messenger  = nullptr;
+        this->context.instance         = nullptr;
+    }
+
+    void Spectra::destroy_surface_and_window() noexcept {
+        this->surface.surface = nullptr;
+        this->surface.window  = nullptr;
+    }
+
+    void Spectra::terminate_glfw() noexcept {
         if (this->surface.glfw_initialized) glfwTerminate();
         this->surface.glfw_initialized = false;
     }
@@ -605,7 +654,7 @@ namespace spectra {
         }
     }
 
-    void Spectra::wait_device_idle_noexcept() noexcept {
+    void Spectra::wait_device_idle_for_cleanup() noexcept {
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
@@ -614,12 +663,9 @@ namespace spectra {
 
     void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
         if (this->imgui_shutdown_notified) return;
-        this->wait_device_idle_noexcept();
+        this->wait_device_idle_for_cleanup();
         for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
-            try {
-                renderer->before_imgui_shutdown(*this);
-            } catch (...) {
-            }
+            renderer->before_imgui_shutdown(*this);
         }
         this->imgui_shutdown_notified = true;
     }
@@ -636,13 +682,10 @@ namespace spectra {
         this->dock_layout_initialized = false;
     }
 
-    void Spectra::detach_renderers_noexcept() noexcept {
+    void Spectra::detach_renderers() noexcept {
         this->notify_renderers_before_imgui_shutdown();
         for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
-            try {
-                renderer->detach(*this);
-            } catch (...) {
-            }
+            renderer->detach(*this);
         }
         this->renderers.clear();
         this->panels.clear();
