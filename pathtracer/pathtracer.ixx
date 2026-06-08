@@ -455,12 +455,6 @@ export namespace spectra::pathtracer {
         std::optional<std::string> window_detail{};
     };
 
-    template <typename Frame>
-    concept PathtracerFrameInfoLike = requires(const Frame& frame) {
-        { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
-        { frame.image_index } -> std::convertible_to<std::uint32_t>;
-    };
-
     template <typename Host>
     concept PathtracerHost = requires(Host& host, PathtracerPanel panel, PathtracerSidebarTab tab, PathtracerToolbarAction action) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
@@ -535,49 +529,17 @@ export namespace spectra::pathtracer {
         PathtracerRenderer& operator=(const PathtracerRenderer& other) = delete;
         PathtracerRenderer& operator=(PathtracerRenderer&& other) noexcept;
 
-        [[nodiscard]] static std::string_view target_name();
-        [[nodiscard]] std::string_view name() const;
-
-        template <PathtracerHost Host>
-        void attach(Host& host) {
-            this->attach(PathtracerHostView{host});
-        }
-
-        template <PathtracerHost Host>
-        void detach(Host&) noexcept {
-            this->detach();
-        }
-
-        template <PathtracerHost Host>
-        void before_imgui_shutdown(Host&) noexcept {
-            this->before_imgui_shutdown();
-        }
-
-        template <PathtracerHost Host>
-        void after_imgui_created(Host&) {
-            this->after_imgui_created();
-        }
-
-        template <PathtracerHost Host, typename Frame>
-            requires PathtracerFrameInfoLike<Frame>
-        [[nodiscard]] PathtracerFrameResult begin_frame(Host& host, const Frame& frame) {
-            return this->begin_frame(PathtracerHostView{host}, PathtracerFrameInfo{
-                                                                       .frame_index = static_cast<std::uint32_t>(frame.frame_slot_index),
-                                                                       .image_index = static_cast<std::uint32_t>(frame.image_index),
-                                                                   });
-        }
-
-        void record_frame(const vk::raii::CommandBuffer& command_buffer);
-
-    private:
-        class Impl;
-        std::unique_ptr<Impl> impl;
-
+        [[nodiscard]] static std::string_view name();
         void attach(PathtracerHostView host);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
         [[nodiscard]] PathtracerFrameResult begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame);
+        void record_frame(const vk::raii::CommandBuffer& command_buffer);
+
+    private:
+        class Impl;
+        std::unique_ptr<Impl> impl;
     };
 
 } // namespace spectra::pathtracer

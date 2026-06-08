@@ -118,12 +118,12 @@ namespace spectra {
     };
 
     export template <typename Renderer, typename Host>
-    concept RendererFor = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, const std::remove_cvref_t<Renderer>& constRenderer, Host& host, const FrameContext& frame, const vk::raii::CommandBuffer& commandBuffer) {
-        { constRenderer.name() } -> std::convertible_to<std::string_view>;
+    concept RendererFor = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, Host& host, const FrameContext& frame, const vk::raii::CommandBuffer& commandBuffer) {
+        { std::remove_cvref_t<Renderer>::name() } -> std::convertible_to<std::string_view>;
         { renderer.attach(host) } -> std::same_as<void>;
-        { renderer.detach(host) } noexcept -> std::same_as<void>;
-        { renderer.before_imgui_shutdown(host) } noexcept -> std::same_as<void>;
-        { renderer.after_imgui_created(host) } -> std::same_as<void>;
+        { renderer.detach() } noexcept -> std::same_as<void>;
+        { renderer.before_imgui_shutdown() } noexcept -> std::same_as<void>;
+        { renderer.after_imgui_created() } -> std::same_as<void>;
         { renderer.begin_frame(host, frame) } -> FrameResultLike;
         { renderer.record_frame(commandBuffer) } -> std::same_as<void>;
     };
@@ -197,11 +197,11 @@ namespace spectra {
                 requires RendererFor<Renderer, Spectra>
             explicit RendererSlot(Renderer renderer) {
                 auto instance               = std::make_shared<Renderer>(std::move(renderer));
-                this->name                  = std::string{instance->name()};
+                this->name                  = std::string{std::remove_cvref_t<Renderer>::name()};
                 this->attach                = [instance](Spectra& spectra) { instance->attach(spectra); };
-                this->detach                = [instance](Spectra& spectra) noexcept { instance->detach(spectra); };
-                this->before_imgui_shutdown = [instance](Spectra& spectra) noexcept { instance->before_imgui_shutdown(spectra); };
-                this->after_imgui_created   = [instance](Spectra& spectra) { instance->after_imgui_created(spectra); };
+                this->detach                = [instance]() noexcept { instance->detach(); };
+                this->before_imgui_shutdown = [instance]() noexcept { instance->before_imgui_shutdown(); };
+                this->after_imgui_created   = [instance]() { instance->after_imgui_created(); };
                 this->begin_frame           = [instance](Spectra& spectra, const FrameContext& frame) {
                     auto result = instance->begin_frame(spectra, frame);
                     return FrameResult{
@@ -215,9 +215,9 @@ namespace spectra {
 
             std::string name{};
             std::move_only_function<void(Spectra&)> attach{};
-            std::move_only_function<void(Spectra&) noexcept> detach{};
-            std::move_only_function<void(Spectra&) noexcept> before_imgui_shutdown{};
-            std::move_only_function<void(Spectra&)> after_imgui_created{};
+            std::move_only_function<void() noexcept> detach{};
+            std::move_only_function<void() noexcept> before_imgui_shutdown{};
+            std::move_only_function<void()> after_imgui_created{};
             std::move_only_function<FrameResult(Spectra&, const FrameContext&)> begin_frame{};
             std::move_only_function<void(const vk::raii::CommandBuffer&)> record_frame{};
         };

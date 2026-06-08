@@ -941,13 +941,13 @@ namespace spectra::pathtracer {
 namespace spectra::pathtracer {
     [[nodiscard]] SceneTranslationReport analyze_pathtracer_scene_probe(const SceneProbeReport& probe) {
         SceneTranslationReport report = AnalyzePathtracerSceneProbe(probe);
-        if (report.target.empty()) report.target = std::string{PathtracerRenderer::target_name()};
+        if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
         return report;
     }
 
     [[nodiscard]] SceneTranslationReport analyze_pathtracer_scene(const SceneSnapshot& document) {
         SceneTranslationReport report = AnalyzePathtracerSceneSupport(document);
-        if (report.target.empty()) report.target = std::string{PathtracerRenderer::target_name()};
+        if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
         return report;
     }
 
@@ -956,7 +956,6 @@ namespace spectra::pathtracer {
         explicit Impl(std::shared_ptr<SceneWorkspace> source_workspace);
         ~Impl() noexcept;
 
-        [[nodiscard]] std::string_view name() const;
         void attach(PathtracerHostView host);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
@@ -1093,12 +1092,8 @@ namespace spectra::pathtracer {
 
     PathtracerRenderer& PathtracerRenderer::operator=(PathtracerRenderer&& other) noexcept = default;
 
-    std::string_view PathtracerRenderer::target_name() {
+    std::string_view PathtracerRenderer::name() {
         return "Spectra Pathtracer";
-    }
-
-    std::string_view PathtracerRenderer::name() const {
-        return this->impl->name();
     }
 
     void PathtracerRenderer::attach(PathtracerHostView host) {
@@ -1161,17 +1156,13 @@ namespace spectra::pathtracer {
         if (source_document == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
         const SceneTranslationReport report = analyze_pathtracer_scene(*source_document);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::target_name(), source_document->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), source_document->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
     }
 
     PathtracerRenderer::Impl::~Impl() noexcept = default;
-
-    std::string_view PathtracerRenderer::Impl::name() const {
-        return "Spectra Pathtracer";
-    }
 
     void PathtracerRenderer::Impl::detach_noexcept() noexcept {
         this->unload_pathtracer_noexcept();
@@ -1211,7 +1202,7 @@ namespace spectra::pathtracer {
 
         const SceneTranslationReport report = analyze_pathtracer_scene(*next_snapshot);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::target_name(), next_snapshot->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), next_snapshot->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }

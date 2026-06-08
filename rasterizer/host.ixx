@@ -69,14 +69,6 @@ namespace spectra::rasterizer {
         std::optional<std::string> window_detail{};
     };
 
-    export template <typename Frame>
-    concept HostFrameLike = requires(const Frame& frame) {
-        { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
-        { frame.image_index } -> std::convertible_to<std::uint32_t>;
-        { frame.frame_number } -> std::convertible_to<std::uint64_t>;
-        { frame.delta_seconds } -> std::convertible_to<double>;
-    };
-
     export template <typename HostType>
     concept Host = requires(HostType& host, Panel panel, SidebarTab tab, ToolbarAction action) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;

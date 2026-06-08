@@ -27,42 +27,15 @@ namespace spectra::rasterizer {
         Renderer& operator=(const Renderer& other) = delete;
         Renderer& operator=(Renderer&& other) noexcept(false);
 
-        [[nodiscard]] static std::string_view target_name();
-        [[nodiscard]] std::string_view name() const;
+        [[nodiscard]] static std::string_view name();
         void set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace);
         void set_control_panel_extension(std::move_only_function<void()> draw);
 
-        template <Host HostType>
-        void attach(HostType& host) {
-            this->attach(HostView{host});
-        }
-
-        template <Host HostType>
-        void detach(HostType&) noexcept {
-            this->detach();
-        }
-
-        template <Host HostType>
-        void before_imgui_shutdown(HostType&) noexcept {
-            this->before_imgui_shutdown();
-        }
-
-        template <Host HostType>
-        void after_imgui_created(HostType&) {
-            this->after_imgui_created();
-        }
-
-        template <Host HostType, typename Frame>
-            requires HostFrameLike<Frame>
-        [[nodiscard]] FrameResult begin_frame(HostType& host, const Frame& frame) {
-            return this->begin_frame(HostView{host}, FrameContext{
-                                                                   .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
-                                                                   .image_index   = static_cast<std::uint32_t>(frame.image_index),
-                                                                   .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
-                                                                   .delta_seconds = static_cast<double>(frame.delta_seconds),
-                                                               });
-        }
-
+        void attach(HostView host);
+        void detach() noexcept;
+        void before_imgui_shutdown() noexcept;
+        void after_imgui_created();
+        [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
@@ -157,13 +130,8 @@ namespace spectra::rasterizer {
             VolumeDrawCommand drawCommand{};
         };
 
-        Renderer() = default;
+        void move_from(Renderer& other);
         void assert_movable() const;
-        void attach(HostView host);
-        void detach() noexcept;
-        void before_imgui_shutdown() noexcept;
-        void after_imgui_created();
-        [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
 
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         void wait_device_idle_for_cleanup() noexcept;

@@ -162,13 +162,18 @@ namespace spectra::rasterizer {
 
     Renderer::~Renderer() noexcept = default;
 
-    Renderer::Renderer(Renderer&& other) noexcept(false) : Renderer() {
-        *this = std::move(other);
+    Renderer::Renderer(Renderer&& other) noexcept(false) {
+        this->move_from(other);
     }
 
     Renderer& Renderer::operator=(Renderer&& other) noexcept(false) {
         if (this == &other) return *this;
         this->assert_movable();
+        this->move_from(other);
+        return *this;
+    }
+
+    void Renderer::move_from(Renderer& other) {
         other.assert_movable();
         this->host               = std::move(other.host);
         this->lifecycle          = std::move(other.lifecycle);
@@ -180,7 +185,6 @@ namespace spectra::rasterizer {
         this->viewport_grid_pass = std::move(other.viewport_grid_pass);
         this->particle_pass      = std::move(other.particle_pass);
         this->volume_pass        = std::move(other.volume_pass);
-        return *this;
     }
 
     void Renderer::assert_movable() const {
@@ -195,11 +199,7 @@ namespace spectra::rasterizer {
         if (this->volume_pass.frame_count != 0 || *this->volume_pass.descriptor_set_layout || *this->volume_pass.descriptor_pool || this->volume_pass.descriptor_sets.size() != 0 || *this->volume_pass.sampler || *this->volume_pass.pipeline_layout || *this->volume_pass.pipeline || !this->volume_pass.frame_volumes.empty()) throw std::runtime_error("Cannot move a Spectra rasterizer renderer with volume pass resources");
     }
 
-    std::string_view Renderer::target_name() {
-        return "Spectra Rasterizer";
-    }
-
-    std::string_view Renderer::name() const {
+    std::string_view Renderer::name() {
         return "Spectra Rasterizer";
     }
 
@@ -1527,30 +1527,102 @@ namespace spectra::rasterizer {
         draw_list->AddRectFilled(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(13, 15, 18, 186), 9.0f);
         draw_list->AddRect(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(96, 106, 116, 90), 9.0f);
 
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
-        const auto axis_endpoint = [&basis, &center](const spectra::rasterizer::math::Vector3 axis) {
-            spectra::rasterizer::math::Vector3 projected{spectra::rasterizer::math::dot(axis, basis.side), -spectra::rasterizer::math::dot(axis, basis.up), 0.0f};
-            const float length = spectra::rasterizer::math::length(projected);
-            if (length > 0.0001f) projected /= length;
-            return ImVec2{center.x + projected.x * 25.0f, center.y + projected.y * 25.0f};
+        struct GizmoAxis {
+            const char* id{};
+            const char* label{};
+            spectra::rasterizer::math::Vector3 axis{};
+            SceneVector3 view_direction{};
+            std::uint8_t line_red{};
+            std::uint8_t line_green{};
+            std::uint8_t line_blue{};
+            std::uint8_t text_red{};
+            std::uint8_t text_green{};
+            std::uint8_t text_blue{};
+            ImVec2 endpoint{};
+            float depth{};
         };
-        const ImVec2 x_end = axis_endpoint(spectra::rasterizer::math::Vector3{1.0f, 0.0f, 0.0f});
-        const ImVec2 y_end = axis_endpoint(spectra::rasterizer::math::Vector3{0.0f, 1.0f, 0.0f});
-        const ImVec2 z_end = axis_endpoint(spectra::rasterizer::math::Vector3{0.0f, 0.0f, 1.0f});
-        draw_list->AddLine(center, x_end, IM_COL32(232, 94, 82, 230), 2.0f);
-        draw_list->AddLine(center, y_end, IM_COL32(112, 202, 124, 230), 2.0f);
-        draw_list->AddLine(center, z_end, IM_COL32(96, 152, 238, 230), 2.0f);
-        draw_list->AddText(ImVec2{x_end.x - 4.0f, x_end.y - 7.0f}, IM_COL32(255, 136, 128, 255), "X");
-        draw_list->AddText(ImVec2{y_end.x - 4.0f, y_end.y - 7.0f}, IM_COL32(154, 226, 166, 255), "Y");
-        draw_list->AddText(ImVec2{z_end.x - 4.0f, z_end.y - 7.0f}, IM_COL32(136, 178, 255, 255), "Z");
+
+        const float yaw = -this->viewport.camera_yaw;
+        const float pitch = this->viewport.camera_pitch;
+        const float yaw_cos = std::cos(yaw);
+        const float yaw_sin = std::sin(yaw);
+        const float pitch_cos = std::cos(pitch);
+        const float pitch_sin = std::sin(pitch);
+        constexpr float axis_radius = 25.0f;
+
+        const auto project_axis = [&](const spectra::rasterizer::math::Vector3 axis) {
+            const spectra::rasterizer::math::Vector3 pitched{
+                axis.x,
+                axis.y * pitch_cos - axis.z * pitch_sin,
+                axis.y * pitch_sin + axis.z * pitch_cos,
+            };
+            const spectra::rasterizer::math::Vector3 projected{
+                pitched.x * yaw_cos + pitched.z * yaw_sin,
+                pitched.y,
+                -pitched.x * yaw_sin + pitched.z * yaw_cos,
+            };
+            return projected;
+        };
+
+        std::array<GizmoAxis, 3> axes{{
+            GizmoAxis{
+                .id             = "x",
+                .label          = "X",
+                .axis           = spectra::rasterizer::math::Vector3{1.0f, 0.0f, 0.0f},
+                .view_direction = SceneVector3{1.0f, 0.0f, 0.0f},
+                .line_red       = 232,
+                .line_green     = 94,
+                .line_blue      = 82,
+                .text_red       = 255,
+                .text_green     = 136,
+                .text_blue      = 128,
+            },
+            GizmoAxis{
+                .id             = "y",
+                .label          = "Y",
+                .axis           = spectra::rasterizer::math::Vector3{0.0f, 1.0f, 0.0f},
+                .view_direction = SceneVector3{0.0f, 1.0f, 0.0f},
+                .line_red       = 112,
+                .line_green     = 202,
+                .line_blue      = 124,
+                .text_red       = 154,
+                .text_green     = 226,
+                .text_blue      = 166,
+            },
+            GizmoAxis{
+                .id             = "z",
+                .label          = "Z",
+                .axis           = spectra::rasterizer::math::Vector3{0.0f, 0.0f, 1.0f},
+                .view_direction = SceneVector3{0.0f, 0.0f, 1.0f},
+                .line_red       = 96,
+                .line_green     = 152,
+                .line_blue      = 238,
+                .text_red       = 136,
+                .text_green     = 178,
+                .text_blue      = 255,
+            },
+        }};
+
+        for (GizmoAxis& axis : axes) {
+            const spectra::rasterizer::math::Vector3 projected = project_axis(axis.axis);
+            axis.endpoint = ImVec2{center.x + projected.x * axis_radius, center.y - projected.y * axis_radius};
+            axis.depth = projected.z;
+        }
+
+        std::ranges::sort(axes, {}, &GizmoAxis::depth);
+        for (const GizmoAxis& axis : axes) {
+            const int line_alpha = axis.depth < 0.0f ? 150 : 232;
+            const int text_alpha = axis.depth < 0.0f ? 190 : 255;
+            draw_list->AddLine(center, axis.endpoint, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, line_alpha), 2.0f);
+            draw_list->AddCircleFilled(axis.endpoint, 3.0f, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, text_alpha), 12);
+            draw_list->AddText(ImVec2{axis.endpoint.x - 4.0f, axis.endpoint.y - 7.0f}, IM_COL32(axis.text_red, axis.text_green, axis.text_blue, text_alpha), axis.label);
+        }
 
         ImGui::PushID("SpectraRasterizerOrientationGizmo");
-        ImGui::SetCursorScreenPos(ImVec2{x_end.x - 10.0f, x_end.y - 10.0f});
-        if (ImGui::InvisibleButton("x", ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(SceneVector3{1.0f, 0.0f, 0.0f});
-        ImGui::SetCursorScreenPos(ImVec2{y_end.x - 10.0f, y_end.y - 10.0f});
-        if (ImGui::InvisibleButton("y", ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(SceneVector3{0.0f, 1.0f, 0.0f});
-        ImGui::SetCursorScreenPos(ImVec2{z_end.x - 10.0f, z_end.y - 10.0f});
-        if (ImGui::InvisibleButton("z", ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(SceneVector3{0.0f, 0.0f, 1.0f});
+        for (const GizmoAxis& axis : axes) {
+            ImGui::SetCursorScreenPos(ImVec2{axis.endpoint.x - 10.0f, axis.endpoint.y - 10.0f});
+            if (ImGui::InvisibleButton(axis.id, ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(axis.view_direction);
+        }
         ImGui::PopID();
     }
 

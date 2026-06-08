@@ -222,11 +222,11 @@ namespace spectra::pathtracer {
                 continue;
             }
 
-            spectra::pathtracer::SceneTranslationReport report{.target = std::string{spectra::pathtracer::PathtracerRenderer::target_name()}};
+            spectra::pathtracer::SceneTranslationReport report{.target = std::string{spectra::pathtracer::PathtracerRenderer::name()}};
             try {
                 if (stop_token.stop_requested()) return;
                 report = spectra::pathtracer::AnalyzePathtracerSceneProbe(translation_request->probe);
-                if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::target_name()};
+                if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::name()};
             } catch (const std::exception& error) {
                 if (stop_token.stop_requested()) return;
                 report.supported = false;
@@ -322,7 +322,7 @@ namespace spectra::pathtracer {
         }
 
         spectra::pathtracer::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneProbe(probe);
-        if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::target_name()};
+        if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::name()};
 
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
@@ -347,7 +347,7 @@ namespace spectra::pathtracer {
         }
 
         spectra::pathtracer::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneSupport(document);
-        if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::target_name()};
+        if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::name()};
 
         {
             std::scoped_lock lock{this->scene_catalog_mutex};

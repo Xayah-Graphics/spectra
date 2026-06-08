@@ -822,30 +822,34 @@ namespace spectra::app {
         PathtracerSpectraRenderer& operator=(PathtracerSpectraRenderer&& other) noexcept = default;
         ~PathtracerSpectraRenderer() noexcept                                            = default;
 
-        [[nodiscard]] std::string_view name() const {
-            return pathtracer::PathtracerRenderer::target_name();
+        [[nodiscard]] static std::string_view name() {
+            return pathtracer::PathtracerRenderer::name();
         }
 
         void attach(Spectra& host) {
             this->scene_library->attach(host);
-            this->renderer->attach(host);
+            this->renderer->attach(pathtracer::PathtracerHostView{host});
         }
 
-        void detach(Spectra& host) noexcept {
-            this->renderer->detach(host);
+        void detach() noexcept {
+            this->renderer->detach();
             this->scene_library->detach();
         }
 
-        void before_imgui_shutdown(Spectra& host) noexcept {
-            this->renderer->before_imgui_shutdown(host);
+        void before_imgui_shutdown() noexcept {
+            this->renderer->before_imgui_shutdown();
         }
 
-        void after_imgui_created(Spectra& host) {
-            this->renderer->after_imgui_created(host);
+        void after_imgui_created() {
+            this->renderer->after_imgui_created();
         }
 
         [[nodiscard]] FrameResult begin_frame(Spectra& host, const FrameContext& frame) {
-            pathtracer::PathtracerFrameResult result = this->renderer->begin_frame(host, frame);
+            const pathtracer::PathtracerFrameInfo pathtracer_frame{
+                .frame_index = frame.frame_slot_index,
+                .image_index = frame.image_index,
+            };
+            pathtracer::PathtracerFrameResult result = this->renderer->begin_frame(pathtracer::PathtracerHostView{host}, pathtracer_frame);
             return FrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,
@@ -875,30 +879,36 @@ namespace spectra::app {
         RasterizerSpectraRenderer& operator=(RasterizerSpectraRenderer&& other) noexcept = default;
         ~RasterizerSpectraRenderer() noexcept                                            = default;
 
-        [[nodiscard]] std::string_view name() const {
-            return rasterizer::Renderer::target_name();
+        [[nodiscard]] static std::string_view name() {
+            return rasterizer::Renderer::name();
         }
 
         void attach(Spectra& host) {
-            this->renderer->attach(host);
+            this->renderer->attach(rasterizer::HostView{host});
         }
 
-        void detach(Spectra& host) noexcept {
-            this->renderer->detach(host);
+        void detach() noexcept {
+            this->renderer->detach();
         }
 
-        void before_imgui_shutdown(Spectra& host) noexcept {
-            this->renderer->before_imgui_shutdown(host);
+        void before_imgui_shutdown() noexcept {
+            this->renderer->before_imgui_shutdown();
         }
 
-        void after_imgui_created(Spectra& host) {
-            this->renderer->after_imgui_created(host);
+        void after_imgui_created() {
+            this->renderer->after_imgui_created();
         }
 
         [[nodiscard]] FrameResult begin_frame(Spectra& host, const FrameContext& frame) {
             this->project_manager->apply_pending_workspace(*this->renderer);
             this->project_manager->drive_simulation(frame);
-            rasterizer::FrameResult result = this->renderer->begin_frame(host, frame);
+            const rasterizer::FrameContext rasterizer_frame{
+                .frame_index   = frame.frame_slot_index,
+                .image_index   = frame.image_index,
+                .frame_number  = frame.frame_number,
+                .delta_seconds = frame.delta_seconds,
+            };
+            rasterizer::FrameResult result = this->renderer->begin_frame(rasterizer::HostView{host}, rasterizer_frame);
             return FrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,

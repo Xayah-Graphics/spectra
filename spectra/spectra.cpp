@@ -540,7 +540,7 @@ namespace spectra {
             vulkan_backend_initialized                     = true;
             this->imgui.initialized                        = true;
             this->imgui.renderers_notified_before_shutdown = false;
-            for (RendererSlot& renderer : this->renderer_registry.slots) renderer.after_imgui_created(*this);
+            for (RendererSlot& renderer : this->renderer_registry.slots) renderer.after_imgui_created();
         } catch (...) {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
@@ -760,7 +760,7 @@ namespace spectra {
     void Spectra::detach_renderers() noexcept {
         this->notify_renderers_before_imgui_shutdown();
         for (auto renderer = this->renderer_registry.slots.rbegin(); renderer != this->renderer_registry.slots.rend(); ++renderer) {
-            renderer->detach(*this);
+            renderer->detach();
         }
         this->renderer_registry.slots.clear();
         this->workspace.panels.clear();
@@ -777,7 +777,7 @@ namespace spectra {
         if (this->imgui.renderers_notified_before_shutdown) return;
         this->wait_device_idle_for_cleanup();
         for (auto renderer = this->renderer_registry.slots.rbegin(); renderer != this->renderer_registry.slots.rend(); ++renderer) {
-            renderer->before_imgui_shutdown(*this);
+            renderer->before_imgui_shutdown();
         }
         this->imgui.renderers_notified_before_shutdown = true;
     }
@@ -853,7 +853,7 @@ namespace spectra {
         this->renderer_registry.registering_name = std::string{renderer_name};
         try {
             renderer.attach(*this);
-            if (this->imgui.initialized) renderer.after_imgui_created(*this);
+            if (this->imgui.initialized) renderer.after_imgui_created();
         } catch (...) {
             this->workspace.panels.resize(panel_count);
             this->workspace.sidebar_tabs.resize(sidebar_tab_count);
