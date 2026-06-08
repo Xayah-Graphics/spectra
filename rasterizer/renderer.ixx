@@ -54,6 +54,28 @@ namespace spectra::rasterizer {
             vk::ImageLayout layout{vk::ImageLayout::eUndefined};
         };
 
+        struct GpuImage2D {
+            vk::raii::Image image{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::raii::ImageView view{nullptr};
+            vk::Extent2D extent{};
+            vk::Format format{};
+            vk::ImageLayout layout{vk::ImageLayout::eUndefined};
+        };
+
+        enum class SelectableObjectKind {
+            Mesh,
+            ParticleSet,
+            VolumeGrid,
+        };
+
+        struct ObjectKey {
+            SelectableObjectKind kind{SelectableObjectKind::Mesh};
+            std::string name{};
+
+            friend auto operator<=>(const ObjectKey&, const ObjectKey&) = default;
+        };
+
         struct CameraUniformData {
             std::array<float, 16> viewProjection{};
             std::array<float, 16> inverseViewProjection{};
@@ -66,7 +88,8 @@ namespace spectra::rasterizer {
         };
 
         struct RenderDrawCommand {
-            std::string name{};
+            ObjectKey objectKey{};
+            std::uint32_t objectId{};
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
             Transform transform{};
@@ -74,11 +97,15 @@ namespace spectra::rasterizer {
         };
 
         struct ParticleDrawCommand {
+            ObjectKey objectKey{};
+            std::uint32_t objectId{};
             std::uint32_t firstInstance{};
             std::uint32_t instanceCount{};
         };
 
         struct VolumeDrawCommand {
+            ObjectKey objectKey{};
+            std::uint32_t objectId{};
             SceneVolumeGrid volume{};
             SceneMaterial material{};
         };
@@ -144,6 +171,8 @@ namespace spectra::rasterizer {
 
         void destroy_host_buffer(GpuBuffer& buffer) noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
+        void create_image_2d(GpuImage2D& image, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect);
+        void destroy_image_2d(GpuImage2D& image) noexcept;
         void create_volume_image(GpuImage3D& image, vk::Extent3D extent);
         void destroy_volume_image(GpuImage3D& image) noexcept;
         void destroy_camera_resources() noexcept;
@@ -151,11 +180,13 @@ namespace spectra::rasterizer {
         void destroy_viewport_grid_resources() noexcept;
         void destroy_particle_resources() noexcept;
         void destroy_volume_resources() noexcept;
+        void destroy_selection_resources() noexcept;
         void ensure_camera_resources();
         void ensure_mesh_resources();
         void ensure_viewport_grid_resources();
         void ensure_particle_resources();
         void ensure_volume_resources();
+        void ensure_selection_resources();
 
         [[nodiscard]] std::vector<SceneMesh> collect_render_meshes() const;
         [[nodiscard]] std::vector<SceneParticleSet> collect_render_particle_sets() const;
@@ -163,6 +194,19 @@ namespace spectra::rasterizer {
         [[nodiscard]] SceneMaterial resolve_material(std::string_view material_name) const;
         [[nodiscard]] const SceneVolumeChannel& require_volume_channel(const SceneVolumeGrid& volume, std::string_view channel_name, SceneVolumeChannelLayout layout) const;
         [[nodiscard]] const SceneVolumeGrid* select_render_volume_grid(const std::vector<SceneVolumeGrid>& volumes) const;
+        void rebuild_selection_registry_if_needed();
+        void register_selectable_object(SelectableObjectKind kind, std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id);
+        [[nodiscard]] std::uint32_t object_id_for(const ObjectKey& key) const;
+        [[nodiscard]] const ObjectKey* object_for_id(std::uint32_t object_id) const;
+        void prune_selection_to_registry();
+        [[nodiscard]] bool object_selected(const ObjectKey& key) const;
+        [[nodiscard]] bool object_hovered(const ObjectKey& key) const;
+        [[nodiscard]] bool object_active(const ObjectKey& key) const;
+        [[nodiscard]] std::array<float, 4> selection_mask_color(const ObjectKey& key) const;
+        [[nodiscard]] std::string object_label(const ObjectKey& key) const;
+        [[nodiscard]] std::string selection_summary() const;
+        void clear_selection();
+        void apply_pick_result(std::uint32_t object_id, bool select, bool additive);
 
         void upload_scene_resources(std::uint32_t frame_index);
         void upload_particle_resources(std::uint32_t frame_index);
@@ -174,12 +218,21 @@ namespace spectra::rasterizer {
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
+        void request_selection_pick(std::uint32_t x, std::uint32_t y, bool select, bool additive);
+        void record_selection_pick_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_selection_visuals(const vk::raii::CommandBuffer& command_buffer);
+        void record_mesh_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
+        void record_particle_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
+        void record_volume_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
+        void record_selection_outline_pass(const vk::raii::CommandBuffer& command_buffer);
+        void consume_completed_selection_pick(std::uint32_t frame_index);
         void request_viewport_screenshot();
         void record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer);
         void consume_completed_screenshot(std::uint32_t frame_index);
 
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
+        void frame_selected_objects();
         void set_viewport_axis_view(Vector3 direction);
         void toggle_viewport_projection();
         void orbit_viewport_camera(ViewportDragDelta delta);
@@ -190,6 +243,7 @@ namespace spectra::rasterizer {
         void draw_viewport_toolbar(ViewportImageRect image_rect);
         void draw_orientation_gizmo(ViewportImageRect image_rect);
         [[nodiscard]] SceneBounds scene_bounds() const;
+        [[nodiscard]] SceneBounds selected_scene_bounds() const;
         [[nodiscard]] CameraUniformData make_viewport_camera_uniform() const;
 
         void draw_viewport_window();
@@ -293,5 +347,48 @@ namespace spectra::rasterizer {
             vk::raii::Pipeline pipeline{nullptr};
             std::vector<FrameVolumeResources> frame_volumes{};
         } volume_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            GpuImage2D object_id_image{};
+            GpuImage2D depth_image{};
+            GpuImage2D mask_image{};
+            vk::raii::Sampler mask_sampler{nullptr};
+            vk::raii::DescriptorSetLayout outline_descriptor_set_layout{nullptr};
+            vk::raii::DescriptorPool outline_descriptor_pool{nullptr};
+            vk::raii::DescriptorSets outline_descriptor_sets{nullptr};
+            vk::raii::PipelineLayout mesh_picking_pipeline_layout{nullptr};
+            vk::raii::Pipeline mesh_picking_pipeline{nullptr};
+            vk::raii::PipelineLayout particle_picking_pipeline_layout{nullptr};
+            vk::raii::Pipeline particle_picking_pipeline{nullptr};
+            vk::raii::PipelineLayout volume_picking_pipeline_layout{nullptr};
+            vk::raii::Pipeline volume_picking_pipeline{nullptr};
+            vk::raii::PipelineLayout mesh_mask_pipeline_layout{nullptr};
+            vk::raii::Pipeline mesh_mask_pipeline{nullptr};
+            vk::raii::PipelineLayout particle_mask_pipeline_layout{nullptr};
+            vk::raii::Pipeline particle_mask_pipeline{nullptr};
+            vk::raii::PipelineLayout volume_mask_pipeline_layout{nullptr};
+            vk::raii::Pipeline volume_mask_pipeline{nullptr};
+            vk::raii::PipelineLayout outline_pipeline_layout{nullptr};
+            vk::raii::Pipeline outline_pipeline{nullptr};
+            std::vector<GpuBuffer> readback_buffers{};
+            SceneRevision registry_revision{};
+            std::map<ObjectKey, std::uint32_t> object_ids{};
+            std::map<std::uint32_t, ObjectKey> objects_by_id{};
+            std::set<ObjectKey> selected_objects{};
+            std::optional<ObjectKey> active_object{};
+            std::optional<ObjectKey> hovered_object{};
+            bool registry_valid{false};
+            bool visuals_visible{true};
+            bool pick_requested{false};
+            bool pick_pending{false};
+            bool requested_select{false};
+            bool requested_additive{false};
+            bool pending_select{false};
+            bool pending_additive{false};
+            std::uint32_t requested_x{};
+            std::uint32_t requested_y{};
+            std::uint32_t pending_frame_index{};
+        } selection;
     };
 } // namespace spectra::rasterizer
