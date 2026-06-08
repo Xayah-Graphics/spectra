@@ -412,6 +412,7 @@ export namespace spectra::pathtracer {
         std::string id{};
         std::string title{};
         std::string icon{};
+        std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
         PathtracerDockSlot dock_slot{PathtracerDockSlot::Floating};
@@ -426,6 +427,7 @@ export namespace spectra::pathtracer {
         std::string id{};
         std::string title{};
         std::string icon{};
+        std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
         std::move_only_function<void()> draw{};
@@ -435,6 +437,7 @@ export namespace spectra::pathtracer {
         std::string id{};
         std::string title{};
         std::string icon{};
+        std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
         std::move_only_function<bool()> active{};

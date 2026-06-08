@@ -78,80 +78,80 @@ namespace {
 
     void apply_imgui_style() {
         ImGui::StyleColorsDark();
-        ImGuiStyle& style                  = ImGui::GetStyle();
-        style.Alpha                        = 1.0f;
-        style.DisabledAlpha                = 0.45f;
-        style.WindowRounding               = 7.0f;
-        style.WindowBorderSize             = 1.0f;
-        style.ChildRounding                = 6.0f;
-        style.ChildBorderSize              = 1.0f;
-        style.PopupRounding                = 7.0f;
-        style.PopupBorderSize              = 1.0f;
-        style.ColorButtonPosition          = ImGuiDir_Right;
-        style.FrameRounding                = 5.0f;
-        style.FrameBorderSize              = 1.0f;
-        style.GrabRounding                 = 5.0f;
-        style.ScrollbarRounding            = 8.0f;
-        style.TabRounding                  = 6.0f;
-        style.TabBorderSize                = 0.0f;
-        style.IndentSpacing                = 14.0f;
-        style.ItemSpacing                  = ImVec2{8.0f, 7.0f};
-        style.ItemInnerSpacing             = ImVec2{7.0f, 5.0f};
-        style.FramePadding                 = ImVec2{9.0f, 5.0f};
-        style.CellPadding                  = ImVec2{8.0f, 5.0f};
-        style.WindowPadding                = ImVec2{11.0f, 10.0f};
-        style.SeparatorTextPadding         = ImVec2{8.0f, 4.0f};
-        style.SelectableTextAlign          = ImVec2{0.0f, 0.5f};
+        ImGuiStyle& style          = ImGui::GetStyle();
+        style.Alpha                = 1.0f;
+        style.DisabledAlpha        = 0.45f;
+        style.WindowRounding       = 7.0f;
+        style.WindowBorderSize     = 1.0f;
+        style.ChildRounding        = 6.0f;
+        style.ChildBorderSize      = 1.0f;
+        style.PopupRounding        = 7.0f;
+        style.PopupBorderSize      = 1.0f;
+        style.ColorButtonPosition  = ImGuiDir_Right;
+        style.FrameRounding        = 5.0f;
+        style.FrameBorderSize      = 1.0f;
+        style.GrabRounding         = 5.0f;
+        style.ScrollbarRounding    = 8.0f;
+        style.TabRounding          = 6.0f;
+        style.TabBorderSize        = 0.0f;
+        style.IndentSpacing        = 14.0f;
+        style.ItemSpacing          = ImVec2{8.0f, 7.0f};
+        style.ItemInnerSpacing     = ImVec2{7.0f, 5.0f};
+        style.FramePadding         = ImVec2{9.0f, 5.0f};
+        style.CellPadding          = ImVec2{8.0f, 5.0f};
+        style.WindowPadding        = ImVec2{11.0f, 10.0f};
+        style.SeparatorTextPadding = ImVec2{8.0f, 4.0f};
+        style.SelectableTextAlign  = ImVec2{0.0f, 0.5f};
 
-        style.Colors[ImGuiCol_Text]                  = ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TextDisabled]          = ImVec4{132.0f / 255.0f, 143.0f / 255.0f, 156.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_WindowBg]              = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ChildBg]               = ImVec4{20.0f / 255.0f, 23.0f / 255.0f, 27.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_PopupBg]               = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Border]                = ImVec4{48.0f / 255.0f, 55.0f / 255.0f, 63.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_BorderShadow]          = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
-        style.Colors[ImGuiCol_FrameBg]               = ImVec4{29.0f / 255.0f, 34.0f / 255.0f, 40.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_FrameBgHovered]        = ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 55.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_FrameBgActive]         = ImVec4{47.0f / 255.0f, 62.0f / 255.0f, 72.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TitleBg]               = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TitleBgActive]         = ImVec4{21.0f / 255.0f, 25.0f / 255.0f, 30.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TitleBgCollapsed]      = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_MenuBarBg]             = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ScrollbarBg]           = ImVec4{17.0f / 255.0f, 20.0f / 255.0f, 23.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ScrollbarGrab]         = ImVec4{49.0f / 255.0f, 57.0f / 255.0f, 66.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4{67.0f / 255.0f, 78.0f / 255.0f, 90.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4{83.0f / 255.0f, 98.0f / 255.0f, 114.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_CheckMark]             = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_SliderGrab]            = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_SliderGrabActive]      = ImVec4{118.0f / 255.0f, 195.0f / 255.0f, 245.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Button]                = ImVec4{31.0f / 255.0f, 37.0f / 255.0f, 43.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ButtonHovered]         = ImVec4{43.0f / 255.0f, 55.0f / 255.0f, 64.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ButtonActive]          = ImVec4{47.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Header]                = ImVec4{31.0f / 255.0f, 38.0f / 255.0f, 45.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_HeaderHovered]         = ImVec4{43.0f / 255.0f, 58.0f / 255.0f, 70.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_HeaderActive]          = ImVec4{48.0f / 255.0f, 79.0f / 255.0f, 96.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Separator]             = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_SeparatorHovered]      = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_SeparatorActive]       = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ResizeGrip]            = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 0.7f};
-        style.Colors[ImGuiCol_ResizeGripHovered]     = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 0.8f};
-        style.Colors[ImGuiCol_ResizeGripActive]      = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 0.95f};
-        style.Colors[ImGuiCol_Tab]                   = ImVec4{22.0f / 255.0f, 25.0f / 255.0f, 29.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TabHovered]            = ImVec4{42.0f / 255.0f, 57.0f / 255.0f, 69.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TabActive]             = ImVec4{35.0f / 255.0f, 43.0f / 255.0f, 51.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TabUnfocused]          = ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 24.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TabUnfocusedActive]    = ImVec4{27.0f / 255.0f, 32.0f / 255.0f, 38.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_DockingPreview]        = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.42f};
-        style.Colors[ImGuiCol_DockingEmptyBg]        = ImVec4{14.0f / 255.0f, 16.0f / 255.0f, 19.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TableHeaderBg]         = ImVec4{26.0f / 255.0f, 31.0f / 255.0f, 36.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TableBorderStrong]     = ImVec4{50.0f / 255.0f, 58.0f / 255.0f, 67.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TableBorderLight]      = ImVec4{39.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TableRowBg]            = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
-        style.Colors[ImGuiCol_TableRowBgAlt]         = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 0.58f};
-        style.Colors[ImGuiCol_TextSelectedBg]        = ImVec4{64.0f / 255.0f, 124.0f / 255.0f, 163.0f / 255.0f, 0.45f};
-        style.Colors[ImGuiCol_DragDropTarget]        = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 0.9f};
-        style.Colors[ImGuiCol_NavHighlight]          = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.7f};
-        style.Colors[ImGuiCol_ModalWindowDimBg]      = ImVec4{5.0f / 255.0f, 7.0f / 255.0f, 10.0f / 255.0f, 0.68f};
+        style.Colors[ImGuiCol_Text]                 = ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TextDisabled]         = ImVec4{132.0f / 255.0f, 143.0f / 255.0f, 156.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_WindowBg]             = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ChildBg]              = ImVec4{20.0f / 255.0f, 23.0f / 255.0f, 27.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_PopupBg]              = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Border]               = ImVec4{48.0f / 255.0f, 55.0f / 255.0f, 63.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_BorderShadow]         = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
+        style.Colors[ImGuiCol_FrameBg]              = ImVec4{29.0f / 255.0f, 34.0f / 255.0f, 40.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBgHovered]       = ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 55.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBgActive]        = ImVec4{47.0f / 255.0f, 62.0f / 255.0f, 72.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TitleBg]              = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TitleBgActive]        = ImVec4{21.0f / 255.0f, 25.0f / 255.0f, 30.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TitleBgCollapsed]     = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_MenuBarBg]            = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarBg]          = ImVec4{17.0f / 255.0f, 20.0f / 255.0f, 23.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarGrab]        = ImVec4{49.0f / 255.0f, 57.0f / 255.0f, 66.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4{67.0f / 255.0f, 78.0f / 255.0f, 90.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ScrollbarGrabActive]  = ImVec4{83.0f / 255.0f, 98.0f / 255.0f, 114.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_CheckMark]            = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SliderGrab]           = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SliderGrabActive]     = ImVec4{118.0f / 255.0f, 195.0f / 255.0f, 245.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Button]               = ImVec4{31.0f / 255.0f, 37.0f / 255.0f, 43.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ButtonHovered]        = ImVec4{43.0f / 255.0f, 55.0f / 255.0f, 64.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ButtonActive]         = ImVec4{47.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Header]               = ImVec4{31.0f / 255.0f, 38.0f / 255.0f, 45.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_HeaderHovered]        = ImVec4{43.0f / 255.0f, 58.0f / 255.0f, 70.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_HeaderActive]         = ImVec4{48.0f / 255.0f, 79.0f / 255.0f, 96.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Separator]            = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SeparatorHovered]     = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_SeparatorActive]      = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ResizeGrip]           = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 0.7f};
+        style.Colors[ImGuiCol_ResizeGripHovered]    = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 0.8f};
+        style.Colors[ImGuiCol_ResizeGripActive]     = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 0.95f};
+        style.Colors[ImGuiCol_Tab]                  = ImVec4{22.0f / 255.0f, 25.0f / 255.0f, 29.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabHovered]           = ImVec4{42.0f / 255.0f, 57.0f / 255.0f, 69.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabActive]            = ImVec4{35.0f / 255.0f, 43.0f / 255.0f, 51.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabUnfocused]         = ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 24.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabUnfocusedActive]   = ImVec4{27.0f / 255.0f, 32.0f / 255.0f, 38.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_DockingPreview]       = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.42f};
+        style.Colors[ImGuiCol_DockingEmptyBg]       = ImVec4{14.0f / 255.0f, 16.0f / 255.0f, 19.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableHeaderBg]        = ImVec4{26.0f / 255.0f, 31.0f / 255.0f, 36.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableBorderStrong]    = ImVec4{50.0f / 255.0f, 58.0f / 255.0f, 67.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableBorderLight]     = ImVec4{39.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableRowBg]           = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
+        style.Colors[ImGuiCol_TableRowBgAlt]        = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 0.58f};
+        style.Colors[ImGuiCol_TextSelectedBg]       = ImVec4{64.0f / 255.0f, 124.0f / 255.0f, 163.0f / 255.0f, 0.45f};
+        style.Colors[ImGuiCol_DragDropTarget]       = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 0.9f};
+        style.Colors[ImGuiCol_NavHighlight]         = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.7f};
+        style.Colors[ImGuiCol_ModalWindowDimBg]     = ImVec4{5.0f / 255.0f, 7.0f / 255.0f, 10.0f / 255.0f, 0.68f};
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
 
@@ -261,9 +261,9 @@ namespace spectra {
     }
 
     void Spectra::activate_renderer(const std::size_t renderer_index) {
-        if (renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        this->active_renderer_index = renderer_index;
-        this->dock_layout_initialized = false;
+        if (renderer_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        this->renderer_registry.active_index    = renderer_index;
+        this->workspace.dock_layout_initialized = false;
         this->sync_active_sidebar_tab();
     }
 
@@ -370,8 +370,8 @@ namespace spectra {
 
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}};
         enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = VK_TRUE;
-        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = VK_TRUE;
-        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = VK_TRUE;
+        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2     = VK_TRUE;
+        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering     = VK_TRUE;
 
         constexpr std::array<const char*, 5> enabled_device_extensions = required_device_extensions();
         constexpr std::array queue_priorities{1.0f};
@@ -543,17 +543,17 @@ namespace spectra {
             init_info.UseDynamicRendering                          = true;
             init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
             if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
-            vulkan_backend_initialized    = true;
-            this->imgui.initialized       = true;
-            this->imgui_shutdown_notified = false;
-            for (RendererSlot& renderer : this->renderers) renderer.after_imgui_created(*this);
+            vulkan_backend_initialized                     = true;
+            this->imgui.initialized                        = true;
+            this->imgui.renderers_notified_before_shutdown = false;
+            for (RendererSlot& renderer : this->renderer_registry.slots) renderer.after_imgui_created(*this);
         } catch (...) {
             if (vulkan_backend_initialized) ImGui_ImplVulkan_Shutdown();
             if (glfw_backend_initialized) ImGui_ImplGlfw_Shutdown();
             if (context_created) ImGui::DestroyContext();
-            this->imgui.descriptor_pool   = nullptr;
-            this->imgui.initialized       = false;
-            this->imgui_shutdown_notified = false;
+            this->imgui.descriptor_pool                    = nullptr;
+            this->imgui.initialized                        = false;
+            this->imgui.renderers_notified_before_shutdown = false;
             throw;
         }
     }
@@ -566,9 +566,9 @@ namespace spectra {
             return false;
         }
 
-        frame.recreate_after_present = false;
-        frame.frame_slot_index       = this->sync.frame_slot_index;
-        frame.frame_number           = this->timing.frame_number;
+        frame.recreate_after_present                    = false;
+        frame.frame_slot_index                          = this->sync.frame_slot_index;
+        frame.frame_number                              = this->timing.frame_number;
         const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
         if (this->timing.last_frame_time_valid) frame.delta_seconds = std::chrono::duration<double>(now - this->timing.last_frame_time).count();
         this->timing.last_frame_time       = now;
@@ -599,15 +599,15 @@ namespace spectra {
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
 
-        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
-        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        if (this->renderer_registry.slots.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->renderer_registry.active_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
         const FrameContext frame_info{
             .frame_slot_index = frame.frame_slot_index,
             .image_index      = frame.image_index,
             .frame_number     = frame.frame_number,
             .delta_seconds    = frame.delta_seconds,
         };
-        FrameResult frame_result = this->renderers[this->active_renderer_index].begin_frame(*this, frame_info);
+        FrameResult frame_result = this->renderer_registry.slots[this->renderer_registry.active_index].begin_frame(*this, frame_info);
         if (frame_result.completion_semaphore.has_value()) {
             if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
             frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
@@ -628,9 +628,9 @@ namespace spectra {
         constexpr vk::CommandBufferBeginInfo command_buffer_begin_info{vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
         command_buffer.begin(command_buffer_begin_info);
 
-        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
-        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        this->renderers[this->active_renderer_index].record_frame(command_buffer);
+        if (this->renderer_registry.slots.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->renderer_registry.active_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        this->renderer_registry.slots[this->renderer_registry.active_index].record_frame(command_buffer);
 
         {
             const vk::ImageMemoryBarrier2 color_barrier{
@@ -765,22 +765,27 @@ namespace spectra {
 
     void Spectra::detach_renderers() noexcept {
         this->notify_renderers_before_imgui_shutdown();
-        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
+        for (auto renderer = this->renderer_registry.slots.rbegin(); renderer != this->renderer_registry.slots.rend(); ++renderer) {
             renderer->detach(*this);
         }
-        this->renderers.clear();
-        this->panels.clear();
-        this->active_renderer_index   = 0;
-        this->dock_layout_initialized = false;
+        this->renderer_registry.slots.clear();
+        this->workspace.panels.clear();
+        this->workspace.sidebar_tabs.clear();
+        this->workspace.toolbar_actions.clear();
+        this->renderer_registry.active_index    = 0;
+        this->workspace.dock_layout_initialized = false;
+        this->workspace.sidebar_visible         = true;
+        this->workspace.active_sidebar_tab_id.clear();
+        this->workspace.sidebar_tab_selection_requested = false;
     }
 
     void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
-        if (this->imgui_shutdown_notified) return;
+        if (this->imgui.renderers_notified_before_shutdown) return;
         this->wait_device_idle_for_cleanup();
-        for (auto renderer = this->renderers.rbegin(); renderer != this->renderers.rend(); ++renderer) {
+        for (auto renderer = this->renderer_registry.slots.rbegin(); renderer != this->renderer_registry.slots.rend(); ++renderer) {
             renderer->before_imgui_shutdown(*this);
         }
-        this->imgui_shutdown_notified = true;
+        this->imgui.renderers_notified_before_shutdown = true;
     }
 
     void Spectra::wait_device_idle_for_cleanup() noexcept {
@@ -797,9 +802,9 @@ namespace spectra {
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
         }
-        this->imgui.descriptor_pool   = nullptr;
-        this->imgui.initialized       = false;
-        this->dock_layout_initialized = false;
+        this->imgui.descriptor_pool             = nullptr;
+        this->imgui.initialized                 = false;
+        this->workspace.dock_layout_initialized = false;
     }
 
     void Spectra::destroy_frame_sync() noexcept {
@@ -823,12 +828,12 @@ namespace spectra {
     }
 
     void Spectra::destroy_vulkan_context() noexcept {
-        this->context.command_pool     = nullptr;
-        this->context.graphics_queue   = nullptr;
-        this->context.device           = nullptr;
-        this->context.physical_device  = nullptr;
-        this->context.debug_messenger  = nullptr;
-        this->context.instance         = nullptr;
+        this->context.command_pool    = nullptr;
+        this->context.graphics_queue  = nullptr;
+        this->context.device          = nullptr;
+        this->context.physical_device = nullptr;
+        this->context.debug_messenger = nullptr;
+        this->context.instance        = nullptr;
     }
 
     void Spectra::terminate_glfw() noexcept {
@@ -839,22 +844,22 @@ namespace spectra {
     void Spectra::store_renderer(RendererSlot renderer) {
         const std::string_view renderer_name = renderer.name;
         if (renderer_name.empty()) throw std::runtime_error("Spectra renderer name must not be empty");
-        for (const RendererSlot& existing_renderer : this->renderers) {
+        for (const RendererSlot& existing_renderer : this->renderer_registry.slots) {
             if (existing_renderer.name == renderer_name) throw std::runtime_error(std::string{"Duplicate Spectra renderer name: "} + std::string{renderer_name});
         }
-        const bool first_renderer = this->renderers.empty();
-        if (this->registering_renderer_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
-        this->registering_renderer_name = std::string{renderer_name};
+        const bool first_renderer = this->renderer_registry.slots.empty();
+        if (this->renderer_registry.registering_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
+        this->renderer_registry.registering_name = std::string{renderer_name};
         try {
             renderer.attach(*this);
             if (this->imgui.initialized) renderer.after_imgui_created(*this);
         } catch (...) {
-            this->registering_renderer_name.reset();
+            this->renderer_registry.registering_name.reset();
             throw;
         }
-        this->registering_renderer_name.reset();
-        this->renderers.push_back(std::move(renderer));
-        if (first_renderer) this->active_renderer_index = 0;
+        this->renderer_registry.registering_name.reset();
+        this->renderer_registry.slots.push_back(std::move(renderer));
+        if (first_renderer) this->renderer_registry.active_index = 0;
     }
 
     void Spectra::store_panel(Panel panel) {
@@ -866,30 +871,30 @@ namespace spectra {
         case DockSlot::Floating: break;
         default: throw std::runtime_error("Spectra panel dock slot is invalid");
         }
-        for (const Panel& existing_panel : this->panels) {
+        for (const Panel& existing_panel : this->workspace.panels) {
             if (!owner_scopes_overlap(existing_panel.owner_renderer, panel.owner_renderer)) continue;
             if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
             if (existing_panel.title == panel.title) throw std::runtime_error(std::string{"Duplicate Spectra panel title: "} + panel.title);
         }
-        this->panels.push_back(std::move(panel));
-        this->dock_layout_initialized = false;
+        this->workspace.panels.push_back(std::move(panel));
+        this->workspace.dock_layout_initialized = false;
     }
 
     void Spectra::store_sidebar_tab(SidebarTab tab) {
         if (tab.id.empty()) throw std::runtime_error("Spectra sidebar tab id must not be empty");
         if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
         if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
-        for (const SidebarTab& existing_tab : this->sidebar_tabs) {
+        for (const SidebarTab& existing_tab : this->workspace.sidebar_tabs) {
             if (!owner_scopes_overlap(existing_tab.owner_renderer, tab.owner_renderer)) continue;
             if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
             if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
         }
-        if (this->active_sidebar_tab_id.empty()) {
-            this->active_sidebar_tab_id             = tab.id;
-            this->sidebar_tab_selection_requested = true;
+        if (this->workspace.active_sidebar_tab_id.empty()) {
+            this->workspace.active_sidebar_tab_id           = tab.id;
+            this->workspace.sidebar_tab_selection_requested = true;
         }
-        this->sidebar_tabs.push_back(std::move(tab));
-        this->dock_layout_initialized = false;
+        this->workspace.sidebar_tabs.push_back(std::move(tab));
+        this->workspace.dock_layout_initialized = false;
     }
 
     void Spectra::store_toolbar_action(ToolbarAction action) {
@@ -898,33 +903,65 @@ namespace spectra {
         if (action.icon.empty()) throw std::runtime_error("Spectra toolbar action icon must not be empty");
         if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
         if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
-        for (const ToolbarAction& existing_action : this->toolbar_actions) {
+        for (const ToolbarAction& existing_action : this->workspace.toolbar_actions) {
             if (!owner_scopes_overlap(existing_action.owner_renderer, action.owner_renderer)) continue;
             if (existing_action.id == action.id) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action id: "} + action.id);
             if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
         }
-        this->toolbar_actions.push_back(std::move(action));
+        this->workspace.toolbar_actions.push_back(std::move(action));
+    }
+
+    std::string Spectra::resolve_contribution_owner(std::string owner_renderer) const {
+        if (!owner_renderer.empty()) {
+            if (this->renderer_registry.registering_name.has_value() && owner_renderer != *this->renderer_registry.registering_name) throw std::runtime_error(std::format("Spectra UI owner \"{}\" does not match renderer registration scope \"{}\"", owner_renderer, *this->renderer_registry.registering_name));
+            return owner_renderer;
+        }
+        if (this->renderer_registry.registering_name.has_value()) return *this->renderer_registry.registering_name;
+        return {};
+    }
+
+    bool Spectra::contribution_belongs_to_active_renderer(const std::string_view owner_renderer) const {
+        if (this->renderer_registry.slots.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
+        if (this->renderer_registry.active_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        if (owner_renderer.empty()) return true;
+        return owner_renderer == this->renderer_registry.slots[this->renderer_registry.active_index].name;
+    }
+
+    void Spectra::sync_active_sidebar_tab() {
+        for (const SidebarTab& tab : this->workspace.sidebar_tabs) {
+            if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
+            if (tab.id == this->workspace.active_sidebar_tab_id) return;
+        }
+        for (const SidebarTab& tab : this->workspace.sidebar_tabs) {
+            if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
+            this->workspace.active_sidebar_tab_id           = tab.id;
+            this->workspace.sidebar_visible                 = true;
+            this->workspace.sidebar_tab_selection_requested = true;
+            return;
+        }
+        this->workspace.active_sidebar_tab_id.clear();
+        this->workspace.sidebar_visible = false;
     }
 
     void Spectra::draw_command_bar() {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
-            for (Panel& panel : this->panels) {
-                if (!this->panel_belongs_to_active_renderer(panel)) continue;
+            for (Panel& panel : this->workspace.panels) {
+                if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
                 if (panel.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(panel.shortcut_key, false)) panel.visible = !panel.visible;
             }
             this->sync_active_sidebar_tab();
-            for (SidebarTab& tab : this->sidebar_tabs) {
-                if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
+            for (SidebarTab& tab : this->workspace.sidebar_tabs) {
+                if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
                 if (tab.shortcut_key == ImGuiKey_None || !ImGui::IsKeyPressed(tab.shortcut_key, false)) continue;
-                const bool selected = this->sidebar_visible && tab.id == this->active_sidebar_tab_id;
-                this->active_sidebar_tab_id = tab.id;
-                this->sidebar_visible       = !selected;
-                this->sidebar_tab_selection_requested = true;
-                this->dock_layout_initialized = false;
+                const bool selected                             = this->workspace.sidebar_visible && tab.id == this->workspace.active_sidebar_tab_id;
+                this->workspace.active_sidebar_tab_id           = tab.id;
+                this->workspace.sidebar_visible                 = !selected;
+                this->workspace.sidebar_tab_selection_requested = true;
+                this->workspace.dock_layout_initialized         = false;
             }
-            for (ToolbarAction& action : this->toolbar_actions) {
-                if (!this->toolbar_action_belongs_to_active_renderer(action)) continue;
+            for (ToolbarAction& action : this->workspace.toolbar_actions) {
+                if (!this->contribution_belongs_to_active_renderer(action.owner_renderer)) continue;
                 if (action.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(action.shortcut_key, false)) action.trigger();
             }
         }
@@ -936,8 +973,7 @@ namespace spectra {
         ImGui::SetNextWindowPos(main_viewport->WorkPos);
         ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, command_bar_height()});
 
-        constexpr ImGuiWindowFlags command_bar_flags =
-            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        constexpr ImGuiWindowFlags command_bar_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 7.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{13.0f / 255.0f, 15.0f / 255.0f, 18.0f / 255.0f, 1.0f});
@@ -955,22 +991,22 @@ namespace spectra {
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 10.0f);
-        for (std::size_t renderer_index = 0; renderer_index < this->renderers.size(); ++renderer_index) {
-            const bool selected = renderer_index == this->active_renderer_index;
+        for (std::size_t renderer_index = 0; renderer_index < this->renderer_registry.slots.size(); ++renderer_index) {
+            const bool selected = renderer_index == this->renderer_registry.active_index;
             push_renderer_button_style(selected);
-            if (ImGui::Button(this->renderers[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) this->activate_renderer(renderer_index);
+            if (ImGui::Button(this->renderer_registry.slots[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) this->activate_renderer(renderer_index);
             pop_renderer_button_style();
-            if (renderer_index + 1 < this->renderers.size()) ImGui::SameLine(0.0f, 6.0f);
+            if (renderer_index + 1 < this->renderer_registry.slots.size()) ImGui::SameLine(0.0f, 6.0f);
         }
 
         std::vector<SidebarTab*> visible_tabs{};
-        for (SidebarTab& tab : this->sidebar_tabs) {
-            if (this->sidebar_tab_belongs_to_active_renderer(tab)) visible_tabs.push_back(&tab);
+        for (SidebarTab& tab : this->workspace.sidebar_tabs) {
+            if (this->contribution_belongs_to_active_renderer(tab.owner_renderer)) visible_tabs.push_back(&tab);
         }
 
         std::vector<ToolbarAction*> visible_actions{};
-        for (ToolbarAction& action : this->toolbar_actions) {
-            if (this->toolbar_action_belongs_to_active_renderer(action)) visible_actions.push_back(&action);
+        for (ToolbarAction& action : this->workspace.toolbar_actions) {
+            if (this->contribution_belongs_to_active_renderer(action.owner_renderer)) visible_actions.push_back(&action);
         }
 
         if (visible_tabs.empty() && visible_actions.empty()) {
@@ -990,14 +1026,14 @@ namespace spectra {
         ImGui::SameLine(0.0f, 6.0f);
         std::size_t button_index = 0;
         for (SidebarTab* tab : visible_tabs) {
-            const bool selected = this->sidebar_visible && tab->id == this->active_sidebar_tab_id;
+            const bool selected = this->workspace.sidebar_visible && tab->id == this->workspace.active_sidebar_tab_id;
             const char* label   = tab->icon.empty() ? tab->title.c_str() : tab->icon.c_str();
             push_toolbar_button_style(selected);
             if (ImGui::Button(label, ImVec2{button_size, button_size})) {
-                this->active_sidebar_tab_id = tab->id;
-                this->sidebar_visible       = !selected;
-                this->sidebar_tab_selection_requested = true;
-                this->dock_layout_initialized = false;
+                this->workspace.active_sidebar_tab_id           = tab->id;
+                this->workspace.sidebar_visible                 = !selected;
+                this->workspace.sidebar_tab_selection_requested = true;
+                this->workspace.dock_layout_initialized         = false;
             }
             pop_toolbar_button_style();
             if (ImGui::IsItemHovered() && !tab->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", tab->title.c_str(), tab->shortcut_label.c_str());
@@ -1032,8 +1068,7 @@ namespace spectra {
         ImGui::SetNextWindowViewport(main_viewport->ID);
         ImGui::SetNextWindowPos(dock_pos);
         ImGui::SetNextWindowSize(dock_size);
-        constexpr ImGuiWindowFlags dockspace_window_flags =
-            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBackground;
+        constexpr ImGuiWindowFlags dockspace_window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBackground;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
@@ -1047,7 +1082,7 @@ namespace spectra {
         ImGui::DockSpace(dockspace_id, ImVec2{0.0f, 0.0f}, dockspace_flags);
         ImGui::End();
         if (dockspace_id == 0) throw std::runtime_error("Failed to create Spectra dockspace");
-        if (this->dock_layout_initialized) return;
+        if (this->workspace.dock_layout_initialized) return;
 
         ImGui::DockBuilderRemoveNode(dockspace_id);
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace | dockspace_flags);
@@ -1056,15 +1091,14 @@ namespace spectra {
 
         ImGuiID center_id = dockspace_id;
         ImGuiID right_id  = 0;
-        this->sync_active_sidebar_tab();
-        if (this->sidebar_visible && !this->active_sidebar_tab_id.empty()) {
+        if (this->workspace.sidebar_visible && !this->workspace.active_sidebar_tab_id.empty()) {
             right_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.28f, nullptr, &center_id);
             if (right_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra sidebar dock layout");
             ImGui::DockBuilderDockWindow("Sidebar", right_id);
         }
 
-        for (const Panel& panel : this->panels) {
-            if (!this->panel_belongs_to_active_renderer(panel)) continue;
+        for (const Panel& panel : this->workspace.panels) {
+            if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
             switch (panel.dock_slot) {
             case DockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
             case DockSlot::Floating: break;
@@ -1079,16 +1113,15 @@ namespace spectra {
         hide_tab_bar(center_id);
         if (right_id != 0) hide_tab_bar(right_id);
         ImGui::DockBuilderFinish(dockspace_id);
-        this->dock_layout_initialized = true;
+        this->workspace.dock_layout_initialized = true;
     }
 
     void Spectra::draw_sidebar() {
-        this->sync_active_sidebar_tab();
-        if (!this->sidebar_visible || this->active_sidebar_tab_id.empty()) return;
+        if (!this->workspace.sidebar_visible || this->workspace.active_sidebar_tab_id.empty()) return;
 
         std::vector<SidebarTab*> visible_tabs{};
-        for (SidebarTab& tab : this->sidebar_tabs) {
-            if (this->sidebar_tab_belongs_to_active_renderer(tab)) visible_tabs.push_back(&tab);
+        for (SidebarTab& tab : this->workspace.sidebar_tabs) {
+            if (this->contribution_belongs_to_active_renderer(tab.owner_renderer)) visible_tabs.push_back(&tab);
         }
         if (visible_tabs.empty()) return;
 
@@ -1107,16 +1140,16 @@ namespace spectra {
         }
         if (ImGui::BeginTabBar("SidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
             for (SidebarTab* tab : visible_tabs) {
-                const ImGuiTabItemFlags tab_flags = this->sidebar_tab_selection_requested && tab->id == this->active_sidebar_tab_id ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
-                const std::string label = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
+                const ImGuiTabItemFlags tab_flags = this->workspace.sidebar_tab_selection_requested && tab->id == this->workspace.active_sidebar_tab_id ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                const std::string label           = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
                 if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
-                    this->active_sidebar_tab_id = tab->id;
+                    this->workspace.active_sidebar_tab_id = tab->id;
                     ImGui::Spacing();
                     tab->draw();
                     ImGui::EndTabItem();
                 }
             }
-            this->sidebar_tab_selection_requested = false;
+            this->workspace.sidebar_tab_selection_requested = false;
             ImGui::EndTabBar();
         }
         ImGui::End();
@@ -1125,8 +1158,8 @@ namespace spectra {
     }
 
     void Spectra::draw_registered_panels() {
-        for (Panel& panel : this->panels) {
-            if (!this->panel_belongs_to_active_renderer(panel)) continue;
+        for (Panel& panel : this->workspace.panels) {
+            if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
             if (!panel.visible) continue;
             if (panel.zero_window_padding) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f, 0.0f});
             bool open        = panel.visible;
@@ -1151,40 +1184,6 @@ namespace spectra {
         const std::string title = this->window_title.detail.empty() ? std::format("{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count) : std::format("{} - {} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, this->window_title.detail, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
         glfwSetWindowTitle(this->surface.window.get(), title.c_str());
         this->window_title.refresh_timer = 0.0f;
-    }
-
-    std::string_view Spectra::active_renderer_name() const {
-        if (this->renderers.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
-        if (this->active_renderer_index >= this->renderers.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        return this->renderers[this->active_renderer_index].name;
-    }
-
-    bool Spectra::panel_belongs_to_active_renderer(const Panel& panel) const {
-        return panel.owner_renderer.empty() || panel.owner_renderer == this->active_renderer_name();
-    }
-
-    bool Spectra::sidebar_tab_belongs_to_active_renderer(const SidebarTab& tab) const {
-        return tab.owner_renderer.empty() || tab.owner_renderer == this->active_renderer_name();
-    }
-
-    bool Spectra::toolbar_action_belongs_to_active_renderer(const ToolbarAction& action) const {
-        return action.owner_renderer.empty() || action.owner_renderer == this->active_renderer_name();
-    }
-
-    void Spectra::sync_active_sidebar_tab() {
-        for (const SidebarTab& tab : this->sidebar_tabs) {
-            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
-            if (tab.id == this->active_sidebar_tab_id) return;
-        }
-        for (const SidebarTab& tab : this->sidebar_tabs) {
-            if (!this->sidebar_tab_belongs_to_active_renderer(tab)) continue;
-            this->active_sidebar_tab_id = tab.id;
-            this->sidebar_visible       = true;
-            this->sidebar_tab_selection_requested = true;
-            return;
-        }
-        this->active_sidebar_tab_id.clear();
-        this->sidebar_visible = false;
     }
 
 } // namespace spectra

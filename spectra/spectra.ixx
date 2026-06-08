@@ -76,6 +76,7 @@ namespace spectra {
         std::string{std::move(panel.id)};
         std::string{std::move(panel.title)};
         std::string{std::move(panel.icon)};
+        std::string{std::move(panel.owner_renderer)};
         std::string{std::move(panel.shortcut_label)};
         static_cast<ImGuiKey>(panel.shortcut_key);
         static_cast<std::underlying_type_t<DockSlot>>(panel.dock_slot);
@@ -91,6 +92,7 @@ namespace spectra {
         std::string{std::move(tab.id)};
         std::string{std::move(tab.title)};
         std::string{std::move(tab.icon)};
+        std::string{std::move(tab.owner_renderer)};
         std::string{std::move(tab.shortcut_label)};
         static_cast<ImGuiKey>(tab.shortcut_key);
         std::move_only_function<void()>{std::move(tab.draw)};
@@ -101,6 +103,7 @@ namespace spectra {
         std::string{std::move(action.id)};
         std::string{std::move(action.title)};
         std::string{std::move(action.icon)};
+        std::string{std::move(action.owner_renderer)};
         std::string{std::move(action.shortcut_label)};
         static_cast<ImGuiKey>(action.shortcut_key);
         std::move_only_function<bool()>{std::move(action.active)};
@@ -221,22 +224,19 @@ namespace spectra {
         };
 
         void store_renderer(RendererSlot renderer);
-        template <typename Item>
-        [[nodiscard]] std::string resolve_contribution_owner(Item& item) const;
         void store_panel(Panel panel);
         void store_sidebar_tab(SidebarTab tab);
         void store_toolbar_action(ToolbarAction action);
+
+        [[nodiscard]] std::string resolve_contribution_owner(std::string owner_renderer) const;
+        [[nodiscard]] bool contribution_belongs_to_active_renderer(std::string_view owner_renderer) const;
+        void sync_active_sidebar_tab();
 
         void draw_command_bar();
         void draw_dockspace();
         void draw_sidebar();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
-        [[nodiscard]] std::string_view active_renderer_name() const;
-        [[nodiscard]] bool panel_belongs_to_active_renderer(const Panel& panel) const;
-        [[nodiscard]] bool sidebar_tab_belongs_to_active_renderer(const SidebarTab& tab) const;
-        [[nodiscard]] bool toolbar_action_belongs_to_active_renderer(const ToolbarAction& action) const;
-        void sync_active_sidebar_tab();
 
         struct {
             vk::raii::Context context{};
@@ -270,6 +270,7 @@ namespace spectra {
         struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
             bool initialized{false};
+            bool renderers_notified_before_shutdown{false};
         } imgui;
 
         struct {
@@ -295,36 +296,27 @@ namespace spectra {
             bool last_frame_time_valid{false};
         } timing;
 
-        bool dock_layout_initialized{false};
-        bool imgui_shutdown_notified{false};
-        bool sidebar_visible{true};
-        bool sidebar_tab_selection_requested{false};
-        std::optional<std::string> registering_renderer_name{};
-        std::size_t active_renderer_index{0};
-        std::string active_sidebar_tab_id{};
-        std::vector<Panel> panels{};
-        std::vector<SidebarTab> sidebar_tabs{};
-        std::vector<ToolbarAction> toolbar_actions{};
-        std::vector<RendererSlot> renderers{};
+        struct {
+            std::vector<RendererSlot> slots{};
+            std::optional<std::string> registering_name{};
+            std::size_t active_index{0};
+        } renderer_registry;
+
+        struct {
+            std::vector<Panel> panels{};
+            std::vector<SidebarTab> sidebar_tabs{};
+            std::vector<ToolbarAction> toolbar_actions{};
+            bool dock_layout_initialized{false};
+            bool sidebar_visible{true};
+            std::string active_sidebar_tab_id{};
+            bool sidebar_tab_selection_requested{false};
+        } workspace;
     };
 
     template <typename Renderer>
         requires RendererFor<Renderer, Spectra>
     void Spectra::register_renderer(Renderer renderer) {
         this->store_renderer(RendererSlot{std::move(renderer)});
-    }
-
-    template <typename Item>
-    std::string Spectra::resolve_contribution_owner(Item& item) const {
-        if constexpr (requires { std::string{std::move(item.owner_renderer)}; }) {
-            std::string owner_renderer{std::move(item.owner_renderer)};
-            if (!owner_renderer.empty()) {
-                if (this->registering_renderer_name.has_value() && owner_renderer != *this->registering_renderer_name) throw std::runtime_error(std::format("Spectra UI owner \"{}\" does not match renderer registration scope \"{}\"", owner_renderer, *this->registering_renderer_name));
-                return owner_renderer;
-            }
-        }
-        if (this->registering_renderer_name.has_value()) return *this->registering_renderer_name;
-        return {};
     }
 
     template <typename PanelContribution>
@@ -334,7 +326,7 @@ namespace spectra {
             .id                  = std::string{std::move(panel.id)},
             .title               = std::string{std::move(panel.title)},
             .icon                = std::string{std::move(panel.icon)},
-            .owner_renderer      = this->resolve_contribution_owner(panel),
+            .owner_renderer      = this->resolve_contribution_owner(std::string{std::move(panel.owner_renderer)}),
             .shortcut_label      = std::string{std::move(panel.shortcut_label)},
             .shortcut_key        = static_cast<ImGuiKey>(panel.shortcut_key),
             .dock_slot           = static_cast<DockSlot>(static_cast<std::underlying_type_t<DockSlot>>(panel.dock_slot)),
@@ -353,7 +345,7 @@ namespace spectra {
             .id             = std::string{std::move(tab.id)},
             .title          = std::string{std::move(tab.title)},
             .icon           = std::string{std::move(tab.icon)},
-            .owner_renderer = this->resolve_contribution_owner(tab),
+            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(tab.owner_renderer)}),
             .shortcut_label = std::string{std::move(tab.shortcut_label)},
             .shortcut_key   = static_cast<ImGuiKey>(tab.shortcut_key),
             .draw           = std::move(tab.draw),
@@ -367,7 +359,7 @@ namespace spectra {
             .id             = std::string{std::move(action.id)},
             .title          = std::string{std::move(action.title)},
             .icon           = std::string{std::move(action.icon)},
-            .owner_renderer = this->resolve_contribution_owner(action),
+            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(action.owner_renderer)}),
             .shortcut_label = std::string{std::move(action.shortcut_label)},
             .shortcut_key   = static_cast<ImGuiKey>(action.shortcut_key),
             .active         = std::move(action.active),

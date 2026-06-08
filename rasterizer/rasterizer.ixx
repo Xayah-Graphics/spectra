@@ -388,6 +388,7 @@ export namespace spectra::rasterizer {
         std::string id{};
         std::string title{};
         std::string icon{};
+        std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
         RasterizerDockSlot dock_slot{RasterizerDockSlot::Floating};
@@ -402,6 +403,7 @@ export namespace spectra::rasterizer {
         std::string id{};
         std::string title{};
         std::string icon{};
+        std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
         std::move_only_function<void()> draw{};
