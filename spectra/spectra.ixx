@@ -145,7 +145,6 @@ namespace spectra {
         [[nodiscard]] std::uint32_t frame_count() const;
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
 
-        void activate_renderer(std::size_t renderer_index);
         template <typename Renderer>
             requires RendererFor<Renderer, Spectra>
         void register_renderer(Renderer renderer);
@@ -231,6 +230,7 @@ namespace spectra {
         [[nodiscard]] std::string resolve_contribution_owner(std::string owner_renderer) const;
         [[nodiscard]] bool contribution_belongs_to_active_renderer(std::string_view owner_renderer) const;
         void sync_active_sidebar_tab();
+        void activate_renderer(std::size_t renderer_index);
 
         void draw_command_bar();
         void draw_dockspace();

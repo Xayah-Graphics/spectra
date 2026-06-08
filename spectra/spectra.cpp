@@ -260,13 +260,6 @@ namespace spectra {
         return this->swapchain.extent;
     }
 
-    void Spectra::activate_renderer(const std::size_t renderer_index) {
-        if (renderer_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
-        this->renderer_registry.active_index    = renderer_index;
-        this->workspace.dock_layout_initialized = false;
-        this->sync_active_sidebar_tab();
-    }
-
     void Spectra::initialize_glfw() {
         if (!glfwInit()) throw std::runtime_error("Failed to initialize GLFW");
         this->surface.glfw_initialized = true;
@@ -318,6 +311,7 @@ namespace spectra {
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
         this->surface.window.reset(glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr));
         if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
+        glfwSetWindowSizeLimits(this->surface.window.get(), 800, 480, GLFW_DONT_CARE, GLFW_DONT_CARE);
         glfwSetWindowUserPointer(this->surface.window.get(), this);
         glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
     }
@@ -849,11 +843,25 @@ namespace spectra {
         }
         const bool first_renderer = this->renderer_registry.slots.empty();
         if (this->renderer_registry.registering_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
+        const std::size_t panel_count              = this->workspace.panels.size();
+        const std::size_t sidebar_tab_count        = this->workspace.sidebar_tabs.size();
+        const std::size_t toolbar_action_count     = this->workspace.toolbar_actions.size();
+        const bool dock_layout_initialized         = this->workspace.dock_layout_initialized;
+        const bool sidebar_visible                 = this->workspace.sidebar_visible;
+        const std::string active_sidebar_tab_id    = this->workspace.active_sidebar_tab_id;
+        const bool sidebar_tab_selection_requested = this->workspace.sidebar_tab_selection_requested;
         this->renderer_registry.registering_name = std::string{renderer_name};
         try {
             renderer.attach(*this);
             if (this->imgui.initialized) renderer.after_imgui_created(*this);
         } catch (...) {
+            this->workspace.panels.resize(panel_count);
+            this->workspace.sidebar_tabs.resize(sidebar_tab_count);
+            this->workspace.toolbar_actions.resize(toolbar_action_count);
+            this->workspace.dock_layout_initialized         = dock_layout_initialized;
+            this->workspace.sidebar_visible                 = sidebar_visible;
+            this->workspace.active_sidebar_tab_id           = active_sidebar_tab_id;
+            this->workspace.sidebar_tab_selection_requested = sidebar_tab_selection_requested;
             this->renderer_registry.registering_name.reset();
             throw;
         }
@@ -889,11 +897,12 @@ namespace spectra {
             if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
             if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
         }
-        if (this->workspace.active_sidebar_tab_id.empty()) {
-            this->workspace.active_sidebar_tab_id           = tab.id;
+        const bool initialize_active_sidebar_tab = this->workspace.active_sidebar_tab_id.empty();
+        this->workspace.sidebar_tabs.push_back(std::move(tab));
+        if (initialize_active_sidebar_tab) {
+            this->workspace.active_sidebar_tab_id           = this->workspace.sidebar_tabs.back().id;
             this->workspace.sidebar_tab_selection_requested = true;
         }
-        this->workspace.sidebar_tabs.push_back(std::move(tab));
         this->workspace.dock_layout_initialized = false;
     }
 
@@ -914,6 +923,10 @@ namespace spectra {
     std::string Spectra::resolve_contribution_owner(std::string owner_renderer) const {
         if (!owner_renderer.empty()) {
             if (this->renderer_registry.registering_name.has_value() && owner_renderer != *this->renderer_registry.registering_name) throw std::runtime_error(std::format("Spectra UI owner \"{}\" does not match renderer registration scope \"{}\"", owner_renderer, *this->renderer_registry.registering_name));
+            if (!this->renderer_registry.registering_name.has_value()) {
+                const bool owner_found = std::ranges::any_of(this->renderer_registry.slots, [&owner_renderer](const RendererSlot& renderer) { return renderer.name == owner_renderer; });
+                if (!owner_found) throw std::runtime_error(std::format("Spectra UI owner \"{}\" does not match a registered renderer", owner_renderer));
+            }
             return owner_renderer;
         }
         if (this->renderer_registry.registering_name.has_value()) return *this->renderer_registry.registering_name;
@@ -941,6 +954,13 @@ namespace spectra {
         }
         this->workspace.active_sidebar_tab_id.clear();
         this->workspace.sidebar_visible = false;
+    }
+
+    void Spectra::activate_renderer(const std::size_t renderer_index) {
+        if (renderer_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
+        this->renderer_registry.active_index    = renderer_index;
+        this->workspace.dock_layout_initialized = false;
+        this->sync_active_sidebar_tab();
     }
 
     void Spectra::draw_command_bar() {
