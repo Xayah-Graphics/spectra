@@ -99,13 +99,33 @@ namespace spectra::rasterizer {
         HostView& operator=(HostView&& other) noexcept = default;
         ~HostView() noexcept                           = default;
 
-        [[nodiscard]] const vk::raii::PhysicalDevice& physical_device();
-        [[nodiscard]] const vk::raii::Device& device();
-        [[nodiscard]] std::uint32_t frame_count();
-        [[nodiscard]] vk::Extent2D swapchain_extent();
-        void register_panel(Panel panel);
-        void register_sidebar_tab(SidebarTab tab);
-        void register_toolbar_action(ToolbarAction action);
+        [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() {
+            return this->physicalDeviceCallback();
+        }
+
+        [[nodiscard]] const vk::raii::Device& device() {
+            return this->deviceCallback();
+        }
+
+        [[nodiscard]] std::uint32_t frame_count() {
+            return this->frameCountCallback();
+        }
+
+        [[nodiscard]] vk::Extent2D swapchain_extent() {
+            return this->swapchainExtentCallback();
+        }
+
+        void register_panel(Panel panel) {
+            this->registerPanelCallback(std::move(panel));
+        }
+
+        void register_sidebar_tab(SidebarTab tab) {
+            this->registerSidebarTabCallback(std::move(tab));
+        }
+
+        void register_toolbar_action(ToolbarAction action) {
+            this->registerToolbarActionCallback(std::move(action));
+        }
 
     private:
         std::move_only_function<const vk::raii::PhysicalDevice&()> physicalDeviceCallback{};

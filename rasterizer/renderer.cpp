@@ -1148,8 +1148,8 @@ namespace spectra::rasterizer {
         const SceneCamera& camera = *scene->camera;
         const spectra::rasterizer::math::Vector3 eye = to_render_vector(camera.transform.position);
         const spectra::rasterizer::math::Vector3 target = to_render_vector(camera.target);
-        const spectra::rasterizer::math::Vector3 offset = spectra::rasterizer::math::subtract_vector(eye, target);
-        const float distance = spectra::rasterizer::math::length_vector(offset);
+        const spectra::rasterizer::math::Vector3 offset = eye - target;
+        const float distance = spectra::rasterizer::math::length(offset);
         if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Spectra rasterizer scene camera must not be located at its target");
         this->viewport.camera_target = camera.target;
         this->viewport.camera_distance = std::max(distance, 0.02f);
@@ -1217,8 +1217,8 @@ namespace spectra::rasterizer {
             (bounds.minimum.y + bounds.maximum.y) * 0.5f,
             (bounds.minimum.z + bounds.maximum.z) * 0.5f,
         };
-        const spectra::rasterizer::math::Vector3 diagonal = spectra::rasterizer::math::subtract_vector(to_render_vector(bounds.maximum), to_render_vector(bounds.minimum));
-        const float radius = std::max(0.1f, spectra::rasterizer::math::length_vector(diagonal) * 0.5f);
+        const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
+        const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
         this->viewport.camera_target = center;
         this->viewport.camera_distance = std::clamp(radius * 2.6f, 0.02f, 1000000.0f);
         this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, this->viewport.camera_distance + radius * 6.0f);
@@ -1226,7 +1226,7 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::set_viewport_axis_view(const SceneVector3 direction) {
-        const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize_vector(to_render_vector(direction));
+        const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize(to_render_vector(direction));
         this->viewport.camera_yaw = std::atan2(normalized.x, normalized.z);
         this->viewport.camera_pitch = clamp_viewport_pitch(std::asin(std::clamp(normalized.y, -1.0f, 1.0f)));
         this->viewport.camera_initialized = true;
@@ -1249,8 +1249,8 @@ namespace spectra::rasterizer {
                                     ? spectra::rasterizer::math::perspective_pan_scale(this->viewport.camera_distance, this->viewport.camera_vertical_fov_degrees, viewport_height)
                                     : std::max(0.02f, this->viewport.camera_distance) / viewport_height;
         spectra::rasterizer::math::Vector3 target = to_render_vector(this->viewport.camera_target);
-        target = spectra::rasterizer::math::add_vector(target, spectra::rasterizer::math::scale_vector(basis.side, -delta.x * pan_scale));
-        target = spectra::rasterizer::math::add_vector(target, spectra::rasterizer::math::scale_vector(basis.up, delta.y * pan_scale));
+        target += basis.side * (-delta.x * pan_scale);
+        target += basis.up * (delta.y * pan_scale);
         this->viewport.camera_target = to_scene_vector(target);
     }
 
@@ -1277,10 +1277,10 @@ namespace spectra::rasterizer {
             projection = spectra::rasterizer::math::orthographic_matrix(orthographic_size, aspect, this->viewport.camera_near_plane, far_plane);
             inverse_projection = spectra::rasterizer::math::inverse_orthographic_matrix(orthographic_size, aspect, this->viewport.camera_near_plane, far_plane);
         }
-        const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::multiply_matrix(spectra::rasterizer::math::look_at_matrix(basis.eye, basis.target), projection);
-        const spectra::rasterizer::math::Matrix4 inverse_view_projection = spectra::rasterizer::math::multiply_matrix(inverse_projection, spectra::rasterizer::math::inverse_look_at_matrix(basis));
+        const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::look_at_matrix(basis.eye, basis.target) * projection;
+        const spectra::rasterizer::math::Matrix4 inverse_view_projection = inverse_projection * spectra::rasterizer::math::inverse_look_at_matrix(basis);
         const LightUniformData light = scene_light_uniform(*scene);
-        const spectra::rasterizer::math::Vector3 normalized_light_direction = spectra::rasterizer::math::normalize_vector(light.direction);
+        const spectra::rasterizer::math::Vector3 normalized_light_direction = spectra::rasterizer::math::normalize(light.direction);
         const float projection_kind = this->viewport.projection == ViewProjection::Perspective ? 0.0f : 1.0f;
         return CameraUniformData{
             .viewProjection        = view_projection.values,
@@ -1529,9 +1529,9 @@ namespace spectra::rasterizer {
 
         const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
         const auto axis_endpoint = [&basis, &center](const spectra::rasterizer::math::Vector3 axis) {
-            spectra::rasterizer::math::Vector3 projected{spectra::rasterizer::math::dot_vector(axis, basis.side), -spectra::rasterizer::math::dot_vector(axis, basis.up), 0.0f};
-            const float length = spectra::rasterizer::math::length_vector(projected);
-            if (length > 0.0001f) projected = spectra::rasterizer::math::scale_vector(projected, 1.0f / length);
+            spectra::rasterizer::math::Vector3 projected{spectra::rasterizer::math::dot(axis, basis.side), -spectra::rasterizer::math::dot(axis, basis.up), 0.0f};
+            const float length = spectra::rasterizer::math::length(projected);
+            if (length > 0.0001f) projected /= length;
             return ImVec2{center.x + projected.x * 25.0f, center.y + projected.y * 25.0f};
         };
         const ImVec2 x_end = axis_endpoint(spectra::rasterizer::math::Vector3{1.0f, 0.0f, 0.0f});

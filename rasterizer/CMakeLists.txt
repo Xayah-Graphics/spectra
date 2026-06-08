@@ -35,7 +35,6 @@ target_sources(
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         math.ixx
         PRIVATE
-        host.cpp
         scene.cpp
         renderer.cpp
         "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
