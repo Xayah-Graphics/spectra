@@ -16,9 +16,12 @@ module;
 
 #include <vulkan/vulkan_raii.hpp>
 
-module spectra.rasterizer;
+module spectra.rasterizer.renderer;
 
-import :math;
+import spectra.rasterizer.frame;
+import spectra.rasterizer.host;
+import spectra.rasterizer.math;
+import spectra.rasterizer.scene;
 import std;
 
 namespace {
@@ -857,7 +860,7 @@ namespace spectra::rasterizer {
 
     const SceneVolumeGrid* Renderer::select_render_volume_grid(const std::vector<SceneVolumeGrid>& volumes) const {
         if (volumes.empty()) return nullptr;
-        if (volumes.size() != 1u) throw std::runtime_error("Spectra rasterizer first-stage volume pass supports exactly one volume grid");
+        if (volumes.size() != 1u) throw std::runtime_error("Spectra rasterizer volume pass supports exactly one volume grid");
         return &volumes.front();
     }
 
@@ -979,6 +982,7 @@ namespace spectra::rasterizer {
             return;
         }
         const SceneVolumeGrid& volume = *selected_volume;
+        if (volume.kind != SceneVolumeKind::GasDensity && volume.kind != SceneVolumeKind::GasTemperature) throw std::runtime_error(std::format("Spectra rasterizer volume pass currently renders gas density/temperature grids only; volume \"{}\" uses an unsupported grid kind", volume.name));
         if (volume.dimensions[0] == 0 || volume.dimensions[1] == 0 || volume.dimensions[2] == 0) throw std::runtime_error(std::format("Rasterizer volume \"{}\" has zero dimensions", volume.name));
         const SceneVolumeChannel& density_channel = this->require_volume_channel(volume, "density", SceneVolumeChannelLayout::CellCentered);
         const SceneVolumeChannel& temperature_channel = this->require_volume_channel(volume, "temperature", SceneVolumeChannelLayout::CellCentered);
@@ -1308,7 +1312,13 @@ namespace spectra::rasterizer {
             draw_status_row("Lights", std::format("{}", scene->lights.size()));
             draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
             draw_status_row("Particle Sets", std::format("{}", scene->particleSets.size()));
+            draw_status_row("Point Clouds", std::format("{}", scene->pointClouds.size()));
             draw_status_row("Volumes", std::format("{}", scene->volumes.size()));
+            draw_status_row("Curves", std::format("{}", scene->curveSets.size()));
+            draw_status_row("Splats", std::format("{}", scene->splatSets.size()));
+            draw_status_row("Line Sets", std::format("{}", scene->lineSets.size()));
+            draw_status_row("Debug Primitives", std::format("{}", scene->debugPrimitives.size()));
+            draw_status_row("Vector Fields", std::format("{}", scene->vectorFields.size()));
             draw_status_row("Cloths", std::format("{}", scene->cloths.size()));
             draw_status_row("Rigid Bodies", std::format("{}", scene->rigidBodies.size()));
             draw_status_row("Colliders", std::format("{}", scene->colliders.size()));

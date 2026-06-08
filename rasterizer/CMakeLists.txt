@@ -26,12 +26,25 @@ target_sources(
         spectra_rasterizer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        rasterizer.ixx
+        common.ixx
+        mesh.ixx
+        particles.ixx
+        volume.ixx
+        curves.ixx
+        splats.ixx
+        debug.ixx
+        scene.ixx
+        ui.ixx
+        frame.ixx
+        host.ixx
+        renderer.ixx
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         math.ixx
         PRIVATE
-        rasterizer.cpp
+        host.cpp
+        scene.cpp
+        renderer.cpp
         "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"
         "${SPECTRA_RASTERIZER_PARTICLE_VERTEX_HEADER}"

@@ -1,4 +1,4 @@
-export module spectra.rasterizer:math;
+export module spectra.rasterizer.math;
 
 import std;
 

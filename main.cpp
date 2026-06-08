@@ -10,7 +10,7 @@ import xayah.projects.bouncing_ball;
 import xayah.projects.cloth;
 import xayah.projects.pyro;
 import xayah.projects.sparkles;
-import spectra.rasterizer;
+import spectra.rasterizer.renderer;
 
 namespace spectra::app {
     static_assert(pathtracer::PathtracerHost<Spectra>);
