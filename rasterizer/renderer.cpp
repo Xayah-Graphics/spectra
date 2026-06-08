@@ -20,7 +20,6 @@ module;
 
 module spectra.rasterizer.renderer;
 
-import spectra.rasterizer.frame;
 import spectra.rasterizer.host;
 import spectra.rasterizer.math;
 import spectra.rasterizer.scene;

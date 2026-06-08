@@ -29,8 +29,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         scene.ixx
-        ui.ixx
-        frame.ixx
         host.ixx
         renderer.ixx
         PRIVATE

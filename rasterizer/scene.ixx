@@ -10,11 +10,10 @@ namespace spectra::rasterizer {
     };
 
     export enum class SceneDirtyFlags : std::uint32_t {
-        None            = 0,
-        Document        = 1u << 0u,
-        Timeline        = 1u << 1u,
-        Frame           = 1u << 2u,
-        RenderResources = 1u << 3u,
+        None     = 0,
+        Document = 1u << 0u,
+        Timeline = 1u << 1u,
+        Frame    = 1u << 2u,
     };
 
     export [[nodiscard]] constexpr SceneDirtyFlags operator|(const SceneDirtyFlags lhs, const SceneDirtyFlags rhs) {
@@ -334,8 +333,6 @@ namespace spectra::rasterizer {
     };
 
     export struct SceneEditBatch {
-        SceneRevision beforeRevision{};
-        SceneRevision afterRevision{};
         SceneDirtyFlags dirty{SceneDirtyFlags::None};
     };
 
@@ -365,14 +362,10 @@ namespace spectra::rasterizer {
         [[nodiscard]] SimulationTimeline timeline() const;
         [[nodiscard]] std::optional<SceneFrameSnapshot> frame() const;
         [[nodiscard]] SceneEditBatch commit(SceneEditBuilder edit);
-        [[nodiscard]] SceneEditBatch changes_since(SceneRevision revision) const;
 
     private:
-        [[nodiscard]] SceneEditBatch fullEdit(SceneRevision before) const;
-
         SceneRevision currentRevision{};
         std::shared_ptr<const SceneDocument> currentDocument{};
         SimulationTimeline currentTimeline{};
-        std::optional<SceneEditBatch> lastEdit{};
     };
 } // namespace spectra::rasterizer

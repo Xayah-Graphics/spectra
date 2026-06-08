@@ -7,15 +7,76 @@ module;
 #endif
 #endif
 
+#include <imgui.h>
 #include <vulkan/vulkan_raii.hpp>
 
 export module spectra.rasterizer.host;
 
-export import spectra.rasterizer.ui;
-
 import std;
 
 namespace spectra::rasterizer {
+    export enum class DockSlot : std::uint8_t {
+        Center = 0,
+        Floating = 1,
+    };
+
+    export struct Panel {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string owner_renderer{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        DockSlot dock_slot{DockSlot::Floating};
+        ImGuiWindowFlags window_flags{0};
+        bool visible{true};
+        bool closable{true};
+        bool zero_window_padding{false};
+        std::move_only_function<void()> draw{};
+    };
+
+    export struct SidebarTab {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string owner_renderer{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<void()> draw{};
+    };
+
+    export struct ToolbarAction {
+        std::string id{};
+        std::string title{};
+        std::string icon{};
+        std::string owner_renderer{};
+        std::string shortcut_label{};
+        ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<bool()> active{};
+        std::move_only_function<void()> trigger{};
+    };
+
+    export struct FrameContext {
+        std::uint32_t frame_index{};
+        std::uint32_t image_index{};
+        std::uint64_t frame_number{};
+        double delta_seconds{};
+    };
+
+    export struct FrameResult {
+        std::optional<vk::Semaphore> completion_semaphore{};
+        bool close_requested{false};
+        std::optional<std::string> window_detail{};
+    };
+
+    export template <typename Frame>
+    concept HostFrameLike = requires(const Frame& frame) {
+        { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
+        { frame.image_index } -> std::convertible_to<std::uint32_t>;
+        { frame.frame_number } -> std::convertible_to<std::uint64_t>;
+        { frame.delta_seconds } -> std::convertible_to<double>;
+    };
+
     export template <typename HostType>
     concept Host = requires(HostType& host, Panel panel, SidebarTab tab, ToolbarAction action) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;

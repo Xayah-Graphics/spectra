@@ -5,7 +5,7 @@ import std;
 namespace spectra::rasterizer {
     void SceneEditBuilder::replaceDocument(SceneDocument document) {
         this->documentReplacement = std::move(document);
-        this->dirty               = this->dirty | SceneDirtyFlags::Document | SceneDirtyFlags::RenderResources;
+        this->dirty               = this->dirty | SceneDirtyFlags::Document;
     }
 
     void SceneEditBuilder::replaceTimeline(SimulationTimeline timeline) {
@@ -15,7 +15,7 @@ namespace spectra::rasterizer {
 
     void SceneEditBuilder::replaceFrame(SceneFrameSnapshot frame) {
         this->frameReplacement = std::move(frame);
-        this->dirty            = this->dirty | SceneDirtyFlags::Frame | SceneDirtyFlags::RenderResources;
+        this->dirty            = this->dirty | SceneDirtyFlags::Frame;
     }
 
     SceneWorkspace::SceneWorkspace(SceneDocument document) {
@@ -53,8 +53,7 @@ namespace spectra::rasterizer {
         if (this->currentDocument == nullptr) throw std::runtime_error("Cannot edit an unloaded rasterizer scene workspace");
         if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit an empty rasterizer scene edit");
 
-        const SceneRevision beforeRevision = this->currentRevision;
-        this->currentRevision              = SceneRevision{beforeRevision.value + 1};
+        this->currentRevision = SceneRevision{this->currentRevision.value + 1};
         if (edit.documentReplacement.has_value()) {
             SceneDocument next = std::move(*edit.documentReplacement);
             next.revision      = this->currentRevision;
@@ -67,34 +66,8 @@ namespace spectra::rasterizer {
             this->currentTimeline.currentFrame = std::move(*edit.frameReplacement);
         }
 
-        SceneEditBatch batch{
-            .beforeRevision = beforeRevision,
-            .afterRevision  = this->currentRevision,
-            .dirty          = edit.dirty,
-        };
-        this->lastEdit = batch;
-        return batch;
-    }
-
-    SceneEditBatch SceneWorkspace::changes_since(const SceneRevision revision) const {
-        if (this->currentDocument == nullptr) throw std::runtime_error("Cannot query rasterizer scene changes from an unloaded workspace");
-        if (revision == this->currentRevision) {
-            return SceneEditBatch{
-                .beforeRevision = revision,
-                .afterRevision  = revision,
-                .dirty          = SceneDirtyFlags::None,
-            };
-        }
-        if (revision.value == 0) return this->fullEdit(revision);
-        if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
-        throw std::runtime_error("Rasterizer scene edit history for the requested revision is unavailable");
-    }
-
-    SceneEditBatch SceneWorkspace::fullEdit(const SceneRevision before) const {
         return SceneEditBatch{
-            .beforeRevision = before,
-            .afterRevision  = this->currentRevision,
-            .dirty          = SceneDirtyFlags::Document | SceneDirtyFlags::Timeline | SceneDirtyFlags::Frame | SceneDirtyFlags::RenderResources,
+            .dirty = edit.dirty,
         };
     }
 } // namespace spectra::rasterizer

@@ -11,7 +11,6 @@ module;
 
 export module spectra.rasterizer.renderer;
 
-export import spectra.rasterizer.frame;
 export import spectra.rasterizer.host;
 export import spectra.rasterizer.scene;
 
@@ -54,7 +53,7 @@ namespace spectra::rasterizer {
         }
 
         template <Host HostType, typename Frame>
-            requires FrameContextLike<Frame>
+            requires HostFrameLike<Frame>
         [[nodiscard]] FrameResult begin_frame(HostType& host, const Frame& frame) {
             return this->begin_frame(HostView{host}, FrameContext{
                                                                    .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
