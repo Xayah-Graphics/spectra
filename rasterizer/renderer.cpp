@@ -179,11 +179,11 @@ namespace {
         ImGui::TextUnformatted(value.data(), value.data() + value.size());
     }
 
-    [[nodiscard]] const char* timeline_mode_text(const spectra::scene::SimulationTimelineMode mode) {
+    [[nodiscard]] const char* timeline_mode_text(const spectra::scene::SceneTimelineMode mode) {
         switch (mode) {
-        case spectra::scene::SimulationTimelineMode::Live: return "Live";
-        case spectra::scene::SimulationTimelineMode::Record: return "Record";
-        case spectra::scene::SimulationTimelineMode::Playback: return "Playback";
+        case spectra::scene::SceneTimelineMode::Live: return "Live";
+        case spectra::scene::SceneTimelineMode::Record: return "Record";
+        case spectra::scene::SceneTimelineMode::Playback: return "Playback";
         }
         throw std::runtime_error("Unknown Spectra rasterizer timeline mode");
     }
@@ -350,7 +350,7 @@ namespace spectra::rasterizer {
         this->scene.camera_workspace = std::move(camera_workspace);
         if (this->scene.workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
         if (this->scene.camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene camera workspace");
-        if (!this->scene.workspace->loaded()) throw std::runtime_error("Spectra rasterizer requires a loaded scene workspace");
+        static_cast<void>(this->scene.workspace->document());
         this->ensure_viewport_camera_session();
         this->synchronize_viewport_camera();
     }
@@ -364,7 +364,7 @@ namespace spectra::rasterizer {
     void Renderer::set_scene_workspace(std::shared_ptr<scene::SceneWorkspace> scene_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) {
         if (scene_workspace == nullptr) throw std::runtime_error("Spectra rasterizer scene workspace must not be null");
         if (camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer camera workspace must not be null");
-        if (!scene_workspace->loaded()) throw std::runtime_error("Spectra rasterizer scene workspace must be loaded");
+        static_cast<void>(scene_workspace->document());
         if (this->host.device != nullptr) this->host.device->waitIdle();
         this->clear_selection();
         this->selection.object_ids.clear();
@@ -484,7 +484,7 @@ namespace spectra::rasterizer {
         const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->host.swapchain_extent.width;
         const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
         const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
-        const scene::SimulationTimeline timeline = this->scene.workspace->timeline();
+        const scene::SceneTimeline timeline = this->scene.workspace->timeline();
         const char* scene_mode = scene->timelineEnabled ? timeline_mode_text(timeline.mode) : "Static";
         return std::format("{} | {} | {}x{}", scene->title.empty() ? scene->name : scene->title, scene_mode, width, height);
     }
@@ -2559,7 +2559,7 @@ namespace spectra::rasterizer {
         const ImVec2 image_max{image_min.x + image_size.x, image_min.y + image_size.y};
 
         ImGui::PushClipRect(image_min, image_max, true);
-        const scene::SimulationTimeline timeline = this->scene.workspace->timeline();
+        const scene::SceneTimeline timeline = this->scene.workspace->timeline();
         const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
         constexpr const char* projection_text = "Perspective";
         const char* scene_mode = scene->timelineEnabled ? timeline_mode_text(timeline.mode) : "Static";
@@ -2630,12 +2630,12 @@ namespace spectra::rasterizer {
         this->draw_viewport_toolbar(image_rect);
     }
 
-    void Renderer::commit_timeline_from_ui(scene::SimulationTimeline timeline) {
+    void Renderer::commit_timeline_from_ui(scene::SceneTimeline timeline) {
         if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline edits");
         scene::SceneEditBuilder edit{};
         edit.replaceTimeline(std::move(timeline));
-        const scene::SceneEditBatch batch = this->scene.workspace->commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer timeline UI edit did not mark the timeline dirty");
+        const scene::SceneDirtyFlags dirty = this->scene.workspace->commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer timeline UI edit did not mark the timeline dirty");
     }
 
     bool Renderer::timeline_enabled() const {
@@ -2649,14 +2649,14 @@ namespace spectra::rasterizer {
 
     void Renderer::toggle_timeline_playback() {
         if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline playback");
-        scene::SimulationTimeline timeline = this->scene.workspace->timeline();
+        scene::SceneTimeline timeline = this->scene.workspace->timeline();
         timeline.playing = !timeline.playing;
         this->commit_timeline_from_ui(std::move(timeline));
     }
 
     void Renderer::request_timeline_reset() {
         if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline reset");
-        scene::SimulationTimeline timeline = this->scene.workspace->timeline();
+        scene::SceneTimeline timeline = this->scene.workspace->timeline();
         ++timeline.resetRequestSerial;
         this->commit_timeline_from_ui(std::move(timeline));
     }
@@ -2668,12 +2668,12 @@ namespace spectra::rasterizer {
             ImGui::Separator();
         }
         const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
-        scene::SimulationTimeline timeline = this->scene.workspace->timeline();
+        scene::SceneTimeline timeline = this->scene.workspace->timeline();
         bool timeline_changed = false;
 
         ImGui::TextUnformatted("Rasterizer");
         ImGui::SameLine();
-        ImGui::TextDisabled(scene->timelineEnabled ? "Simulation" : "Static Scene");
+        ImGui::TextDisabled(scene->timelineEnabled ? "Dynamic Scene" : "Static Scene");
         if (scene->timelineEnabled) {
             ImGui::SeparatorText("Timeline");
             if (ImGui::Button(timeline.playing ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW)) {
@@ -2686,21 +2686,21 @@ namespace spectra::rasterizer {
                 timeline_changed = true;
             }
             ImGui::SameLine();
-            const bool live_selected = timeline.mode == scene::SimulationTimelineMode::Live;
-            const bool record_selected = timeline.mode == scene::SimulationTimelineMode::Record;
-            const bool playback_selected = timeline.mode == scene::SimulationTimelineMode::Playback;
+            const bool live_selected = timeline.mode == scene::SceneTimelineMode::Live;
+            const bool record_selected = timeline.mode == scene::SceneTimelineMode::Record;
+            const bool playback_selected = timeline.mode == scene::SceneTimelineMode::Playback;
             if (ImGui::RadioButton("Live", live_selected)) {
-                timeline.mode = scene::SimulationTimelineMode::Live;
+                timeline.mode = scene::SceneTimelineMode::Live;
                 timeline_changed = true;
             }
             ImGui::SameLine();
             if (ImGui::RadioButton("Record", record_selected)) {
-                timeline.mode = scene::SimulationTimelineMode::Record;
+                timeline.mode = scene::SceneTimelineMode::Record;
                 timeline_changed = true;
             }
             ImGui::SameLine();
             if (ImGui::RadioButton("Playback", playback_selected)) {
-                timeline.mode = scene::SimulationTimelineMode::Playback;
+                timeline.mode = scene::SceneTimelineMode::Playback;
                 timeline_changed = true;
             }
             bool loop = timeline.loop;
@@ -2715,7 +2715,7 @@ namespace spectra::rasterizer {
             ImGui::BeginDisabled(timeline.recordedFrames.empty());
             if (ImGui::SliderInt("Playback Frame", &selected_frame, 0, max_frame)) {
                 timeline.selectedFrameIndex = static_cast<std::uint64_t>(selected_frame);
-                timeline.mode = scene::SimulationTimelineMode::Playback;
+                timeline.mode = scene::SceneTimelineMode::Playback;
                 timeline_changed = true;
             }
             ImGui::EndDisabled();
@@ -2728,7 +2728,7 @@ namespace spectra::rasterizer {
             if (timeline_changed) this->commit_timeline_from_ui(std::move(timeline));
         }
 
-        const scene::SimulationTimeline current_timeline = this->scene.workspace->timeline();
+        const scene::SceneTimeline current_timeline = this->scene.workspace->timeline();
         ImGui::SeparatorText("Status");
         if (ImGui::BeginTable("SpectraRasterizerStatus", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);

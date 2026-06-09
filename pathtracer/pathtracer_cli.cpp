@@ -95,10 +95,9 @@ int main(int argc, char* argv[]) {
         spectra::pathtracer::GpuRuntime runtime(runtime_config);
         runtime.UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(render_config));
 
-        spectra::scene::PbrtSceneWorkspace scene_workspace                      = spectra::scene::BuildPbrtScene(*scene_name);
-        std::shared_ptr<const spectra::scene::PbrtSceneSnapshot> scene_snapshot = scene_workspace.snapshot();
+        spectra::scene::PbrtSceneSnapshot scene_snapshot = spectra::scene::ParsePbrtScene(*scene_name);
         spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_pathtracer_cli scene");
-        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(*scene_snapshot, render_config, &scene_memory_scope);
+        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(scene_snapshot, render_config, &scene_memory_scope);
         spectra::pathtracer::WavefrontPathtracer pathtracer(&scene_memory_scope, *compiled_scene, render_config);
 
         spectra::Float seconds = pathtracer.Render();

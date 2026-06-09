@@ -175,7 +175,6 @@ namespace spectra::pathtracer {
         void set_target_sample_count(int target_sample_count);
         void set_exposure(float value);
         void request_reset_accumulation();
-        void replace_scene(const scene::PbrtSceneSnapshot& scene, const scene::PbrtSceneEditBatch& edit_batch);
         void release_viewport_descriptors_noexcept() noexcept;
         void create_viewport_descriptors();
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
@@ -599,33 +598,6 @@ namespace spectra::pathtracer {
         this->reset_requested = true;
     }
 
-    void RenderPipeline::replace_scene(const scene::PbrtSceneSnapshot& scene, const scene::PbrtSceneEditBatch& edit_batch) {
-        if (edit_batch.dirty == scene::PbrtSceneDirtyFlags::None) throw std::runtime_error("Cannot replace Spectra pathtracer scene without dirty state");
-        if (edit_batch.beforeRevision != this->scene_revision) throw std::runtime_error("Spectra pathtracer scene edit does not start from the active scene revision");
-        if (edit_batch.afterRevision != scene.revision) throw std::runtime_error("Spectra pathtracer scene edit does not match the replacement scene snapshot revision");
-        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available for scene replacement");
-
-        const std::array<int, 2> preserved_resolution{this->resolution.x, this->resolution.y};
-        const int preserved_target_samples = this->target_samples;
-        const float preserved_exposure     = this->exposure;
-        this->device->waitIdle();
-        spectra::GPUWait();
-        destroy_pathtracer_scene_resources_noexcept(*this);
-        try {
-            this->scene_memory_scope = create_pathtracer_scene_memory_scope();
-            RenderPipelineSceneResources next_resources = create_pathtracer_runtime_resources(scene, this->render_config, preserved_resolution, this->scene_memory_scope.get());
-            this->compiled_scene = std::move(next_resources.compiled_scene);
-            this->integrator     = std::move(next_resources.integrator);
-            this->scene_revision = scene.revision;
-            this->exposure       = preserved_exposure;
-            initialize_pathtracer_integrator_state(*this);
-            this->target_samples = std::min(std::max(1, preserved_target_samples), this->max_samples);
-        } catch (...) {
-            destroy_pathtracer_scene_resources_noexcept(*this);
-            throw;
-        }
-    }
-
     void RenderPipeline::release_viewport_descriptors_noexcept() noexcept {
         release_pathtracer_viewport_descriptors_noexcept(*this);
     }
@@ -974,12 +946,6 @@ namespace spectra::pathtracer {
 
 
 namespace spectra::pathtracer {
-    [[nodiscard]] PathtracerSceneSupportReport analyze_pathtracer_scene_probe(const scene::PbrtSceneProbeReport& probe) {
-        PathtracerSceneSupportReport report = AnalyzePathtracerSceneProbe(probe);
-        if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
-        return report;
-    }
-
     [[nodiscard]] PathtracerSceneSupportReport analyze_pathtracer_scene(const scene::PbrtSceneSnapshot& document) {
         PathtracerSceneSupportReport report = AnalyzePathtracerSceneSupport(document);
         if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
@@ -988,7 +954,7 @@ namespace spectra::pathtracer {
 
     class PathtracerRenderer::Impl {
     public:
-        Impl(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
+        Impl(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
         ~Impl() noexcept;
 
         void attach(PathtracerHostView host);
@@ -1025,7 +991,7 @@ namespace spectra::pathtracer {
         [[nodiscard]] const scene::PbrtSceneInfo& active_scene_info() const;
         [[nodiscard]] const scene::PbrtSceneSnapshot& active_scene_snapshot() const;
         [[nodiscard]] std::string active_scene_id() const;
-        void synchronize_scene_workspace();
+        void load_source_scene();
 
         void draw_viewport_window();
         void draw_render_tab();
@@ -1064,7 +1030,7 @@ namespace spectra::pathtracer {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool performance_overlay_visible{true};
-        std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace{};
+        std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene{};
         std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
 
         struct {
@@ -1125,7 +1091,7 @@ namespace spectra::pathtracer {
         } statistics;
     };
 
-    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace), std::move(camera_workspace))) {}
+    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_scene), std::move(camera_workspace))) {}
 
     PathtracerRenderer::~PathtracerRenderer() noexcept = default;
 
@@ -1191,14 +1157,12 @@ namespace spectra::pathtracer {
         return this->sum / static_cast<float>(this->count);
     }
 
-    PathtracerRenderer::Impl::Impl(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : source_workspace(std::move(source_workspace)), camera_workspace(std::move(camera_workspace)) {
-        if (this->source_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene workspace");
+    PathtracerRenderer::Impl::Impl(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : source_scene(std::move(source_scene)), camera_workspace(std::move(camera_workspace)) {
+        if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
-        const std::shared_ptr<const scene::PbrtSceneSnapshot> source_document = this->source_workspace->snapshot();
-        if (source_document == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
-        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*source_document);
+        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*this->source_scene);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), source_document->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), this->source_scene->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
@@ -1242,43 +1206,25 @@ namespace spectra::pathtracer {
         return scene.name;
     }
 
-    void PathtracerRenderer::Impl::synchronize_scene_workspace() {
-        std::shared_ptr<const scene::PbrtSceneSnapshot> next_snapshot = this->source_workspace->snapshot();
-        if (next_snapshot == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
+    void PathtracerRenderer::Impl::load_source_scene() {
+        if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
+        if (this->scene_snapshot != nullptr) {
+            if (this->scene_snapshot->revision != this->source_scene->revision) throw std::runtime_error("Spectra pathtracer source scene changed after construction");
+            return;
+        }
 
-        if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
-
-        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*next_snapshot);
+        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*this->source_scene);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), next_snapshot->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), this->source_scene->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
 
-        const scene::SceneRevision previous_revision = this->scene_snapshot == nullptr ? scene::SceneRevision{} : this->scene_snapshot->revision;
-        const scene::PbrtSceneEditBatch edit_batch       = this->source_workspace->changes_since(previous_revision);
-        scene::PbrtSceneInfo next_info                   = DescribeScene(*next_snapshot);
-
-        if (edit_batch.dirty != scene::PbrtSceneDirtyFlags::None && this->render_pipeline != nullptr) {
-            if (this->device == nullptr) throw std::runtime_error("Spectra pathtracer logical device is not available");
-            this->device->waitIdle();
-            if (this->gpu_runtime != nullptr) this->gpu_runtime->WaitGpuNoexcept();
-            this->render_pipeline->replace_scene(*next_snapshot, edit_batch);
-            this->scene_film_resolution      = this->render_pipeline->film_resolution();
-            this->scene_sampler_sample_count = this->render_pipeline->sampler_sample_count();
-            this->scene_camera_from_world    = this->render_pipeline->camera_from_world_transform();
-        } else if (edit_batch.dirty != scene::PbrtSceneDirtyFlags::None) {
-            this->scene_film_resolution      = {0, 0};
-            this->scene_camera_from_world    = spectra::Transform{};
-            this->scene_sampler_sample_count = 0;
-        }
-
-        this->scene_snapshot = std::move(next_snapshot);
-        this->scene_info     = std::move(next_info);
-        if (edit_batch.dirty == scene::PbrtSceneDirtyFlags::None || this->render_pipeline == nullptr) return;
-        this->camera.observed_revision = scene::SceneRevision{};
-        this->initialize_camera_state();
-        this->clear_pathtracer_throughput_statistics();
+        this->scene_snapshot = this->source_scene;
+        this->scene_info     = DescribeScene(*this->source_scene);
+        this->scene_film_resolution      = {0, 0};
+        this->scene_camera_from_world    = spectra::Transform{};
+        this->scene_sampler_sample_count = 0;
     }
 
     void PathtracerRenderer::Impl::attach(PathtracerHostView host) {
@@ -1287,7 +1233,7 @@ namespace spectra::pathtracer {
         this->attached = true;
         try {
             this->gpu_runtime = std::make_unique<GpuRuntime>(this->runtime_config);
-            this->synchronize_scene_workspace();
+            this->load_source_scene();
             this->register_panels(host);
         } catch (...) {
             this->detach_noexcept();
@@ -1309,7 +1255,7 @@ namespace spectra::pathtracer {
 
     PathtracerFrameResult PathtracerRenderer::Impl::begin_frame(PathtracerHostView host, const PathtracerFrameInfo& frame) {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
-        this->synchronize_scene_workspace();
+        this->load_source_scene();
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
         PathtracerFrameResult result{};
         this->synchronize_render_resolution();

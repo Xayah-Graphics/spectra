@@ -5,7 +5,6 @@
 import std;
 import spectra;
 import spectra.pathtracer;
-import spectra.pathtracer.pbrt.panel;
 import xayah.projects.bouncing_ball;
 import xayah.projects.cloth;
 import xayah.projects.pyro;
@@ -14,6 +13,8 @@ import spectra.rasterizer.renderer;
 import spectra.scene;
 
 namespace spectra::app {
+    inline constexpr std::string_view CornellBoxSceneId = "cornell-box/cornell-box.pbrt";
+
     static_assert(pathtracer::PathtracerHost<Spectra>);
     static_assert(rasterizer::Host<Spectra>);
     static_assert(static_cast<std::underlying_type_t<DockSlot>>(pathtracer::PathtracerDockSlot::Center) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Center));
@@ -25,7 +26,7 @@ namespace spectra::app {
         return scene::Vector3{value[0], value[1], value[2]};
     }
 
-    [[nodiscard]] scene::SceneDocument MakeRasterizerSimulationDocument(std::string name, std::string title, std::string source) {
+    [[nodiscard]] scene::SceneDocument MakeDynamicSceneDocument(std::string name, std::string title, std::string source) {
         return scene::SceneDocument{
             .revision        = scene::SceneRevision{1},
             .name            = std::move(name),
@@ -51,7 +52,7 @@ namespace spectra::app {
         }
 
         [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
+            scene::SceneDocument document = MakeDynamicSceneDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
             document.materials.push_back(scene::SceneMaterial{
                 .name      = "ball",
                 .baseColor = scene::Vector4{0.95f, 0.28f, 0.18f, 1.0f},
@@ -168,7 +169,7 @@ namespace spectra::app {
         }
 
         [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.sparkles", "Sparkles", "project://sparkles");
+            scene::SceneDocument document = MakeDynamicSceneDocument("project.sparkles", "Sparkles", "project://sparkles");
             document.materials.push_back(scene::SceneMaterial{
                 .name             = "sparkle",
                 .baseColor        = scene::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
@@ -247,7 +248,7 @@ namespace spectra::app {
         }
 
         [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.cloth", "Cloth", "project://cloth");
+            scene::SceneDocument document = MakeDynamicSceneDocument("project.cloth", "Cloth", "project://cloth");
             document.materials.push_back(scene::SceneMaterial{
                 .name      = "cloth",
                 .baseColor = scene::Vector4{0.18f, 0.42f, 0.88f, 1.0f},
@@ -413,7 +414,7 @@ namespace spectra::app {
         }
 
         [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.pyro", "Pyro", "project://pyro");
+            scene::SceneDocument document = MakeDynamicSceneDocument("project.pyro", "Pyro", "project://pyro");
             document.materials.push_back(scene::SceneMaterial{
                 .name             = "smoke",
                 .baseColor        = scene::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
@@ -499,28 +500,356 @@ namespace spectra::app {
         }
     };
 
-    static_assert(scene::SceneSimulationAdapter<BouncingBallRasterizerProject>);
-    static_assert(scene::SceneSimulationAdapter<SparklesRasterizerProject>);
-    static_assert(scene::SceneSimulationAdapter<ClothRasterizerProject>);
-    static_assert(scene::SceneSimulationAdapter<PyroRasterizerProject>);
+    template <typename Source>
+    concept SceneFrameSource = std::default_initializable<Source> && requires(Source& source, const Source& const_source, const scene::SceneFrameInfo& frame) {
+        { Source::project_id() } -> std::convertible_to<std::string_view>;
+        { Source::project_title() } -> std::convertible_to<std::string_view>;
+        { const_source.create_document() } -> std::same_as<scene::SceneDocument>;
+        { source.reset() } -> std::same_as<scene::SceneFrameSnapshot>;
+        { source.step(frame) } -> std::same_as<scene::SceneFrameSnapshot>;
+    };
 
-    [[nodiscard]] scene::SceneSourceRegistry MakeSceneSourceRegistry() {
-        scene::SceneSourceRegistry registry{};
-        registry.register_static_scene(std::string{scene::CornellBoxSceneId}, "Cornell Box", [] { return scene::LoadPreviewSceneDocumentFromPbrt(scene::CornellBoxSceneId); });
-        registry.register_simulation<BouncingBallRasterizerProject>();
-        registry.register_simulation<SparklesRasterizerProject>();
-        registry.register_simulation<ClothRasterizerProject>();
-        registry.register_simulation<PyroRasterizerProject>();
+    class SceneFrameRuntime {
+    public:
+        SceneFrameRuntime() = default;
+
+        SceneFrameRuntime(const SceneFrameRuntime& other) = delete;
+        SceneFrameRuntime(SceneFrameRuntime&& other) = delete;
+        SceneFrameRuntime& operator=(const SceneFrameRuntime& other) = delete;
+        SceneFrameRuntime& operator=(SceneFrameRuntime&& other) = delete;
+        virtual ~SceneFrameRuntime() noexcept = default;
+
+        [[nodiscard]] virtual scene::SceneDocument create_document() const = 0;
+        [[nodiscard]] virtual scene::SceneFrameSnapshot reset() = 0;
+        [[nodiscard]] virtual scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) = 0;
+    };
+
+    template <SceneFrameSource Source>
+    class SceneFrameRuntimeModel final : public SceneFrameRuntime {
+    public:
+        SceneFrameRuntimeModel() = default;
+
+        [[nodiscard]] scene::SceneDocument create_document() const override {
+            return this->source.create_document();
+        }
+
+        [[nodiscard]] scene::SceneFrameSnapshot reset() override {
+            return this->source.reset();
+        }
+
+        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) override {
+            return this->source.step(frame);
+        }
+
+    private:
+        Source source{};
+    };
+
+    enum class AppSceneKind {
+        Static,
+        Dynamic,
+    };
+
+    struct AppSceneEntry {
+        std::string id{};
+        std::string title{};
+        AppSceneKind kind{AppSceneKind::Static};
+        std::move_only_function<scene::SceneDocument()> create_static_document{};
+        std::move_only_function<std::unique_ptr<SceneFrameRuntime>()> create_dynamic_runtime{};
+    };
+
+    class AppSceneRegistry final {
+    public:
+        AppSceneRegistry() = default;
+
+        AppSceneRegistry(const AppSceneRegistry& other) = delete;
+        AppSceneRegistry(AppSceneRegistry&& other) noexcept = default;
+        AppSceneRegistry& operator=(const AppSceneRegistry& other) = delete;
+        AppSceneRegistry& operator=(AppSceneRegistry&& other) noexcept = default;
+        ~AppSceneRegistry() noexcept = default;
+
+        void register_static_scene(std::string id, std::string title, std::move_only_function<scene::SceneDocument()> create_document) {
+            if (!create_document) throw std::runtime_error("Static scene entry requires a document factory");
+            this->ensure_unique_scene_id(id);
+            this->entries.push_back(AppSceneEntry{
+                .id                     = std::move(id),
+                .title                  = std::move(title),
+                .kind                   = AppSceneKind::Static,
+                .create_static_document = std::move(create_document),
+            });
+        }
+
+        template <SceneFrameSource Source>
+        void register_dynamic_scene() {
+            const std::string id{Source::project_id()};
+            this->ensure_unique_scene_id(id);
+            this->entries.push_back(AppSceneEntry{
+                .id                     = id,
+                .title                  = std::string{Source::project_title()},
+                .kind                   = AppSceneKind::Dynamic,
+                .create_dynamic_runtime = [] { return std::make_unique<SceneFrameRuntimeModel<Source>>(); },
+            });
+        }
+
+        [[nodiscard]] std::unique_ptr<SceneFrameRuntime> create_dynamic_runtime(const std::size_t index) {
+            if (this->entries.empty()) throw std::runtime_error("App scene registry is empty");
+            if (index >= this->entries.size()) throw std::runtime_error("App scene index is out of range");
+            AppSceneEntry& entry = this->entries.at(index);
+            if (entry.kind != AppSceneKind::Dynamic) throw std::runtime_error("App scene entry is not dynamic");
+            if (!entry.create_dynamic_runtime) throw std::runtime_error("Dynamic scene entry has no runtime factory");
+            return entry.create_dynamic_runtime();
+        }
+
+        [[nodiscard]] scene::SceneDocument create_static_document(const std::size_t index) {
+            if (this->entries.empty()) throw std::runtime_error("App scene registry is empty");
+            if (index >= this->entries.size()) throw std::runtime_error("App scene index is out of range");
+            AppSceneEntry& entry = this->entries.at(index);
+            if (entry.kind != AppSceneKind::Static) throw std::runtime_error("App scene entry is not static");
+            if (!entry.create_static_document) throw std::runtime_error("Static scene entry has no document factory");
+            return entry.create_static_document();
+        }
+
+        [[nodiscard]] const AppSceneEntry& entry(const std::size_t index) const {
+            if (index >= this->entries.size()) throw std::runtime_error("App scene index is out of range");
+            return this->entries.at(index);
+        }
+
+        [[nodiscard]] std::size_t size() const {
+            return this->entries.size();
+        }
+
+    private:
+        void ensure_unique_scene_id(const std::string& id) const {
+            if (id.empty()) throw std::runtime_error("App scene id must not be empty");
+            for (const AppSceneEntry& entry : this->entries) {
+                if (entry.id == id) throw std::runtime_error("Duplicate app scene id: " + id);
+            }
+        }
+
+        std::vector<AppSceneEntry> entries{};
+    };
+
+    void CommitSceneFrame(scene::SceneWorkspace& workspace, scene::SceneFrameSnapshot frame) {
+        scene::SceneEditBuilder edit{};
+        edit.replaceFrame(std::move(frame));
+        const scene::SceneDirtyFlags dirty = workspace.commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+    }
+
+    void CommitSceneTimeline(scene::SceneWorkspace& workspace, scene::SceneTimeline timeline) {
+        scene::SceneEditBuilder edit{};
+        edit.replaceTimeline(std::move(timeline));
+        const scene::SceneDirtyFlags dirty = workspace.commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
+    }
+
+    void CommitSceneTimelineAndFrame(scene::SceneWorkspace& workspace, scene::SceneTimeline timeline, scene::SceneFrameSnapshot frame) {
+        scene::SceneEditBuilder edit{};
+        edit.replaceTimeline(std::move(timeline));
+        edit.replaceFrame(std::move(frame));
+        const scene::SceneDirtyFlags dirty = workspace.commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
+        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+    }
+
+    class AppSceneController final {
+    public:
+        explicit AppSceneController(AppSceneRegistry registry) : registry(std::move(registry)) {
+            if (this->registry.size() == 0u) throw std::runtime_error("App scene controller requires at least one scene");
+            this->slots.resize(this->registry.size());
+            this->ensure_slot(0u);
+        }
+
+        AppSceneController(const AppSceneController& other) = delete;
+        AppSceneController(AppSceneController&& other) = delete;
+        AppSceneController& operator=(const AppSceneController& other) = delete;
+        AppSceneController& operator=(AppSceneController&& other) = delete;
+        ~AppSceneController() noexcept = default;
+
+        [[nodiscard]] std::shared_ptr<scene::SceneWorkspace> active_workspace() {
+            return this->ensure_slot(this->currentActiveIndex).workspace;
+        }
+
+        [[nodiscard]] const AppSceneEntry& entry(const std::size_t index) const {
+            return this->registry.entry(index);
+        }
+
+        [[nodiscard]] std::size_t size() const {
+            return this->registry.size();
+        }
+
+        [[nodiscard]] std::size_t selected_index() const {
+            return this->pendingActiveIndex.value_or(this->currentActiveIndex);
+        }
+
+        [[nodiscard]] bool pending_switch() const {
+            return this->pendingActiveIndex.has_value() && *this->pendingActiveIndex != this->currentActiveIndex;
+        }
+
+        void request_activate(const std::size_t index) {
+            if (index >= this->slots.size()) throw std::runtime_error("App scene activation index is out of range");
+            if (index == this->currentActiveIndex) {
+                this->pendingActiveIndex.reset();
+                return;
+            }
+            this->pendingActiveIndex = index;
+        }
+
+        [[nodiscard]] bool apply_pending_scene() {
+            if (!this->pendingActiveIndex.has_value()) return false;
+            const std::size_t next_index = *this->pendingActiveIndex;
+            this->pendingActiveIndex.reset();
+            if (next_index >= this->slots.size()) throw std::runtime_error("Pending app scene index is out of range");
+            if (next_index == this->currentActiveIndex) return false;
+            this->ensure_slot(next_index);
+            this->currentActiveIndex = next_index;
+            return true;
+        }
+
+        void update_active_scene(const double delta_seconds) {
+            const AppSceneEntry& entry = this->registry.entry(this->currentActiveIndex);
+            if (entry.kind == AppSceneKind::Static) return;
+            SceneSlot& slot = this->ensure_slot(this->currentActiveIndex);
+            if (slot.runtime == nullptr) throw std::runtime_error("Dynamic scene slot has no runtime");
+            const std::shared_ptr<const scene::SceneDocument> document = slot.workspace->document();
+            if (!document->timelineEnabled) throw std::runtime_error("Dynamic scene must enable timeline");
+            if (document->framesPerSecond <= 0.0) throw std::runtime_error("Dynamic scene frame rate must be positive");
+            const double fixed_delta_seconds = 1.0 / document->framesPerSecond;
+            scene::SceneTimeline timeline = slot.workspace->timeline();
+            if (timeline.framesPerSecond <= 0.0) throw std::runtime_error("Scene timeline frame rate must be positive");
+            if (timeline.resetRequestSerial != slot.observed_reset_request_serial) {
+                this->reset_dynamic_scene(slot, std::move(timeline));
+                slot.observed_reset_request_serial = slot.workspace->timeline().resetRequestSerial;
+                slot.committed_playback_frame_index.reset();
+                return;
+            }
+            if (timeline.clearRecordingRequestSerial != slot.observed_clear_recording_request_serial) {
+                timeline.recordedFrames.clear();
+                timeline.selectedFrameIndex = 0;
+                CommitSceneTimeline(*slot.workspace, std::move(timeline));
+                slot.observed_clear_recording_request_serial = slot.workspace->timeline().clearRecordingRequestSerial;
+                slot.committed_playback_frame_index.reset();
+                return;
+            }
+            if (timeline.mode == scene::SceneTimelineMode::Playback) {
+                if (timeline.recordedFrames.empty()) return;
+                if (timeline.selectedFrameIndex >= timeline.recordedFrames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
+                if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selectedFrameIndex) return;
+                scene::SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
+                CommitSceneFrame(*slot.workspace, std::move(selected_frame));
+                slot.committed_playback_frame_index = timeline.selectedFrameIndex;
+                return;
+            }
+            slot.committed_playback_frame_index.reset();
+            if (!timeline.playing) return;
+            if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene frame delta time is invalid");
+            slot.frame_accumulator_seconds += delta_seconds;
+            bool advanced = false;
+            scene::SceneFrameSnapshot snapshot{};
+            while (slot.frame_accumulator_seconds >= fixed_delta_seconds) {
+                slot.frame_accumulator_seconds -= fixed_delta_seconds;
+                ++slot.stream_frame_index;
+                slot.stream_time_seconds += fixed_delta_seconds;
+                snapshot = slot.runtime->step(scene::SceneFrameInfo{
+                    .delta_seconds = fixed_delta_seconds,
+                    .time_seconds  = slot.stream_time_seconds,
+                    .frame_index   = slot.stream_frame_index,
+                });
+                advanced = true;
+            }
+            if (!advanced) return;
+            if (timeline.mode == scene::SceneTimelineMode::Record) {
+                timeline.recordedFrames.push_back(snapshot);
+                timeline.selectedFrameIndex = timeline.recordedFrames.size() - 1u;
+                CommitSceneTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
+                return;
+            }
+            CommitSceneFrame(*slot.workspace, std::move(snapshot));
+        }
+
+    private:
+        struct SceneSlot {
+            std::unique_ptr<SceneFrameRuntime> runtime{};
+            std::shared_ptr<scene::SceneWorkspace> workspace{};
+            double frame_accumulator_seconds{};
+            double stream_time_seconds{};
+            std::uint64_t stream_frame_index{};
+            std::uint64_t observed_reset_request_serial{};
+            std::uint64_t observed_clear_recording_request_serial{};
+            std::optional<std::uint64_t> committed_playback_frame_index{};
+        };
+
+        [[nodiscard]] SceneSlot& ensure_slot(const std::size_t index) {
+            if (index >= this->slots.size()) throw std::runtime_error("App scene slot index is out of range");
+            SceneSlot& slot = this->slots.at(index);
+            const AppSceneEntry& entry = this->registry.entry(index);
+            if (slot.workspace != nullptr) {
+                if (entry.kind == AppSceneKind::Dynamic && slot.runtime == nullptr) throw std::runtime_error("Dynamic scene slot has a workspace but no runtime");
+                return slot;
+            }
+            scene::SceneDocument document = entry.kind == AppSceneKind::Static ? this->registry.create_static_document(index) : this->create_dynamic_slot(index, &slot);
+            slot.workspace = std::make_shared<scene::SceneWorkspace>(std::move(document));
+            if (entry.kind == AppSceneKind::Static) return slot;
+            if (slot.runtime == nullptr) throw std::runtime_error("Dynamic scene slot was not initialized");
+            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
+            const std::shared_ptr<const scene::SceneDocument> scene_document = slot.workspace->document();
+            if (!scene_document->timelineEnabled) throw std::runtime_error("Dynamic scene must enable timeline");
+            scene::SceneTimeline timeline{
+                .mode               = scene::SceneTimelineMode::Live,
+                .framesPerSecond    = scene_document->framesPerSecond,
+                .playing            = true,
+                .loop               = true,
+                .selectedFrameIndex = 0,
+            };
+            CommitSceneTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
+            return slot;
+        }
+
+        [[nodiscard]] scene::SceneDocument create_dynamic_slot(const std::size_t index, SceneSlot* slot) {
+            if (slot == nullptr) throw std::runtime_error("Dynamic scene slot pointer must not be null");
+            slot->runtime = this->registry.create_dynamic_runtime(index);
+            scene::SceneDocument document = slot->runtime->create_document();
+            if (!document.timelineEnabled) throw std::runtime_error("Dynamic scene document must enable timeline");
+            return document;
+        }
+
+        void reset_dynamic_scene(SceneSlot& slot, scene::SceneTimeline timeline) {
+            slot.frame_accumulator_seconds = 0.0;
+            slot.stream_time_seconds = 0.0;
+            slot.stream_frame_index = 0;
+            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
+            timeline.selectedFrameIndex = 0;
+            CommitSceneTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
+        }
+
+        AppSceneRegistry registry{};
+        std::vector<SceneSlot> slots{};
+        std::size_t currentActiveIndex{};
+        std::optional<std::size_t> pendingActiveIndex{};
+    };
+
+    static_assert(SceneFrameSource<BouncingBallRasterizerProject>);
+    static_assert(SceneFrameSource<SparklesRasterizerProject>);
+    static_assert(SceneFrameSource<ClothRasterizerProject>);
+    static_assert(SceneFrameSource<PyroRasterizerProject>);
+
+    [[nodiscard]] AppSceneRegistry MakeSceneRegistry() {
+        AppSceneRegistry registry{};
+        registry.register_static_scene(std::string{CornellBoxSceneId}, "Cornell Box", [] { return scene::LoadPreviewSceneDocumentFromPbrt(CornellBoxSceneId); });
+        registry.register_dynamic_scene<BouncingBallRasterizerProject>();
+        registry.register_dynamic_scene<SparklesRasterizerProject>();
+        registry.register_dynamic_scene<ClothRasterizerProject>();
+        registry.register_dynamic_scene<PyroRasterizerProject>();
         return registry;
     }
 
-    void DrawRasterizerSceneControlPanel(scene::SceneSession& session) {
+    void DrawRasterizerSceneControlPanel(AppSceneController& session) {
         const std::size_t selected_index = session.selected_index();
-        const scene::SceneSourceEntry& selected_entry = session.entry(selected_index);
+        const AppSceneEntry& selected_entry = session.entry(selected_index);
         ImGui::SeparatorText("Scene");
         if (ImGui::BeginCombo("Scene", selected_entry.title.c_str())) {
             for (std::size_t index = 0; index < session.size(); ++index) {
-                const scene::SceneSourceEntry& entry = session.entry(index);
+                const AppSceneEntry& entry = session.entry(index);
                 const bool selected = index == selected_index;
                 if (ImGui::Selectable(entry.title.c_str(), selected)) session.request_activate(index);
                 if (selected) ImGui::SetItemDefaultFocus();
@@ -528,17 +857,16 @@ namespace spectra::app {
             ImGui::EndCombo();
         }
         ImGui::TextDisabled("%s", selected_entry.id.c_str());
-        ImGui::TextDisabled("%s", selected_entry.kind == scene::SceneSourceKind::Static ? "Static" : "Simulation");
+        ImGui::TextDisabled("%s", selected_entry.kind == AppSceneKind::Static ? "Static" : "Dynamic");
         if (session.pending_switch()) ImGui::TextDisabled("Switching on next frame");
     }
 
     class PathtracerSpectraRenderer final {
     public:
-        PathtracerSpectraRenderer(std::shared_ptr<scene::PbrtSceneBrowserSession> sceneBrowser, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_browser(std::move(sceneBrowser)), camera_workspace(std::move(cameraWorkspace)) {
-            if (this->scene_browser == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene browser session");
+        PathtracerSpectraRenderer(std::shared_ptr<const scene::PbrtSceneSnapshot> sceneSnapshot, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_snapshot(std::move(sceneSnapshot)), camera_workspace(std::move(cameraWorkspace)) {
+            if (this->scene_snapshot == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene snapshot");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
-            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_browser->workspace(), this->camera_workspace);
-            this->scene_panel = std::make_unique<pathtracer::PbrtScenePanel>(this->scene_browser);
+            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_snapshot, this->camera_workspace);
         }
 
         PathtracerSpectraRenderer(const PathtracerSpectraRenderer& other)                = delete;
@@ -552,13 +880,11 @@ namespace spectra::app {
         }
 
         void attach(Spectra& host) {
-            this->scene_panel->attach(host);
             this->renderer->attach(pathtracer::PathtracerHostView{host});
         }
 
         void detach() noexcept {
             this->renderer->detach();
-            this->scene_panel->detach();
         }
 
         void before_imgui_shutdown() noexcept {
@@ -587,18 +913,17 @@ namespace spectra::app {
         }
 
     private:
-        std::shared_ptr<scene::PbrtSceneBrowserSession> scene_browser{};
+        std::shared_ptr<const scene::PbrtSceneSnapshot> scene_snapshot{};
         std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::unique_ptr<pathtracer::PathtracerRenderer> renderer{};
-        std::unique_ptr<pathtracer::PbrtScenePanel> scene_panel{};
     };
 
     class RasterizerSpectraRenderer final {
     public:
-        RasterizerSpectraRenderer(scene::SceneSourceRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_session(std::make_shared<scene::SceneSession>(std::move(registry))), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_session->active_workspace(), this->camera_workspace)) {
-            if (this->scene_session == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene session");
+        RasterizerSpectraRenderer(AppSceneRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_controller(std::make_shared<AppSceneController>(std::move(registry))), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_controller->active_workspace(), this->camera_workspace)) {
+            if (this->scene_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
-            this->renderer->set_control_panel_extension([sceneSession = this->scene_session] { DrawRasterizerSceneControlPanel(*sceneSession); });
+            this->renderer->set_control_panel_extension([sceneController = this->scene_controller] { DrawRasterizerSceneControlPanel(*sceneController); });
         }
 
         RasterizerSpectraRenderer(const RasterizerSpectraRenderer& other)                = delete;
@@ -628,8 +953,8 @@ namespace spectra::app {
         }
 
         [[nodiscard]] FrameResult begin_frame(Spectra& host, const FrameContext& frame) {
-            if (this->scene_session->apply_pending_scene()) this->renderer->set_scene_workspace(this->scene_session->active_workspace(), this->camera_workspace);
-            this->scene_session->update_active_scene(frame.delta_seconds);
+            if (this->scene_controller->apply_pending_scene()) this->renderer->set_scene_workspace(this->scene_controller->active_workspace(), this->camera_workspace);
+            this->scene_controller->update_active_scene(frame.delta_seconds);
             const rasterizer::FrameContext rasterizer_frame{
                 .frame_index   = frame.frame_slot_index,
                 .image_index   = frame.image_index,
@@ -649,7 +974,7 @@ namespace spectra::app {
         }
 
     private:
-        std::shared_ptr<scene::SceneSession> scene_session{};
+        std::shared_ptr<AppSceneController> scene_controller{};
         std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::unique_ptr<rasterizer::Renderer> renderer{};
     };
@@ -657,11 +982,11 @@ namespace spectra::app {
     static_assert(RendererFor<PathtracerSpectraRenderer, Spectra>);
     static_assert(RendererFor<RasterizerSpectraRenderer, Spectra>);
 
-    void RegisterRenderers(Spectra& app, std::shared_ptr<scene::PbrtSceneBrowserSession> pbrtSceneBrowser, scene::SceneSourceRegistry sceneSourceRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
-        if (pbrtSceneBrowser == nullptr) throw std::runtime_error("Renderer registration requires a PBRT scene browser session");
+    void RegisterRenderers(Spectra& app, std::shared_ptr<const scene::PbrtSceneSnapshot> pbrtScene, AppSceneRegistry sceneRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
+        if (pbrtScene == nullptr) throw std::runtime_error("Renderer registration requires a PBRT scene snapshot");
         if (cameraWorkspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
-        app.register_renderer(RasterizerSpectraRenderer{std::move(sceneSourceRegistry), cameraWorkspace});
-        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneBrowser), std::move(cameraWorkspace)});
+        app.register_renderer(RasterizerSpectraRenderer{std::move(sceneRegistry), cameraWorkspace});
+        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtScene), std::move(cameraWorkspace)});
     }
 } // namespace spectra::app
 
@@ -669,12 +994,12 @@ int main(const int argc, char**) {
     try {
         if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
-        std::shared_ptr<spectra::scene::PbrtSceneBrowserSession> pbrt_scene_browser = std::make_shared<spectra::scene::PbrtSceneBrowserSession>(std::string{spectra::scene::CornellBoxSceneId});
-        spectra::scene::SceneSourceRegistry scene_source_registry = spectra::app::MakeSceneSourceRegistry();
+        std::shared_ptr<const spectra::scene::PbrtSceneSnapshot> pbrt_scene = std::make_shared<spectra::scene::PbrtSceneSnapshot>(spectra::scene::ParsePbrtScene(spectra::app::CornellBoxSceneId));
+        spectra::app::AppSceneRegistry scene_registry = spectra::app::MakeSceneRegistry();
         std::shared_ptr<spectra::scene::SceneCameraWorkspace> camera_workspace = std::make_shared<spectra::scene::SceneCameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_browser), std::move(scene_source_registry), std::move(camera_workspace));
+        spectra::app::RegisterRenderers(app, std::move(pbrt_scene), std::move(scene_registry), std::move(camera_workspace));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

@@ -91,12 +91,7 @@ namespace spectra::scene {
         return found->second;
     }
 
-    void SceneEditBuilder::replaceDocument(SceneDocument document) {
-        this->documentReplacement = std::move(document);
-        this->dirty               = this->dirty | SceneDirtyFlags::Document;
-    }
-
-    void SceneEditBuilder::replaceTimeline(SimulationTimeline timeline) {
+    void SceneEditBuilder::replaceTimeline(SceneTimeline timeline) {
         this->timelineReplacement = std::move(timeline);
         this->dirty               = this->dirty | SceneDirtyFlags::Timeline;
     }
@@ -113,10 +108,6 @@ namespace spectra::scene {
         this->currentTimeline.framesPerSecond = this->currentDocument->framesPerSecond;
     }
 
-    bool SceneWorkspace::loaded() const {
-        return this->currentDocument != nullptr;
-    }
-
     SceneRevision SceneWorkspace::revision() const {
         if (this->currentDocument == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
         return this->currentRevision;
@@ -127,14 +118,9 @@ namespace spectra::scene {
         return this->currentDocument;
     }
 
-    SimulationTimeline SceneWorkspace::timeline() const {
+    SceneTimeline SceneWorkspace::timeline() const {
         if (this->currentDocument == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
         return this->currentTimeline;
-    }
-
-    std::optional<SceneFrameSnapshot> SceneWorkspace::frame() const {
-        if (this->currentDocument == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
-        return this->currentTimeline.currentFrame;
     }
 
     SceneResolvedFrame SceneWorkspace::resolved_frame() const {
@@ -162,17 +148,11 @@ namespace spectra::scene {
         };
     }
 
-    SceneEditBatch SceneWorkspace::commit(SceneEditBuilder edit) {
+    SceneDirtyFlags SceneWorkspace::commit(SceneEditBuilder edit) {
         if (this->currentDocument == nullptr) throw std::runtime_error("Cannot edit an unloaded scene workspace");
         if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit an empty scene edit");
 
-        const SceneRevision before_revision = this->currentRevision;
         this->currentRevision = SceneRevision{this->currentRevision.value + 1};
-        if (edit.documentReplacement.has_value()) {
-            SceneDocument next = std::move(*edit.documentReplacement);
-            next.revision      = this->currentRevision;
-            this->currentDocument = std::make_shared<SceneDocument>(std::move(next));
-        }
         if (edit.timelineReplacement.has_value()) this->currentTimeline = std::move(*edit.timelineReplacement);
         if (edit.frameReplacement.has_value()) {
             edit.frameReplacement->revision = this->currentRevision;
@@ -180,258 +160,14 @@ namespace spectra::scene {
             this->currentTimeline.currentFrame = std::move(*edit.frameReplacement);
         }
 
-        return SceneEditBatch{
-            .beforeRevision = before_revision,
-            .afterRevision  = this->currentRevision,
-            .dirty          = edit.dirty,
-        };
+        return edit.dirty;
     }
-
-    namespace {
-        void CommitFrame(SceneWorkspace& workspace, SceneFrameSnapshot frame, const bool reset_timeline) {
-            SceneEditBuilder edit{};
-            if (reset_timeline) {
-                const std::shared_ptr<const SceneDocument> document = workspace.document();
-                edit.replaceTimeline(SimulationTimeline{
-                    .mode            = SimulationTimelineMode::Live,
-                    .framesPerSecond = document->framesPerSecond,
-                    .playing         = true,
-                    .loop            = true,
-                    .cursor          = frame.cursor,
-                });
-            }
-            edit.replaceFrame(std::move(frame));
-            const SceneEditBatch batch = workspace.commit(std::move(edit));
-            if (!HasSceneDirtyFlag(batch.dirty, SceneDirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
-        }
-
-        void CommitTimelineAndFrame(SceneWorkspace& workspace, SimulationTimeline timeline, SceneFrameSnapshot frame) {
-            timeline.cursor = frame.cursor;
-            timeline.currentFrame = frame;
-            SceneEditBuilder edit{};
-            edit.replaceTimeline(std::move(timeline));
-            edit.replaceFrame(std::move(frame));
-            const SceneEditBatch batch = workspace.commit(std::move(edit));
-            if (!HasSceneDirtyFlag(batch.dirty, SceneDirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
-            if (!HasSceneDirtyFlag(batch.dirty, SceneDirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
-        }
-
-        void CommitTimeline(SceneWorkspace& workspace, SimulationTimeline timeline) {
-            SceneEditBuilder edit{};
-            edit.replaceTimeline(std::move(timeline));
-            const SceneEditBatch batch = workspace.commit(std::move(edit));
-            if (!HasSceneDirtyFlag(batch.dirty, SceneDirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
-        }
-    } // namespace
 
     FrameCursor MakeFrameCursor(const SceneFrameInfo& info) {
         return FrameCursor{
             .frameIndex  = info.frame_index,
             .timeSeconds = info.time_seconds,
         };
-    }
-
-    void SceneSourceRegistry::register_static_scene(std::string id, std::string title, std::move_only_function<SceneDocument()> create_document) {
-        if (!create_document) throw std::runtime_error("Static scene entry requires a document factory");
-        this->ensure_unique_scene_id(id);
-        this->entries.push_back(SceneSourceEntry{
-            .id                     = std::move(id),
-            .title                  = std::move(title),
-            .kind                   = SceneSourceKind::Static,
-            .create_static_document = std::move(create_document),
-        });
-    }
-
-    std::unique_ptr<SceneSourceRuntime> SceneSourceRegistry::create_simulation_runtime(const std::size_t index) {
-        if (this->entries.empty()) throw std::runtime_error("Scene registry is empty");
-        if (index >= this->entries.size()) throw std::runtime_error("Scene source index is out of range");
-        SceneSourceEntry& scene = this->entries.at(index);
-        if (scene.kind != SceneSourceKind::Simulation) throw std::runtime_error("Scene source entry is not a simulation");
-        if (!scene.create_simulation_runtime) throw std::runtime_error("Simulation scene entry has no runtime factory");
-        return scene.create_simulation_runtime();
-    }
-
-    SceneDocument SceneSourceRegistry::create_static_document(const std::size_t index) {
-        if (this->entries.empty()) throw std::runtime_error("Scene registry is empty");
-        if (index >= this->entries.size()) throw std::runtime_error("Scene source index is out of range");
-        SceneSourceEntry& scene = this->entries.at(index);
-        if (scene.kind != SceneSourceKind::Static) throw std::runtime_error("Scene source entry is not static");
-        if (!scene.create_static_document) throw std::runtime_error("Static scene entry has no document factory");
-        return scene.create_static_document();
-    }
-
-    const SceneSourceEntry& SceneSourceRegistry::entry(const std::size_t index) const {
-        if (index >= this->entries.size()) throw std::runtime_error("Scene source index is out of range");
-        return this->entries.at(index);
-    }
-
-    std::size_t SceneSourceRegistry::size() const {
-        return this->entries.size();
-    }
-
-    void SceneSourceRegistry::ensure_unique_scene_id(const std::string& id) const {
-        if (id.empty()) throw std::runtime_error("Scene source id must not be empty");
-        for (const SceneSourceEntry& entry : this->entries) {
-            if (entry.id == id) throw std::runtime_error("Duplicate scene source id: " + id);
-        }
-    }
-
-    SceneSession::SceneSession(SceneSourceRegistry registry) : registry(std::move(registry)) {
-        if (this->registry.size() == 0u) throw std::runtime_error("Scene session requires at least one scene source");
-        this->slots.resize(this->registry.size());
-        this->ensure_slot(0u);
-    }
-
-    std::shared_ptr<SceneWorkspace> SceneSession::active_workspace() {
-        return this->ensure_slot(this->currentActiveIndex).workspace;
-    }
-
-    const SceneSourceEntry& SceneSession::entry(const std::size_t index) const {
-        return this->registry.entry(index);
-    }
-
-    std::size_t SceneSession::size() const {
-        return this->registry.size();
-    }
-
-    std::size_t SceneSession::active_index() const {
-        return this->currentActiveIndex;
-    }
-
-    std::size_t SceneSession::selected_index() const {
-        return this->pendingActiveIndex.value_or(this->currentActiveIndex);
-    }
-
-    bool SceneSession::pending_switch() const {
-        return this->pendingActiveIndex.has_value() && *this->pendingActiveIndex != this->currentActiveIndex;
-    }
-
-    void SceneSession::request_activate(const std::size_t index) {
-        if (index >= this->slots.size()) throw std::runtime_error("Scene source activation index is out of range");
-        if (index == this->currentActiveIndex) {
-            this->pendingActiveIndex.reset();
-            return;
-        }
-        this->pendingActiveIndex = index;
-    }
-
-    bool SceneSession::apply_pending_scene() {
-        if (!this->pendingActiveIndex.has_value()) return false;
-        const std::size_t next_index = *this->pendingActiveIndex;
-        this->pendingActiveIndex.reset();
-        if (next_index >= this->slots.size()) throw std::runtime_error("Pending scene source index is out of range");
-        if (next_index == this->currentActiveIndex) return false;
-        this->ensure_slot(next_index);
-        this->currentActiveIndex = next_index;
-        return true;
-    }
-
-    void SceneSession::update_active_scene(const double delta_seconds) {
-        const SceneSourceEntry& entry = this->registry.entry(this->currentActiveIndex);
-        if (entry.kind == SceneSourceKind::Static) return;
-        SceneSlot& slot = this->ensure_slot(this->currentActiveIndex);
-        if (slot.runtime == nullptr) throw std::runtime_error("Simulation scene slot has no runtime");
-        const std::shared_ptr<const SceneDocument> document = slot.workspace->document();
-        if (!document->timelineEnabled) throw std::runtime_error("Simulation scene must enable timeline");
-        if (document->framesPerSecond <= 0.0) throw std::runtime_error("Simulation scene frame rate must be positive");
-        const double fixed_delta_seconds = 1.0 / document->framesPerSecond;
-        SimulationTimeline timeline = slot.workspace->timeline();
-        if (timeline.framesPerSecond <= 0.0) throw std::runtime_error("Simulation timeline frame rate must be positive");
-        if (timeline.resetRequestSerial != slot.observed_reset_request_serial) {
-            this->reset_simulation(slot, std::move(timeline));
-            slot.observed_reset_request_serial = slot.workspace->timeline().resetRequestSerial;
-            slot.committed_playback_frame_index.reset();
-            return;
-        }
-        if (timeline.clearRecordingRequestSerial != slot.observed_clear_recording_request_serial) {
-            timeline.recordedFrames.clear();
-            timeline.selectedFrameIndex = 0;
-            CommitTimeline(*slot.workspace, std::move(timeline));
-            slot.observed_clear_recording_request_serial = slot.workspace->timeline().clearRecordingRequestSerial;
-            slot.committed_playback_frame_index.reset();
-            return;
-        }
-        if (timeline.mode == SimulationTimelineMode::Playback) {
-            if (timeline.recordedFrames.empty()) return;
-            if (timeline.selectedFrameIndex >= timeline.recordedFrames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
-            if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selectedFrameIndex) return;
-            SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
-            CommitFrame(*slot.workspace, std::move(selected_frame), false);
-            slot.committed_playback_frame_index = timeline.selectedFrameIndex;
-            return;
-        }
-        slot.committed_playback_frame_index.reset();
-        if (!timeline.playing) return;
-        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene frame delta time is invalid");
-        slot.simulation_accumulator_seconds += delta_seconds;
-        bool advanced = false;
-        SceneFrameSnapshot snapshot{};
-        while (slot.simulation_accumulator_seconds >= fixed_delta_seconds) {
-            slot.simulation_accumulator_seconds -= fixed_delta_seconds;
-            ++slot.simulation_frame_index;
-            slot.simulation_time_seconds += fixed_delta_seconds;
-            snapshot = slot.runtime->step(SceneFrameInfo{
-                .delta_seconds = fixed_delta_seconds,
-                .time_seconds  = slot.simulation_time_seconds,
-                .frame_index   = slot.simulation_frame_index,
-            });
-            advanced = true;
-        }
-        if (!advanced) return;
-        if (timeline.mode == SimulationTimelineMode::Record) {
-            timeline.recordedFrames.push_back(snapshot);
-            timeline.selectedFrameIndex = timeline.recordedFrames.size() - 1u;
-            CommitTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
-            return;
-        }
-        CommitFrame(*slot.workspace, std::move(snapshot), false);
-    }
-
-    SceneSession::SceneSlot& SceneSession::ensure_slot(const std::size_t index) {
-        if (index >= this->slots.size()) throw std::runtime_error("Scene session slot index is out of range");
-        SceneSlot& slot = this->slots.at(index);
-        const SceneSourceEntry& entry = this->registry.entry(index);
-        if (slot.workspace != nullptr) {
-            if (entry.kind == SceneSourceKind::Simulation && slot.runtime == nullptr) throw std::runtime_error("Simulation scene slot has a workspace but no runtime");
-            return slot;
-        }
-        SceneDocument document = entry.kind == SceneSourceKind::Static ? this->registry.create_static_document(index) : this->create_simulation_slot(index, &slot);
-        slot.workspace = std::make_shared<SceneWorkspace>(std::move(document));
-        if (entry.kind == SceneSourceKind::Static) return slot;
-        if (slot.runtime == nullptr) throw std::runtime_error("Simulation scene slot was not initialized");
-        SceneFrameSnapshot snapshot = slot.runtime->reset();
-        const std::shared_ptr<const SceneDocument> scene = slot.workspace->document();
-        if (!scene->timelineEnabled) throw std::runtime_error("Simulation scene must enable timeline");
-        SimulationTimeline timeline{
-            .mode               = SimulationTimelineMode::Live,
-            .framesPerSecond    = scene->framesPerSecond,
-            .playing            = true,
-            .loop               = true,
-            .cursor             = snapshot.cursor,
-            .selectedFrameIndex = 0,
-            .currentFrame       = snapshot,
-        };
-        CommitTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
-        return slot;
-    }
-
-    SceneDocument SceneSession::create_simulation_slot(const std::size_t index, SceneSlot* slot) {
-        if (slot == nullptr) throw std::runtime_error("Simulation scene slot pointer must not be null");
-        slot->runtime = this->registry.create_simulation_runtime(index);
-        SceneDocument document = slot->runtime->create_document();
-        if (!document.timelineEnabled) throw std::runtime_error("Simulation scene document must enable timeline");
-        return document;
-    }
-
-    void SceneSession::reset_simulation(SceneSlot& slot, SimulationTimeline timeline) {
-        slot.simulation_accumulator_seconds = 0.0;
-        slot.simulation_time_seconds = 0.0;
-        slot.simulation_frame_index = 0;
-        SceneFrameSnapshot snapshot = slot.runtime->reset();
-        timeline.cursor = snapshot.cursor;
-        timeline.currentFrame = snapshot;
-        timeline.selectedFrameIndex = 0;
-        CommitTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
     }
 
     namespace {
@@ -719,10 +455,7 @@ namespace spectra::scene {
     }
 
     SceneDocument LoadPreviewSceneDocumentFromPbrt(const std::string_view scene_id) {
-        PbrtSceneWorkspace workspace = BuildPbrtScene(scene_id);
-        const std::shared_ptr<const PbrtSceneSnapshot> scene = workspace.snapshot();
-        if (scene == nullptr) throw std::runtime_error("PBRT workspace did not produce a scene snapshot");
-        return MakePreviewSceneDocumentFromPbrt(*scene);
+        return MakePreviewSceneDocumentFromPbrt(ParsePbrtScene(scene_id));
     }
 
     namespace {
@@ -750,24 +483,6 @@ namespace spectra::scene {
             return std::runtime_error(std::format("{}: {}", SourceString(source), message));
         }
 
-        class SceneOperationCancelled final : public std::exception {
-        public:
-            [[nodiscard]] const char* what() const noexcept override {
-                return "Spectra scene operation cancelled";
-            }
-        };
-
-        class PbrtSceneNotTopLevel final : public std::exception {
-        public:
-            [[nodiscard]] const char* what() const noexcept override {
-                return "PBRT file is not a top-level scene";
-            }
-        };
-
-        void CheckSceneStop(const std::stop_token* stopToken) {
-            if (stopToken != nullptr && stopToken->stop_requested()) throw SceneOperationCancelled{};
-        }
-
         [[nodiscard]] bool HasExtension(const std::filesystem::path& path, const std::string_view extension) {
             return Lowercase(path.extension().string()) == Lowercase(std::string(extension));
         }
@@ -790,37 +505,28 @@ namespace spectra::scene {
             return !path.extension().empty();
         }
 
-        [[nodiscard]] std::string ReadPlainFile(const std::filesystem::path& path, const std::stop_token* stopToken) {
+        [[nodiscard]] std::string ReadPlainFile(const std::filesystem::path& path) {
             std::ifstream input(path, std::ios::binary);
             if (!input) throw std::runtime_error(std::format("{}: unable to open PBRT scene file", path.string()));
 
             std::string result;
             std::array<char, 1 << 15> buffer{};
             while (input) {
-                CheckSceneStop(stopToken);
                 input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
                 const std::streamsize count = input.gcount();
                 if (count > 0) result.append(buffer.data(), static_cast<std::size_t>(count));
             }
             if (input.bad()) throw std::runtime_error(std::format("{}: PBRT scene file read failed", path.string()));
-            CheckSceneStop(stopToken);
             return result;
         }
 
-        [[nodiscard]] std::string ReadGzipFile(const std::filesystem::path& path, const std::stop_token* stopToken) {
+        [[nodiscard]] std::string ReadGzipFile(const std::filesystem::path& path) {
             gzFile file = gzopen(path.string().c_str(), "rb");
             if (file == nullptr) throw std::runtime_error(std::format("{}: unable to open gzip PBRT scene file", path.string()));
-            const auto checkStop = [file, stopToken] {
-                if (stopToken != nullptr && stopToken->stop_requested()) {
-                    gzclose(file);
-                    throw SceneOperationCancelled{};
-                }
-            };
 
             std::string result;
             std::array<char, 1 << 15> buffer{};
             while (true) {
-                checkStop();
                 const int count = gzread(file, buffer.data(), static_cast<unsigned int>(buffer.size()));
                 if (count < 0) {
                     int errorNumber = 0;
@@ -832,29 +538,26 @@ namespace spectra::scene {
                 result.append(buffer.data(), static_cast<std::size_t>(count));
             }
 
-            checkStop();
             const int closeStatus = gzclose(file);
             if (closeStatus != Z_OK) throw std::runtime_error(std::format("{}: gzip close failed", path.string()));
             return result;
         }
 
-        [[nodiscard]] std::string ReadSceneFile(const std::filesystem::path& path, const std::stop_token* stopToken) {
-            if (HasExtension(path, ".gz")) return ReadGzipFile(path, stopToken);
-            return ReadPlainFile(path, stopToken);
+        [[nodiscard]] std::string ReadSceneFile(const std::filesystem::path& path) {
+            if (HasExtension(path, ".gz")) return ReadGzipFile(path);
+            return ReadPlainFile(path);
         }
 
         class PbrtTokenStream {
         public:
-            explicit PbrtTokenStream(std::filesystem::path filename, const std::stop_token* stopToken) : stopToken(stopToken) {
+            explicit PbrtTokenStream(std::filesystem::path filename) {
                 this->PushFile(std::move(filename));
             }
 
             [[nodiscard]] std::optional<Token> Next() {
-                CheckSceneStop(this->stopToken);
                 if (this->pushedToken.has_value()) return std::exchange(this->pushedToken, {});
 
                 while (!this->fileStack.empty()) {
-                    CheckSceneStop(this->stopToken);
                     PbrtTokenFile& file = this->fileStack.back();
                     this->SkipIgnored(&file);
                     if (file.offset >= file.content.size()) {
@@ -890,10 +593,8 @@ namespace spectra::scene {
             }
 
             void PushFile(std::filesystem::path path) {
-                CheckSceneStop(this->stopToken);
                 if (!std::filesystem::exists(path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", path.string()));
-                std::string content = ReadSceneFile(path, this->stopToken);
-                CheckSceneStop(this->stopToken);
+                std::string content = ReadSceneFile(path);
                 this->fileStack.push_back(PbrtTokenFile{
                     .filename = std::move(path),
                     .content  = std::move(content),
@@ -971,7 +672,6 @@ namespace spectra::scene {
 
             std::vector<PbrtTokenFile> fileStack{};
             std::optional<Token> pushedToken{};
-            const std::stop_token* stopToken{};
         };
 
         [[nodiscard]] Token RequireToken(PbrtTokenStream& stream, const std::string_view context) {
@@ -1342,522 +1042,9 @@ namespace spectra::scene {
             std::vector<PbrtSceneParameter> textureAttributes{};
         };
 
-        struct ProbeParameter {
-            std::string type{};
-            std::string name{};
-            std::vector<std::string> stringValues{};
-            SceneSourceLocation source{};
-        };
-
-        [[nodiscard]] ProbeParameter ParseProbeParameterDeclaration(const Token& declaration) {
-            const std::string& text = declaration.text;
-            std::size_t typeBegin = 0;
-            while (typeBegin < text.size() && std::isspace(static_cast<unsigned char>(text[typeBegin]))) ++typeBegin;
-            if (typeBegin == text.size()) throw ParseError(declaration.source, "PBRT parameter declaration does not contain a type");
-
-            std::size_t typeEnd = typeBegin;
-            while (typeEnd < text.size() && !std::isspace(static_cast<unsigned char>(text[typeEnd]))) ++typeEnd;
-
-            std::size_t nameBegin = typeEnd;
-            while (nameBegin < text.size() && std::isspace(static_cast<unsigned char>(text[nameBegin]))) ++nameBegin;
-            if (nameBegin == text.size()) throw ParseError(declaration.source, std::format("\"{}\" does not contain a parameter name", text));
-
-            std::size_t nameEnd = nameBegin;
-            while (nameEnd < text.size() && !std::isspace(static_cast<unsigned char>(text[nameEnd]))) ++nameEnd;
-
-            return ProbeParameter{
-                .type   = text.substr(typeBegin, typeEnd - typeBegin),
-                .name   = text.substr(nameBegin, nameEnd - nameBegin),
-                .source = declaration.source,
-            };
-        }
-
-        [[nodiscard]] std::string ProbeStringParameter(const std::vector<ProbeParameter>& parameters, const std::string& name, std::string default_value) {
-            for (const ProbeParameter& parameter : parameters) {
-                if (parameter.type != "string" || parameter.name != name) continue;
-                if (parameter.stringValues.size() != 1) throw ParseError(parameter.source, std::format("PBRT probe string parameter \"{}\" must contain exactly one value", name));
-                return parameter.stringValues.front();
-            }
-            return default_value;
-        }
-
-        class PbrtSceneProbeBuilder {
-        public:
-            explicit PbrtSceneProbeBuilder(std::filesystem::path inputFile, const std::stop_token* stopToken = nullptr) : stopToken(stopToken), inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
-                CheckSceneStop(this->stopToken);
-                const SceneSourceLocation source{.filename = this->inputFile.string(), .line = 1, .column = 1};
-                this->report.name     = this->inputFile.stem().string();
-                this->report.title    = this->inputFile.stem().string();
-                this->report.source   = this->inputFile.string();
-                this->report.revision = SceneRevision{1};
-                this->AddFeature(PbrtSceneProbeFeatureCategory::PixelFilter, "gaussian", {}, source);
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Film, "rgb", {}, source);
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Camera, "perspective", {}, source);
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Sampler, "zsobol", {}, source);
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Integrator, "volpath", {}, source);
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Accelerator, "bvh", {}, source);
-            }
-
-            [[nodiscard]] PbrtSceneProbeReport Probe() {
-                CheckSceneStop(this->stopToken);
-                this->ParseFile(this->inputFile);
-                CheckSceneStop(this->stopToken);
-                this->Finish();
-                return std::move(this->report);
-            }
-
-        private:
-            enum class BlockState { Options, World };
-
-            void AddFeature(const PbrtSceneProbeFeatureCategory category, std::string type, std::string kind, const SceneSourceLocation& source) {
-                this->report.features.push_back(PbrtSceneProbeFeature{
-                    .category = category,
-                    .type     = Lowercase(std::move(type)),
-                    .kind     = Lowercase(std::move(kind)),
-                    .source   = source,
-                });
-            }
-
-            void AddTransformFeatureIfNeeded(const std::string_view owner, const SceneSourceLocation& source) {
-                if (!this->graphicsState.transform.animated) return;
-                this->AddFeature(PbrtSceneProbeFeatureCategory::AnimatedTransform, std::string{owner}, {}, source);
-            }
-
-            [[nodiscard]] std::filesystem::path ResolveIncludePath(const std::string& value, const SceneSourceLocation& source) const {
-                if (value.empty()) throw ParseError(source, "Include filename must not be empty");
-                const std::filesystem::path path = IsAbsolutePathString(value) ? std::filesystem::path(value) : this->searchDirectory / std::filesystem::path(value);
-                return std::filesystem::absolute(path).lexically_normal();
-            }
-
-            void RequireExistingProbeFile(const std::filesystem::path& path, const SceneSourceLocation& source, const std::string_view directive) const {
-                if (!std::filesystem::exists(path)) throw ParseError(source, std::format("{} file \"{}\" does not exist", directive, path.string()));
-                if (!std::filesystem::is_regular_file(path)) throw ParseError(source, std::format("{} path \"{}\" is not a regular file", directive, path.string()));
-            }
-
-            void ParseFile(const std::filesystem::path& path) {
-                CheckSceneStop(this->stopToken);
-                PbrtTokenStream stream(path, this->stopToken);
-                while (std::optional<Token> directive = stream.Next()) {
-                    CheckSceneStop(this->stopToken);
-                    this->ParseDirective(stream, *directive);
-                }
-            }
-
-            std::vector<ProbeParameter> ParseProbeParameters(PbrtTokenStream& stream) {
-                std::vector<ProbeParameter> parameters;
-                while (true) {
-                    CheckSceneStop(this->stopToken);
-                    std::optional<Token> declaration = stream.Next();
-                    if (!declaration.has_value()) return parameters;
-                    if (declaration->kind != TokenKind::QuotedString) {
-                        stream.PushBack(std::move(*declaration));
-                        return parameters;
-                    }
-
-                    ProbeParameter parameter = ParseProbeParameterDeclaration(*declaration);
-                    Token value = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
-                    if (value.kind == TokenKind::LeftBracket) {
-                        while (true) {
-                            CheckSceneStop(this->stopToken);
-                            Token element = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
-                            if (element.kind == TokenKind::RightBracket) break;
-                            this->AppendProbeParameterValue(&parameter, element);
-                        }
-                    } else {
-                        this->AppendProbeParameterValue(&parameter, value);
-                    }
-                    parameters.push_back(std::move(parameter));
-                }
-            }
-
-            void AppendProbeParameterValue(ProbeParameter* parameter, const Token& value) const {
-                if (parameter->type == "string" || parameter->type == "texture") {
-                    if (value.kind != TokenKind::QuotedString) throw ParseError(value.source, std::format("\"{} {}\" expects quoted string values", parameter->type, parameter->name));
-                    parameter->stringValues.push_back(value.text);
-                    return;
-                }
-                if (value.kind == TokenKind::QuotedString) parameter->stringValues.push_back(value.text);
-            }
-
-            void ParseDirective(PbrtTokenStream& stream, const Token& directive) {
-                CheckSceneStop(this->stopToken);
-                if (directive.kind != TokenKind::Word) throw ParseError(directive.source, "PBRT directive must be an unquoted identifier");
-
-                if (directive.text == "AttributeBegin" || directive.text == "TransformBegin") {
-                    this->RequireWorld(directive, directive.text);
-                    this->stateStack.push_back(this->graphicsState);
-                    this->stackKinds.push_back('a');
-                    return;
-                }
-                if (directive.text == "AttributeEnd" || directive.text == "TransformEnd") {
-                    this->RequireWorld(directive, directive.text);
-                    this->PopGraphicsState(directive);
-                    return;
-                }
-                if (directive.text == "ActiveTransform") {
-                    this->ActiveTransform(RequireToken(stream, "ActiveTransform"), directive.source);
-                    return;
-                }
-                if (directive.text == "AreaLightSource") {
-                    this->RequireWorld(directive, "AreaLightSource");
-                    const std::string type = RequireStringToken(stream, "AreaLightSource");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::AreaLight, type, {}, directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "Accelerator") {
-                    this->RequireOptions(directive, "Accelerator");
-                    const std::string type = RequireStringToken(stream, "Accelerator");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Accelerator, type, {}, directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "Attribute") {
-                    static_cast<void>(RequireStringToken(stream, "Attribute"));
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "Camera") {
-                    this->RequireOptions(directive, "Camera");
-                    const std::string type = RequireStringToken(stream, "Camera");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Camera, type, {}, directive.source);
-                    this->AddTransformFeatureIfNeeded("camera", directive.source);
-                    this->ParseProbeParameters(stream);
-                    this->namedCoordinateSystems["camera"] = this->graphicsState.transform;
-                    return;
-                }
-                if (directive.text == "PbrtColorSpace") {
-                    this->graphicsState.colorSpace = ParseColorSpaceName(RequireStringToken(stream, "PbrtColorSpace"), directive.source);
-                    return;
-                }
-                if (directive.text == "ConcatTransform") {
-                    this->ConcatTransform(stream, directive.source);
-                    return;
-                }
-                if (directive.text == "CoordinateSystem") {
-                    this->namedCoordinateSystems[RequireStringToken(stream, "CoordinateSystem")] = this->graphicsState.transform;
-                    return;
-                }
-                if (directive.text == "CoordSysTransform") {
-                    const std::string name = RequireStringToken(stream, "CoordSysTransform");
-                    const std::map<std::string, PbrtSceneTransformSet>::const_iterator iter = this->namedCoordinateSystems.find(name);
-                    if (iter == this->namedCoordinateSystems.end()) throw ParseError(directive.source, std::format("Unknown coordinate system \"{}\"", name));
-                    this->graphicsState.transform = iter->second;
-                    return;
-                }
-                if (directive.text == "Film") {
-                    this->RequireOptions(directive, "Film");
-                    const std::string type = RequireStringToken(stream, "Film");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Film, type, {}, directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "Identity") {
-                    this->SetActiveTransform(PbrtSceneTransform{});
-                    return;
-                }
-                if (directive.text == "Import") {
-                    this->RequireWorld(directive, "Import");
-                    const std::filesystem::path importPath = this->ResolveIncludePath(RequireStringToken(stream, "Import"), directive.source);
-                    this->RequireExistingProbeFile(importPath, directive.source, "Import");
-                    return;
-                }
-                if (directive.text == "Include") {
-                    const std::filesystem::path includePath = this->ResolveIncludePath(RequireStringToken(stream, "Include"), directive.source);
-                    this->RequireExistingProbeFile(includePath, directive.source, "Include");
-                    return;
-                }
-                if (directive.text == "Integrator") {
-                    this->RequireOptions(directive, "Integrator");
-                    const std::string type = RequireStringToken(stream, "Integrator");
-                    std::vector<ProbeParameter> parameters = this->ParseProbeParameters(stream);
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Integrator, type, {}, directive.source);
-                    const std::string lightSampler = ProbeStringParameter(parameters, "lightsampler", {});
-                    if (!lightSampler.empty()) this->AddFeature(PbrtSceneProbeFeatureCategory::LightSampler, lightSampler, {}, directive.source);
-                    return;
-                }
-                if (directive.text == "LightSource") {
-                    this->RequireWorld(directive, "LightSource");
-                    const std::string type = RequireStringToken(stream, "LightSource");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Light, type, {}, directive.source);
-                    this->AddTransformFeatureIfNeeded(std::format("light \"{}\"", type), directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "LookAt") {
-                    std::array<float, 9> values{};
-                    for (float& value : values) value = ParseFloatToken(RequireToken(stream, "LookAt"));
-                    this->ApplyActiveTransform(LookAt(Vector3{values[0], values[1], values[2]}, Vector3{values[3], values[4], values[5]}, Vector3{values[6], values[7], values[8]}));
-                    return;
-                }
-                if (directive.text == "MakeNamedMaterial") {
-                    this->RequireWorld(directive, "MakeNamedMaterial");
-                    const std::string name = RequireStringToken(stream, "MakeNamedMaterial");
-                    std::vector<ProbeParameter> parameters = this->ParseProbeParameters(stream);
-                    const std::string type = ProbeStringParameter(parameters, "type", {});
-                    if (type.empty()) throw ParseError(directive.source, std::format("MakeNamedMaterial \"{}\" requires \"string type\"", name));
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Material, type, {}, directive.source);
-                    return;
-                }
-                if (directive.text == "MakeNamedMedium") {
-                    const std::string name = RequireStringToken(stream, "MakeNamedMedium");
-                    std::vector<ProbeParameter> parameters = this->ParseProbeParameters(stream);
-                    const std::string type = ProbeStringParameter(parameters, "type", {});
-                    if (type.empty()) throw ParseError(directive.source, std::format("MakeNamedMedium \"{}\" requires \"string type\"", name));
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Medium, type, {}, directive.source);
-                    this->AddTransformFeatureIfNeeded(std::format("medium \"{}\"", name), directive.source);
-                    return;
-                }
-                if (directive.text == "Material") {
-                    this->RequireWorld(directive, "Material");
-                    std::string type = RequireStringToken(stream, "Material");
-                    if (type.empty()) type = "interface";
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Material, type, {}, directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "MediumInterface") {
-                    this->MediumInterface(stream);
-                    return;
-                }
-                if (directive.text == "NamedMaterial") {
-                    this->RequireWorld(directive, "NamedMaterial");
-                    static_cast<void>(RequireStringToken(stream, "NamedMaterial"));
-                    return;
-                }
-                if (directive.text == "ObjectBegin") {
-                    this->ObjectBegin(RequireStringToken(stream, "ObjectBegin"), directive.source);
-                    return;
-                }
-                if (directive.text == "ObjectEnd") {
-                    this->ObjectEnd(directive.source);
-                    return;
-                }
-                if (directive.text == "ObjectInstance") {
-                    this->ObjectInstance(RequireStringToken(stream, "ObjectInstance"), directive.source);
-                    return;
-                }
-                if (directive.text == "Option") {
-                    const std::string name = RequireStringToken(stream, "Option");
-                    Token value = RequireToken(stream, "Option");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Option, name, value.text, directive.source);
-                    return;
-                }
-                if (directive.text == "PixelFilter") {
-                    this->RequireOptions(directive, "PixelFilter");
-                    const std::string type = RequireStringToken(stream, "PixelFilter");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::PixelFilter, type, {}, directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "ReverseOrientation") {
-                    this->RequireWorld(directive, "ReverseOrientation");
-                    return;
-                }
-                if (directive.text == "Rotate") {
-                    const float angle = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    const float x = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    const float y = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    const float z = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    this->ApplyActiveTransform(Rotate(angle, Vector3{x, y, z}));
-                    return;
-                }
-                if (directive.text == "Sampler") {
-                    this->RequireOptions(directive, "Sampler");
-                    const std::string type = RequireStringToken(stream, "Sampler");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Sampler, type, {}, directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "Scale") {
-                    const float x = ParseFloatToken(RequireToken(stream, "Scale"));
-                    const float y = ParseFloatToken(RequireToken(stream, "Scale"));
-                    const float z = ParseFloatToken(RequireToken(stream, "Scale"));
-                    this->ApplyActiveTransform(Scale(x, y, z));
-                    return;
-                }
-                if (directive.text == "Shape") {
-                    this->RequireWorld(directive, "Shape");
-                    const std::string type = RequireStringToken(stream, "Shape");
-                    this->AddFeature(PbrtSceneProbeFeatureCategory::Shape, type, {}, directive.source);
-                    this->AddTransformFeatureIfNeeded(std::format("shape \"{}\"", type), directive.source);
-                    this->ParseProbeParameters(stream);
-                    return;
-                }
-                if (directive.text == "Texture") {
-                    this->RequireWorld(directive, "Texture");
-                    this->Texture(stream, directive.source);
-                    return;
-                }
-                if (directive.text == "Transform") {
-                    this->Transform(stream, directive.source);
-                    return;
-                }
-                if (directive.text == "TransformTimes") {
-                    this->RequireOptions(directive, "TransformTimes");
-                    this->graphicsState.transform.startTime = ParseFloatToken(RequireToken(stream, "TransformTimes"));
-                    this->graphicsState.transform.endTime = ParseFloatToken(RequireToken(stream, "TransformTimes"));
-                    return;
-                }
-                if (directive.text == "Translate") {
-                    const float x = ParseFloatToken(RequireToken(stream, "Translate"));
-                    const float y = ParseFloatToken(RequireToken(stream, "Translate"));
-                    const float z = ParseFloatToken(RequireToken(stream, "Translate"));
-                    this->ApplyActiveTransform(Translate(Vector3{x, y, z}));
-                    return;
-                }
-                if (directive.text == "WorldBegin") {
-                    this->RequireOptions(directive, "WorldBegin");
-                    const float startTime = this->graphicsState.transform.startTime;
-                    const float endTime = this->graphicsState.transform.endTime;
-                    this->currentBlock = BlockState::World;
-                    this->graphicsState.transform = PbrtSceneTransformSet{.startTime = startTime, .endTime = endTime};
-                    this->graphicsState.activeStart = true;
-                    this->graphicsState.activeEnd = true;
-                    this->namedCoordinateSystems["world"] = this->graphicsState.transform;
-                    return;
-                }
-                if (directive.text == "WorldEnd") throw ParseError(directive.source, "WorldEnd is not used by PBRT v4 scene files");
-                throw ParseError(directive.source, std::format("Unknown PBRT directive \"{}\"", directive.text));
-            }
-
-            void RequireOptions(const Token& directive, const std::string_view name) const {
-                if (this->currentBlock != BlockState::Options) throw ParseError(directive.source, std::format("{} is only valid before WorldBegin", name));
-            }
-
-            void RequireWorld(const Token& directive, const std::string_view name) const {
-                if (this->currentBlock == BlockState::Options) throw PbrtSceneNotTopLevel{};
-                if (this->currentBlock != BlockState::World) throw ParseError(directive.source, std::format("{} is only valid after WorldBegin", name));
-            }
-
-            void RequireWorld(const SceneSourceLocation& source, const std::string_view name) const {
-                if (this->currentBlock == BlockState::Options) throw PbrtSceneNotTopLevel{};
-                if (this->currentBlock != BlockState::World) throw ParseError(source, std::format("{} is only valid after WorldBegin", name));
-            }
-
-            void ApplyActiveTransform(const PbrtSceneTransform& transform) {
-                ApplyTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
-            }
-
-            void SetActiveTransform(const PbrtSceneTransform& transform) {
-                SetTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
-            }
-
-            void ActiveTransform(const Token& token, const SceneSourceLocation& source) {
-                if (token.kind != TokenKind::Word) throw ParseError(token.source, "ActiveTransform expects StartTime, EndTime, or All");
-                if (token.text == "StartTime") {
-                    this->graphicsState.activeStart = true;
-                    this->graphicsState.activeEnd = false;
-                    return;
-                }
-                if (token.text == "EndTime") {
-                    this->graphicsState.activeStart = false;
-                    this->graphicsState.activeEnd = true;
-                    return;
-                }
-                if (token.text == "All") {
-                    this->graphicsState.activeStart = true;
-                    this->graphicsState.activeEnd = true;
-                    return;
-                }
-                throw ParseError(source, std::format("Unknown ActiveTransform target \"{}\"", token.text));
-            }
-
-            void PopGraphicsState(const Token& directive) {
-                if (this->stateStack.empty() || this->stackKinds.empty() || this->stackKinds.back() != 'a') throw ParseError(directive.source, std::format("{} without matching begin", directive.text));
-                this->graphicsState = std::move(this->stateStack.back());
-                this->stateStack.pop_back();
-                this->stackKinds.pop_back();
-            }
-
-            void ReadBracketedMatrix(PbrtTokenStream& stream, const std::string_view context, std::array<float, 16>* values) const {
-                Token open = RequireToken(stream, context);
-                if (open.kind != TokenKind::LeftBracket) throw ParseError(open.source, std::format("{} expects '['", context));
-                for (float& value : *values) value = ParseFloatToken(RequireToken(stream, context));
-                Token close = RequireToken(stream, context);
-                if (close.kind != TokenKind::RightBracket) throw ParseError(close.source, std::format("{} expects ']'", context));
-            }
-
-            void Transform(PbrtTokenStream& stream, const SceneSourceLocation& source) {
-                std::array<float, 16> values{};
-                this->ReadBracketedMatrix(stream, "Transform", &values);
-                this->SetActiveTransform(TransformFromPbrtMatrix(values, source));
-            }
-
-            void ConcatTransform(PbrtTokenStream& stream, const SceneSourceLocation& source) {
-                std::array<float, 16> values{};
-                this->ReadBracketedMatrix(stream, "ConcatTransform", &values);
-                this->ApplyActiveTransform(TransformFromPbrtMatrix(values, source));
-            }
-
-            void MediumInterface(PbrtTokenStream& stream) {
-                static_cast<void>(RequireStringToken(stream, "MediumInterface"));
-                std::optional<Token> outsideToken = stream.Next();
-                if (!outsideToken.has_value()) return;
-                if (outsideToken->kind == TokenKind::QuotedString) return;
-                stream.PushBack(std::move(*outsideToken));
-            }
-
-            void ObjectBegin(std::string name, const SceneSourceLocation& source) {
-                this->RequireWorld(source, "ObjectBegin");
-                if (this->activeObjectDefinition) throw ParseError(source, "ObjectBegin cannot be nested inside another ObjectBegin");
-                this->stateStack.push_back(this->graphicsState);
-                this->stackKinds.push_back('o');
-                this->activeObjectDefinition = true;
-                this->activeObjectDefinitionName = std::move(name);
-            }
-
-            void ObjectEnd(const SceneSourceLocation& source) {
-                this->RequireWorld(source, "ObjectEnd");
-                if (!this->activeObjectDefinition) throw ParseError(source, "ObjectEnd without ObjectBegin");
-                if (this->stateStack.empty() || this->stackKinds.empty() || this->stackKinds.back() != 'o') throw ParseError(source, "ObjectEnd does not match the current graphics state stack");
-                this->graphicsState = std::move(this->stateStack.back());
-                this->stateStack.pop_back();
-                this->stackKinds.pop_back();
-                this->activeObjectDefinition = false;
-                this->activeObjectDefinitionName.clear();
-            }
-
-            void ObjectInstance(std::string name, const SceneSourceLocation& source) {
-                this->RequireWorld(source, "ObjectInstance");
-                if (this->activeObjectDefinition) throw ParseError(source, "ObjectInstance cannot be used inside ObjectBegin");
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Shape, "objectinstance", std::move(name), source);
-                this->AddTransformFeatureIfNeeded("object instance", source);
-            }
-
-            void Texture(PbrtTokenStream& stream, const SceneSourceLocation& source) {
-                static_cast<void>(RequireStringToken(stream, "Texture"));
-                const std::string kind = RequireStringToken(stream, "Texture");
-                const std::string type = RequireStringToken(stream, "Texture");
-                if (kind != "float" && kind != "spectrum") throw ParseError(source, std::format("Texture has unsupported value type \"{}\"", kind));
-                this->AddFeature(PbrtSceneProbeFeatureCategory::Texture, type, kind, source);
-                this->AddTransformFeatureIfNeeded(std::format("texture \"{}\"", type), source);
-                this->ParseProbeParameters(stream);
-            }
-
-            void Finish() const {
-                if (!this->stateStack.empty()) throw std::runtime_error(std::format("{}: missing AttributeEnd/ObjectEnd for scene probe stack", this->report.source));
-                if (this->activeObjectDefinition) throw std::runtime_error(std::format("{}: missing ObjectEnd", this->report.source));
-                if (this->currentBlock != BlockState::World) throw PbrtSceneNotTopLevel{};
-            }
-
-            PbrtSceneProbeReport report{};
-            const std::stop_token* stopToken{};
-            std::filesystem::path inputFile;
-            std::filesystem::path searchDirectory;
-            GraphicsState graphicsState{};
-            BlockState currentBlock{BlockState::Options};
-            std::vector<GraphicsState> stateStack{};
-            std::vector<char> stackKinds{};
-            std::map<std::string, PbrtSceneTransformSet> namedCoordinateSystems{};
-            bool activeObjectDefinition{false};
-            std::string activeObjectDefinitionName{};
-        };
-
         class PbrtSceneBuilder {
         public:
-            explicit PbrtSceneBuilder(std::filesystem::path inputFile, const std::stop_token* stopToken = nullptr) : stopToken(stopToken), inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
-                CheckSceneStop(this->stopToken);
+            explicit PbrtSceneBuilder(std::filesystem::path inputFile) : inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
                 this->scene.name   = this->inputFile.stem().string();
                 this->scene.title  = this->inputFile.stem().string();
                 this->scene.source = this->inputFile.string();
@@ -1873,9 +1060,7 @@ namespace spectra::scene {
             }
 
             [[nodiscard]] PbrtSceneSnapshot Parse() {
-                CheckSceneStop(this->stopToken);
                 this->ParseFile(this->inputFile);
-                CheckSceneStop(this->stopToken);
                 this->Finish();
                 return std::move(this->scene);
             }
@@ -1905,7 +1090,6 @@ namespace spectra::scene {
 
             void ResolveParameterPaths(std::vector<PbrtSceneParameter>* parameters, const EntityUse entityUse) const {
                 for (PbrtSceneParameter& parameter : *parameters) {
-                    CheckSceneStop(this->stopToken);
                     std::vector<std::string>* values = ParameterStringValues(&parameter);
                     if (values == nullptr) continue;
                     if (entityUse == EntityUse::Film && parameter.name == "filename") continue;
@@ -1916,7 +1100,6 @@ namespace spectra::scene {
                     if (!directFileParameter && !apertureParameter && !spectrumParameter) continue;
 
                     for (std::string& value : *values) {
-                        CheckSceneStop(this->stopToken);
                         if (value.empty()) continue;
                         if (apertureParameter && IsBuiltInApertureName(value)) continue;
                         if (spectrumParameter && !IsPathLike(value) && !std::filesystem::exists(this->searchDirectory / std::filesystem::path(value))) continue;
@@ -1929,12 +1112,10 @@ namespace spectra::scene {
                 std::vector<PbrtSceneParameter> merged;
                 merged.reserve(attributes.size() + parameters.size());
                 for (PbrtSceneParameter parameter : attributes) {
-                    CheckSceneStop(this->stopToken);
                     parameter.mayBeUnused = true;
                     merged.push_back(std::move(parameter));
                 }
                 for (PbrtSceneParameter& parameter : parameters) {
-                    CheckSceneStop(this->stopToken);
                     merged.push_back(std::move(parameter));
                 }
                 this->ResolveParameterPaths(&merged, entityUse);
@@ -1961,10 +1142,8 @@ namespace spectra::scene {
             }
 
             void ParseFile(const std::filesystem::path& path) {
-                CheckSceneStop(this->stopToken);
-                PbrtTokenStream stream(path, this->stopToken);
+                PbrtTokenStream stream(path);
                 while (std::optional<Token> directive = stream.Next()) {
-                    CheckSceneStop(this->stopToken);
                     this->ParseDirective(stream, *directive);
                 }
             }
@@ -1972,7 +1151,6 @@ namespace spectra::scene {
             [[nodiscard]] std::vector<PbrtSceneParameter> ParseParameters(PbrtTokenStream& stream) {
                 std::vector<PbrtSceneParameter> parameters;
                 while (true) {
-                    CheckSceneStop(this->stopToken);
                     std::optional<Token> declaration = stream.Next();
                     if (!declaration.has_value()) return parameters;
                     if (declaration->kind != TokenKind::QuotedString) {
@@ -1984,7 +1162,6 @@ namespace spectra::scene {
                     Token value              = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                     if (value.kind == TokenKind::LeftBracket) {
                         while (true) {
-                            CheckSceneStop(this->stopToken);
                             Token element = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                             if (element.kind == TokenKind::RightBracket) break;
                             this->AppendParameterValue(&parameter, element);
@@ -2044,7 +1221,6 @@ namespace spectra::scene {
             }
 
             void ParseDirective(PbrtTokenStream& stream, const Token& directive) {
-                CheckSceneStop(this->stopToken);
                 if (directive.kind != TokenKind::Word) throw ParseError(directive.source, "PBRT directive must be an unquoted identifier");
 
                 if (directive.text == "AttributeBegin" || directive.text == "TransformBegin") {
@@ -2526,7 +1702,6 @@ namespace spectra::scene {
             }
 
             PbrtSceneSnapshot scene{};
-            const std::stop_token* stopToken{};
             std::filesystem::path inputFile;
             std::filesystem::path searchDirectory;
             GraphicsState graphicsState{};
@@ -2548,10 +1723,6 @@ namespace spectra::scene {
             return std::filesystem::absolute(std::filesystem::path(SPECTRA_SCENES_ROOT)).lexically_normal();
         }
 
-        [[nodiscard]] std::string PathId(std::filesystem::path path) {
-            return path.generic_string();
-        }
-
         [[nodiscard]] std::filesystem::path PbrtSceneFilenameStem(const std::filesystem::path& path) {
             std::filesystem::path filename = path.filename();
             if (HasExtension(filename, ".gz")) filename = filename.stem();
@@ -2561,28 +1732,6 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string SceneDisplayName(const std::filesystem::path& relativePath) {
             return PbrtSceneFilenameStem(relativePath).string();
-        }
-
-        [[nodiscard]] std::string SceneGroupName(const std::filesystem::path& relativePath) {
-            if (relativePath.empty()) return "scene";
-            const std::filesystem::path::iterator begin = relativePath.begin();
-            if (begin == relativePath.end()) return "scene";
-            return begin->string();
-        }
-
-        void RefreshCatalogCounts(PbrtSceneCatalog* catalog) {
-            catalog->pending_count     = 0;
-            catalog->candidate_count   = 0;
-            catalog->non_scene_count   = 0;
-            catalog->invalid_count     = 0;
-            for (const PbrtSceneCatalogEntry& entry : catalog->entries) {
-                switch (entry.state) {
-                case PbrtSceneCatalogEntryState::Pending: ++catalog->pending_count; break;
-                case PbrtSceneCatalogEntryState::Candidate: ++catalog->candidate_count; break;
-                case PbrtSceneCatalogEntryState::NonScene: ++catalog->non_scene_count; break;
-                case PbrtSceneCatalogEntryState::Invalid: ++catalog->invalid_count; break;
-                }
-            }
         }
 
         [[nodiscard]] std::filesystem::path ResolveScenePathByUniqueStem(const std::filesystem::path& root, const std::string& name) {
@@ -2616,58 +1765,7 @@ namespace spectra::scene {
 
             throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", requested));
         }
-
-        constexpr std::size_t PbrtCatalogBackgroundWorkerCount = 2u;
     } // namespace
-
-    PbrtSceneWorkspace::PbrtSceneWorkspace(PbrtSceneSnapshot snapshot) {
-        if (snapshot.revision.value == 0) snapshot.revision = SceneRevision{1};
-        this->currentSnapshot = std::make_shared<PbrtSceneSnapshot>(std::move(snapshot));
-    }
-
-    bool PbrtSceneWorkspace::loaded() const {
-        return this->currentSnapshot != nullptr;
-    }
-
-    std::shared_ptr<const PbrtSceneSnapshot> PbrtSceneWorkspace::snapshot() const {
-        if (this->currentSnapshot == nullptr) throw std::runtime_error("PBRT scene workspace does not contain a loaded snapshot");
-        return this->currentSnapshot;
-    }
-
-    PbrtSceneEditBatch PbrtSceneWorkspace::replace_snapshot(PbrtSceneSnapshot snapshot) {
-        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded PBRT scene workspace");
-
-        PbrtSceneSnapshot next = std::move(snapshot);
-        const SceneRevision before_revision = this->currentSnapshot->revision;
-        next.revision = SceneRevision{before_revision.value + 1};
-        this->currentSnapshot = std::make_shared<PbrtSceneSnapshot>(std::move(next));
-
-        PbrtSceneEditBatch batch = this->fullEdit(before_revision);
-        this->lastEdit = batch;
-        return batch;
-    }
-
-    PbrtSceneEditBatch PbrtSceneWorkspace::changes_since(const SceneRevision revision) const {
-        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot query PBRT scene changes from an unloaded workspace");
-        if (revision == this->currentSnapshot->revision) {
-            return PbrtSceneEditBatch{
-                .beforeRevision = revision,
-                .afterRevision  = revision,
-                .dirty          = PbrtSceneDirtyFlags::None,
-            };
-        }
-        if (revision.value == 0) return this->fullEdit(revision);
-        if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
-        throw std::runtime_error("PBRT scene edit history for the requested revision is unavailable");
-    }
-
-    PbrtSceneEditBatch PbrtSceneWorkspace::fullEdit(const SceneRevision before) const {
-        return PbrtSceneEditBatch{
-            .beforeRevision = before,
-            .afterRevision  = this->currentSnapshot->revision,
-            .dirty          = PbrtSceneDirtyFlags::Snapshot,
-        };
-    }
 
     PbrtSceneInfo DescribeScene(const PbrtSceneSnapshot& scene) {
         const auto one_float_parameter = [](const std::vector<PbrtSceneParameter>& parameters, const std::string& name, const float default_value) {
@@ -2725,289 +1823,15 @@ namespace spectra::scene {
         };
     }
 
-    PbrtSceneBrowserSession::PbrtSceneBrowserSession(std::string initial_scene_id) : currentWorkspace(std::make_shared<PbrtSceneWorkspace>()) {
-        if (initial_scene_id.empty()) throw std::runtime_error("PBRT catalog session initial scene id must not be empty");
-        this->catalog = DiscoverPbrtSceneCatalog();
-        this->catalogProbeClaimed.assign(this->catalog.entries.size(), false);
-        const std::vector<PbrtSceneCatalogEntry>::iterator active_scene_iter = std::ranges::find_if(this->catalog.entries, [&initial_scene_id](const PbrtSceneCatalogEntry& entry) { return entry.id == initial_scene_id; });
-        if (active_scene_iter == this->catalog.entries.end()) throw std::runtime_error(std::format("PBRT scene catalog does not contain required initial scene \"{}\"", initial_scene_id));
-        ProbePbrtSceneCatalogEntry(*active_scene_iter);
-        if (active_scene_iter->state == PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("PBRT initial scene \"{}\" is not probeable: {}", initial_scene_id, active_scene_iter->issues.empty() ? "no diagnostics" : active_scene_iter->issues.front().message));
-        if (active_scene_iter->state == PbrtSceneCatalogEntryState::NonScene) throw std::runtime_error(std::format("PBRT initial scene \"{}\" is not a top-level scene", initial_scene_id));
-        if (active_scene_iter->state != PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("PBRT initial scene \"{}\" did not produce a candidate scene probe", initial_scene_id));
-        PbrtSceneSnapshot initial_scene = ParsePbrtSceneCatalogEntry(*active_scene_iter);
-        active_scene_iter->revision = initial_scene.revision;
-        if (active_scene_iter->probe.has_value()) active_scene_iter->probe->revision = initial_scene.revision;
-        active_scene_iter->issues.clear();
-        this->activeSceneIndex = static_cast<std::size_t>(std::distance(this->catalog.entries.begin(), active_scene_iter));
-        this->selectedSceneIndex = this->activeSceneIndex;
-        *this->currentWorkspace = PbrtSceneWorkspace{std::move(initial_scene)};
-        this->refresh_catalog_counts();
-    }
-
-    PbrtSceneBrowserSession::~PbrtSceneBrowserSession() noexcept {
-        this->stop_background_probe_workers();
-    }
-
-    void PbrtSceneBrowserSession::start_background_probe_workers() {
-        if (!this->backgroundWorkers.empty()) throw std::runtime_error("PBRT catalog background probe workers are already running");
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            this->catalogProbeClaimed.assign(this->catalog.entries.size(), false);
-        }
-        this->backgroundWorkers.reserve(PbrtCatalogBackgroundWorkerCount);
-        for (std::size_t worker_index = 0; worker_index < PbrtCatalogBackgroundWorkerCount; ++worker_index) {
-            this->backgroundWorkers.emplace_back([this](const std::stop_token stop_token) { this->run_background_probe_worker(stop_token); });
-        }
-        this->backgroundCondition.notify_all();
-    }
-
-    void PbrtSceneBrowserSession::stop_background_probe_workers() noexcept {
-        for (std::jthread& worker : this->backgroundWorkers) worker.request_stop();
-        this->backgroundCondition.notify_all();
-        for (std::jthread& worker : this->backgroundWorkers) {
-            if (worker.joinable()) worker.join();
-        }
-        this->backgroundWorkers.clear();
-        std::scoped_lock lock{this->catalogMutex};
-        this->catalogProbeClaimed.assign(this->catalog.entries.size(), false);
-    }
-
-    void PbrtSceneBrowserSession::stop_background_probe_workers_if_idle() noexcept {
-        bool should_stop = false;
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            should_stop = !this->backgroundWorkers.empty() && this->catalog.pending_count == 0;
-        }
-        if (should_stop) this->stop_background_probe_workers();
-    }
-
-    std::shared_ptr<PbrtSceneWorkspace> PbrtSceneBrowserSession::workspace() const {
-        return this->currentWorkspace;
-    }
-
-    PbrtSceneCatalog PbrtSceneBrowserSession::catalog_snapshot() const {
-        std::scoped_lock lock{this->catalogMutex};
-        return this->catalog;
-    }
-
-    std::size_t PbrtSceneBrowserSession::active_scene_index() const {
-        std::scoped_lock lock{this->catalogMutex};
-        return this->activeSceneIndex;
-    }
-
-    std::size_t PbrtSceneBrowserSession::selected_scene_index() const {
-        std::scoped_lock lock{this->catalogMutex};
-        return this->selectedSceneIndex;
-    }
-
-    void PbrtSceneBrowserSession::select_scene(const std::size_t scene_index) {
-        std::scoped_lock lock{this->catalogMutex};
-        if (scene_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT scene selection index is out of range");
-        this->selectedSceneIndex = scene_index;
-    }
-
-    PbrtSceneSnapshot PbrtSceneBrowserSession::parse_selected_scene() const {
-        std::size_t selected_scene_index{};
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            selected_scene_index = this->selectedSceneIndex;
-        }
-        return this->parse_scene(selected_scene_index);
-    }
-
-    PbrtSceneEditBatch PbrtSceneBrowserSession::commit_selected_scene(PbrtSceneSnapshot snapshot) {
-        std::size_t selected_scene_index{};
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            selected_scene_index = this->selectedSceneIndex;
-        }
-        return this->commit_scene(selected_scene_index, std::move(snapshot));
-    }
-
-    PbrtSceneSnapshot PbrtSceneBrowserSession::parse_scene(const std::size_t scene_index) const {
-        PbrtSceneCatalogEntry entry{};
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            if (scene_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT scene load index is out of range");
-            entry = this->catalog.entries.at(scene_index);
-        }
-        if (entry.state != PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Cannot load disabled PBRT scene \"{}\"", entry.id));
-        return ParsePbrtSceneCatalogEntry(entry);
-    }
-
-    PbrtSceneEditBatch PbrtSceneBrowserSession::commit_scene(const std::size_t scene_index, PbrtSceneSnapshot snapshot) {
-        if (this->currentWorkspace == nullptr) throw std::runtime_error("PBRT catalog session workspace is unavailable");
-        if (snapshot.name.empty()) throw std::runtime_error("PBRT catalog session cannot commit a snapshot with an empty scene id");
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            if (scene_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT scene load index is out of range");
-            if (this->catalog.entries.at(scene_index).id != snapshot.name) throw std::runtime_error(std::format("PBRT catalog entry \"{}\" cannot commit snapshot \"{}\"", this->catalog.entries.at(scene_index).id, snapshot.name));
-        }
-        PbrtSceneEditBatch edit_batch{};
-        if (!this->currentWorkspace->loaded()) {
-            *this->currentWorkspace = PbrtSceneWorkspace{std::move(snapshot)};
-            edit_batch = PbrtSceneEditBatch{
-                .beforeRevision = SceneRevision{},
-                .afterRevision  = this->currentWorkspace->snapshot()->revision,
-                .dirty          = PbrtSceneDirtyFlags::Snapshot,
-            };
-        } else {
-            edit_batch = this->currentWorkspace->replace_snapshot(std::move(snapshot));
-            if (edit_batch.dirty != PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("PBRT catalog session failed to commit a scene replacement");
-        }
-        {
-            std::scoped_lock lock{this->catalogMutex};
-            this->activeSceneIndex = scene_index;
-            this->selectedSceneIndex = scene_index;
-            this->catalog.entries.at(scene_index).revision = edit_batch.afterRevision;
-            if (this->catalog.entries.at(scene_index).probe.has_value()) this->catalog.entries.at(scene_index).probe->revision = edit_batch.afterRevision;
-            this->catalog.entries.at(scene_index).state = PbrtSceneCatalogEntryState::Candidate;
-            this->catalog.entries.at(scene_index).issues.clear();
-            this->refresh_catalog_counts();
-        }
-        return edit_batch;
-    }
-
-    void PbrtSceneBrowserSession::run_background_probe_worker(const std::stop_token stop_token) {
-        while (!stop_token.stop_requested()) {
-            std::optional<std::size_t> probe_index{};
-            PbrtSceneCatalogEntry probe_entry{};
-            {
-                std::unique_lock lock{this->catalogMutex};
-                if (!this->backgroundCondition.wait(lock, stop_token, [this] { return this->has_background_probe_work_locked(); })) return;
-                probe_index = this->next_catalog_probe_index_locked();
-                if (!probe_index.has_value()) continue;
-                this->catalogProbeClaimed[*probe_index] = true;
-                probe_entry = this->catalog.entries.at(*probe_index);
-            }
-
-            if (stop_token.stop_requested()) return;
-            ProbePbrtSceneCatalogEntry(probe_entry, stop_token);
-            {
-                std::scoped_lock lock{this->catalogMutex};
-                if (stop_token.stop_requested()) return;
-                if (*probe_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT catalog probe index is out of range");
-                if (this->catalog.entries.at(*probe_index).id != probe_entry.id) throw std::runtime_error("PBRT catalog changed while probing");
-                this->catalog.entries.at(*probe_index) = std::move(probe_entry);
-                this->catalogProbeClaimed.at(*probe_index) = false;
-                this->refresh_catalog_counts();
-            }
-            this->backgroundCondition.notify_all();
-        }
-    }
-
-    void PbrtSceneBrowserSession::refresh_catalog_counts() {
-        RefreshCatalogCounts(&this->catalog);
-    }
-
-    bool PbrtSceneBrowserSession::has_background_probe_work_locked() const {
-        return this->next_catalog_probe_index_locked().has_value();
-    }
-
-    std::optional<std::size_t> PbrtSceneBrowserSession::next_catalog_probe_index_locked() const {
-        if (this->catalogProbeClaimed.size() != this->catalog.entries.size()) throw std::runtime_error("PBRT catalog probe claim table is out of sync");
-        for (std::size_t scene_index = 0; scene_index < this->catalog.entries.size(); ++scene_index) {
-            if (this->catalog.entries.at(scene_index).state != PbrtSceneCatalogEntryState::Pending) continue;
-            if (this->catalogProbeClaimed.at(scene_index)) continue;
-            return scene_index;
-        }
-        return {};
-    }
-
-    PbrtSceneCatalog DiscoverPbrtSceneCatalog() {
-        PbrtSceneCatalog catalog{.root = SceneRoot()};
-        if (!std::filesystem::exists(catalog.root)) throw std::runtime_error(std::format("{}: scene root does not exist", catalog.root.string()));
-        for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(catalog.root)) {
-            if (!entry.is_regular_file()) continue;
-            const std::filesystem::path sourcePath = std::filesystem::absolute(entry.path()).lexically_normal();
-            if (!IsPbrtSceneFile(sourcePath)) continue;
-
-            const std::filesystem::path relativePath = sourcePath.lexically_relative(catalog.root);
-            PbrtSceneCatalogEntry catalogEntry{
-                .id          = PathId(relativePath),
-                .displayName = SceneDisplayName(relativePath),
-                .group       = SceneGroupName(relativePath),
-                .relativePath = relativePath,
-                .sourcePath  = sourcePath,
-                .state       = PbrtSceneCatalogEntryState::Pending,
-            };
-            catalog.entries.push_back(std::move(catalogEntry));
-        }
-        std::ranges::sort(catalog.entries, {}, &PbrtSceneCatalogEntry::id);
-        RefreshCatalogCounts(&catalog);
-        return catalog;
-    }
-
-    PbrtSceneProbeReport ProbePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry) {
-        return ProbePbrtSceneCatalogEntry(entry, std::stop_token{});
-    }
-
-    PbrtSceneProbeReport ProbePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry, const std::stop_token stopToken) {
-        CheckSceneStop(&stopToken);
-        PbrtSceneProbeBuilder builder(entry.sourcePath, &stopToken);
-        PbrtSceneProbeReport report = builder.Probe();
-        report.name             = entry.id;
-        report.title            = entry.displayName;
-        if (report.revision.value == 0) report.revision = SceneRevision{1};
-        return report;
-    }
-
-    PbrtSceneSnapshot ParsePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry) {
-        return ParsePbrtSceneCatalogEntry(entry, std::stop_token{});
-    }
-
-    PbrtSceneSnapshot ParsePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry, const std::stop_token stopToken) {
-        CheckSceneStop(&stopToken);
-        PbrtSceneBuilder builder(entry.sourcePath, &stopToken);
+    PbrtSceneSnapshot ParsePbrtScene(const std::string_view scene_id) {
+        if (scene_id.empty()) throw std::runtime_error("PBRT scene parse requires a non-empty scene id");
+        const std::filesystem::path scenePath = ResolveScenePath(scene_id);
+        PbrtSceneBuilder builder(scenePath);
         PbrtSceneSnapshot scene = builder.Parse();
-        scene.name          = entry.id;
-        scene.title         = entry.displayName;
+        scene.name = std::string{scene_id};
+        scene.title = SceneDisplayName(scenePath);
         if (scene.revision.value == 0) scene.revision = SceneRevision{1};
         return scene;
     }
 
-    void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry) {
-        ProbePbrtSceneCatalogEntry(entry, std::stop_token{});
-    }
-
-    void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry, const std::stop_token stopToken) {
-        entry.state = PbrtSceneCatalogEntryState::Pending;
-        entry.revision = SceneRevision{};
-        entry.probe.reset();
-        entry.issues.clear();
-        try {
-            PbrtSceneProbeReport report = ProbePbrtSceneCatalogEntry(static_cast<const PbrtSceneCatalogEntry&>(entry), stopToken);
-            entry.revision          = report.revision;
-            entry.probe             = std::move(report);
-            entry.state             = PbrtSceneCatalogEntryState::Candidate;
-        } catch (const SceneOperationCancelled&) {
-            entry.state = PbrtSceneCatalogEntryState::Pending;
-            entry.revision = SceneRevision{};
-            entry.probe.reset();
-            entry.issues.clear();
-        } catch (const PbrtSceneNotTopLevel&) {
-            entry.state = PbrtSceneCatalogEntryState::NonScene;
-            entry.revision = SceneRevision{};
-            entry.probe.reset();
-            entry.issues.clear();
-        } catch (const std::exception& error) {
-            entry.state = PbrtSceneCatalogEntryState::Invalid;
-            entry.revision = SceneRevision{};
-            entry.probe.reset();
-            entry.issues.push_back(PbrtSceneDiagnostic{
-                .source  = SceneSourceLocation{.filename = entry.sourcePath.string(), .line = 1, .column = 1},
-                .message = error.what(),
-            });
-        }
-    }
-
-    PbrtSceneWorkspace BuildPbrtScene(const std::string_view name) {
-        const std::filesystem::path scenePath = ResolveScenePath(name);
-        PbrtSceneBuilder builder(scenePath);
-        PbrtSceneSnapshot scene = builder.Parse();
-        if (name.empty()) throw std::runtime_error("PBRT scene build requires a non-empty scene id");
-        scene.name = std::string{name};
-        return PbrtSceneWorkspace{std::move(scene)};
-    }
 } // namespace spectra::scene

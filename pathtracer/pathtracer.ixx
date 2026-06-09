@@ -148,13 +148,12 @@ export namespace spectra::pathtracer {
         std::vector<scene::PbrtSceneDiagnostic> diagnostics{};
     };
 
-    [[nodiscard]] PathtracerSceneSupportReport AnalyzePathtracerSceneProbe(const scene::PbrtSceneProbeReport& probe);
     [[nodiscard]] PathtracerSceneSupportReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene);
     [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtSceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource);
 
     class PathtracerRenderer final {
     public:
-        PathtracerRenderer(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
+        PathtracerRenderer(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
         ~PathtracerRenderer() noexcept;
 
         PathtracerRenderer(const PathtracerRenderer& other) = delete;
