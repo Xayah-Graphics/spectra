@@ -41,7 +41,7 @@ module;
 
 module spectra.pathtracer;
 
-import spectra.scene.pbrt;
+import spectra.scene;
 import std;
 
 namespace spectra::pathtracer {
@@ -92,7 +92,7 @@ namespace spectra::pathtracer {
             return std::format("{}:{}:{}", source.filename, source.line, source.column);
         }
 
-        [[nodiscard]] std::string FormatGpuSupportReport(const scene::PbrtSceneTranslationReport& report) {
+        [[nodiscard]] std::string FormatGpuSupportReport(const PathtracerSceneSupportReport& report) {
             std::string message = "Scene is not supported by the current GPU pathtracer:";
             for (const scene::PbrtSceneDiagnostic& diagnostic : report.diagnostics) message += std::format("\n  {}: {}", SourceString(diagnostic.source), diagnostic.message);
             return message;
@@ -110,7 +110,7 @@ namespace spectra::pathtracer {
             return default_value;
         }
 
-        void AddDiagnostic(scene::PbrtSceneTranslationReport* report, scene::SceneSourceLocation source, std::string message) {
+        void AddDiagnostic(PathtracerSceneSupportReport* report, scene::SceneSourceLocation source, std::string message) {
             report->supported = false;
             report->diagnostics.push_back(scene::PbrtSceneDiagnostic{
                 .source  = std::move(source),
@@ -118,15 +118,15 @@ namespace spectra::pathtracer {
             });
         }
 
-        void ValidateTransform(scene::PbrtSceneTranslationReport* report, const scene::PbrtSceneTransformSet& transform, const scene::SceneSourceLocation& source, const std::string_view owner) {
+        void ValidateTransform(PathtracerSceneSupportReport* report, const scene::PbrtSceneTransformSet& transform, const scene::SceneSourceLocation& source, const std::string_view owner) {
             if (transform.animated) AddDiagnostic(report, source, std::format("{} uses animated transforms, which are represented by the scene document but are not supported by the current GPU pathtracer", owner));
         }
 
-        void ValidateEntityType(scene::PbrtSceneTranslationReport* report, const scene::PbrtSceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
+        void ValidateEntityType(PathtracerSceneSupportReport* report, const scene::PbrtSceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
             if (!ContainsName(supported, entity.type)) AddDiagnostic(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
         }
 
-        void ValidateProbeFeatureType(scene::PbrtSceneTranslationReport* report, const scene::PbrtSceneProbeFeature& feature, const std::set<std::string>& supported, const std::string_view kind) {
+        void ValidateProbeFeatureType(PathtracerSceneSupportReport* report, const scene::PbrtSceneProbeFeature& feature, const std::set<std::string>& supported, const std::string_view kind) {
             if (!ContainsName(supported, feature.type)) AddDiagnostic(report, feature.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, feature.type));
         }
 
@@ -156,7 +156,7 @@ namespace spectra::pathtracer {
             PathtracerSceneCompiler(const scene::PbrtSceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
 
             void Compile() {
-                const scene::PbrtSceneTranslationReport supportReport = AnalyzePathtracerSceneSupport(this->source);
+                const PathtracerSceneSupportReport supportReport = AnalyzePathtracerSceneSupport(this->source);
                 if (!supportReport.supported) throw std::runtime_error(FormatGpuSupportReport(supportReport));
 
                 this->RegisterResourceNames();
@@ -690,7 +690,7 @@ namespace spectra::pathtracer {
         };
     } // namespace
 
-    scene::PbrtSceneTranslationReport AnalyzePathtracerSceneProbe(const scene::PbrtSceneProbeReport& probe) {
+    PathtracerSceneSupportReport AnalyzePathtracerSceneProbe(const scene::PbrtSceneProbeReport& probe) {
         static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
         static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
         static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
@@ -705,7 +705,7 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
         static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
 
-        scene::PbrtSceneTranslationReport report{.target = "Spectra Pathtracer"};
+        PathtracerSceneSupportReport report{.target = "Spectra Pathtracer"};
         for (const scene::PbrtSceneProbeFeature& feature : probe.features) {
             switch (feature.category) {
             case scene::PbrtSceneProbeFeatureCategory::PixelFilter: ValidateProbeFeatureType(&report, feature, supportedFilters, "pixel filter"); break;
@@ -741,7 +741,7 @@ namespace spectra::pathtracer {
         return report;
     }
 
-    scene::PbrtSceneTranslationReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene) {
+    PathtracerSceneSupportReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene) {
         static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
         static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
         static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
@@ -756,7 +756,7 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
         static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
 
-        scene::PbrtSceneTranslationReport report{.target = "Spectra Pathtracer"};
+        PathtracerSceneSupportReport report{.target = "Spectra Pathtracer"};
         ValidateEntityType(&report, scene.renderSettings.filter, supportedFilters, "pixel filter");
         ValidateEntityType(&report, scene.renderSettings.film, supportedFilms, "film");
         ValidateEntityType(&report, scene.renderSettings.camera, supportedCameras, "camera");

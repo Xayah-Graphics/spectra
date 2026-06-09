@@ -32,7 +32,7 @@ module;
 
 module spectra.pathtracer;
 
-import spectra.scene.pbrt;
+import spectra.scene;
 import std;
 
 namespace {
@@ -974,14 +974,14 @@ namespace spectra::pathtracer {
 
 
 namespace spectra::pathtracer {
-    [[nodiscard]] scene::PbrtSceneTranslationReport analyze_pathtracer_scene_probe(const scene::PbrtSceneProbeReport& probe) {
-        scene::PbrtSceneTranslationReport report = AnalyzePathtracerSceneProbe(probe);
+    [[nodiscard]] PathtracerSceneSupportReport analyze_pathtracer_scene_probe(const scene::PbrtSceneProbeReport& probe) {
+        PathtracerSceneSupportReport report = AnalyzePathtracerSceneProbe(probe);
         if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
         return report;
     }
 
-    [[nodiscard]] scene::PbrtSceneTranslationReport analyze_pathtracer_scene(const scene::PbrtSceneSnapshot& document) {
-        scene::PbrtSceneTranslationReport report = AnalyzePathtracerSceneSupport(document);
+    [[nodiscard]] PathtracerSceneSupportReport analyze_pathtracer_scene(const scene::PbrtSceneSnapshot& document) {
+        PathtracerSceneSupportReport report = AnalyzePathtracerSceneSupport(document);
         if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
         return report;
     }
@@ -1196,7 +1196,7 @@ namespace spectra::pathtracer {
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
         const std::shared_ptr<const scene::PbrtSceneSnapshot> source_document = this->source_workspace->snapshot();
         if (source_document == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
-        const scene::PbrtSceneTranslationReport report = analyze_pathtracer_scene(*source_document);
+        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*source_document);
         if (!report.supported) {
             std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), source_document->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
@@ -1248,7 +1248,7 @@ namespace spectra::pathtracer {
 
         if (this->scene_snapshot != nullptr && this->scene_snapshot->revision == next_snapshot->revision) return;
 
-        const scene::PbrtSceneTranslationReport report = analyze_pathtracer_scene(*next_snapshot);
+        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*next_snapshot);
         if (!report.supported) {
             std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), next_snapshot->name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);

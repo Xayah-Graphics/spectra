@@ -5,14 +5,13 @@
 import std;
 import spectra;
 import spectra.pathtracer;
-import spectra.pathtracer.pbrt.library;
+import spectra.pathtracer.pbrt.panel;
 import xayah.projects.bouncing_ball;
 import xayah.projects.cloth;
 import xayah.projects.pyro;
 import xayah.projects.sparkles;
 import spectra.rasterizer.renderer;
-import spectra.scene.preview;
-import spectra.scene.session;
+import spectra.scene;
 
 namespace spectra::app {
     static_assert(pathtracer::PathtracerHost<Spectra>);
@@ -535,10 +534,11 @@ namespace spectra::app {
 
     class PathtracerSpectraRenderer final {
     public:
-        PathtracerSpectraRenderer(std::shared_ptr<pathtracer::PbrtSceneLibrary> sceneLibrary, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_library(std::move(sceneLibrary)), camera_workspace(std::move(cameraWorkspace)) {
-            if (this->scene_library == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene library");
+        PathtracerSpectraRenderer(std::shared_ptr<scene::PbrtSceneBrowserSession> sceneBrowser, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_browser(std::move(sceneBrowser)), camera_workspace(std::move(cameraWorkspace)) {
+            if (this->scene_browser == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene browser session");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
-            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_library->scene_workspace(), this->camera_workspace);
+            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_browser->workspace(), this->camera_workspace);
+            this->scene_panel = std::make_unique<pathtracer::PbrtScenePanel>(this->scene_browser);
         }
 
         PathtracerSpectraRenderer(const PathtracerSpectraRenderer& other)                = delete;
@@ -552,13 +552,13 @@ namespace spectra::app {
         }
 
         void attach(Spectra& host) {
-            this->scene_library->attach(host);
+            this->scene_panel->attach(host);
             this->renderer->attach(pathtracer::PathtracerHostView{host});
         }
 
         void detach() noexcept {
             this->renderer->detach();
-            this->scene_library->detach();
+            this->scene_panel->detach();
         }
 
         void before_imgui_shutdown() noexcept {
@@ -587,9 +587,10 @@ namespace spectra::app {
         }
 
     private:
-        std::shared_ptr<pathtracer::PbrtSceneLibrary> scene_library{};
+        std::shared_ptr<scene::PbrtSceneBrowserSession> scene_browser{};
         std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::unique_ptr<pathtracer::PathtracerRenderer> renderer{};
+        std::unique_ptr<pathtracer::PbrtScenePanel> scene_panel{};
     };
 
     class RasterizerSpectraRenderer final {
@@ -656,10 +657,11 @@ namespace spectra::app {
     static_assert(RendererFor<PathtracerSpectraRenderer, Spectra>);
     static_assert(RendererFor<RasterizerSpectraRenderer, Spectra>);
 
-    void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, scene::SceneSourceRegistry sceneSourceRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
+    void RegisterRenderers(Spectra& app, std::shared_ptr<scene::PbrtSceneBrowserSession> pbrtSceneBrowser, scene::SceneSourceRegistry sceneSourceRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
+        if (pbrtSceneBrowser == nullptr) throw std::runtime_error("Renderer registration requires a PBRT scene browser session");
         if (cameraWorkspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
         app.register_renderer(RasterizerSpectraRenderer{std::move(sceneSourceRegistry), cameraWorkspace});
-        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneLibrary), std::move(cameraWorkspace)});
+        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneBrowser), std::move(cameraWorkspace)});
     }
 } // namespace spectra::app
 
@@ -667,12 +669,12 @@ int main(const int argc, char**) {
     try {
         if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
-        std::shared_ptr<spectra::pathtracer::PbrtSceneLibrary> pbrt_scene_library = std::make_shared<spectra::pathtracer::PbrtSceneLibrary>(std::string{spectra::scene::CornellBoxSceneId});
+        std::shared_ptr<spectra::scene::PbrtSceneBrowserSession> pbrt_scene_browser = std::make_shared<spectra::scene::PbrtSceneBrowserSession>(std::string{spectra::scene::CornellBoxSceneId});
         spectra::scene::SceneSourceRegistry scene_source_registry = spectra::app::MakeSceneSourceRegistry();
         std::shared_ptr<spectra::scene::SceneCameraWorkspace> camera_workspace = std::make_shared<spectra::scene::SceneCameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_library), std::move(scene_source_registry), std::move(camera_workspace));
+        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_browser), std::move(scene_source_registry), std::move(camera_workspace));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

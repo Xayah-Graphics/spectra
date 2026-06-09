@@ -6,14 +6,8 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         scene.ixx
-        pbrt.ixx
-        preview.ixx
-        session.ixx
         PRIVATE
         scene.cpp
-        pbrt.cpp
-        preview.cpp
-        session.cpp
 )
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
 target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB)

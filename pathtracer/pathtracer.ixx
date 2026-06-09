@@ -13,7 +13,7 @@ module;
 
 export module spectra.pathtracer;
 
-export import spectra.scene.pbrt;
+export import spectra.scene;
 
 import std;
 
@@ -142,8 +142,14 @@ export namespace spectra::pathtracer {
         std::move_only_function<void(PathtracerToolbarAction)> registerToolbarActionCallback{};
     };
 
-    [[nodiscard]] scene::PbrtSceneTranslationReport AnalyzePathtracerSceneProbe(const scene::PbrtSceneProbeReport& probe);
-    [[nodiscard]] scene::PbrtSceneTranslationReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene);
+    struct PathtracerSceneSupportReport {
+        std::string target{};
+        bool supported{true};
+        std::vector<scene::PbrtSceneDiagnostic> diagnostics{};
+    };
+
+    [[nodiscard]] PathtracerSceneSupportReport AnalyzePathtracerSceneProbe(const scene::PbrtSceneProbeReport& probe);
+    [[nodiscard]] PathtracerSceneSupportReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene);
     [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtSceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource);
 
     class PathtracerRenderer final {

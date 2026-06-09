@@ -18,7 +18,7 @@
 #include <vector>
 
 import spectra.pathtracer;
-import spectra.scene.pbrt;
+import spectra.scene;
 
 namespace {
     class UsageError : public std::runtime_error {
