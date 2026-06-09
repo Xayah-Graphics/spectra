@@ -9,7 +9,4 @@ AGENTS.md
 archlinux.bat
 imgui.ini
 scenes/*
-!scenes/cornell-box/
-!scenes/cornell-box/LICENSE.txt
-!scenes/cornell-box/cornell-box.pbrt
 *.md

@@ -148,7 +148,7 @@ export namespace spectra::pathtracer {
 
     class PathtracerRenderer final {
     public:
-        explicit PathtracerRenderer(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace);
+        PathtracerRenderer(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
         ~PathtracerRenderer() noexcept;
 
         PathtracerRenderer(const PathtracerRenderer& other) = delete;

@@ -703,8 +703,9 @@ namespace spectra::app {
 
     class RasterizerSceneManager final {
     public:
-        explicit RasterizerSceneManager(RasterizerSceneRegistry registry) : registry(std::move(registry)) {
+        RasterizerSceneManager(RasterizerSceneRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : registry(std::move(registry)), camera_workspace(std::move(cameraWorkspace)) {
             if (this->registry.size() == 0u) throw std::runtime_error("Rasterizer scene manager requires at least one scene");
+            if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer scene manager requires a scene camera workspace");
             this->slots.resize(this->registry.size());
             this->ensure_slot(0u);
         }
@@ -726,7 +727,7 @@ namespace spectra::app {
             if (next_index >= this->slots.size()) throw std::runtime_error("Pending rasterizer scene index is out of range");
             if (next_index == this->active_index) return;
             this->active_index = next_index;
-            renderer.set_scene_workspace(this->active_workspace());
+            renderer.set_scene_workspace(this->active_workspace(), this->camera_workspace);
         }
 
         void draw_control_panel() {
@@ -811,6 +812,7 @@ namespace spectra::app {
 
     private:
         RasterizerSceneRegistry registry{};
+        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::vector<RasterizerSceneSlot> slots{};
         std::size_t active_index{};
         std::optional<std::size_t> pending_active_index{};
@@ -865,9 +867,10 @@ namespace spectra::app {
 
     class PathtracerSpectraRenderer final {
     public:
-        explicit PathtracerSpectraRenderer(std::shared_ptr<pathtracer::PbrtSceneLibrary> sceneLibrary) : scene_library(std::move(sceneLibrary)) {
+        PathtracerSpectraRenderer(std::shared_ptr<pathtracer::PbrtSceneLibrary> sceneLibrary, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_library(std::move(sceneLibrary)), camera_workspace(std::move(cameraWorkspace)) {
             if (this->scene_library == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene library");
-            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_library->scene_workspace());
+            if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
+            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_library->scene_workspace(), this->camera_workspace);
         }
 
         PathtracerSpectraRenderer(const PathtracerSpectraRenderer& other)                = delete;
@@ -917,13 +920,15 @@ namespace spectra::app {
 
     private:
         std::shared_ptr<pathtracer::PbrtSceneLibrary> scene_library{};
+        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::unique_ptr<pathtracer::PathtracerRenderer> renderer{};
     };
 
     class RasterizerSpectraRenderer final {
     public:
-        explicit RasterizerSpectraRenderer(RasterizerSceneRegistry registry) : scene_manager(std::make_shared<RasterizerSceneManager>(std::move(registry))), renderer(std::make_unique<rasterizer::Renderer>(this->scene_manager->active_workspace())) {
+        RasterizerSpectraRenderer(RasterizerSceneRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_manager(std::make_shared<RasterizerSceneManager>(std::move(registry), cameraWorkspace)), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_manager->active_workspace(), this->camera_workspace)) {
             if (this->scene_manager == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene manager");
+            if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
             this->renderer->set_control_panel_extension([sceneManager = this->scene_manager] { sceneManager->draw_control_panel(); });
         }
 
@@ -976,15 +981,17 @@ namespace spectra::app {
 
     private:
         std::shared_ptr<RasterizerSceneManager> scene_manager{};
+        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::unique_ptr<rasterizer::Renderer> renderer{};
     };
 
     static_assert(RendererFor<PathtracerSpectraRenderer, Spectra>);
     static_assert(RendererFor<RasterizerSpectraRenderer, Spectra>);
 
-    void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, RasterizerSceneRegistry rasterizerSceneRegistry) {
-        app.register_renderer(RasterizerSpectraRenderer{std::move(rasterizerSceneRegistry)});
-        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneLibrary)});
+    void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, RasterizerSceneRegistry rasterizerSceneRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
+        if (cameraWorkspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
+        app.register_renderer(RasterizerSpectraRenderer{std::move(rasterizerSceneRegistry), cameraWorkspace});
+        app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneLibrary), std::move(cameraWorkspace)});
     }
 } // namespace spectra::app
 
@@ -994,9 +1001,10 @@ int main(const int argc, char**) {
 
         std::shared_ptr<spectra::pathtracer::PbrtSceneLibrary> pbrt_scene_library = std::make_shared<spectra::pathtracer::PbrtSceneLibrary>(std::string{spectra::scene::CornellBoxSceneId});
         spectra::app::RasterizerSceneRegistry rasterizer_scene_registry = spectra::app::MakeRasterizerSceneRegistry();
+        std::shared_ptr<spectra::scene::SceneCameraWorkspace> camera_workspace = std::make_shared<spectra::scene::SceneCameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_library), std::move(rasterizer_scene_registry));
+        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_library), std::move(rasterizer_scene_registry), std::move(camera_workspace));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

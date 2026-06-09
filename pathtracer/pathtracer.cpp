@@ -842,6 +842,40 @@ namespace spectra::pathtracer {
         float basis_handedness{1.0f};
     };
 
+    [[nodiscard]] scene::Vector3 to_scene_vector(const spectra::Point3f& value) {
+        return scene::Vector3{value.x, value.y, value.z};
+    }
+
+    [[nodiscard]] scene::Vector3 to_scene_vector(const spectra::Vector3f& value) {
+        return scene::Vector3{value.x, value.y, value.z};
+    }
+
+    [[nodiscard]] spectra::Point3f to_pathtracer_point(const scene::Vector3 value) {
+        return spectra::Point3f{value.x, value.y, value.z};
+    }
+
+    [[nodiscard]] spectra::Vector3f to_pathtracer_vector(const scene::Vector3 value) {
+        return spectra::Vector3f{value.x, value.y, value.z};
+    }
+
+    [[nodiscard]] scene::SceneCameraState scene_camera_state_from_interactive_pose(const InteractiveCameraPose& pose, const float fov_degrees) {
+        return scene::SceneCameraState{
+            .eye                = to_scene_vector(pose.eye),
+            .target             = to_scene_vector(pose.center),
+            .up                 = to_scene_vector(pose.up),
+            .verticalFovDegrees = fov_degrees,
+        };
+    }
+
+    [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_scene_camera_state(const scene::SceneCameraState& state, const float basis_handedness) {
+        return InteractiveCameraPose{
+            .eye              = to_pathtracer_point(state.eye),
+            .center           = to_pathtracer_point(state.target),
+            .up               = to_pathtracer_vector(state.up),
+            .basis_handedness = basis_handedness,
+        };
+    }
+
     [[nodiscard]] float interactive_camera_fov_degrees(const scene::PbrtSceneInfo& info) {
         if (info.camera != "perspective") throw std::runtime_error(std::format("Interactive Spectra pathtracer camera controls require a perspective camera, not \"{}\"", info.camera));
         if (!(info.camera_fov_degrees > 0.0f && info.camera_fov_degrees < 180.0f)) throw std::runtime_error("Spectra scene camera fov must be inside (0, 180)");
@@ -954,7 +988,7 @@ namespace spectra::pathtracer {
 
     class PathtracerRenderer::Impl {
     public:
-        explicit Impl(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace);
+        Impl(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
         ~Impl() noexcept;
 
         void attach(PathtracerHostView host);
@@ -990,6 +1024,7 @@ namespace spectra::pathtracer {
         [[nodiscard]] std::string window_detail() const;
         [[nodiscard]] const scene::PbrtSceneInfo& active_scene_info() const;
         [[nodiscard]] const scene::PbrtSceneSnapshot& active_scene_snapshot() const;
+        [[nodiscard]] std::string active_scene_id() const;
         void synchronize_scene_workspace();
 
         void draw_viewport_window();
@@ -1013,6 +1048,9 @@ namespace spectra::pathtracer {
         void set_override_pixel_samples(std::optional<int> sample_count);
         [[nodiscard]] std::string sample_source_text() const;
         void initialize_camera_state();
+        void synchronize_camera_workspace();
+        void apply_camera_snapshot(const scene::SceneCameraSnapshot& snapshot);
+        void commit_camera_state(const InteractiveCameraPose& pose);
         void set_camera_speed(float speed);
         void reset_camera();
         void clear_pathtracer_throughput_statistics();
@@ -1027,6 +1065,7 @@ namespace spectra::pathtracer {
         bool attached{false};
         bool performance_overlay_visible{true};
         std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace{};
+        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
 
         struct {
             bool viewport_known{false};
@@ -1070,6 +1109,7 @@ namespace spectra::pathtracer {
             std::array<float, 2> mouse_position{0.0f, 0.0f};
             spectra::Transform moving_from_camera{};
             spectra::Transform camera_from_world{};
+            scene::SceneRevision observed_revision{};
         } camera;
 
         struct {
@@ -1085,7 +1125,7 @@ namespace spectra::pathtracer {
         } statistics;
     };
 
-    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace))) {}
+    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_workspace), std::move(camera_workspace))) {}
 
     PathtracerRenderer::~PathtracerRenderer() noexcept = default;
 
@@ -1151,8 +1191,9 @@ namespace spectra::pathtracer {
         return this->sum / static_cast<float>(this->count);
     }
 
-    PathtracerRenderer::Impl::Impl(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace) : source_workspace(std::move(source_workspace)) {
+    PathtracerRenderer::Impl::Impl(std::shared_ptr<scene::PbrtSceneWorkspace> source_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : source_workspace(std::move(source_workspace)), camera_workspace(std::move(camera_workspace)) {
         if (this->source_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene workspace");
+        if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
         const std::shared_ptr<const scene::PbrtSceneSnapshot> source_document = this->source_workspace->snapshot();
         if (source_document == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
         const scene::PbrtSceneTranslationReport report = analyze_pathtracer_scene(*source_document);
@@ -1195,6 +1236,12 @@ namespace spectra::pathtracer {
         return *this->scene_snapshot;
     }
 
+    std::string PathtracerRenderer::Impl::active_scene_id() const {
+        const scene::PbrtSceneSnapshot& scene = this->active_scene_snapshot();
+        if (scene.name.empty()) throw std::runtime_error("Spectra pathtracer scene id must not be empty");
+        return scene.name;
+    }
+
     void PathtracerRenderer::Impl::synchronize_scene_workspace() {
         std::shared_ptr<const scene::PbrtSceneSnapshot> next_snapshot = this->source_workspace->snapshot();
         if (next_snapshot == nullptr) throw std::runtime_error("Spectra pathtracer source scene workspace returned an empty scene snapshot");
@@ -1229,6 +1276,7 @@ namespace spectra::pathtracer {
         this->scene_snapshot = std::move(next_snapshot);
         this->scene_info     = std::move(next_info);
         if (edit_batch.dirty == scene::PbrtSceneDirtyFlags::None || this->render_pipeline == nullptr) return;
+        this->camera.observed_revision = scene::SceneRevision{};
         this->initialize_camera_state();
         this->clear_pathtracer_throughput_statistics();
     }
@@ -1266,6 +1314,7 @@ namespace spectra::pathtracer {
         PathtracerFrameResult result{};
         this->synchronize_render_resolution();
         if (this->pathtracer_ready()) {
+            this->synchronize_camera_workspace();
             result.close_requested                                            = this->process_camera_input();
             const RenderPipeline::RenderFrameResult render_result = this->render_pipeline->render_frame(frame.frame_index, this->camera.moving_from_camera);
             result.completion_semaphore                                       = this->render_pipeline->active_cuda_complete_semaphore();
@@ -1302,6 +1351,8 @@ namespace spectra::pathtracer {
         this->scene_film_resolution      = {0, 0};
         this->scene_camera_from_world    = spectra::Transform{};
         this->scene_sampler_sample_count = 0;
+        this->camera.initialized         = false;
+        this->camera.observed_revision   = scene::SceneRevision{};
     }
 
     void PathtracerRenderer::Impl::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
@@ -1332,9 +1383,7 @@ namespace spectra::pathtracer {
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild Spectra pathtracer with a non-positive resolution");
         if (!force && this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
 
-        const bool preserve_camera = this->camera.initialized;
-        const InteractiveCameraPose preserved_pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
-        const float preserved_speed             = this->camera.speed;
+        const std::optional<float> preserved_speed = this->camera.initialized ? std::optional<float>{this->camera.speed} : std::nullopt;
         const int preserved_samples             = preserve_target_samples && this->render_pipeline != nullptr ? this->render_pipeline->target_sample_count() : 0;
         const float preserved_exposure          = this->render_pipeline == nullptr ? 1.0f : this->render_pipeline->current_exposure();
         this->render_resolution_sync.rebuilding = true;
@@ -1347,19 +1396,8 @@ namespace spectra::pathtracer {
             if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer was not created");
             if (preserved_samples > 0) this->render_pipeline->set_target_sample_count(preserved_samples);
             this->render_pipeline->set_exposure(preserved_exposure);
-            if (preserve_camera) {
-                this->camera.camera_from_world    = this->scene_camera_from_world;
-                this->camera.eye                  = preserved_pose.eye;
-                this->camera.center               = preserved_pose.center;
-                this->camera.up                   = preserved_pose.up;
-                this->camera.basis_handedness     = preserved_pose.basis_handedness;
-                this->camera.speed                = preserved_speed;
-                this->camera.fov_degrees          = interactive_camera_fov_degrees(this->active_scene_info());
-                this->camera.mouse_position_known = false;
-                this->camera.input_enabled        = false;
-                this->camera.moving_from_camera   = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, preserved_pose);
-            } else
-                this->initialize_camera_state();
+            this->initialize_camera_state();
+            if (preserved_speed.has_value()) this->camera.speed = *preserved_speed;
             this->clear_pathtracer_throughput_statistics();
             this->statistics.last_frame_rendered_sample = false;
             this->render_resolution_sync.rebuilding     = false;
@@ -1448,19 +1486,45 @@ namespace spectra::pathtracer {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
         const float initial_move_scale = this->render_pipeline->camera_initial_move_scale();
         if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
-        this->camera.camera_from_world               = this->scene_camera_from_world;
+        this->camera.camera_from_world = this->scene_camera_from_world;
         const InteractiveCameraPose pose = interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
-        this->camera.initialized                     = true;
-        this->camera.input_enabled                   = false;
-        this->camera.speed                           = initial_move_scale * 60.0f;
-        this->camera.fov_degrees                     = interactive_camera_fov_degrees(this->active_scene_info());
-        this->camera.basis_handedness                = pose.basis_handedness;
-        this->camera.eye                             = pose.eye;
-        this->camera.center                          = pose.center;
-        this->camera.up                              = pose.up;
-        this->camera.mouse_position                  = {0.0f, 0.0f};
-        this->camera.mouse_position_known            = false;
-        this->camera.moving_from_camera              = spectra::Transform{};
+        this->camera.input_enabled = false;
+        this->camera.speed = initial_move_scale * 60.0f;
+        this->camera.fov_degrees = interactive_camera_fov_degrees(this->active_scene_info());
+        this->camera.basis_handedness = pose.basis_handedness;
+        this->camera.mouse_position = {0.0f, 0.0f};
+        this->camera.mouse_position_known = false;
+        this->camera_workspace->ensure_camera(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
+        this->apply_camera_snapshot(this->camera_workspace->snapshot(this->active_scene_id()));
+    }
+
+    void PathtracerRenderer::Impl::synchronize_camera_workspace() {
+        if (!this->pathtracer_ready()) return;
+        if (!this->camera.initialized) this->initialize_camera_state();
+        const scene::SceneCameraSnapshot snapshot = this->camera_workspace->snapshot(this->active_scene_id());
+        if (snapshot.revision == this->camera.observed_revision) return;
+        this->apply_camera_snapshot(snapshot);
+        this->request_pathtracer_accumulation_reset();
+    }
+
+    void PathtracerRenderer::Impl::apply_camera_snapshot(const scene::SceneCameraSnapshot& snapshot) {
+        if (!this->scene_info.has_value()) throw std::runtime_error("Cannot apply camera state without an active Spectra scene");
+        if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot apply camera state without an active Spectra pathtracer");
+        const InteractiveCameraPose pose = interactive_camera_pose_from_scene_camera_state(snapshot.state, this->camera.basis_handedness);
+        this->camera.eye = pose.eye;
+        this->camera.center = pose.center;
+        this->camera.up = pose.up;
+        this->camera.fov_degrees = snapshot.state.verticalFovDegrees;
+        this->camera.mouse_position_known = false;
+        this->camera.input_enabled = false;
+        this->camera.moving_from_camera = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, pose);
+        this->camera.initialized = true;
+        this->camera.observed_revision = snapshot.revision;
+    }
+
+    void PathtracerRenderer::Impl::commit_camera_state(const InteractiveCameraPose& pose) {
+        const scene::SceneCameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
+        this->camera.observed_revision = snapshot.revision;
     }
 
     void PathtracerRenderer::Impl::set_camera_speed(const float speed) {
@@ -1472,12 +1536,9 @@ namespace spectra::pathtracer {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
         const InteractiveCameraPose pose = interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
-        this->camera.eye                             = pose.eye;
-        this->camera.center                          = pose.center;
-        this->camera.up                              = pose.up;
-        this->camera.basis_handedness                = pose.basis_handedness;
-        this->camera.mouse_position_known            = false;
-        this->camera.moving_from_camera              = spectra::Transform{};
+        this->camera.basis_handedness = pose.basis_handedness;
+        const scene::SceneCameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, interactive_camera_fov_degrees(this->active_scene_info())));
+        this->apply_camera_snapshot(snapshot);
         this->request_pathtracer_accumulation_reset();
     }
 
@@ -1620,6 +1681,7 @@ namespace spectra::pathtracer {
             this->camera.up                 = pose.up;
             this->camera.basis_handedness   = pose.basis_handedness;
             this->camera.moving_from_camera = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, pose);
+            this->commit_camera_state(pose);
             this->request_pathtracer_accumulation_reset();
         }
         return close_requested;

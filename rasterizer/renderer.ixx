@@ -19,7 +19,7 @@ import std;
 namespace spectra::rasterizer {
     export class Renderer final {
     public:
-        explicit Renderer(std::shared_ptr<scene::SceneWorkspace> scene_workspace);
+        Renderer(std::shared_ptr<scene::SceneWorkspace> scene_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -28,7 +28,7 @@ namespace spectra::rasterizer {
         Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
-        void set_scene_workspace(std::shared_ptr<scene::SceneWorkspace> scene_workspace);
+        void set_scene_workspace(std::shared_ptr<scene::SceneWorkspace> scene_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
         void set_control_panel_extension(std::move_only_function<void()> draw);
 
         void attach(HostView host);
@@ -108,11 +108,6 @@ namespace spectra::rasterizer {
             std::uint32_t objectId{};
             scene::SceneVolumeGrid volume{};
             scene::SceneMaterial material{};
-        };
-
-        enum class ViewProjection {
-            Perspective,
-            Orthographic,
         };
 
         struct SceneBounds {
@@ -230,11 +225,17 @@ namespace spectra::rasterizer {
         void record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer);
         void consume_completed_screenshot(std::uint32_t frame_index);
 
+        [[nodiscard]] std::string active_scene_id() const;
+        [[nodiscard]] scene::SceneCameraState initial_camera_state_from_scene() const;
+        [[nodiscard]] scene::SceneCameraState current_viewport_camera_state() const;
+        void ensure_viewport_camera_session();
+        void synchronize_viewport_camera();
+        void apply_viewport_camera_state(const scene::SceneCameraSnapshot& snapshot);
+        void commit_viewport_camera();
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
         void frame_selected_objects();
         void set_viewport_axis_view(scene::Vector3 direction);
-        void toggle_viewport_projection();
         void orbit_viewport_camera(ViewportDragDelta delta);
         void pan_viewport_camera(ViewportDragDelta delta, float viewport_height);
         void zoom_viewport_camera(float steps);
@@ -269,6 +270,8 @@ namespace spectra::rasterizer {
 
         struct {
             std::shared_ptr<scene::SceneWorkspace> workspace{};
+            std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
+            scene::SceneRevision observed_camera_revision{};
         } scene;
 
         struct {
@@ -291,13 +294,13 @@ namespace spectra::rasterizer {
             vk::raii::DeviceMemory depth_memory{nullptr};
             vk::raii::ImageView depth_view{nullptr};
             scene::Vector3 camera_target{};
+            scene::Vector3 camera_up{0.0f, 1.0f, 0.0f};
             float camera_distance{1.0f};
             float camera_yaw{};
             float camera_pitch{};
             float camera_vertical_fov_degrees{45.0f};
             float camera_near_plane{0.01f};
             float camera_far_plane{200.0f};
-            ViewProjection projection{ViewProjection::Perspective};
             bool camera_initialized{false};
             bool overlays_visible{true};
             bool grid_visible{true};

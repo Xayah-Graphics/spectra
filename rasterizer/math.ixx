@@ -127,15 +127,19 @@ namespace spectra::rasterizer::math {
         return value / vector_length;
     }
 
-    export [[nodiscard]] CameraBasis camera_basis(const Vector3 eye, const Vector3 target) {
+    export [[nodiscard]] CameraBasis camera_basis(const Vector3 eye, const Vector3 target, const Vector3 up) {
         CameraBasis basis{};
         basis.eye     = eye;
         basis.target  = target;
         basis.forward = normalize(basis.target - basis.eye);
-        constexpr Vector3 world_up{0.0f, 1.0f, 0.0f};
-        basis.side = normalize(cross(basis.forward, world_up));
+        const Vector3 normalized_up = normalize(up);
+        basis.side = normalize(cross(basis.forward, normalized_up));
         basis.up   = cross(basis.side, basis.forward);
         return basis;
+    }
+
+    export [[nodiscard]] CameraBasis camera_basis(const Vector3 eye, const Vector3 target) {
+        return camera_basis(eye, target, Vector3{0.0f, 1.0f, 0.0f});
     }
 
     export [[nodiscard]] CameraBasis orbit_camera_basis(const Vector3 target, const float yaw_radians, const float pitch_radians, const float distance) {
@@ -182,10 +186,9 @@ namespace spectra::rasterizer::math {
         return scale * rotate * translate;
     }
 
-    export [[nodiscard]] Matrix4 look_at_matrix(const Vector3 eye, const Vector3 target) {
-        const CameraBasis basis = camera_basis(eye, target);
-        Matrix4 view            = Matrix4::identity();
-        view(0u, 0u)            = basis.side.x;
+    export [[nodiscard]] Matrix4 look_at_matrix(const CameraBasis& basis) {
+        Matrix4 view = Matrix4::identity();
+        view(0u, 0u) = basis.side.x;
         view(1u, 0u)            = basis.side.y;
         view(2u, 0u)            = basis.side.z;
         view(0u, 1u)            = basis.up.x;
@@ -194,10 +197,14 @@ namespace spectra::rasterizer::math {
         view(0u, 2u)            = -basis.forward.x;
         view(1u, 2u)            = -basis.forward.y;
         view(2u, 2u)            = -basis.forward.z;
-        view(3u, 0u)            = -dot(basis.side, eye);
-        view(3u, 1u)            = -dot(basis.up, eye);
-        view(3u, 2u)            = dot(basis.forward, eye);
+        view(3u, 0u)            = -dot(basis.side, basis.eye);
+        view(3u, 1u)            = -dot(basis.up, basis.eye);
+        view(3u, 2u)            = dot(basis.forward, basis.eye);
         return view;
+    }
+
+    export [[nodiscard]] Matrix4 look_at_matrix(const Vector3 eye, const Vector3 target) {
+        return look_at_matrix(camera_basis(eye, target));
     }
 
     export [[nodiscard]] Matrix4 inverse_look_at_matrix(const CameraBasis& basis) {
@@ -243,32 +250,6 @@ namespace spectra::rasterizer::math {
         inverse_projection(2u, 3u) = 1.0f / depth_scale;
         inverse_projection(3u, 2u) = -1.0f;
         inverse_projection(3u, 3u) = far_plane / (near_plane - far_plane) / depth_scale;
-        return inverse_projection;
-    }
-
-    export [[nodiscard]] Matrix4 orthographic_matrix(const float vertical_size, const float aspect, const float near_plane, const float far_plane) {
-        if (!std::isfinite(vertical_size) || vertical_size <= 0.0f) throw std::runtime_error("Rasterizer orthographic vertical size must be positive");
-        if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
-        if (!std::isfinite(near_plane) || !std::isfinite(far_plane) || near_plane <= 0.0f || far_plane <= near_plane) throw std::runtime_error("Rasterizer camera clipping planes are invalid");
-        const float horizontal_size = vertical_size * aspect;
-        Matrix4 projection          = Matrix4::identity();
-        projection(0u, 0u)          = 2.0f / horizontal_size;
-        projection(1u, 1u)          = -2.0f / vertical_size;
-        projection(2u, 2u)          = 1.0f / (near_plane - far_plane);
-        projection(3u, 2u)          = near_plane / (near_plane - far_plane);
-        return projection;
-    }
-
-    export [[nodiscard]] Matrix4 inverse_orthographic_matrix(const float vertical_size, const float aspect, const float near_plane, const float far_plane) {
-        if (!std::isfinite(vertical_size) || vertical_size <= 0.0f) throw std::runtime_error("Rasterizer orthographic vertical size must be positive");
-        if (!std::isfinite(aspect) || aspect <= 0.0f) throw std::runtime_error("Rasterizer camera aspect ratio must be positive");
-        if (!std::isfinite(near_plane) || !std::isfinite(far_plane) || near_plane <= 0.0f || far_plane <= near_plane) throw std::runtime_error("Rasterizer camera clipping planes are invalid");
-        const float horizontal_size = vertical_size * aspect;
-        Matrix4 inverse_projection  = Matrix4::identity();
-        inverse_projection(0u, 0u)  = horizontal_size * 0.5f;
-        inverse_projection(1u, 1u)  = -vertical_size * 0.5f;
-        inverse_projection(2u, 2u)  = near_plane - far_plane;
-        inverse_projection(3u, 2u)  = -near_plane;
         return inverse_projection;
     }
 
