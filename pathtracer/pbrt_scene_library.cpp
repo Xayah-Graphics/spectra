@@ -5,7 +5,8 @@ module;
 
 module spectra.pathtracer.pbrt.library;
 
-import spectra.pathtracer.pbrt;
+import spectra.pathtracer;
+import spectra.scene.pbrt;
 import std;
 
 namespace {
@@ -62,52 +63,52 @@ namespace {
         throw std::runtime_error("Unknown Spectra scene display filter");
     }
 
-    [[nodiscard]] std::string source_location_text(const spectra::pathtracer::SceneSourceLocation& source) {
+    [[nodiscard]] std::string source_location_text(const spectra::scene::SceneSourceLocation& source) {
         return std::format("{}:{}:{}", source.filename, source.line, source.column);
     }
 
-    [[nodiscard]] std::size_t visible_scene_count(const spectra::pathtracer::PbrtSceneCatalog& catalog) {
+    [[nodiscard]] std::size_t visible_scene_count(const spectra::scene::PbrtSceneCatalog& catalog) {
         if (catalog.non_scene_count > catalog.entries.size()) throw std::runtime_error("Spectra scene catalog non-scene count exceeds total entry count");
         return catalog.entries.size() - catalog.non_scene_count;
     }
 
-    [[nodiscard]] std::string first_diagnostic_message(const std::vector<spectra::pathtracer::SceneDiagnostic>& diagnostics) {
+    [[nodiscard]] std::string first_diagnostic_message(const std::vector<spectra::scene::PbrtSceneDiagnostic>& diagnostics) {
         if (diagnostics.empty()) return "no diagnostics";
         return diagnostics.front().message;
     }
 
-    [[nodiscard]] std::string last_probe_feature_type(const spectra::pathtracer::SceneProbeReport& probe, const spectra::pathtracer::SceneProbeFeatureCategory category, std::string fallback) {
-        for (const spectra::pathtracer::SceneProbeFeature& feature : probe.features) {
-            if (feature.category == category && !feature.type.empty()) fallback = feature.type;
+    [[nodiscard]] std::string last_probe_feature_type(const spectra::scene::PbrtSceneProbeReport& probe, const spectra::scene::PbrtSceneProbeFeatureCategory category, std::string default_value) {
+        for (const spectra::scene::PbrtSceneProbeFeature& feature : probe.features) {
+            if (feature.category == category && !feature.type.empty()) default_value = feature.type;
         }
-        return fallback;
+        return default_value;
     }
 
     constexpr std::size_t scene_background_worker_count = 2;
 } // namespace
 
 namespace spectra::pathtracer {
-    PbrtSceneLibrary::PbrtSceneLibrary(std::string initial_scene_id) : workspace(std::make_shared<SceneWorkspace>()), initial_scene_id(std::move(initial_scene_id)) {
+    PbrtSceneLibrary::PbrtSceneLibrary(std::string initial_scene_id) : workspace(std::make_shared<scene::PbrtSceneWorkspace>()), initial_scene_id(std::move(initial_scene_id)) {
         if (this->initial_scene_id.empty()) throw std::runtime_error("Spectra PBRT scene library initial scene id must not be empty");
-        this->scene_catalog = spectra::pathtracer::DiscoverPbrtSceneCatalog();
+        this->scene_catalog = spectra::scene::DiscoverPbrtSceneCatalog();
         this->scene_catalog_probe_claimed.assign(this->scene_catalog.entries.size(), false);
-        const auto active_scene_iter = std::ranges::find_if(this->scene_catalog.entries, [this](const spectra::pathtracer::PbrtSceneCatalogEntry& entry) { return entry.id == this->initial_scene_id; });
+        const auto active_scene_iter = std::ranges::find_if(this->scene_catalog.entries, [this](const spectra::scene::PbrtSceneCatalogEntry& entry) { return entry.id == this->initial_scene_id; });
         if (active_scene_iter == this->scene_catalog.entries.end()) throw std::runtime_error(std::format("Spectra scene catalog does not contain required initial scene \"{}\"", this->initial_scene_id));
-        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not parseable: {}", this->initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
-        spectra::pathtracer::ProbePbrtSceneCatalogEntry(*active_scene_iter);
-        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not probeable: {}", this->initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
-        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not a top-level PBRT scene", this->initial_scene_id));
-        if (active_scene_iter->state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Spectra initial scene \"{}\" did not produce a candidate scene probe", this->initial_scene_id));
-        spectra::pathtracer::SceneSnapshot initial_document = spectra::pathtracer::ParsePbrtSceneCatalogEntry(*active_scene_iter);
-        const spectra::pathtracer::SceneTranslationReport initial_report = this->analyze_document(initial_document);
+        if (active_scene_iter->state == spectra::scene::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not parseable: {}", this->initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
+        spectra::scene::ProbePbrtSceneCatalogEntry(*active_scene_iter);
+        if (active_scene_iter->state == spectra::scene::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not probeable: {}", this->initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
+        if (active_scene_iter->state == spectra::scene::PbrtSceneCatalogEntryState::NonScene) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not a top-level PBRT scene", this->initial_scene_id));
+        if (active_scene_iter->state != spectra::scene::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Spectra initial scene \"{}\" did not produce a candidate scene probe", this->initial_scene_id));
+        spectra::scene::PbrtSceneSnapshot initial_document = spectra::scene::ParsePbrtSceneCatalogEntry(*active_scene_iter);
+        const spectra::scene::PbrtSceneTranslationReport initial_report = this->analyze_document(initial_document);
         if (!initial_report.supported) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not supported by pathtracer: {}", this->initial_scene_id, first_diagnostic_message(initial_report.diagnostics)));
         active_scene_iter->revision = initial_document.revision;
         if (active_scene_iter->probe.has_value()) active_scene_iter->probe->revision = initial_document.revision;
-        active_scene_iter->state = spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate;
+        active_scene_iter->state = spectra::scene::PbrtSceneCatalogEntryState::Candidate;
         active_scene_iter->issues.clear();
         this->active_scene_index           = static_cast<std::size_t>(std::distance(this->scene_catalog.entries.begin(), active_scene_iter));
         this->scene_library.selected_index = this->active_scene_index;
-        *this->workspace                   = SceneWorkspace{std::move(initial_document)};
+        *this->workspace                   = scene::PbrtSceneWorkspace{std::move(initial_document)};
         this->refresh_scene_catalog_counts();
     }
 
@@ -125,7 +126,7 @@ namespace spectra::pathtracer {
         this->attached = false;
     }
 
-    std::shared_ptr<SceneWorkspace> PbrtSceneLibrary::scene_workspace() const {
+    std::shared_ptr<scene::PbrtSceneWorkspace> PbrtSceneLibrary::scene_workspace() const {
         return this->workspace;
     }
 
@@ -188,7 +189,7 @@ namespace spectra::pathtracer {
     void PbrtSceneLibrary::run_scene_background_worker(const std::stop_token stop_token) {
         while (!stop_token.stop_requested()) {
             std::optional<std::size_t> probe_index{};
-            spectra::pathtracer::PbrtSceneCatalogEntry probe_entry{};
+            spectra::scene::PbrtSceneCatalogEntry probe_entry{};
             std::optional<TranslationRequest> translation_request{};
             {
                 std::unique_lock lock{this->scene_catalog_mutex};
@@ -206,7 +207,7 @@ namespace spectra::pathtracer {
 
             if (probe_index.has_value()) {
                 if (stop_token.stop_requested()) return;
-                spectra::pathtracer::ProbePbrtSceneCatalogEntry(probe_entry, stop_token);
+                spectra::scene::ProbePbrtSceneCatalogEntry(probe_entry, stop_token);
                 {
                     std::scoped_lock lock{this->scene_catalog_mutex};
                     if (stop_token.stop_requested()) return;
@@ -221,7 +222,7 @@ namespace spectra::pathtracer {
                 continue;
             }
 
-            spectra::pathtracer::SceneTranslationReport report{.target = std::string{spectra::pathtracer::PathtracerRenderer::name()}};
+            spectra::scene::PbrtSceneTranslationReport report{.target = std::string{spectra::pathtracer::PathtracerRenderer::name()}};
             try {
                 if (stop_token.stop_requested()) return;
                 report = spectra::pathtracer::AnalyzePathtracerSceneProbe(translation_request->probe);
@@ -229,8 +230,8 @@ namespace spectra::pathtracer {
             } catch (const std::exception& error) {
                 if (stop_token.stop_requested()) return;
                 report.supported = false;
-                report.diagnostics.push_back(spectra::pathtracer::SceneDiagnostic{
-                    .source  = spectra::pathtracer::SceneSourceLocation{.filename = translation_request->probe.source, .line = 1, .column = 1},
+                report.diagnostics.push_back(spectra::scene::PbrtSceneDiagnostic{
+                    .source  = spectra::scene::SceneSourceLocation{.filename = translation_request->probe.source, .line = 1, .column = 1},
                     .message = error.what(),
                 });
             }
@@ -240,8 +241,8 @@ namespace spectra::pathtracer {
                 bool catalog_entry_still_matches = false;
                 std::erase_if(this->translation_requests_in_progress, [this, &translation_request](const TranslationRequestKey& key) { return this->translation_request_key_matches(key, translation_request->key); });
                 if (translation_request->sceneIndex < this->scene_catalog.entries.size()) {
-                    const spectra::pathtracer::PbrtSceneCatalogEntry& entry = this->scene_catalog.entries[translation_request->sceneIndex];
-                    catalog_entry_still_matches = entry.state == spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate && entry.id == translation_request->key.sceneId && entry.revision == translation_request->key.revision;
+                    const spectra::scene::PbrtSceneCatalogEntry& entry = this->scene_catalog.entries[translation_request->sceneIndex];
+                    catalog_entry_still_matches = entry.state == spectra::scene::PbrtSceneCatalogEntryState::Candidate && entry.id == translation_request->key.sceneId && entry.revision == translation_request->key.revision;
                 }
                 if (catalog_entry_still_matches && !this->has_probe_translation_cache_entry_locked(translation_request->key)) {
                     this->probe_translation_cache.push_back(ProbeTranslationCacheEntry{
@@ -259,12 +260,12 @@ namespace spectra::pathtracer {
         this->scene_catalog.candidate_count = 0;
         this->scene_catalog.non_scene_count = 0;
         this->scene_catalog.invalid_count = 0;
-        for (const spectra::pathtracer::PbrtSceneCatalogEntry& entry : this->scene_catalog.entries) {
+        for (const spectra::scene::PbrtSceneCatalogEntry& entry : this->scene_catalog.entries) {
             switch (entry.state) {
-            case spectra::pathtracer::PbrtSceneCatalogEntryState::Pending: ++this->scene_catalog.pending_count; break;
-            case spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate: ++this->scene_catalog.candidate_count; break;
-            case spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene: ++this->scene_catalog.non_scene_count; break;
-            case spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid: ++this->scene_catalog.invalid_count; break;
+            case spectra::scene::PbrtSceneCatalogEntryState::Pending: ++this->scene_catalog.pending_count; break;
+            case spectra::scene::PbrtSceneCatalogEntryState::Candidate: ++this->scene_catalog.candidate_count; break;
+            case spectra::scene::PbrtSceneCatalogEntryState::NonScene: ++this->scene_catalog.non_scene_count; break;
+            case spectra::scene::PbrtSceneCatalogEntryState::Invalid: ++this->scene_catalog.invalid_count; break;
             }
         }
     }
@@ -282,7 +283,7 @@ namespace spectra::pathtracer {
     std::optional<std::size_t> PbrtSceneLibrary::next_catalog_probe_index_locked() const {
         if (this->scene_catalog_probe_claimed.size() != this->scene_catalog.entries.size()) throw std::runtime_error("Spectra scene catalog probe claim table is out of sync");
         for (std::size_t scene_index = 0; scene_index < this->scene_catalog.entries.size(); ++scene_index) {
-            if (this->scene_catalog.entries[scene_index].state != spectra::pathtracer::PbrtSceneCatalogEntryState::Pending) continue;
+            if (this->scene_catalog.entries[scene_index].state != spectra::scene::PbrtSceneCatalogEntryState::Pending) continue;
             if (this->scene_catalog_probe_claimed[scene_index]) continue;
             return scene_index;
         }
@@ -312,7 +313,7 @@ namespace spectra::pathtracer {
         return false;
     }
 
-    spectra::pathtracer::SceneTranslationReport PbrtSceneLibrary::analyze_probe(const spectra::pathtracer::SceneProbeReport& probe) {
+    spectra::scene::PbrtSceneTranslationReport PbrtSceneLibrary::analyze_probe(const spectra::scene::PbrtSceneProbeReport& probe) {
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
             for (ProbeTranslationCacheEntry& cache_entry : this->probe_translation_cache) {
@@ -320,7 +321,7 @@ namespace spectra::pathtracer {
             }
         }
 
-        spectra::pathtracer::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneProbe(probe);
+        spectra::scene::PbrtSceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneProbe(probe);
         if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::name()};
 
         {
@@ -337,7 +338,7 @@ namespace spectra::pathtracer {
         return report;
     }
 
-    spectra::pathtracer::SceneTranslationReport PbrtSceneLibrary::analyze_document(const spectra::pathtracer::SceneSnapshot& document) {
+    spectra::scene::PbrtSceneTranslationReport PbrtSceneLibrary::analyze_document(const spectra::scene::PbrtSceneSnapshot& document) {
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
             for (DocumentTranslationCacheEntry& cache_entry : this->document_translation_cache) {
@@ -345,7 +346,7 @@ namespace spectra::pathtracer {
             }
         }
 
-        spectra::pathtracer::SceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneSupport(document);
+        spectra::scene::PbrtSceneTranslationReport report = spectra::pathtracer::AnalyzePathtracerSceneSupport(document);
         if (report.target.empty()) report.target = std::string{spectra::pathtracer::PathtracerRenderer::name()};
 
         {
@@ -362,18 +363,18 @@ namespace spectra::pathtracer {
         return report;
     }
 
-    PbrtSceneLibrary::DisplayState PbrtSceneLibrary::display_state(const spectra::pathtracer::PbrtSceneCatalogEntry& entry, const std::optional<spectra::pathtracer::SceneTranslationReport>& report, const bool loaded) const {
-        if (entry.state == spectra::pathtracer::PbrtSceneCatalogEntryState::Pending) return DisplayState::Checking;
-        if (entry.state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) return DisplayState::Invalid;
-        if (entry.state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error("Unknown Spectra scene catalog entry state");
+    PbrtSceneLibrary::DisplayState PbrtSceneLibrary::display_state(const spectra::scene::PbrtSceneCatalogEntry& entry, const std::optional<spectra::scene::PbrtSceneTranslationReport>& report, const bool loaded) const {
+        if (entry.state == spectra::scene::PbrtSceneCatalogEntryState::Pending) return DisplayState::Checking;
+        if (entry.state == spectra::scene::PbrtSceneCatalogEntryState::Invalid) return DisplayState::Invalid;
+        if (entry.state != spectra::scene::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error("Unknown Spectra scene catalog entry state");
         if (!report.has_value()) return DisplayState::Checking;
         if (report.has_value() && !report->supported) return DisplayState::Unsupported;
         if (loaded) return DisplayState::Loaded;
         return DisplayState::Candidate;
     }
 
-    std::optional<spectra::pathtracer::SceneTranslationReport> PbrtSceneLibrary::cached_entry_report(const spectra::pathtracer::PbrtSceneCatalogEntry& entry) const {
-        if (entry.state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate || entry.revision.value == 0) return {};
+    std::optional<spectra::scene::PbrtSceneTranslationReport> PbrtSceneLibrary::cached_entry_report(const spectra::scene::PbrtSceneCatalogEntry& entry) const {
+        if (entry.state != spectra::scene::PbrtSceneCatalogEntryState::Candidate || entry.revision.value == 0) return {};
         std::scoped_lock lock{this->scene_catalog_mutex};
         for (const ProbeTranslationCacheEntry& cache_entry : this->probe_translation_cache) {
             if (cache_entry.sceneId == entry.id && cache_entry.revision == entry.revision) return cache_entry.report;
@@ -381,8 +382,8 @@ namespace spectra::pathtracer {
         return {};
     }
 
-    void PbrtSceneLibrary::request_entry_report_analysis(const std::size_t scene_index, const spectra::pathtracer::PbrtSceneCatalogEntry& entry) {
-        if (entry.state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate) return;
+    void PbrtSceneLibrary::request_entry_report_analysis(const std::size_t scene_index, const spectra::scene::PbrtSceneCatalogEntry& entry) {
+        if (entry.state != spectra::scene::PbrtSceneCatalogEntryState::Candidate) return;
         if (!entry.probe.has_value()) return;
         if (entry.revision.value == 0) throw std::runtime_error(std::format("Candidate Spectra scene \"{}\" has no catalog revision", entry.id));
         TranslationRequest request{
@@ -406,15 +407,15 @@ namespace spectra::pathtracer {
         else this->scene_background_condition.notify_one();
     }
 
-    void PbrtSceneLibrary::commit_document(const std::size_t scene_index, spectra::pathtracer::SceneSnapshot document) {
+    void PbrtSceneLibrary::commit_document(const std::size_t scene_index, spectra::scene::PbrtSceneSnapshot document) {
         if (this->workspace == nullptr) throw std::runtime_error("Spectra pathtracer PBRT scene workspace is unavailable");
         if (!this->workspace->loaded()) {
-            *this->workspace = SceneWorkspace{std::move(document)};
+            *this->workspace = scene::PbrtSceneWorkspace{std::move(document)};
         } else {
-            SceneEditBuilder edit{};
-            edit.replaceSnapshot(std::move(document), SceneDirtyFlags::Snapshot);
-            const SceneEditBatch edit_batch = this->workspace->commit(std::move(edit));
-            if (edit_batch.dirty != SceneDirtyFlags::Snapshot) throw std::runtime_error("Spectra pathtracer failed to commit a PBRT scene replacement");
+            scene::PbrtSceneEditBuilder edit{};
+            edit.replaceSnapshot(std::move(document), scene::PbrtSceneDirtyFlags::Snapshot);
+            const scene::PbrtSceneEditBatch edit_batch = this->workspace->commit(std::move(edit));
+            if (edit_batch.dirty != scene::PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("Spectra pathtracer failed to commit a PBRT scene replacement");
         }
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
@@ -426,15 +427,15 @@ namespace spectra::pathtracer {
     }
 
     void PbrtSceneLibrary::load_scene(const std::size_t scene_index) {
-        spectra::pathtracer::PbrtSceneCatalogEntry entry{};
+        spectra::scene::PbrtSceneCatalogEntry entry{};
         {
             std::scoped_lock lock{this->scene_catalog_mutex};
             if (scene_index >= this->scene_catalog.entries.size()) throw std::runtime_error("Spectra scene load index is out of range");
             entry = this->scene_catalog.entries[scene_index];
         }
-        if (entry.state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Cannot load disabled Spectra scene \"{}\"", entry.id));
-        spectra::pathtracer::SceneSnapshot document = spectra::pathtracer::ParsePbrtSceneCatalogEntry(entry);
-        const spectra::pathtracer::SceneTranslationReport report = this->analyze_document(document);
+        if (entry.state != spectra::scene::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Cannot load disabled Spectra scene \"{}\"", entry.id));
+        spectra::scene::PbrtSceneSnapshot document = spectra::scene::ParsePbrtSceneCatalogEntry(entry);
+        const spectra::scene::PbrtSceneTranslationReport report = this->analyze_document(document);
         if (!report.supported) {
             throw std::runtime_error(std::format("Cannot load Spectra pathtracer PBRT scene \"{}\": {}", entry.id, first_diagnostic_message(report.diagnostics)));
         }
@@ -444,7 +445,7 @@ namespace spectra::pathtracer {
     void PbrtSceneLibrary::draw_scene_library_window() {
         this->stop_scene_background_workers_if_idle();
 
-        spectra::pathtracer::PbrtSceneCatalog catalog_snapshot{};
+        spectra::scene::PbrtSceneCatalog catalog_snapshot{};
         std::size_t active_scene_index_snapshot{};
         std::size_t selected_scene_index_snapshot{};
         int filter_snapshot{};
@@ -459,7 +460,7 @@ namespace spectra::pathtracer {
         }
 
         if (selected_scene_index_snapshot >= catalog_snapshot.entries.size()) selected_scene_index_snapshot = active_scene_index_snapshot;
-        if (selected_scene_index_snapshot < catalog_snapshot.entries.size() && catalog_snapshot.entries[selected_scene_index_snapshot].state == spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene) selected_scene_index_snapshot = active_scene_index_snapshot;
+        if (selected_scene_index_snapshot < catalog_snapshot.entries.size() && catalog_snapshot.entries[selected_scene_index_snapshot].state == spectra::scene::PbrtSceneCatalogEntryState::NonScene) selected_scene_index_snapshot = active_scene_index_snapshot;
 
         ImGui::TextUnformatted("Scene Library");
         ImGui::SameLine();
@@ -502,13 +503,13 @@ namespace spectra::pathtracer {
             ImGui::TableSetupColumn("Integrator", ImGuiTableColumnFlags_WidthFixed, 96.0f);
             ImGui::TableHeadersRow();
             for (std::size_t scene_index = 0; scene_index < catalog_snapshot.entries.size(); ++scene_index) {
-                const spectra::pathtracer::PbrtSceneCatalogEntry& entry = catalog_snapshot.entries[scene_index];
-                if (entry.state == spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene) continue;
+                const spectra::scene::PbrtSceneCatalogEntry& entry = catalog_snapshot.entries[scene_index];
+                if (entry.state == spectra::scene::PbrtSceneCatalogEntryState::NonScene) continue;
                 if (!contains_case_insensitive(entry.id, search_text) && !contains_case_insensitive(entry.displayName, search_text) && !contains_case_insensitive(entry.group, search_text)) continue;
-                std::optional<spectra::pathtracer::SceneTranslationReport> report = this->cached_entry_report(entry);
+                std::optional<spectra::scene::PbrtSceneTranslationReport> report = this->cached_entry_report(entry);
                 const bool selected = scene_index == selected_scene_index_snapshot;
                 const bool active   = scene_index == active_scene_index_snapshot;
-                if (entry.state == spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate && !report.has_value()) this->request_entry_report_analysis(scene_index, entry);
+                if (entry.state == spectra::scene::PbrtSceneCatalogEntryState::Candidate && !report.has_value()) this->request_entry_report_analysis(scene_index, entry);
                 const DisplayState state = this->display_state(entry, report, active);
                 if (!display_filter_matches(state, filter_snapshot)) continue;
 
@@ -528,7 +529,7 @@ namespace spectra::pathtracer {
                 draw_display_state_label(state);
                 ImGui::TableSetColumnIndex(3);
                 if (entry.probe.has_value())
-                    ImGui::TextUnformatted(last_probe_feature_type(*entry.probe, spectra::pathtracer::SceneProbeFeatureCategory::Integrator, "-").c_str());
+                    ImGui::TextUnformatted(last_probe_feature_type(*entry.probe, spectra::scene::PbrtSceneProbeFeatureCategory::Integrator, "-").c_str());
                 else
                     ImGui::TextDisabled("-");
             }
@@ -536,11 +537,11 @@ namespace spectra::pathtracer {
         }
 
         if (selected_scene_index_snapshot >= catalog_snapshot.entries.size()) return;
-        if (catalog_snapshot.entries[selected_scene_index_snapshot].state == spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene) return;
-        const spectra::pathtracer::PbrtSceneCatalogEntry& selected_entry = catalog_snapshot.entries[selected_scene_index_snapshot];
-        std::optional<spectra::pathtracer::SceneTranslationReport> selected_report = this->cached_entry_report(selected_entry);
+        if (catalog_snapshot.entries[selected_scene_index_snapshot].state == spectra::scene::PbrtSceneCatalogEntryState::NonScene) return;
+        const spectra::scene::PbrtSceneCatalogEntry& selected_entry = catalog_snapshot.entries[selected_scene_index_snapshot];
+        std::optional<spectra::scene::PbrtSceneTranslationReport> selected_report = this->cached_entry_report(selected_entry);
         const bool selected_active = selected_scene_index_snapshot == active_scene_index_snapshot;
-        if (selected_entry.state == spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate && !selected_report.has_value()) this->request_entry_report_analysis(selected_scene_index_snapshot, selected_entry);
+        if (selected_entry.state == spectra::scene::PbrtSceneCatalogEntryState::Candidate && !selected_report.has_value()) this->request_entry_report_analysis(selected_scene_index_snapshot, selected_entry);
         const DisplayState selected_state = this->display_state(selected_entry, selected_report, selected_active);
         ImGui::Spacing();
         ImGui::SeparatorText("Selected Scene");
@@ -577,16 +578,16 @@ namespace spectra::pathtracer {
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextUnformatted(value.c_str());
                 };
-                const auto count_feature = [&selected_entry](const spectra::pathtracer::SceneProbeFeatureCategory category) {
-                    return static_cast<std::size_t>(std::ranges::count_if(selected_entry.probe->features, [category](const spectra::pathtracer::SceneProbeFeature& feature) { return feature.category == category; }));
+                const auto count_feature = [&selected_entry](const spectra::scene::PbrtSceneProbeFeatureCategory category) {
+                    return static_cast<std::size_t>(std::ranges::count_if(selected_entry.probe->features, [category](const spectra::scene::PbrtSceneProbeFeature& feature) { return feature.category == category; }));
                 };
-                row("Camera", last_probe_feature_type(*selected_entry.probe, spectra::pathtracer::SceneProbeFeatureCategory::Camera, "-"));
-                row("Sampler", last_probe_feature_type(*selected_entry.probe, spectra::pathtracer::SceneProbeFeatureCategory::Sampler, "-"));
-                row("Integrator", last_probe_feature_type(*selected_entry.probe, spectra::pathtracer::SceneProbeFeatureCategory::Integrator, "-"));
-                row("Accelerator", last_probe_feature_type(*selected_entry.probe, spectra::pathtracer::SceneProbeFeatureCategory::Accelerator, "-"));
-                row("Shapes", std::format("{}", count_feature(spectra::pathtracer::SceneProbeFeatureCategory::Shape)));
-                row("Materials", std::format("{}", count_feature(spectra::pathtracer::SceneProbeFeatureCategory::Material)));
-                row("Lights", std::format("{}", count_feature(spectra::pathtracer::SceneProbeFeatureCategory::Light)));
+                row("Camera", last_probe_feature_type(*selected_entry.probe, spectra::scene::PbrtSceneProbeFeatureCategory::Camera, "-"));
+                row("Sampler", last_probe_feature_type(*selected_entry.probe, spectra::scene::PbrtSceneProbeFeatureCategory::Sampler, "-"));
+                row("Integrator", last_probe_feature_type(*selected_entry.probe, spectra::scene::PbrtSceneProbeFeatureCategory::Integrator, "-"));
+                row("Accelerator", last_probe_feature_type(*selected_entry.probe, spectra::scene::PbrtSceneProbeFeatureCategory::Accelerator, "-"));
+                row("Shapes", std::format("{}", count_feature(spectra::scene::PbrtSceneProbeFeatureCategory::Shape)));
+                row("Materials", std::format("{}", count_feature(spectra::scene::PbrtSceneProbeFeatureCategory::Material)));
+                row("Lights", std::format("{}", count_feature(spectra::scene::PbrtSceneProbeFeatureCategory::Light)));
                 ImGui::EndTable();
             }
         }
@@ -596,7 +597,7 @@ namespace spectra::pathtracer {
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
                 if (ImGui::BeginChild("SpectraSceneLibraryTranslation", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
-                    for (const spectra::pathtracer::SceneDiagnostic& diagnostic : selected_report->diagnostics) {
+                    for (const spectra::scene::PbrtSceneDiagnostic& diagnostic : selected_report->diagnostics) {
                         ImGui::TextColored(display_state_color(DisplayState::Unsupported), "%s", source_location_text(diagnostic.source).c_str());
                         ImGui::TextWrapped("%s", diagnostic.message.c_str());
                         ImGui::Spacing();
@@ -613,7 +614,7 @@ namespace spectra::pathtracer {
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
                 if (ImGui::BeginChild("SpectraSceneLibraryIssues", ImVec2{0.0f, 120.0f}, ImGuiChildFlags_Borders)) {
-                    for (const spectra::pathtracer::SceneDiagnostic& issue : selected_entry.issues) {
+                    for (const spectra::scene::PbrtSceneDiagnostic& issue : selected_entry.issues) {
                         ImGui::TextColored(display_state_color(DisplayState::Invalid), "%s", source_location_text(issue.source).c_str());
                         ImGui::TextWrapped("%s", issue.message.c_str());
                         ImGui::Spacing();

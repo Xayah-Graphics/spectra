@@ -1,6 +1,7 @@
 export module spectra.pathtracer.pbrt.library;
 
-export import spectra.pathtracer.pbrt;
+export import spectra.pathtracer;
+export import spectra.scene.pbrt;
 import std;
 
 export namespace spectra::pathtracer {
@@ -29,30 +30,30 @@ export namespace spectra::pathtracer {
 
         void detach() noexcept;
 
-        [[nodiscard]] std::shared_ptr<SceneWorkspace> scene_workspace() const;
+        [[nodiscard]] std::shared_ptr<scene::PbrtSceneWorkspace> scene_workspace() const;
 
     private:
         struct ProbeTranslationCacheEntry {
             std::string sceneId{};
-            SceneRevision revision{};
-            SceneTranslationReport report{};
+            scene::SceneRevision revision{};
+            scene::PbrtSceneTranslationReport report{};
         };
 
         struct DocumentTranslationCacheEntry {
             std::string sceneId{};
-            SceneRevision revision{};
-            SceneTranslationReport report{};
+            scene::SceneRevision revision{};
+            scene::PbrtSceneTranslationReport report{};
         };
 
         struct TranslationRequestKey {
             std::string sceneId{};
-            SceneRevision revision{};
+            scene::SceneRevision revision{};
         };
 
         struct TranslationRequest {
             TranslationRequestKey key{};
             std::size_t sceneIndex{};
-            SceneProbeReport probe{};
+            scene::PbrtSceneProbeReport probe{};
         };
 
         void attach_sidebar_host(std::move_only_function<void(PathtracerSidebarTab)> register_tab);
@@ -67,20 +68,20 @@ export namespace spectra::pathtracer {
         [[nodiscard]] static bool translation_request_key_matches(const TranslationRequestKey& lhs, const TranslationRequestKey& rhs);
         [[nodiscard]] bool has_probe_translation_cache_entry_locked(const TranslationRequestKey& key) const;
         [[nodiscard]] bool has_translation_request_locked(const TranslationRequestKey& key) const;
-        [[nodiscard]] SceneTranslationReport analyze_probe(const SceneProbeReport& probe);
-        [[nodiscard]] SceneTranslationReport analyze_document(const SceneSnapshot& document);
-        [[nodiscard]] DisplayState display_state(const PbrtSceneCatalogEntry& entry, const std::optional<SceneTranslationReport>& report, bool loaded) const;
-        [[nodiscard]] std::optional<SceneTranslationReport> cached_entry_report(const PbrtSceneCatalogEntry& entry) const;
-        void request_entry_report_analysis(std::size_t scene_index, const PbrtSceneCatalogEntry& entry);
-        void commit_document(std::size_t scene_index, SceneSnapshot document);
+        [[nodiscard]] scene::PbrtSceneTranslationReport analyze_probe(const scene::PbrtSceneProbeReport& probe);
+        [[nodiscard]] scene::PbrtSceneTranslationReport analyze_document(const scene::PbrtSceneSnapshot& document);
+        [[nodiscard]] DisplayState display_state(const scene::PbrtSceneCatalogEntry& entry, const std::optional<scene::PbrtSceneTranslationReport>& report, bool loaded) const;
+        [[nodiscard]] std::optional<scene::PbrtSceneTranslationReport> cached_entry_report(const scene::PbrtSceneCatalogEntry& entry) const;
+        void request_entry_report_analysis(std::size_t scene_index, const scene::PbrtSceneCatalogEntry& entry);
+        void commit_document(std::size_t scene_index, scene::PbrtSceneSnapshot document);
         void load_scene(std::size_t scene_index);
         void draw_scene_library_window();
 
-        std::shared_ptr<SceneWorkspace> workspace{};
+        std::shared_ptr<scene::PbrtSceneWorkspace> workspace{};
         std::string initial_scene_id{};
         mutable std::mutex scene_catalog_mutex{};
         std::condition_variable_any scene_background_condition{};
-        PbrtSceneCatalog scene_catalog{};
+        scene::PbrtSceneCatalog scene_catalog{};
         std::vector<bool> scene_catalog_probe_claimed{};
         std::vector<ProbeTranslationCacheEntry> probe_translation_cache{};
         std::vector<DocumentTranslationCacheEntry> document_translation_cache{};

@@ -11,7 +11,7 @@ import xayah.projects.cloth;
 import xayah.projects.pyro;
 import xayah.projects.sparkles;
 import spectra.rasterizer.renderer;
-import spectra.scene_bridge;
+import spectra.scene.pbrt_preview;
 
 namespace spectra::app {
     static_assert(pathtracer::PathtracerHost<Spectra>);
@@ -36,9 +36,9 @@ namespace spectra::app {
     concept RasterizerSimulationAdapter = std::default_initializable<Adapter> && requires(Adapter& adapter, const Adapter& constAdapter, const RasterizerSimulationFrameInfo& frame) {
         { Adapter::project_id() } -> std::convertible_to<std::string_view>;
         { Adapter::project_title() } -> std::convertible_to<std::string_view>;
-        { constAdapter.create_document() } -> std::same_as<rasterizer::SceneDocument>;
-        { adapter.reset() } -> std::same_as<rasterizer::SceneFrameSnapshot>;
-        { adapter.step(frame) } -> std::same_as<rasterizer::SceneFrameSnapshot>;
+        { constAdapter.create_document() } -> std::same_as<scene::SceneDocument>;
+        { adapter.reset() } -> std::same_as<scene::SceneFrameSnapshot>;
+        { adapter.step(frame) } -> std::same_as<scene::SceneFrameSnapshot>;
     };
 
     class RasterizerSimulationRuntime {
@@ -52,9 +52,9 @@ namespace spectra::app {
 
         [[nodiscard]] virtual std::string_view id() const                                      = 0;
         [[nodiscard]] virtual std::string_view title() const                                   = 0;
-        [[nodiscard]] virtual rasterizer::SceneDocument create_document() const                 = 0;
-        [[nodiscard]] virtual rasterizer::SceneFrameSnapshot reset()                            = 0;
-        [[nodiscard]] virtual rasterizer::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) = 0;
+        [[nodiscard]] virtual scene::SceneDocument create_document() const                 = 0;
+        [[nodiscard]] virtual scene::SceneFrameSnapshot reset()                            = 0;
+        [[nodiscard]] virtual scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) = 0;
     };
 
     template <RasterizerSimulationAdapter Adapter>
@@ -70,15 +70,15 @@ namespace spectra::app {
             return Adapter::project_title();
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_document() const override {
+        [[nodiscard]] scene::SceneDocument create_document() const override {
             return this->adapter.create_document();
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() override {
+        [[nodiscard]] scene::SceneFrameSnapshot reset() override {
             return this->adapter.reset();
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) override {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) override {
             return this->adapter.step(frame);
         }
 
@@ -90,13 +90,13 @@ namespace spectra::app {
         std::string id{};
         std::string title{};
         RasterizerSceneKind kind{RasterizerSceneKind::Static};
-        std::move_only_function<rasterizer::SceneDocument()> create_static_document{};
+        std::move_only_function<scene::SceneDocument()> create_static_document{};
         std::move_only_function<std::unique_ptr<RasterizerSimulationRuntime>()> create_simulation_runtime{};
     };
 
     class RasterizerSceneRegistry final {
     public:
-        void register_static_scene(std::string id, std::string title, std::move_only_function<rasterizer::SceneDocument()> create_document) {
+        void register_static_scene(std::string id, std::string title, std::move_only_function<scene::SceneDocument()> create_document) {
             if (!create_document) throw std::runtime_error("Static rasterizer scene entry requires a document factory");
             this->ensure_unique_scene_id(id);
             this->entries.push_back(RasterizerSceneEntry{
@@ -127,7 +127,7 @@ namespace spectra::app {
             return scene.create_simulation_runtime();
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_static_document(const std::size_t index) {
+        [[nodiscard]] scene::SceneDocument create_static_document(const std::size_t index) {
             if (this->entries.empty()) throw std::runtime_error("Rasterizer scene registry is empty");
             if (index >= this->entries.size()) throw std::runtime_error("Rasterizer scene index is out of range");
             RasterizerSceneEntry& scene = this->entries.at(index);
@@ -155,13 +155,13 @@ namespace spectra::app {
         std::vector<RasterizerSceneEntry> entries{};
     };
 
-    [[nodiscard]] rasterizer::Vector3 ToRasterizerVector3(const std::array<float, 3>& value) {
-        return rasterizer::Vector3{value[0], value[1], value[2]};
+    [[nodiscard]] scene::Vector3 ToSceneVector3(const std::array<float, 3>& value) {
+        return scene::Vector3{value[0], value[1], value[2]};
     }
 
-    [[nodiscard]] rasterizer::SceneDocument MakeRasterizerSimulationDocument(std::string name, std::string title, std::string source) {
-        return rasterizer::SceneDocument{
-            .revision        = rasterizer::SceneRevision{1},
+    [[nodiscard]] scene::SceneDocument MakeRasterizerSimulationDocument(std::string name, std::string title, std::string source) {
+        return scene::SceneDocument{
+            .revision        = scene::SceneRevision{1},
             .name            = std::move(name),
             .title           = std::move(title),
             .source          = std::move(source),
@@ -169,12 +169,12 @@ namespace spectra::app {
         };
     }
 
-    void CommitRasterizerFrame(rasterizer::SceneWorkspace& workspace, rasterizer::SceneFrameSnapshot frame, const bool resetTimeline) {
-        rasterizer::SceneEditBuilder edit{};
+    void CommitRasterizerFrame(scene::SceneWorkspace& workspace, scene::SceneFrameSnapshot frame, const bool resetTimeline) {
+        scene::SceneEditBuilder edit{};
         if (resetTimeline) {
-            const std::shared_ptr<const rasterizer::SceneDocument> document = workspace.document();
-            edit.replaceTimeline(rasterizer::SimulationTimeline{
-                .mode            = rasterizer::SimulationTimelineMode::Live,
+            const std::shared_ptr<const scene::SceneDocument> document = workspace.document();
+            edit.replaceTimeline(scene::SimulationTimeline{
+                .mode            = scene::SimulationTimelineMode::Live,
                 .framesPerSecond = document->framesPerSecond,
                 .playing         = true,
                 .loop            = true,
@@ -182,30 +182,30 @@ namespace spectra::app {
             });
         }
         edit.replaceFrame(std::move(frame));
-        const rasterizer::SceneEditBatch batch = workspace.commit(std::move(edit));
-        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer scene frame commit did not mark the frame dirty");
+        const scene::SceneEditBatch batch = workspace.commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer scene frame commit did not mark the frame dirty");
     }
 
-    void CommitRasterizerTimelineAndFrame(rasterizer::SceneWorkspace& workspace, rasterizer::SimulationTimeline timeline, rasterizer::SceneFrameSnapshot frame) {
+    void CommitRasterizerTimelineAndFrame(scene::SceneWorkspace& workspace, scene::SimulationTimeline timeline, scene::SceneFrameSnapshot frame) {
         timeline.cursor       = frame.cursor;
         timeline.currentFrame = frame;
-        rasterizer::SceneEditBuilder edit{};
+        scene::SceneEditBuilder edit{};
         edit.replaceTimeline(std::move(timeline));
         edit.replaceFrame(std::move(frame));
-        const rasterizer::SceneEditBatch batch = workspace.commit(std::move(edit));
-        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer scene timeline commit did not mark the timeline dirty");
-        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer scene frame commit did not mark the frame dirty");
+        const scene::SceneEditBatch batch = workspace.commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer scene timeline commit did not mark the timeline dirty");
+        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer scene frame commit did not mark the frame dirty");
     }
 
-    void CommitRasterizerTimeline(rasterizer::SceneWorkspace& workspace, rasterizer::SimulationTimeline timeline) {
-        rasterizer::SceneEditBuilder edit{};
+    void CommitRasterizerTimeline(scene::SceneWorkspace& workspace, scene::SimulationTimeline timeline) {
+        scene::SceneEditBuilder edit{};
         edit.replaceTimeline(std::move(timeline));
-        const rasterizer::SceneEditBatch batch = workspace.commit(std::move(edit));
-        if (!rasterizer::HasSceneDirtyFlag(batch.dirty, rasterizer::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer scene timeline commit did not mark the timeline dirty");
+        const scene::SceneEditBatch batch = workspace.commit(std::move(edit));
+        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer scene timeline commit did not mark the timeline dirty");
     }
 
-    [[nodiscard]] rasterizer::FrameCursor MakeFrameCursor(const RasterizerSimulationFrameInfo& info) {
-        return rasterizer::FrameCursor{
+    [[nodiscard]] scene::FrameCursor MakeFrameCursor(const RasterizerSimulationFrameInfo& info) {
+        return scene::FrameCursor{
             .frameIndex   = info.frame_index,
             .timeSeconds  = info.time_seconds,
         };
@@ -226,51 +226,51 @@ namespace spectra::app {
             return "Bouncing Ball";
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_document() const {
-            rasterizer::SceneDocument document = MakeRasterizerSimulationDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
-            document.materials.push_back(rasterizer::SceneMaterial{
+        [[nodiscard]] scene::SceneDocument create_document() const {
+            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
+            document.materials.push_back(scene::SceneMaterial{
                 .name      = "ball",
-                .baseColor = rasterizer::Vector4{0.95f, 0.28f, 0.18f, 1.0f},
+                .baseColor = scene::Vector4{0.95f, 0.28f, 0.18f, 1.0f},
                 .roughness = 0.42f,
             });
-            document.materials.push_back(rasterizer::SceneMaterial{
+            document.materials.push_back(scene::SceneMaterial{
                 .name      = "floor",
-                .baseColor = rasterizer::Vector4{0.38f, 0.43f, 0.38f, 1.0f},
+                .baseColor = scene::Vector4{0.38f, 0.43f, 0.38f, 1.0f},
                 .roughness = 0.74f,
             });
-            document.lights.push_back(rasterizer::SceneLight{
+            document.lights.push_back(scene::SceneLight{
                 .name      = "key",
-                .kind      = rasterizer::SceneLightKind::Directional,
-                .transform = rasterizer::Transform{.rotation = rasterizer::Quaternion{0.35f, 0.0f, 0.0f, 0.94f}},
-                .color     = rasterizer::Vector3{1.0f, 0.97f, 0.92f},
+                .kind      = scene::SceneLightKind::Directional,
+                .transform = scene::Transform{.rotation = scene::Quaternion{0.35f, 0.0f, 0.0f, 0.94f}},
+                .color     = scene::Vector3{1.0f, 0.97f, 0.92f},
                 .intensity = 3.0f,
             });
-            document.camera = rasterizer::SceneCamera{
+            document.camera = scene::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::Transform{.position = rasterizer::Vector3{4.4f, 2.7f, 5.8f}},
-                .target    = rasterizer::Vector3{0.0f, 1.25f, 0.0f},
+                .transform = scene::Transform{.position = scene::Vector3{4.4f, 2.7f, 5.8f}},
+                .target    = scene::Vector3{0.0f, 1.25f, 0.0f},
                 .verticalFovDegrees = 42.0f,
                 .nearPlane = 0.05f,
                 .farPlane  = 80.0f,
             };
             document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_mesh());
-            document.rigidBodies.push_back(rasterizer::SceneRigidBody{
+            document.rigidBodies.push_back(scene::SceneRigidBody{
                 .name         = "ball.body",
                 .meshName     = "ball.mesh",
                 .materialName = "ball",
-                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->solver.current_position())},
+                .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
                 .mass         = 1.0f,
             });
             return document;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
             return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -278,20 +278,20 @@ namespace spectra::app {
     private:
         xayah::projects::bouncing_ball::BouncingBallSolver solver{};
 
-        [[nodiscard]] rasterizer::SceneMesh make_floor_mesh() const {
-            return rasterizer::SceneMesh{
+        [[nodiscard]] scene::SceneMesh make_floor_mesh() const {
+            return scene::SceneMesh{
                 .name         = "floor.mesh",
                 .positions    = {
-                    rasterizer::Vector3{-5.5f, 0.0f, -5.5f},
-                    rasterizer::Vector3{5.5f, 0.0f, -5.5f},
-                    rasterizer::Vector3{5.5f, 0.0f, 5.5f},
-                    rasterizer::Vector3{-5.5f, 0.0f, 5.5f},
+                    scene::Vector3{-5.5f, 0.0f, -5.5f},
+                    scene::Vector3{5.5f, 0.0f, -5.5f},
+                    scene::Vector3{5.5f, 0.0f, 5.5f},
+                    scene::Vector3{-5.5f, 0.0f, 5.5f},
                 },
                 .normals      = {
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
                 },
                 .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
                 .materialName = "floor",
@@ -299,34 +299,34 @@ namespace spectra::app {
             };
         }
 
-        [[nodiscard]] rasterizer::SceneMesh make_mesh() const {
-            rasterizer::SceneMesh mesh{
+        [[nodiscard]] scene::SceneMesh make_mesh() const {
+            scene::SceneMesh mesh{
                 .name         = "ball.mesh",
                 .materialName = "ball",
-                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->solver.current_position())},
+                .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
                 .dynamic      = true,
             };
             const std::vector<xayah::projects::bouncing_ball::BouncingBallVertex>& vertices = this->solver.mesh_vertices();
             mesh.positions.reserve(vertices.size());
             mesh.normals.reserve(vertices.size());
             for (const xayah::projects::bouncing_ball::BouncingBallVertex& vertex : vertices) {
-                mesh.positions.push_back(ToRasterizerVector3(vertex.position));
-                mesh.normals.push_back(ToRasterizerVector3(vertex.normal));
+                mesh.positions.push_back(ToSceneVector3(vertex.position));
+                mesh.normals.push_back(ToSceneVector3(vertex.normal));
             }
             mesh.indices = this->solver.mesh_indices();
             return mesh;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
-            rasterizer::SceneFrameSnapshot snapshot{
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
+            scene::SceneFrameSnapshot snapshot{
                 .cursor = MakeFrameCursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
-            snapshot.rigidBodies.push_back(rasterizer::SceneRigidBody{
+            snapshot.rigidBodies.push_back(scene::SceneRigidBody{
                 .name         = "ball.body",
                 .meshName     = "ball.mesh",
                 .materialName = "ball",
-                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->solver.current_position())},
+                .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
                 .mass         = 1.0f,
             });
             return snapshot;
@@ -343,25 +343,25 @@ namespace spectra::app {
             return "Sparkles";
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_document() const {
-            rasterizer::SceneDocument document = MakeRasterizerSimulationDocument("project.sparkles", "Sparkles", "project://sparkles");
-            document.materials.push_back(rasterizer::SceneMaterial{
+        [[nodiscard]] scene::SceneDocument create_document() const {
+            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.sparkles", "Sparkles", "project://sparkles");
+            document.materials.push_back(scene::SceneMaterial{
                 .name             = "sparkle",
-                .baseColor        = rasterizer::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
-                .emissionColor    = rasterizer::Vector3{1.0f, 0.54f, 0.12f},
+                .baseColor        = scene::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
+                .emissionColor    = scene::Vector3{1.0f, 0.54f, 0.12f},
                 .emissionStrength = 2.4f,
                 .roughness        = 0.2f,
             });
-            document.lights.push_back(rasterizer::SceneLight{
+            document.lights.push_back(scene::SceneLight{
                 .name      = "environment",
-                .kind      = rasterizer::SceneLightKind::Environment,
-                .color     = rasterizer::Vector3{0.22f, 0.26f, 0.34f},
+                .kind      = scene::SceneLightKind::Environment,
+                .color     = scene::Vector3{0.22f, 0.26f, 0.34f},
                 .intensity = 0.8f,
             });
-            document.camera = rasterizer::SceneCamera{
+            document.camera = scene::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::Transform{.position = rasterizer::Vector3{4.6f, 3.1f, 6.0f}},
-                .target    = rasterizer::Vector3{0.0f, 1.9f, 0.0f},
+                .transform = scene::Transform{.position = scene::Vector3{4.6f, 3.1f, 6.0f}},
+                .target    = scene::Vector3{0.0f, 1.9f, 0.0f},
                 .verticalFovDegrees = 42.0f,
                 .nearPlane = 0.05f,
                 .farPlane  = 90.0f,
@@ -370,12 +370,12 @@ namespace spectra::app {
             return document;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
             return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -383,8 +383,8 @@ namespace spectra::app {
     private:
         xayah::projects::sparkles::SparklesSolver solver{};
 
-        [[nodiscard]] rasterizer::SceneParticleSet make_particles() const {
-            rasterizer::SceneParticleSet particles{
+        [[nodiscard]] scene::SceneParticleSet make_particles() const {
+            scene::SceneParticleSet particles{
                 .name         = "sparkles.particles",
                 .materialName = "sparkle",
                 .dynamic      = true,
@@ -394,15 +394,15 @@ namespace spectra::app {
             particles.radii.reserve(visibleParticles.size());
             particles.colors.reserve(visibleParticles.size());
             for (const xayah::projects::sparkles::SparklesParticle& particle : visibleParticles) {
-                particles.positions.push_back(ToRasterizerVector3(particle.position));
+                particles.positions.push_back(ToSceneVector3(particle.position));
                 particles.radii.push_back(particle.radius);
-                particles.colors.push_back(rasterizer::Vector4{particle.color[0], particle.color[1], particle.color[2], 1.0f});
+                particles.colors.push_back(scene::Vector4{particle.color[0], particle.color[1], particle.color[2], 1.0f});
             }
             return particles;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
-            rasterizer::SceneFrameSnapshot snapshot{
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
+            scene::SceneFrameSnapshot snapshot{
                 .cursor = MakeFrameCursor(frame),
             };
             snapshot.particleSets.push_back(this->make_particles());
@@ -422,34 +422,34 @@ namespace spectra::app {
             return "Cloth";
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_document() const {
-            rasterizer::SceneDocument document = MakeRasterizerSimulationDocument("project.cloth", "Cloth", "project://cloth");
-            document.materials.push_back(rasterizer::SceneMaterial{
+        [[nodiscard]] scene::SceneDocument create_document() const {
+            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.cloth", "Cloth", "project://cloth");
+            document.materials.push_back(scene::SceneMaterial{
                 .name      = "cloth",
-                .baseColor = rasterizer::Vector4{0.18f, 0.42f, 0.88f, 1.0f},
+                .baseColor = scene::Vector4{0.18f, 0.42f, 0.88f, 1.0f},
                 .roughness = 0.64f,
             });
-            document.materials.push_back(rasterizer::SceneMaterial{
+            document.materials.push_back(scene::SceneMaterial{
                 .name      = "cloth.floor",
-                .baseColor = rasterizer::Vector4{0.34f, 0.38f, 0.36f, 1.0f},
+                .baseColor = scene::Vector4{0.34f, 0.38f, 0.36f, 1.0f},
                 .roughness = 0.78f,
             });
-            document.materials.push_back(rasterizer::SceneMaterial{
+            document.materials.push_back(scene::SceneMaterial{
                 .name      = "cloth.collider",
-                .baseColor = rasterizer::Vector4{0.90f, 0.44f, 0.28f, 1.0f},
+                .baseColor = scene::Vector4{0.90f, 0.44f, 0.28f, 1.0f},
                 .roughness = 0.46f,
             });
-            document.lights.push_back(rasterizer::SceneLight{
+            document.lights.push_back(scene::SceneLight{
                 .name      = "key",
-                .kind      = rasterizer::SceneLightKind::Directional,
-                .transform = rasterizer::Transform{.rotation = rasterizer::Quaternion{0.45f, 0.18f, 0.0f, 0.87f}},
-                .color     = rasterizer::Vector3{0.92f, 0.96f, 1.0f},
+                .kind      = scene::SceneLightKind::Directional,
+                .transform = scene::Transform{.rotation = scene::Quaternion{0.45f, 0.18f, 0.0f, 0.87f}},
+                .color     = scene::Vector3{0.92f, 0.96f, 1.0f},
                 .intensity = 3.6f,
             });
-            document.camera = rasterizer::SceneCamera{
+            document.camera = scene::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::Transform{.position = rasterizer::Vector3{3.8f, 2.8f, 5.2f}},
-                .target    = rasterizer::Vector3{0.0f, 1.05f, 0.0f},
+                .transform = scene::Transform{.position = scene::Vector3{3.8f, 2.8f, 5.2f}},
+                .target    = scene::Vector3{0.0f, 1.05f, 0.0f},
                 .verticalFovDegrees = 42.0f,
                 .nearPlane = 0.05f,
                 .farPlane  = 90.0f,
@@ -457,27 +457,27 @@ namespace spectra::app {
             document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_collider_mesh());
             document.meshes.push_back(this->make_mesh());
-            document.cloths.push_back(rasterizer::SceneCloth{
+            document.cloths.push_back(scene::SceneCloth{
                 .name         = "cloth.body",
                 .meshName     = "cloth.mesh",
                 .materialName = "cloth",
                 .dynamic      = true,
             });
-            document.colliders.push_back(rasterizer::SceneCollider{
+            document.colliders.push_back(scene::SceneCollider{
                 .name      = "cloth.collider",
                 .meshName  = "cloth.collider.mesh",
-                .transform = rasterizer::Transform{.position = ToRasterizerVector3(this->collider.center)},
+                .transform = scene::Transform{.position = ToSceneVector3(this->collider.center)},
                 .friction  = 0.54f,
             });
             return document;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
             return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -487,20 +487,20 @@ namespace spectra::app {
         xayah::projects::cloth::ClothSphereCollider collider{};
         xayah::projects::cloth::ClothSolver solver;
 
-        [[nodiscard]] rasterizer::SceneMesh make_floor_mesh() const {
-            return rasterizer::SceneMesh{
+        [[nodiscard]] scene::SceneMesh make_floor_mesh() const {
+            return scene::SceneMesh{
                 .name         = "cloth.floor.mesh",
                 .positions    = {
-                    rasterizer::Vector3{-3.8f, -0.02f, -3.2f},
-                    rasterizer::Vector3{3.8f, -0.02f, -3.2f},
-                    rasterizer::Vector3{3.8f, -0.02f, 3.2f},
-                    rasterizer::Vector3{-3.8f, -0.02f, 3.2f},
+                    scene::Vector3{-3.8f, -0.02f, -3.2f},
+                    scene::Vector3{3.8f, -0.02f, -3.2f},
+                    scene::Vector3{3.8f, -0.02f, 3.2f},
+                    scene::Vector3{-3.8f, -0.02f, 3.2f},
                 },
                 .normals      = {
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
-                    rasterizer::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
                 },
                 .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
                 .materialName = "cloth.floor",
@@ -508,11 +508,11 @@ namespace spectra::app {
             };
         }
 
-        [[nodiscard]] rasterizer::SceneMesh make_collider_mesh() const {
-            rasterizer::SceneMesh mesh{
+        [[nodiscard]] scene::SceneMesh make_collider_mesh() const {
+            scene::SceneMesh mesh{
                 .name         = "cloth.collider.mesh",
                 .materialName = "cloth.collider",
-                .transform    = rasterizer::Transform{.position = ToRasterizerVector3(this->collider.center)},
+                .transform    = scene::Transform{.position = ToSceneVector3(this->collider.center)},
                 .dynamic      = false,
             };
             constexpr std::uint32_t latitude_segments = 18u;
@@ -523,8 +523,8 @@ namespace spectra::app {
                 const float ring = std::sin(theta);
                 for (std::uint32_t longitude = 0; longitude < longitude_segments; ++longitude) {
                     const float phi = 2.0f * std::numbers::pi_v<float> * static_cast<float>(longitude) / static_cast<float>(longitude_segments);
-                    const rasterizer::Vector3 normal{ring * std::cos(phi), y, ring * std::sin(phi)};
-                    mesh.positions.push_back(rasterizer::Vector3{normal.x * this->collider.radius, normal.y * this->collider.radius, normal.z * this->collider.radius});
+                    const scene::Vector3 normal{ring * std::cos(phi), y, ring * std::sin(phi)};
+                    mesh.positions.push_back(scene::Vector3{normal.x * this->collider.radius, normal.y * this->collider.radius, normal.z * this->collider.radius});
                     mesh.normals.push_back(normal);
                 }
             }
@@ -546,8 +546,8 @@ namespace spectra::app {
             return mesh;
         }
 
-        [[nodiscard]] rasterizer::SceneMesh make_mesh() const {
-            rasterizer::SceneMesh mesh{
+        [[nodiscard]] scene::SceneMesh make_mesh() const {
+            scene::SceneMesh mesh{
                 .name         = "cloth.mesh",
                 .materialName = "cloth",
                 .dynamic      = true,
@@ -556,19 +556,19 @@ namespace spectra::app {
             mesh.positions.reserve(vertices.size());
             mesh.normals.reserve(vertices.size());
             for (const xayah::projects::cloth::ClothVertex& vertex : vertices) {
-                mesh.positions.push_back(ToRasterizerVector3(vertex.position));
-                mesh.normals.push_back(ToRasterizerVector3(vertex.normal));
+                mesh.positions.push_back(ToSceneVector3(vertex.position));
+                mesh.normals.push_back(ToSceneVector3(vertex.normal));
             }
             mesh.indices = this->solver.mesh_indices();
             return mesh;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
-            rasterizer::SceneFrameSnapshot snapshot{
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
+            scene::SceneFrameSnapshot snapshot{
                 .cursor = MakeFrameCursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
-            snapshot.cloths.push_back(rasterizer::SceneCloth{
+            snapshot.cloths.push_back(scene::SceneCloth{
                 .name         = "cloth.body",
                 .meshName     = "cloth.mesh",
                 .materialName = "cloth",
@@ -588,25 +588,25 @@ namespace spectra::app {
             return "Pyro";
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_document() const {
-            rasterizer::SceneDocument document = MakeRasterizerSimulationDocument("project.pyro", "Pyro", "project://pyro");
-            document.materials.push_back(rasterizer::SceneMaterial{
+        [[nodiscard]] scene::SceneDocument create_document() const {
+            scene::SceneDocument document = MakeRasterizerSimulationDocument("project.pyro", "Pyro", "project://pyro");
+            document.materials.push_back(scene::SceneMaterial{
                 .name             = "smoke",
-                .baseColor        = rasterizer::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
-                .emissionColor    = rasterizer::Vector3{0.95f, 0.48f, 0.18f},
+                .baseColor        = scene::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
+                .emissionColor    = scene::Vector3{0.95f, 0.48f, 0.18f},
                 .emissionStrength = 0.3f,
                 .roughness        = 0.9f,
             });
-            document.lights.push_back(rasterizer::SceneLight{
+            document.lights.push_back(scene::SceneLight{
                 .name      = "environment",
-                .kind      = rasterizer::SceneLightKind::Environment,
-                .color     = rasterizer::Vector3{0.24f, 0.26f, 0.30f},
+                .kind      = scene::SceneLightKind::Environment,
+                .color     = scene::Vector3{0.24f, 0.26f, 0.30f},
                 .intensity = 0.7f,
             });
-            document.camera = rasterizer::SceneCamera{
+            document.camera = scene::SceneCamera{
                 .name      = "camera.main",
-                .transform = rasterizer::Transform{.position = rasterizer::Vector3{2.35f, 1.65f, 2.8f}},
-                .target    = rasterizer::Vector3{0.6f, 0.86f, 0.6f},
+                .transform = scene::Transform{.position = scene::Vector3{2.35f, 1.65f, 2.8f}},
+                .target    = scene::Vector3{0.6f, 0.86f, 0.6f},
                 .verticalFovDegrees = 39.0f,
                 .nearPlane = 0.03f,
                 .farPlane  = 80.0f,
@@ -615,12 +615,12 @@ namespace spectra::app {
             return document;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
             return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -630,8 +630,8 @@ namespace spectra::app {
         std::array<std::uint32_t, 3> resolution{64u, 96u, 64u};
         float cell_size{0.01875f};
 
-        [[nodiscard]] rasterizer::SceneVolumeChannel make_volume_channel(std::string name, const rasterizer::SceneVolumeChannelLayout layout, const std::array<std::uint32_t, 3> dimensions, std::vector<float> values) const {
-            return rasterizer::SceneVolumeChannel{
+        [[nodiscard]] scene::SceneVolumeChannel make_volume_channel(std::string name, const scene::SceneVolumeChannelLayout layout, const std::array<std::uint32_t, 3> dimensions, std::vector<float> values) const {
+            return scene::SceneVolumeChannel{
                 .name       = std::move(name),
                 .layout     = layout,
                 .dimensions = dimensions,
@@ -639,35 +639,35 @@ namespace spectra::app {
             };
         }
 
-        [[nodiscard]] rasterizer::SceneVolumeGrid make_volume_metadata(const std::uint64_t) const {
-            return rasterizer::SceneVolumeGrid{
+        [[nodiscard]] scene::SceneVolumeGrid make_volume_metadata(const std::uint64_t) const {
+            return scene::SceneVolumeGrid{
                 .name         = "pyro.volume",
-                .kind         = rasterizer::SceneVolumeKind::GasDensity,
+                .kind         = scene::SceneVolumeKind::GasDensity,
                 .dimensions   = this->resolution,
-                .origin       = rasterizer::Vector3{0.0f, 0.0f, 0.0f},
-                .voxelSize    = rasterizer::Vector3{this->cell_size, this->cell_size, this->cell_size},
+                .origin       = scene::Vector3{0.0f, 0.0f, 0.0f},
+                .voxelSize    = scene::Vector3{this->cell_size, this->cell_size, this->cell_size},
                 .materialName = "smoke",
                 .dynamic      = true,
             };
         }
 
-        [[nodiscard]] rasterizer::SceneVolumeGrid make_volume(const xayah::projects::pyro::PyroFrame& frame) const {
-            rasterizer::SceneVolumeGrid volume = this->make_volume_metadata(static_cast<std::uint64_t>(frame.frame_index));
+        [[nodiscard]] scene::SceneVolumeGrid make_volume(const xayah::projects::pyro::PyroFrame& frame) const {
+            scene::SceneVolumeGrid volume = this->make_volume_metadata(static_cast<std::uint64_t>(frame.frame_index));
             volume.dimensions = frame.resolution;
-            volume.voxelSize = rasterizer::Vector3{frame.cell_size, frame.cell_size, frame.cell_size};
-            volume.channels.push_back(this->make_volume_channel("density", rasterizer::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.density));
-            volume.channels.push_back(this->make_volume_channel("temperature", rasterizer::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.temperature));
-            volume.channels.push_back(this->make_volume_channel("velocity_x", rasterizer::SceneVolumeChannelLayout::FaceX, std::array<std::uint32_t, 3>{frame.resolution[0] + 1u, frame.resolution[1], frame.resolution[2]}, frame.velocity_x));
-            volume.channels.push_back(this->make_volume_channel("velocity_y", rasterizer::SceneVolumeChannelLayout::FaceY, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1] + 1u, frame.resolution[2]}, frame.velocity_y));
-            volume.channels.push_back(this->make_volume_channel("velocity_z", rasterizer::SceneVolumeChannelLayout::FaceZ, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1], frame.resolution[2] + 1u}, frame.velocity_z));
+            volume.voxelSize = scene::Vector3{frame.cell_size, frame.cell_size, frame.cell_size};
+            volume.channels.push_back(this->make_volume_channel("density", scene::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.density));
+            volume.channels.push_back(this->make_volume_channel("temperature", scene::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.temperature));
+            volume.channels.push_back(this->make_volume_channel("velocity_x", scene::SceneVolumeChannelLayout::FaceX, std::array<std::uint32_t, 3>{frame.resolution[0] + 1u, frame.resolution[1], frame.resolution[2]}, frame.velocity_x));
+            volume.channels.push_back(this->make_volume_channel("velocity_y", scene::SceneVolumeChannelLayout::FaceY, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1] + 1u, frame.resolution[2]}, frame.velocity_y));
+            volume.channels.push_back(this->make_volume_channel("velocity_z", scene::SceneVolumeChannelLayout::FaceZ, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1], frame.resolution[2] + 1u}, frame.velocity_z));
             return volume;
         }
 
-        [[nodiscard]] rasterizer::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) {
             const xayah::projects::pyro::PyroFrame pyroFrame = this->solver.read_frame(ToPyroFrameIndex(frame.frame_index));
             this->resolution                                   = pyroFrame.resolution;
             this->cell_size                                    = pyroFrame.cell_size;
-            rasterizer::SceneFrameSnapshot snapshot{
+            scene::SceneFrameSnapshot snapshot{
                 .cursor = MakeFrameCursor(frame),
             };
             snapshot.volumes.push_back(this->make_volume(pyroFrame));
@@ -682,7 +682,7 @@ namespace spectra::app {
 
     [[nodiscard]] RasterizerSceneRegistry MakeRasterizerSceneRegistry() {
         RasterizerSceneRegistry registry{};
-        registry.register_static_scene(std::string{scene_bridge::CornellBoxSceneId}, "Cornell Box", [] { return scene_bridge::LoadCornellBoxRasterizerDocument(); });
+        registry.register_static_scene(std::string{scene::CornellBoxSceneId}, "Cornell Box", [] { return scene::LoadSceneDocumentFromPbrt(scene::CornellBoxSceneId); });
         registry.register_simulation<BouncingBallRasterizerProject>();
         registry.register_simulation<SparklesRasterizerProject>();
         registry.register_simulation<ClothRasterizerProject>();
@@ -692,7 +692,7 @@ namespace spectra::app {
 
     struct RasterizerSceneSlot {
         std::unique_ptr<RasterizerSimulationRuntime> runtime{};
-        std::shared_ptr<rasterizer::SceneWorkspace> workspace{};
+        std::shared_ptr<scene::SceneWorkspace> workspace{};
         double simulation_accumulator_seconds{};
         double simulation_time_seconds{};
         std::uint64_t simulation_frame_index{};
@@ -715,7 +715,7 @@ namespace spectra::app {
         RasterizerSceneManager& operator=(RasterizerSceneManager&& other) noexcept = default;
         ~RasterizerSceneManager() noexcept                                         = default;
 
-        [[nodiscard]] std::shared_ptr<rasterizer::SceneWorkspace> active_workspace() {
+        [[nodiscard]] std::shared_ptr<scene::SceneWorkspace> active_workspace() {
             return this->ensure_slot(this->active_index).workspace;
         }
 
@@ -753,11 +753,11 @@ namespace spectra::app {
             const RasterizerSceneEntry& entry = this->registry.entry(this->active_index);
             if (entry.kind == RasterizerSceneKind::Static) return;
             RasterizerSceneSlot& slot = this->ensure_slot(this->active_index);
-            const std::shared_ptr<const rasterizer::SceneDocument> document = slot.workspace->document();
+            const std::shared_ptr<const scene::SceneDocument> document = slot.workspace->document();
             if (!document->timelineEnabled) throw std::runtime_error("Rasterizer simulation scene must enable timeline");
             if (document->framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer simulation scene frame rate must be positive");
             const double fixed_delta_seconds = 1.0 / document->framesPerSecond;
-            rasterizer::SimulationTimeline timeline = slot.workspace->timeline();
+            scene::SimulationTimeline timeline = slot.workspace->timeline();
             if (timeline.framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer simulation timeline frame rate must be positive");
             if (timeline.resetRequestSerial != slot.observed_reset_request_serial) {
                 this->reset_simulation(slot, std::move(timeline));
@@ -773,11 +773,11 @@ namespace spectra::app {
                 slot.committed_playback_frame_index.reset();
                 return;
             }
-            if (timeline.mode == rasterizer::SimulationTimelineMode::Playback) {
+            if (timeline.mode == scene::SimulationTimelineMode::Playback) {
                 if (timeline.recordedFrames.empty()) return;
                 if (timeline.selectedFrameIndex >= timeline.recordedFrames.size()) throw std::runtime_error("Rasterizer playback selected frame is out of range");
                 if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selectedFrameIndex) return;
-                rasterizer::SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
+                scene::SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
                 CommitRasterizerFrame(*slot.workspace, std::move(selected_frame), false);
                 slot.committed_playback_frame_index = timeline.selectedFrameIndex;
                 return;
@@ -787,7 +787,7 @@ namespace spectra::app {
             if (!std::isfinite(frame.delta_seconds) || frame.delta_seconds < 0.0) throw std::runtime_error("Rasterizer frame delta time is invalid");
             slot.simulation_accumulator_seconds += frame.delta_seconds;
             bool advanced = false;
-            rasterizer::SceneFrameSnapshot snapshot{};
+            scene::SceneFrameSnapshot snapshot{};
             while (slot.simulation_accumulator_seconds >= fixed_delta_seconds) {
                 slot.simulation_accumulator_seconds -= fixed_delta_seconds;
                 ++slot.simulation_frame_index;
@@ -800,7 +800,7 @@ namespace spectra::app {
                 advanced = true;
             }
             if (!advanced) return;
-            if (timeline.mode == rasterizer::SimulationTimelineMode::Record) {
+            if (timeline.mode == scene::SimulationTimelineMode::Record) {
                 timeline.recordedFrames.push_back(snapshot);
                 timeline.selectedFrameIndex = timeline.recordedFrames.size() - 1u;
                 CommitRasterizerTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
@@ -823,15 +823,15 @@ namespace spectra::app {
                 if (entry.kind == RasterizerSceneKind::Simulation && slot.runtime == nullptr) throw std::runtime_error("Rasterizer simulation slot has a workspace but no runtime");
                 return slot;
             }
-            rasterizer::SceneDocument document = entry.kind == RasterizerSceneKind::Static ? this->registry.create_static_document(index) : this->create_simulation_slot(index, &slot);
-            slot.workspace = std::make_shared<rasterizer::SceneWorkspace>(std::move(document));
+            scene::SceneDocument document = entry.kind == RasterizerSceneKind::Static ? this->registry.create_static_document(index) : this->create_simulation_slot(index, &slot);
+            slot.workspace = std::make_shared<scene::SceneWorkspace>(std::move(document));
             if (entry.kind == RasterizerSceneKind::Static) return slot;
             if (slot.runtime == nullptr) throw std::runtime_error("Rasterizer simulation slot was not initialized");
-            rasterizer::SceneFrameSnapshot snapshot = slot.runtime->reset();
-            const std::shared_ptr<const rasterizer::SceneDocument> scene = slot.workspace->document();
+            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
+            const std::shared_ptr<const scene::SceneDocument> scene = slot.workspace->document();
             if (!scene->timelineEnabled) throw std::runtime_error("Rasterizer simulation scene must enable timeline");
-            rasterizer::SimulationTimeline timeline{
-                .mode            = rasterizer::SimulationTimelineMode::Live,
+            scene::SimulationTimeline timeline{
+                .mode            = scene::SimulationTimelineMode::Live,
                 .framesPerSecond = scene->framesPerSecond,
                 .playing         = true,
                 .loop            = true,
@@ -843,19 +843,19 @@ namespace spectra::app {
             return slot;
         }
 
-        [[nodiscard]] rasterizer::SceneDocument create_simulation_slot(const std::size_t index, RasterizerSceneSlot* slot) {
+        [[nodiscard]] scene::SceneDocument create_simulation_slot(const std::size_t index, RasterizerSceneSlot* slot) {
             if (slot == nullptr) throw std::runtime_error("Rasterizer simulation slot pointer must not be null");
             slot->runtime = this->registry.create_simulation_runtime(index);
-            rasterizer::SceneDocument document = slot->runtime->create_document();
+            scene::SceneDocument document = slot->runtime->create_document();
             if (!document.timelineEnabled) throw std::runtime_error("Rasterizer simulation scene document must enable timeline");
             return document;
         }
 
-        void reset_simulation(RasterizerSceneSlot& slot, rasterizer::SimulationTimeline timeline) {
+        void reset_simulation(RasterizerSceneSlot& slot, scene::SimulationTimeline timeline) {
             slot.simulation_accumulator_seconds = 0.0;
             slot.simulation_time_seconds        = 0.0;
             slot.simulation_frame_index         = 0;
-            rasterizer::SceneFrameSnapshot snapshot = slot.runtime->reset();
+            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
             timeline.cursor                         = snapshot.cursor;
             timeline.currentFrame                   = snapshot;
             timeline.selectedFrameIndex             = 0;
@@ -992,7 +992,7 @@ int main(const int argc, char**) {
     try {
         if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
-        std::shared_ptr<spectra::pathtracer::PbrtSceneLibrary> pbrt_scene_library = std::make_shared<spectra::pathtracer::PbrtSceneLibrary>(std::string{spectra::scene_bridge::CornellBoxSceneId});
+        std::shared_ptr<spectra::pathtracer::PbrtSceneLibrary> pbrt_scene_library = std::make_shared<spectra::pathtracer::PbrtSceneLibrary>(std::string{spectra::scene::CornellBoxSceneId});
         spectra::app::RasterizerSceneRegistry rasterizer_scene_registry = spectra::app::MakeRasterizerSceneRegistry();
 
         spectra::Spectra app{"Spectra"};

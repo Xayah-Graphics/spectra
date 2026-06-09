@@ -41,6 +41,7 @@ module;
 
 module spectra.pathtracer;
 
+import spectra.scene.pbrt;
 import std;
 
 namespace spectra::pathtracer {
@@ -66,34 +67,34 @@ namespace spectra::pathtracer {
             };
         }
 
-        [[nodiscard]] Transform ToPathtracerTransform(const SceneTransform& transform) {
+        [[nodiscard]] Transform ToPathtracerTransform(const scene::PbrtSceneTransform& transform) {
             return Transform(ToPathtracerMatrix(transform.matrix), ToPathtracerMatrix(transform.inverse));
         }
 
-        [[nodiscard]] const RGBColorSpace* ToPathtracerColorSpace(ColorSpace colorSpace) {
+        [[nodiscard]] const RGBColorSpace* ToPathtracerColorSpace(scene::PbrtColorSpace colorSpace) {
             switch (colorSpace) {
-            case ColorSpace::sRGB: return RGBColorSpace::SRGB();
-            case ColorSpace::DCI_P3: return RGBColorSpace::DCI_P3();
-            case ColorSpace::Rec2020: return RGBColorSpace::Rec2020();
-            case ColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1();
+            case scene::PbrtColorSpace::sRGB: return RGBColorSpace::SRGB();
+            case scene::PbrtColorSpace::DCI_P3: return RGBColorSpace::DCI_P3();
+            case scene::PbrtColorSpace::Rec2020: return RGBColorSpace::Rec2020();
+            case scene::PbrtColorSpace::ACES2065_1: return RGBColorSpace::ACES2065_1();
             }
             throw std::runtime_error("Unknown Spectra scene color space.");
         }
 
-        [[nodiscard]] FileLoc ToFileLoc(const SceneSourceLocation& source, const std::string& fallback) {
-            FileLoc location(source.filename.empty() ? std::string_view(fallback) : std::string_view(source.filename));
+        [[nodiscard]] FileLoc ToFileLoc(const scene::SceneSourceLocation& source, const std::string& default_value) {
+            FileLoc location(source.filename.empty() ? std::string_view(default_value) : std::string_view(source.filename));
             location.line   = source.line;
             location.column = source.column;
             return location;
         }
 
-        [[nodiscard]] std::string SourceString(const SceneSourceLocation& source) {
+        [[nodiscard]] std::string SourceString(const scene::SceneSourceLocation& source) {
             return std::format("{}:{}:{}", source.filename, source.line, source.column);
         }
 
-        [[nodiscard]] std::string FormatGpuSupportReport(const SceneTranslationReport& report) {
+        [[nodiscard]] std::string FormatGpuSupportReport(const scene::PbrtSceneTranslationReport& report) {
             std::string message = "Scene is not supported by the current GPU pathtracer:";
-            for (const SceneDiagnostic& diagnostic : report.diagnostics) message += std::format("\n  {}: {}", SourceString(diagnostic.source), diagnostic.message);
+            for (const scene::PbrtSceneDiagnostic& diagnostic : report.diagnostics) message += std::format("\n  {}: {}", SourceString(diagnostic.source), diagnostic.message);
             return message;
         }
 
@@ -101,35 +102,35 @@ namespace spectra::pathtracer {
             return values.find(value) != values.end();
         }
 
-        [[nodiscard]] std::string OneStringParameter(const std::vector<SceneParameter>& parameters, const std::string& name, std::string fallback) {
-            for (const SceneParameter& parameter : parameters) {
+        [[nodiscard]] std::string OneStringParameter(const std::vector<scene::PbrtSceneParameter>& parameters, const std::string& name, std::string default_value) {
+            for (const scene::PbrtSceneParameter& parameter : parameters) {
                 if (parameter.name != name) continue;
                 if (const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values); values != nullptr && !values->empty()) return values->front();
             }
-            return fallback;
+            return default_value;
         }
 
-        void AddDiagnostic(SceneTranslationReport* report, SceneSourceLocation source, std::string message) {
+        void AddDiagnostic(scene::PbrtSceneTranslationReport* report, scene::SceneSourceLocation source, std::string message) {
             report->supported = false;
-            report->diagnostics.push_back(SceneDiagnostic{
+            report->diagnostics.push_back(scene::PbrtSceneDiagnostic{
                 .source  = std::move(source),
                 .message = std::move(message),
             });
         }
 
-        void ValidateTransform(SceneTranslationReport* report, const SceneTransformSet& transform, const SceneSourceLocation& source, const std::string_view owner) {
+        void ValidateTransform(scene::PbrtSceneTranslationReport* report, const scene::PbrtSceneTransformSet& transform, const scene::SceneSourceLocation& source, const std::string_view owner) {
             if (transform.animated) AddDiagnostic(report, source, std::format("{} uses animated transforms, which are represented by the scene document but are not supported by the current GPU pathtracer", owner));
         }
 
-        void ValidateEntityType(SceneTranslationReport* report, const SceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
+        void ValidateEntityType(scene::PbrtSceneTranslationReport* report, const scene::PbrtSceneEntity& entity, const std::set<std::string>& supported, const std::string_view kind) {
             if (!ContainsName(supported, entity.type)) AddDiagnostic(report, entity.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, entity.type));
         }
 
-        void ValidateProbeFeatureType(SceneTranslationReport* report, const SceneProbeFeature& feature, const std::set<std::string>& supported, const std::string_view kind) {
+        void ValidateProbeFeatureType(scene::PbrtSceneTranslationReport* report, const scene::PbrtSceneProbeFeature& feature, const std::set<std::string>& supported, const std::string_view kind) {
             if (!ContainsName(supported, feature.type)) AddDiagnostic(report, feature.source, std::format("GPU pathtracer does not support {} type \"{}\"", kind, feature.type));
         }
 
-        void AppendParameterValues(ParsedParameter* parsedParameter, const SceneParameter& parameter) {
+        void AppendParameterValues(ParsedParameter* parsedParameter, const scene::PbrtSceneParameter& parameter) {
             if (const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values)) {
                 for (float value : *values) parsedParameter->AddFloat(value);
                 return;
@@ -152,26 +153,26 @@ namespace spectra::pathtracer {
 
         class PathtracerSceneCompiler {
         public:
-            PathtracerSceneCompiler(const SceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
+            PathtracerSceneCompiler(const scene::PbrtSceneSnapshot& sourceScene, CompiledPathtracerScene& compiledScene, const RenderConfig& config, std::optional<Point2i> resolutionOverride) : source(sourceScene), compiled(compiledScene), renderConfig(config), filmResolutionOverride(resolutionOverride), location(sourceScene.source) {}
 
             void Compile() {
-                const SceneTranslationReport supportReport = AnalyzePathtracerSceneSupport(this->source);
+                const scene::PbrtSceneTranslationReport supportReport = AnalyzePathtracerSceneSupport(this->source);
                 if (!supportReport.supported) throw std::runtime_error(FormatGpuSupportReport(supportReport));
 
                 this->RegisterResourceNames();
                 this->SetRenderSettings(this->source.renderSettings);
-                for (const SceneMaterial& material : this->source.materials) this->AddMaterial(material);
-                for (const SceneTexture& texture : this->source.textures) this->AddTexture(texture);
-                for (const SceneMedium& medium : this->source.media) this->AddMedium(medium);
+                for (const scene::PbrtSceneMaterial& material : this->source.materials) this->AddMaterial(material);
+                for (const scene::PbrtSceneTexture& texture : this->source.textures) this->AddTexture(texture);
+                for (const scene::PbrtSceneMedium& medium : this->source.media) this->AddMedium(medium);
 
                 this->compiled.media   = this->CreateMedia();
                 this->compiled.sampler = this->CreateSampler();
                 this->compiled.camera  = this->CreateCamera();
 
-                for (const SceneLight& light : this->source.lights) this->AddLight(light);
-                for (const SceneShape& shape : this->source.shapes) this->AddShape(shape);
-                for (const SceneObjectDefinition& definition : this->source.objectDefinitions) this->AddObjectDefinition(definition);
-                for (const SceneObjectInstance& instance : this->source.objectInstances) this->AddObjectInstance(instance);
+                for (const scene::PbrtSceneLight& light : this->source.lights) this->AddLight(light);
+                for (const scene::PbrtSceneShape& shape : this->source.shapes) this->AddShape(shape);
+                for (const scene::PbrtSceneObjectDefinition& definition : this->source.objectDefinitions) this->AddObjectDefinition(definition);
+                for (const scene::PbrtSceneObjectInstance& instance : this->source.objectInstances) this->AddObjectInstance(instance);
 
                 this->compiled.textures = this->CreateTextures();
                 this->CreateMaterials();
@@ -185,9 +186,9 @@ namespace spectra::pathtracer {
             }
 
         private:
-            [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<SceneParameter>& parameters, ColorSpace colorSpace) const {
+            [[nodiscard]] ParameterDictionary MakeParameterDictionary(const std::vector<scene::PbrtSceneParameter>& parameters, scene::PbrtColorSpace colorSpace) const {
                 ParsedParameterVector parsedParameters{};
-                for (const SceneParameter& parameter : parameters) {
+                for (const scene::PbrtSceneParameter& parameter : parameters) {
                     if (parameter.type.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty type.", this->source.source));
                     if (parameter.name.empty()) throw std::runtime_error(std::format("{} scene parameter has an empty name.", this->source.source));
                     ParsedParameter* parsedParameter = new ParsedParameter(ToFileLoc(parameter.source, this->source.source));
@@ -202,7 +203,7 @@ namespace spectra::pathtracer {
                 return ParameterDictionary(std::move(parsedParameters), ToPathtracerColorSpace(colorSpace));
             }
 
-            [[nodiscard]] PathtracerSceneEntity MakeEntity(const SceneEntity& entity) const {
+            [[nodiscard]] PathtracerSceneEntity MakeEntity(const scene::PbrtSceneEntity& entity) const {
                 if (entity.type.empty()) throw std::runtime_error(std::format("{} scene entity has an empty type.", this->source.source));
                 return PathtracerSceneEntity{
                     .name       = entity.type,
@@ -211,13 +212,13 @@ namespace spectra::pathtracer {
                 };
             }
 
-            void OverrideIntegerParameter(SceneEntity* entity, std::string name, int value) const {
-                for (SceneParameter& parameter : entity->parameters) {
+            void OverrideIntegerParameter(scene::PbrtSceneEntity* entity, std::string name, int value) const {
+                for (scene::PbrtSceneParameter& parameter : entity->parameters) {
                     if (parameter.type != "integer" || parameter.name != name) continue;
                     parameter.values = std::vector<int>{value};
                     return;
                 }
-                entity->parameters.push_back(SceneParameter{
+                entity->parameters.push_back(scene::PbrtSceneParameter{
                     .type       = "integer",
                     .name       = std::move(name),
                     .values     = std::vector<int>{value},
@@ -226,14 +227,14 @@ namespace spectra::pathtracer {
                 });
             }
 
-            [[nodiscard]] bool HasIntegerParameter(const SceneEntity& entity, const std::string_view name) const {
-                for (const SceneParameter& parameter : entity.parameters) {
+            [[nodiscard]] bool HasIntegerParameter(const scene::PbrtSceneEntity& entity, const std::string_view name) const {
+                for (const scene::PbrtSceneParameter& parameter : entity.parameters) {
                     if (parameter.type == "integer" && parameter.name == name) return true;
                 }
                 return false;
             }
 
-            void ApplySamplerDefaults(SceneEntity* sampler) const {
+            void ApplySamplerDefaults(scene::PbrtSceneEntity* sampler) const {
                 if (sampler == nullptr) throw std::runtime_error("Spectra pathtracer sampler defaults require a sampler entity.");
                 if (!this->renderConfig.default_pixel_samples.has_value()) return;
                 if (this->renderConfig.pixel_samples.has_value()) return;
@@ -268,15 +269,15 @@ namespace spectra::pathtracer {
             }
 
             void RegisterResourceNames() {
-                for (const SceneMaterial& material : this->source.materials) {
+                for (const scene::PbrtSceneMaterial& material : this->source.materials) {
                     this->RequireUniqueName(this->materialNames, "material", material.name);
                     this->materialNames.insert(material.name);
                 }
-                for (const SceneMedium& medium : this->source.media) {
+                for (const scene::PbrtSceneMedium& medium : this->source.media) {
                     this->RequireUniqueName(this->mediumNames, "medium", medium.name);
                     this->mediumNames.insert(medium.name);
                 }
-                for (const SceneObjectDefinition& definition : this->source.objectDefinitions) {
+                for (const scene::PbrtSceneObjectDefinition& definition : this->source.objectDefinitions) {
                     this->RequireUniqueName(this->objectDefinitionNames, "object definition", definition.name);
                     this->objectDefinitionNames.insert(definition.name);
                 }
@@ -287,16 +288,16 @@ namespace spectra::pathtracer {
                 return this->cameraEntity.cameraTransform.RenderFromWorld();
             }
 
-            [[nodiscard]] Transform SceneTransform(const SceneTransformSet& transform, const SceneSourceLocation& source) const {
+            [[nodiscard]] Transform pbrt_scene_transform(const scene::PbrtSceneTransformSet& transform, const scene::SceneSourceLocation& source) const {
                 if (transform.animated) throw std::runtime_error(std::format("{}: animated transform reached GPU scene compiler after validation.", SourceString(source)));
                 return ToPathtracerTransform(transform.start);
             }
 
-            [[nodiscard]] Transform RenderFromObjectTransform(const SceneTransformSet& transform, const SceneSourceLocation& source) const {
-                return this->RenderFromWorldTransform() * this->SceneTransform(transform, source);
+            [[nodiscard]] Transform RenderFromObjectTransform(const scene::PbrtSceneTransformSet& transform, const scene::SceneSourceLocation& source) const {
+                return this->RenderFromWorldTransform() * this->pbrt_scene_transform(transform, source);
             }
 
-            [[nodiscard]] PathtracerShapeSceneEntity MakeShapeEntity(const SceneShape& shape) const {
+            [[nodiscard]] PathtracerShapeSceneEntity MakeShapeEntity(const scene::PbrtSceneShape& shape) const {
                 const std::string materialName = shape.materialName;
                 this->RequireMaterial(materialName);
                 Transform renderFromObject = this->RenderFromObjectTransform(shape.transform, shape.entity.source);
@@ -325,12 +326,12 @@ namespace spectra::pathtracer {
                 return iter->second;
             }
 
-            void SetRenderSettings(const SceneRenderSettings& settings) {
+            void SetRenderSettings(const scene::PbrtSceneRenderSettings& settings) {
                 if (this->renderSettingsReady) throw std::runtime_error(std::format("{} scene render settings are already configured.", this->source.source));
 
                 PathtracerSceneEntity filterEntity = this->MakeEntity(settings.filter);
-                SceneEntity film            = settings.film;
-                SceneEntity sampler         = settings.sampler;
+                scene::PbrtSceneEntity film            = settings.film;
+                scene::PbrtSceneEntity sampler         = settings.sampler;
                 this->ApplySamplerDefaults(&sampler);
                 if (this->filmResolutionOverride.has_value()) {
                     if (this->filmResolutionOverride->x <= 0 || this->filmResolutionOverride->y <= 0) throw std::runtime_error("Spectra interactive film resolution must be positive.");
@@ -342,7 +343,7 @@ namespace spectra::pathtracer {
                 this->compiled.integrator          = this->MakeEntity(settings.integrator);
                 this->compiled.accelerator         = this->MakeEntity(settings.accelerator);
                 PathtracerSceneEntity cameraEntity = this->MakeEntity(settings.camera);
-                const Transform worldFromCamera    = this->SceneTransform(settings.cameraTransform, settings.camera.source);
+                const Transform worldFromCamera    = this->pbrt_scene_transform(settings.cameraTransform, settings.camera.source);
                 this->cameraEntity                 = PathtracerCameraSceneEntity{
                     .name            = std::move(cameraEntity.name),
                     .loc             = cameraEntity.loc,
@@ -375,7 +376,7 @@ namespace spectra::pathtracer {
                 return Camera::Create(this->cameraEntity.name, this->cameraEntity.parameters, cameraMedium, this->cameraEntity.cameraTransform, this->compiled.film, &this->cameraEntity.loc, alloc);
             }
 
-            void AddMaterial(const SceneMaterial& material) {
+            void AddMaterial(const scene::PbrtSceneMaterial& material) {
                 PathtracerSceneEntity entity = this->MakeEntity(material.entity);
                 this->ConsumeMatchingTypeParameter(entity, "material");
                 std::lock_guard<std::mutex> lock(this->materialMutex);
@@ -383,7 +384,7 @@ namespace spectra::pathtracer {
                 this->materials.push_back(std::make_pair(material.name, std::move(entity)));
             }
 
-            void AddTexture(const SceneTexture& texture) {
+            void AddTexture(const scene::PbrtSceneTexture& texture) {
                 this->RequireRenderSettings();
                 if (texture.kind == "float")
                     this->RequireUniqueName(this->floatTextureNames, "float texture", texture.name);
@@ -446,7 +447,7 @@ namespace spectra::pathtracer {
                 }
             }
 
-            void AddMedium(const SceneMedium& medium) {
+            void AddMedium(const scene::PbrtSceneMedium& medium) {
                 this->RequireRenderSettings();
 
                 PathtracerSceneEntity base = this->MakeEntity(medium.entity);
@@ -464,7 +465,7 @@ namespace spectra::pathtracer {
                 this->mediumJobs[medium.name] = RunAsync(create);
             }
 
-            void AddLight(const SceneLight& light) {
+            void AddLight(const scene::PbrtSceneLight& light) {
                 this->RequireRenderSettings();
 
                 PathtracerSceneEntity base = this->MakeEntity(light.entity);
@@ -483,19 +484,19 @@ namespace spectra::pathtracer {
                 this->lightJobs.push_back(RunAsync(create));
             }
 
-            void AddShape(const SceneShape& shape) {
+            void AddShape(const scene::PbrtSceneShape& shape) {
                 this->RequireRenderSettings();
                 this->compiled.shapes.push_back(this->MakeShapeEntity(shape));
             }
 
-            void AddObjectDefinition(const SceneObjectDefinition& definition) {
+            void AddObjectDefinition(const scene::PbrtSceneObjectDefinition& definition) {
                 this->RequireRenderSettings();
                 PathtracerInstanceDefinitionSceneEntity entity{
                     .name = definition.name,
                     .loc  = ToFileLoc(definition.source, this->source.source),
                 };
                 entity.shapes.reserve(definition.shapes.size());
-                for (const SceneShape& shape : definition.shapes) {
+                for (const scene::PbrtSceneShape& shape : definition.shapes) {
                     PathtracerShapeSceneEntity shapeEntity = this->MakeShapeEntity(shape);
                     if (shapeEntity.areaLight.has_value()) throw std::runtime_error(std::format("{} scene object definition \"{}\" contains an area light shape; instanced area lights are not supported.", this->source.source, definition.name));
                     entity.shapes.push_back(std::move(shapeEntity));
@@ -504,7 +505,7 @@ namespace spectra::pathtracer {
                 this->compiled.instanceDefinitions[definition.name] = std::move(entity);
             }
 
-            void AddObjectInstance(const SceneObjectInstance& instance) {
+            void AddObjectInstance(const scene::PbrtSceneObjectInstance& instance) {
                 this->RequireRenderSettings();
                 if (this->objectDefinitionNames.find(instance.definitionName) == this->objectDefinitionNames.end()) throw std::runtime_error(std::format("{} scene references unknown object definition \"{}\".", this->source.source, instance.definitionName));
 
@@ -658,7 +659,7 @@ namespace spectra::pathtracer {
                 return lights;
             }
 
-            const SceneSnapshot& source;
+            const scene::PbrtSceneSnapshot& source;
             CompiledPathtracerScene& compiled;
             RenderConfig renderConfig;
             std::optional<Point2i> filmResolutionOverride{};
@@ -689,7 +690,7 @@ namespace spectra::pathtracer {
         };
     } // namespace
 
-    SceneTranslationReport AnalyzePathtracerSceneProbe(const SceneProbeReport& probe) {
+    scene::PbrtSceneTranslationReport AnalyzePathtracerSceneProbe(const scene::PbrtSceneProbeReport& probe) {
         static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
         static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
         static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
@@ -704,35 +705,35 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
         static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
 
-        SceneTranslationReport report{.target = "Spectra Pathtracer"};
-        for (const SceneProbeFeature& feature : probe.features) {
+        scene::PbrtSceneTranslationReport report{.target = "Spectra Pathtracer"};
+        for (const scene::PbrtSceneProbeFeature& feature : probe.features) {
             switch (feature.category) {
-            case SceneProbeFeatureCategory::PixelFilter: ValidateProbeFeatureType(&report, feature, supportedFilters, "pixel filter"); break;
-            case SceneProbeFeatureCategory::Film: ValidateProbeFeatureType(&report, feature, supportedFilms, "film"); break;
-            case SceneProbeFeatureCategory::Camera: ValidateProbeFeatureType(&report, feature, supportedCameras, "camera"); break;
-            case SceneProbeFeatureCategory::Sampler: ValidateProbeFeatureType(&report, feature, supportedSamplers, "sampler"); break;
-            case SceneProbeFeatureCategory::Integrator: ValidateProbeFeatureType(&report, feature, supportedIntegrators, "integrator"); break;
-            case SceneProbeFeatureCategory::Accelerator: ValidateProbeFeatureType(&report, feature, supportedAccelerators, "accelerator"); break;
-            case SceneProbeFeatureCategory::Material: ValidateProbeFeatureType(&report, feature, supportedMaterials, "material"); break;
-            case SceneProbeFeatureCategory::Texture:
+            case scene::PbrtSceneProbeFeatureCategory::PixelFilter: ValidateProbeFeatureType(&report, feature, supportedFilters, "pixel filter"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Film: ValidateProbeFeatureType(&report, feature, supportedFilms, "film"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Camera: ValidateProbeFeatureType(&report, feature, supportedCameras, "camera"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Sampler: ValidateProbeFeatureType(&report, feature, supportedSamplers, "sampler"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Integrator: ValidateProbeFeatureType(&report, feature, supportedIntegrators, "integrator"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Accelerator: ValidateProbeFeatureType(&report, feature, supportedAccelerators, "accelerator"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Material: ValidateProbeFeatureType(&report, feature, supportedMaterials, "material"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Texture:
                 if (feature.kind != "float" && feature.kind != "spectrum") AddDiagnostic(&report, feature.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", feature.kind));
                 ValidateProbeFeatureType(&report, feature, supportedTextures, "texture");
                 if (feature.kind == "float" && feature.type == "marble") AddDiagnostic(&report, feature.source, "\"marble\" is only a spectrum texture in the GPU pathtracer");
                 if (feature.kind == "spectrum" && (feature.type == "fbm" || feature.type == "wrinkled" || feature.type == "windy")) AddDiagnostic(&report, feature.source, std::format("\"{}\" is only a float texture in the GPU pathtracer", feature.type));
                 break;
-            case SceneProbeFeatureCategory::Medium: ValidateProbeFeatureType(&report, feature, supportedMedia, "medium"); break;
-            case SceneProbeFeatureCategory::Light: ValidateProbeFeatureType(&report, feature, supportedLights, "light"); break;
-            case SceneProbeFeatureCategory::AreaLight: ValidateProbeFeatureType(&report, feature, supportedAreaLights, "area light"); break;
-            case SceneProbeFeatureCategory::Shape:
+            case scene::PbrtSceneProbeFeatureCategory::Medium: ValidateProbeFeatureType(&report, feature, supportedMedia, "medium"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Light: ValidateProbeFeatureType(&report, feature, supportedLights, "light"); break;
+            case scene::PbrtSceneProbeFeatureCategory::AreaLight: ValidateProbeFeatureType(&report, feature, supportedAreaLights, "area light"); break;
+            case scene::PbrtSceneProbeFeatureCategory::Shape:
                 if (feature.type != "objectinstance") ValidateProbeFeatureType(&report, feature, supportedShapes, "shape");
                 break;
-            case SceneProbeFeatureCategory::LightSampler:
+            case scene::PbrtSceneProbeFeatureCategory::LightSampler:
                 if (!feature.type.empty() && !ContainsName(supportedLightSamplers, feature.type)) AddDiagnostic(&report, feature.source, std::format("GPU pathtracer does not support light sampler \"{}\"", feature.type));
                 break;
-            case SceneProbeFeatureCategory::Option:
+            case scene::PbrtSceneProbeFeatureCategory::Option:
                 AddDiagnostic(&report, feature.source, std::format("PBRT Option \"{}\" is represented by the scene probe but is not wired into the current pathtracer runtime", feature.type));
                 break;
-            case SceneProbeFeatureCategory::AnimatedTransform:
+            case scene::PbrtSceneProbeFeatureCategory::AnimatedTransform:
                 AddDiagnostic(&report, feature.source, std::format("{} uses animated transforms, which are represented by the scene probe but are not supported by the current GPU pathtracer", feature.type));
                 break;
             }
@@ -740,7 +741,7 @@ namespace spectra::pathtracer {
         return report;
     }
 
-    SceneTranslationReport AnalyzePathtracerSceneSupport(const SceneSnapshot& scene) {
+    scene::PbrtSceneTranslationReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene) {
         static const std::set<std::string> supportedFilters{"box", "gaussian", "mitchell", "sinc", "triangle"};
         static const std::set<std::string> supportedFilms{"rgb", "gbuffer", "spectral"};
         static const std::set<std::string> supportedCameras{"perspective", "orthographic", "realistic", "spherical"};
@@ -755,7 +756,7 @@ namespace spectra::pathtracer {
         static const std::set<std::string> supportedShapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
         static const std::set<std::string> supportedLightSamplers{"uniform", "power", "bvh", "exhaustive"};
 
-        SceneTranslationReport report{.target = "Spectra Pathtracer"};
+        scene::PbrtSceneTranslationReport report{.target = "Spectra Pathtracer"};
         ValidateEntityType(&report, scene.renderSettings.filter, supportedFilters, "pixel filter");
         ValidateEntityType(&report, scene.renderSettings.film, supportedFilms, "film");
         ValidateEntityType(&report, scene.renderSettings.camera, supportedCameras, "camera");
@@ -764,25 +765,25 @@ namespace spectra::pathtracer {
         ValidateEntityType(&report, scene.renderSettings.accelerator, supportedAccelerators, "accelerator");
         ValidateTransform(&report, scene.renderSettings.cameraTransform, scene.renderSettings.camera.source, "camera");
 
-        for (const SceneOption& option : scene.renderSettings.options) AddDiagnostic(&report, option.source, std::format("PBRT Option \"{}\" is represented by the scene document but is not wired into the current pathtracer runtime", option.name));
+        for (const scene::PbrtSceneOption& option : scene.renderSettings.options) AddDiagnostic(&report, option.source, std::format("PBRT Option \"{}\" is represented by the scene document but is not wired into the current pathtracer runtime", option.name));
 
         const std::string lightSampler = OneStringParameter(scene.renderSettings.integrator.parameters, "lightsampler", "");
         if (!lightSampler.empty() && !ContainsName(supportedLightSamplers, lightSampler)) AddDiagnostic(&report, scene.renderSettings.integrator.source, std::format("GPU pathtracer does not support light sampler \"{}\"", lightSampler));
 
         std::set<std::string> materials{};
-        for (const SceneMaterial& material : scene.materials) {
+        for (const scene::PbrtSceneMaterial& material : scene.materials) {
             materials.insert(material.name);
             ValidateEntityType(&report, material.entity, supportedMaterials, "material");
         }
 
         std::set<std::string> media{};
-        for (const SceneMedium& medium : scene.media) {
+        for (const scene::PbrtSceneMedium& medium : scene.media) {
             media.insert(medium.name);
             ValidateEntityType(&report, medium.entity, supportedMedia, "medium");
             ValidateTransform(&report, medium.transform, medium.entity.source, std::format("medium \"{}\"", medium.name));
         }
 
-        for (const SceneTexture& texture : scene.textures) {
+        for (const scene::PbrtSceneTexture& texture : scene.textures) {
             if (texture.kind != "float" && texture.kind != "spectrum") AddDiagnostic(&report, texture.entity.source, std::format("GPU pathtracer does not support texture value kind \"{}\"", texture.kind));
             ValidateEntityType(&report, texture.entity, supportedTextures, "texture");
             if (texture.kind == "float" && texture.entity.type == "marble") AddDiagnostic(&report, texture.entity.source, "\"marble\" is only a spectrum texture in the GPU pathtracer");
@@ -790,7 +791,7 @@ namespace spectra::pathtracer {
             ValidateTransform(&report, texture.transform, texture.entity.source, std::format("texture \"{}\"", texture.name));
         }
 
-        const auto validateShape = [&report, &materials, &media](const SceneShape& shape, const std::string_view owner) {
+        const auto validateShape = [&report, &materials, &media](const scene::PbrtSceneShape& shape, const std::string_view owner) {
             ValidateEntityType(&report, shape.entity, supportedShapes, "shape");
             ValidateTransform(&report, shape.transform, shape.entity.source, owner);
             if (shape.materialName.empty() || !ContainsName(materials, shape.materialName)) AddDiagnostic(&report, shape.entity.source, std::format("{} references unknown material \"{}\"", owner, shape.materialName));
@@ -799,24 +800,24 @@ namespace spectra::pathtracer {
             if (shape.areaLight.has_value()) ValidateEntityType(&report, shape.areaLight->entity, supportedAreaLights, "area light");
         };
 
-        for (const SceneLight& light : scene.lights) {
+        for (const scene::PbrtSceneLight& light : scene.lights) {
             ValidateEntityType(&report, light.entity, supportedLights, "light");
             ValidateTransform(&report, light.transform, light.entity.source, std::format("light \"{}\"", light.name));
             if (!light.medium.empty() && !ContainsName(media, light.medium)) AddDiagnostic(&report, light.entity.source, std::format("light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
         }
 
-        for (const SceneShape& shape : scene.shapes) validateShape(shape, std::format("shape \"{}\"", shape.name));
+        for (const scene::PbrtSceneShape& shape : scene.shapes) validateShape(shape, std::format("shape \"{}\"", shape.name));
 
         std::set<std::string> objectDefinitions{};
-        for (const SceneObjectDefinition& definition : scene.objectDefinitions) {
+        for (const scene::PbrtSceneObjectDefinition& definition : scene.objectDefinitions) {
             objectDefinitions.insert(definition.name);
-            for (const SceneShape& shape : definition.shapes) {
+            for (const scene::PbrtSceneShape& shape : definition.shapes) {
                 validateShape(shape, std::format("object definition \"{}\" shape", definition.name));
                 if (shape.areaLight.has_value()) AddDiagnostic(&report, shape.entity.source, std::format("object definition \"{}\" contains an area light shape; instanced area lights are not supported by the current GPU pathtracer", definition.name));
             }
         }
 
-        for (const SceneObjectInstance& instance : scene.objectInstances) {
+        for (const scene::PbrtSceneObjectInstance& instance : scene.objectInstances) {
             if (!ContainsName(objectDefinitions, instance.definitionName)) AddDiagnostic(&report, instance.source, std::format("object instance references unknown definition \"{}\"", instance.definitionName));
             ValidateTransform(&report, instance.transform, instance.source, std::format("object instance \"{}\"", instance.name));
         }
@@ -824,14 +825,14 @@ namespace spectra::pathtracer {
         return report;
     }
 
-    std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
+    std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtSceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride) {
         std::unique_ptr<CompiledPathtracerScene> compiled = std::make_unique<CompiledPathtracerScene>(memoryResource);
         PathtracerSceneCompiler compiler(scene, *compiled, config, filmResolutionOverride);
         compiler.Compile();
         return compiled;
     }
 
-    std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const SceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource) {
+    std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtSceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource) {
         return CompilePathtracerScene(scene, config, memoryResource, {});
     }
 } // namespace spectra::pathtracer

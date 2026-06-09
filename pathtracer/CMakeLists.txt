@@ -328,7 +328,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         pathtracer.ixx
-        pbrt_scene.ixx
         pbrt_scene_library.ixx
         PRIVATE
         ${SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES}
@@ -339,7 +338,6 @@ target_sources(
         ${SPECTRA_ROOT_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${SPECTRA_ROOT_DIR}/vendor/pbrt/rply/rply.cpp
         pathtracer.cpp
-        pbrt_scene.cpp
         pbrt_scene_library.cpp
         compiled_scene.cpp
         optix/aggregate.cu
@@ -347,7 +345,6 @@ target_sources(
 )
 add_dependencies(spectra_pathtracer spectra_pathtracer_soa_generated)
 target_compile_definitions(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_DEFINITIONS})
-target_compile_definitions(spectra_pathtracer PRIVATE "SPECTRA_PBRT_SCENE_ROOT=\"${SPECTRA_PBRT_SCENE_ROOT}\"")
 target_include_directories(spectra_pathtracer PUBLIC ${SPECTRA_PATHTRACER_INCLUDE_DIRS} PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
 target_compile_options(
         spectra_pathtracer
@@ -361,6 +358,7 @@ target_link_libraries(
         PUBLIC
         Vulkan::Vulkan
         vendor::imgui
+        spectra::scene
         PRIVATE
         OpenEXR::OpenEXR
         Ptex_static

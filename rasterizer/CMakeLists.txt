@@ -42,14 +42,12 @@ target_sources(
         spectra_rasterizer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        scene.ixx
         host.ixx
         renderer.ixx
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         math.ixx
         PRIVATE
-        scene.cpp
         renderer.cpp
         "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"
@@ -74,6 +72,6 @@ target_sources(
         "${SPECTRA_RASTERIZER_SELECTION_OUTLINE_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_SELECTION_OUTLINE_FRAGMENT_HEADER}"
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene)
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")

@@ -12,14 +12,14 @@ module;
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
-export import spectra.rasterizer.scene;
+export import spectra.scene;
 
 import std;
 
 namespace spectra::rasterizer {
     export class Renderer final {
     public:
-        explicit Renderer(std::shared_ptr<SceneWorkspace> scene_workspace);
+        explicit Renderer(std::shared_ptr<scene::SceneWorkspace> scene_workspace);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -28,7 +28,7 @@ namespace spectra::rasterizer {
         Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
-        void set_scene_workspace(std::shared_ptr<SceneWorkspace> scene_workspace);
+        void set_scene_workspace(std::shared_ptr<scene::SceneWorkspace> scene_workspace);
         void set_control_panel_extension(std::move_only_function<void()> draw);
 
         void attach(HostView host);
@@ -92,8 +92,8 @@ namespace spectra::rasterizer {
             std::uint32_t objectId{};
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
-            Transform transform{};
-            SceneMaterial material{};
+            scene::Transform transform{};
+            scene::SceneMaterial material{};
         };
 
         struct ParticleDrawCommand {
@@ -106,8 +106,8 @@ namespace spectra::rasterizer {
         struct VolumeDrawCommand {
             ObjectKey objectKey{};
             std::uint32_t objectId{};
-            SceneVolumeGrid volume{};
-            SceneMaterial material{};
+            scene::SceneVolumeGrid volume{};
+            scene::SceneMaterial material{};
         };
 
         enum class ViewProjection {
@@ -116,8 +116,8 @@ namespace spectra::rasterizer {
         };
 
         struct SceneBounds {
-            Vector3 minimum{};
-            Vector3 maximum{};
+            scene::Vector3 minimum{};
+            scene::Vector3 maximum{};
             bool valid{false};
         };
 
@@ -136,13 +136,13 @@ namespace spectra::rasterizer {
         struct FrameSceneResources {
             GpuBuffer vertexBuffer{};
             GpuBuffer indexBuffer{};
-            SceneRevision uploadedRevision{};
+            scene::SceneRevision uploadedRevision{};
             std::vector<RenderDrawCommand> drawCommands{};
         };
 
         struct FrameParticleResources {
             GpuBuffer instanceBuffer{};
-            SceneRevision uploadedRevision{};
+            scene::SceneRevision uploadedRevision{};
             std::vector<ParticleDrawCommand> drawCommands{};
         };
 
@@ -151,7 +151,7 @@ namespace spectra::rasterizer {
             GpuBuffer temperatureStagingBuffer{};
             GpuImage3D densityImage{};
             GpuImage3D temperatureImage{};
-            SceneRevision uploadedRevision{};
+            scene::SceneRevision uploadedRevision{};
             bool uploadPending{};
             bool descriptorValid{};
             VolumeDrawCommand drawCommand{};
@@ -188,12 +188,12 @@ namespace spectra::rasterizer {
         void ensure_volume_resources();
         void ensure_selection_resources();
 
-        [[nodiscard]] std::vector<SceneMesh> collect_render_meshes() const;
-        [[nodiscard]] std::vector<SceneParticleSet> collect_render_particle_sets() const;
-        [[nodiscard]] std::vector<SceneVolumeGrid> collect_render_volumes() const;
-        [[nodiscard]] SceneMaterial resolve_material(std::string_view material_name) const;
-        [[nodiscard]] const SceneVolumeChannel& require_volume_channel(const SceneVolumeGrid& volume, std::string_view channel_name, SceneVolumeChannelLayout layout) const;
-        [[nodiscard]] const SceneVolumeGrid* select_render_volume_grid(const std::vector<SceneVolumeGrid>& volumes) const;
+        [[nodiscard]] std::vector<scene::SceneMesh> collect_render_meshes() const;
+        [[nodiscard]] std::vector<scene::SceneParticleSet> collect_render_particle_sets() const;
+        [[nodiscard]] std::vector<scene::SceneVolumeGrid> collect_render_volumes() const;
+        [[nodiscard]] scene::SceneMaterial resolve_material(std::string_view material_name) const;
+        [[nodiscard]] const scene::SceneVolumeChannel& require_volume_channel(const scene::SceneVolumeGrid& volume, std::string_view channel_name, scene::SceneVolumeChannelLayout layout) const;
+        [[nodiscard]] const scene::SceneVolumeGrid* select_render_volume_grid(const std::vector<scene::SceneVolumeGrid>& volumes) const;
         void rebuild_selection_registry_if_needed();
         void register_selectable_object(SelectableObjectKind kind, std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id);
         [[nodiscard]] std::uint32_t object_id_for(const ObjectKey& key) const;
@@ -233,7 +233,7 @@ namespace spectra::rasterizer {
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
         void frame_selected_objects();
-        void set_viewport_axis_view(Vector3 direction);
+        void set_viewport_axis_view(scene::Vector3 direction);
         void toggle_viewport_projection();
         void orbit_viewport_camera(ViewportDragDelta delta);
         void pan_viewport_camera(ViewportDragDelta delta, float viewport_height);
@@ -248,7 +248,7 @@ namespace spectra::rasterizer {
 
         void draw_viewport_window();
         void draw_rasterizer_window();
-        void commit_timeline_from_ui(SimulationTimeline timeline);
+        void commit_timeline_from_ui(scene::SimulationTimeline timeline);
         [[nodiscard]] bool timeline_enabled() const;
         [[nodiscard]] bool timeline_playing() const;
         void toggle_timeline_playback();
@@ -268,7 +268,7 @@ namespace spectra::rasterizer {
         } lifecycle;
 
         struct {
-            std::shared_ptr<SceneWorkspace> workspace{};
+            std::shared_ptr<scene::SceneWorkspace> workspace{};
         } scene;
 
         struct {
@@ -290,7 +290,7 @@ namespace spectra::rasterizer {
             vk::raii::Image depth_image{nullptr};
             vk::raii::DeviceMemory depth_memory{nullptr};
             vk::raii::ImageView depth_view{nullptr};
-            Vector3 camera_target{};
+            scene::Vector3 camera_target{};
             float camera_distance{1.0f};
             float camera_yaw{};
             float camera_pitch{};
@@ -373,7 +373,7 @@ namespace spectra::rasterizer {
             vk::raii::PipelineLayout outline_pipeline_layout{nullptr};
             vk::raii::Pipeline outline_pipeline{nullptr};
             std::vector<GpuBuffer> readback_buffers{};
-            SceneRevision registry_revision{};
+            scene::SceneRevision registry_revision{};
             std::map<ObjectKey, std::uint32_t> object_ids{};
             std::map<std::uint32_t, ObjectKey> objects_by_id{};
             std::set<ObjectKey> selected_objects{};

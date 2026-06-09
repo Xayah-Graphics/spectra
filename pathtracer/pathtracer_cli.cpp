@@ -18,7 +18,7 @@
 #include <vector>
 
 import spectra.pathtracer;
-import spectra.pathtracer.pbrt;
+import spectra.scene.pbrt;
 
 namespace {
     class UsageError : public std::runtime_error {
@@ -95,8 +95,8 @@ int main(int argc, char* argv[]) {
         spectra::pathtracer::GpuRuntime runtime(runtime_config);
         runtime.UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(render_config));
 
-        spectra::pathtracer::SceneWorkspace scene_workspace                      = spectra::pathtracer::BuildPbrtScene(*scene_name);
-        std::shared_ptr<const spectra::pathtracer::SceneSnapshot> scene_snapshot = scene_workspace.snapshot();
+        spectra::scene::PbrtSceneWorkspace scene_workspace                      = spectra::scene::BuildPbrtScene(*scene_name);
+        std::shared_ptr<const spectra::scene::PbrtSceneSnapshot> scene_snapshot = scene_workspace.snapshot();
         spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_pathtracer_cli scene");
         std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(*scene_snapshot, render_config, &scene_memory_scope);
         spectra::pathtracer::WavefrontPathtracer pathtracer(&scene_memory_scope, *compiled_scene, render_config);

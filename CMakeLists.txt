@@ -21,7 +21,7 @@ endif ()
 
 set(SPECTRA_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(SPECTRA_BINARY_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-set(SPECTRA_PBRT_SCENE_ROOT "${SPECTRA_ROOT_DIR}/scene")
+set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
 
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
@@ -45,9 +45,9 @@ target_link_libraries(vendor_imgui PUBLIC Vulkan::Vulkan PRIVATE glfw)
 target_include_directories(vendor_imgui PUBLIC ${SPECTRA_ROOT_DIR}/vendor/imgui)
 
 add_subdirectory(spectra)
+add_subdirectory(scene)
 add_subdirectory(pathtracer)
 add_subdirectory(rasterizer)
-add_subdirectory(scene_bridge)
 add_subdirectory(projects)
 
 add_executable(spectra_gui main.cpp)
@@ -56,9 +56,9 @@ target_link_libraries(
         spectra_gui
         PRIVATE
         spectra::core
+        spectra::scene
         spectra::pathtracer
         spectra::rasterizer
-        spectra::scene_bridge
         xayah::bouncing_ball
         xayah::sparkles
         xayah::cloth
