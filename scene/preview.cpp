@@ -1,4 +1,4 @@
-module spectra.scene.pbrt_preview;
+module spectra.scene.preview;
 
 import spectra.scene.pbrt;
 import std;
@@ -279,7 +279,7 @@ namespace spectra::scene {
         }
     } // namespace
 
-    SceneDocument MakeSceneDocumentFromPbrt(const PbrtSceneSnapshot& scene) {
+    SceneDocument MakePreviewSceneDocumentFromPbrt(const PbrtSceneSnapshot& scene) {
         reject_unsupported_scene_content(scene);
         if (scene.revision.value == 0u) throw std::runtime_error("PBRT preview scene revision must not be zero");
         if (scene.name.empty()) throw std::runtime_error("PBRT preview scene name must not be empty");
@@ -307,11 +307,11 @@ namespace spectra::scene {
         return document;
     }
 
-    SceneDocument LoadSceneDocumentFromPbrt(const std::string_view scene_id) {
+    SceneDocument LoadPreviewSceneDocumentFromPbrt(const std::string_view scene_id) {
         PbrtSceneWorkspace workspace = BuildPbrtScene(scene_id);
         const std::shared_ptr<const PbrtSceneSnapshot> scene = workspace.snapshot();
         if (scene == nullptr) throw std::runtime_error("PBRT workspace did not produce a scene snapshot");
-        return MakeSceneDocumentFromPbrt(*scene);
+        return MakePreviewSceneDocumentFromPbrt(*scene);
     }
 
 } // namespace spectra::scene

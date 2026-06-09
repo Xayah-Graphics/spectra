@@ -11,7 +11,8 @@ import xayah.projects.cloth;
 import xayah.projects.pyro;
 import xayah.projects.sparkles;
 import spectra.rasterizer.renderer;
-import spectra.scene.pbrt_preview;
+import spectra.scene.preview;
+import spectra.scene.session;
 
 namespace spectra::app {
     static_assert(pathtracer::PathtracerHost<Spectra>);
@@ -20,140 +21,6 @@ namespace spectra::app {
     static_assert(static_cast<std::underlying_type_t<DockSlot>>(pathtracer::PathtracerDockSlot::Floating) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Floating));
     static_assert(static_cast<std::underlying_type_t<DockSlot>>(rasterizer::DockSlot::Center) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Center));
     static_assert(static_cast<std::underlying_type_t<DockSlot>>(rasterizer::DockSlot::Floating) == static_cast<std::underlying_type_t<DockSlot>>(DockSlot::Floating));
-
-    enum class RasterizerSceneKind {
-        Static,
-        Simulation,
-    };
-
-    struct RasterizerSimulationFrameInfo {
-        double delta_seconds{};
-        double time_seconds{};
-        std::uint64_t frame_index{};
-    };
-
-    template <typename Adapter>
-    concept RasterizerSimulationAdapter = std::default_initializable<Adapter> && requires(Adapter& adapter, const Adapter& constAdapter, const RasterizerSimulationFrameInfo& frame) {
-        { Adapter::project_id() } -> std::convertible_to<std::string_view>;
-        { Adapter::project_title() } -> std::convertible_to<std::string_view>;
-        { constAdapter.create_document() } -> std::same_as<scene::SceneDocument>;
-        { adapter.reset() } -> std::same_as<scene::SceneFrameSnapshot>;
-        { adapter.step(frame) } -> std::same_as<scene::SceneFrameSnapshot>;
-    };
-
-    class RasterizerSimulationRuntime {
-    public:
-        RasterizerSimulationRuntime()                                                        = default;
-        RasterizerSimulationRuntime(const RasterizerSimulationRuntime& other)                 = delete;
-        RasterizerSimulationRuntime(RasterizerSimulationRuntime&& other) noexcept             = default;
-        RasterizerSimulationRuntime& operator=(const RasterizerSimulationRuntime& other)      = delete;
-        RasterizerSimulationRuntime& operator=(RasterizerSimulationRuntime&& other) noexcept  = default;
-        virtual ~RasterizerSimulationRuntime() noexcept                                      = default;
-
-        [[nodiscard]] virtual std::string_view id() const                                      = 0;
-        [[nodiscard]] virtual std::string_view title() const                                   = 0;
-        [[nodiscard]] virtual scene::SceneDocument create_document() const                 = 0;
-        [[nodiscard]] virtual scene::SceneFrameSnapshot reset()                            = 0;
-        [[nodiscard]] virtual scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) = 0;
-    };
-
-    template <RasterizerSimulationAdapter Adapter>
-    class RasterizerSimulationRuntimeModel final : public RasterizerSimulationRuntime {
-    public:
-        RasterizerSimulationRuntimeModel() = default;
-
-        [[nodiscard]] std::string_view id() const override {
-            return Adapter::project_id();
-        }
-
-        [[nodiscard]] std::string_view title() const override {
-            return Adapter::project_title();
-        }
-
-        [[nodiscard]] scene::SceneDocument create_document() const override {
-            return this->adapter.create_document();
-        }
-
-        [[nodiscard]] scene::SceneFrameSnapshot reset() override {
-            return this->adapter.reset();
-        }
-
-        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) override {
-            return this->adapter.step(frame);
-        }
-
-    private:
-        Adapter adapter{};
-    };
-
-    struct RasterizerSceneEntry {
-        std::string id{};
-        std::string title{};
-        RasterizerSceneKind kind{RasterizerSceneKind::Static};
-        std::move_only_function<scene::SceneDocument()> create_static_document{};
-        std::move_only_function<std::unique_ptr<RasterizerSimulationRuntime>()> create_simulation_runtime{};
-    };
-
-    class RasterizerSceneRegistry final {
-    public:
-        void register_static_scene(std::string id, std::string title, std::move_only_function<scene::SceneDocument()> create_document) {
-            if (!create_document) throw std::runtime_error("Static rasterizer scene entry requires a document factory");
-            this->ensure_unique_scene_id(id);
-            this->entries.push_back(RasterizerSceneEntry{
-                .id                     = std::move(id),
-                .title                  = std::move(title),
-                .kind                   = RasterizerSceneKind::Static,
-                .create_static_document = std::move(create_document),
-            });
-        }
-
-        template <RasterizerSimulationAdapter Adapter>
-        void register_simulation() {
-            const std::string id{Adapter::project_id()};
-            this->ensure_unique_scene_id(id);
-            this->entries.push_back(RasterizerSceneEntry{
-                .id                        = id,
-                .title                     = std::string{Adapter::project_title()},
-                .kind                      = RasterizerSceneKind::Simulation,
-                .create_simulation_runtime = [] { return std::make_unique<RasterizerSimulationRuntimeModel<Adapter>>(); },
-            });
-        }
-
-        [[nodiscard]] std::unique_ptr<RasterizerSimulationRuntime> create_simulation_runtime(const std::size_t index) {
-            if (this->entries.empty()) throw std::runtime_error("Rasterizer scene registry is empty");
-            if (index >= this->entries.size()) throw std::runtime_error("Rasterizer scene index is out of range");
-            RasterizerSceneEntry& scene = this->entries.at(index);
-            if (scene.kind != RasterizerSceneKind::Simulation) throw std::runtime_error("Rasterizer scene entry is not a simulation");
-            return scene.create_simulation_runtime();
-        }
-
-        [[nodiscard]] scene::SceneDocument create_static_document(const std::size_t index) {
-            if (this->entries.empty()) throw std::runtime_error("Rasterizer scene registry is empty");
-            if (index >= this->entries.size()) throw std::runtime_error("Rasterizer scene index is out of range");
-            RasterizerSceneEntry& scene = this->entries.at(index);
-            if (scene.kind != RasterizerSceneKind::Static) throw std::runtime_error("Rasterizer scene entry is not static");
-            return scene.create_static_document();
-        }
-
-        [[nodiscard]] const RasterizerSceneEntry& entry(const std::size_t index) const {
-            if (index >= this->entries.size()) throw std::runtime_error("Rasterizer scene index is out of range");
-            return this->entries.at(index);
-        }
-
-        [[nodiscard]] std::size_t size() const {
-            return this->entries.size();
-        }
-
-    private:
-        void ensure_unique_scene_id(const std::string& id) const {
-            if (id.empty()) throw std::runtime_error("Rasterizer scene id must not be empty");
-            for (const RasterizerSceneEntry& entry : this->entries) {
-                if (entry.id == id) throw std::runtime_error("Duplicate rasterizer scene id: " + id);
-            }
-        }
-
-        std::vector<RasterizerSceneEntry> entries{};
-    };
 
     [[nodiscard]] scene::Vector3 ToSceneVector3(const std::array<float, 3>& value) {
         return scene::Vector3{value[0], value[1], value[2]};
@@ -166,48 +33,6 @@ namespace spectra::app {
             .title           = std::move(title),
             .source          = std::move(source),
             .framesPerSecond = 60.0,
-        };
-    }
-
-    void CommitRasterizerFrame(scene::SceneWorkspace& workspace, scene::SceneFrameSnapshot frame, const bool resetTimeline) {
-        scene::SceneEditBuilder edit{};
-        if (resetTimeline) {
-            const std::shared_ptr<const scene::SceneDocument> document = workspace.document();
-            edit.replaceTimeline(scene::SimulationTimeline{
-                .mode            = scene::SimulationTimelineMode::Live,
-                .framesPerSecond = document->framesPerSecond,
-                .playing         = true,
-                .loop            = true,
-                .cursor          = frame.cursor,
-            });
-        }
-        edit.replaceFrame(std::move(frame));
-        const scene::SceneEditBatch batch = workspace.commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer scene frame commit did not mark the frame dirty");
-    }
-
-    void CommitRasterizerTimelineAndFrame(scene::SceneWorkspace& workspace, scene::SimulationTimeline timeline, scene::SceneFrameSnapshot frame) {
-        timeline.cursor       = frame.cursor;
-        timeline.currentFrame = frame;
-        scene::SceneEditBuilder edit{};
-        edit.replaceTimeline(std::move(timeline));
-        edit.replaceFrame(std::move(frame));
-        const scene::SceneEditBatch batch = workspace.commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer scene timeline commit did not mark the timeline dirty");
-        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Rasterizer scene frame commit did not mark the frame dirty");
-    }
-
-    void CommitRasterizerTimeline(scene::SceneWorkspace& workspace, scene::SimulationTimeline timeline) {
-        scene::SceneEditBuilder edit{};
-        edit.replaceTimeline(std::move(timeline));
-        const scene::SceneEditBatch batch = workspace.commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(batch.dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer scene timeline commit did not mark the timeline dirty");
-    }
-
-    [[nodiscard]] scene::FrameCursor MakeFrameCursor(const RasterizerSimulationFrameInfo& info) {
-        return scene::FrameCursor{
-            .frameIndex   = info.frame_index,
-            .timeSeconds  = info.time_seconds,
         };
     }
 
@@ -267,10 +92,10 @@ namespace spectra::app {
 
         [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -317,9 +142,9 @@ namespace spectra::app {
             return mesh;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) const {
             scene::SceneFrameSnapshot snapshot{
-                .cursor = MakeFrameCursor(frame),
+                .cursor = scene::MakeFrameCursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
             snapshot.rigidBodies.push_back(scene::SceneRigidBody{
@@ -372,10 +197,10 @@ namespace spectra::app {
 
         [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -401,9 +226,9 @@ namespace spectra::app {
             return particles;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) const {
             scene::SceneFrameSnapshot snapshot{
-                .cursor = MakeFrameCursor(frame),
+                .cursor = scene::MakeFrameCursor(frame),
             };
             snapshot.particleSets.push_back(this->make_particles());
             return snapshot;
@@ -474,10 +299,10 @@ namespace spectra::app {
 
         [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -563,9 +388,9 @@ namespace spectra::app {
             return mesh;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) const {
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) const {
             scene::SceneFrameSnapshot snapshot{
-                .cursor = MakeFrameCursor(frame),
+                .cursor = scene::MakeFrameCursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
             snapshot.cloths.push_back(scene::SceneCloth{
@@ -617,10 +442,10 @@ namespace spectra::app {
 
         [[nodiscard]] scene::SceneFrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(RasterizerSimulationFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -663,26 +488,26 @@ namespace spectra::app {
             return volume;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const RasterizerSimulationFrameInfo& frame) {
+        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) {
             const xayah::projects::pyro::PyroFrame pyroFrame = this->solver.read_frame(ToPyroFrameIndex(frame.frame_index));
             this->resolution                                   = pyroFrame.resolution;
             this->cell_size                                    = pyroFrame.cell_size;
             scene::SceneFrameSnapshot snapshot{
-                .cursor = MakeFrameCursor(frame),
+                .cursor = scene::MakeFrameCursor(frame),
             };
             snapshot.volumes.push_back(this->make_volume(pyroFrame));
             return snapshot;
         }
     };
 
-    static_assert(RasterizerSimulationAdapter<BouncingBallRasterizerProject>);
-    static_assert(RasterizerSimulationAdapter<SparklesRasterizerProject>);
-    static_assert(RasterizerSimulationAdapter<ClothRasterizerProject>);
-    static_assert(RasterizerSimulationAdapter<PyroRasterizerProject>);
+    static_assert(scene::SceneSimulationAdapter<BouncingBallRasterizerProject>);
+    static_assert(scene::SceneSimulationAdapter<SparklesRasterizerProject>);
+    static_assert(scene::SceneSimulationAdapter<ClothRasterizerProject>);
+    static_assert(scene::SceneSimulationAdapter<PyroRasterizerProject>);
 
-    [[nodiscard]] RasterizerSceneRegistry MakeRasterizerSceneRegistry() {
-        RasterizerSceneRegistry registry{};
-        registry.register_static_scene(std::string{scene::CornellBoxSceneId}, "Cornell Box", [] { return scene::LoadSceneDocumentFromPbrt(scene::CornellBoxSceneId); });
+    [[nodiscard]] scene::SceneSourceRegistry MakeSceneSourceRegistry() {
+        scene::SceneSourceRegistry registry{};
+        registry.register_static_scene(std::string{scene::CornellBoxSceneId}, "Cornell Box", [] { return scene::LoadPreviewSceneDocumentFromPbrt(scene::CornellBoxSceneId); });
         registry.register_simulation<BouncingBallRasterizerProject>();
         registry.register_simulation<SparklesRasterizerProject>();
         registry.register_simulation<ClothRasterizerProject>();
@@ -690,180 +515,23 @@ namespace spectra::app {
         return registry;
     }
 
-    struct RasterizerSceneSlot {
-        std::unique_ptr<RasterizerSimulationRuntime> runtime{};
-        std::shared_ptr<scene::SceneWorkspace> workspace{};
-        double simulation_accumulator_seconds{};
-        double simulation_time_seconds{};
-        std::uint64_t simulation_frame_index{};
-        std::uint64_t observed_reset_request_serial{};
-        std::uint64_t observed_clear_recording_request_serial{};
-        std::optional<std::uint64_t> committed_playback_frame_index{};
-    };
-
-    class RasterizerSceneManager final {
-    public:
-        RasterizerSceneManager(RasterizerSceneRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : registry(std::move(registry)), camera_workspace(std::move(cameraWorkspace)) {
-            if (this->registry.size() == 0u) throw std::runtime_error("Rasterizer scene manager requires at least one scene");
-            if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer scene manager requires a scene camera workspace");
-            this->slots.resize(this->registry.size());
-            this->ensure_slot(0u);
-        }
-
-        RasterizerSceneManager(const RasterizerSceneManager& other)                = delete;
-        RasterizerSceneManager(RasterizerSceneManager&& other) noexcept            = default;
-        RasterizerSceneManager& operator=(const RasterizerSceneManager& other)     = delete;
-        RasterizerSceneManager& operator=(RasterizerSceneManager&& other) noexcept = default;
-        ~RasterizerSceneManager() noexcept                                         = default;
-
-        [[nodiscard]] std::shared_ptr<scene::SceneWorkspace> active_workspace() {
-            return this->ensure_slot(this->active_index).workspace;
-        }
-
-        void apply_pending_workspace(rasterizer::Renderer& renderer) {
-            if (!this->pending_active_index.has_value()) return;
-            const std::size_t next_index = *this->pending_active_index;
-            this->pending_active_index.reset();
-            if (next_index >= this->slots.size()) throw std::runtime_error("Pending rasterizer scene index is out of range");
-            if (next_index == this->active_index) return;
-            this->active_index = next_index;
-            renderer.set_scene_workspace(this->active_workspace(), this->camera_workspace);
-        }
-
-        void draw_control_panel() {
-            const std::size_t selected_index = this->pending_active_index.value_or(this->active_index);
-            const RasterizerSceneEntry& selected_entry = this->registry.entry(selected_index);
-            ImGui::SeparatorText("Scene");
-            if (ImGui::BeginCombo("Scene", selected_entry.title.c_str())) {
-                for (std::size_t index = 0; index < this->registry.size(); ++index) {
-                    const RasterizerSceneEntry& entry = this->registry.entry(index);
-                    const bool selected = index == selected_index;
-                    if (ImGui::Selectable(entry.title.c_str(), selected)) {
-                        if (index != this->active_index) this->pending_active_index = index;
-                    }
-                    if (selected) ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
+    void DrawRasterizerSceneControlPanel(scene::SceneSession& session) {
+        const std::size_t selected_index = session.selected_index();
+        const scene::SceneSourceEntry& selected_entry = session.entry(selected_index);
+        ImGui::SeparatorText("Scene");
+        if (ImGui::BeginCombo("Scene", selected_entry.title.c_str())) {
+            for (std::size_t index = 0; index < session.size(); ++index) {
+                const scene::SceneSourceEntry& entry = session.entry(index);
+                const bool selected = index == selected_index;
+                if (ImGui::Selectable(entry.title.c_str(), selected)) session.request_activate(index);
+                if (selected) ImGui::SetItemDefaultFocus();
             }
-            ImGui::TextDisabled("%s", selected_entry.id.c_str());
-            ImGui::TextDisabled("%s", selected_entry.kind == RasterizerSceneKind::Static ? "Static" : "Simulation");
-            if (this->pending_active_index.has_value() && *this->pending_active_index != this->active_index) ImGui::TextDisabled("Switching on next frame");
+            ImGui::EndCombo();
         }
-
-        void update_active_scene(const FrameContext& frame) {
-            const RasterizerSceneEntry& entry = this->registry.entry(this->active_index);
-            if (entry.kind == RasterizerSceneKind::Static) return;
-            RasterizerSceneSlot& slot = this->ensure_slot(this->active_index);
-            const std::shared_ptr<const scene::SceneDocument> document = slot.workspace->document();
-            if (!document->timelineEnabled) throw std::runtime_error("Rasterizer simulation scene must enable timeline");
-            if (document->framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer simulation scene frame rate must be positive");
-            const double fixed_delta_seconds = 1.0 / document->framesPerSecond;
-            scene::SimulationTimeline timeline = slot.workspace->timeline();
-            if (timeline.framesPerSecond <= 0.0) throw std::runtime_error("Rasterizer simulation timeline frame rate must be positive");
-            if (timeline.resetRequestSerial != slot.observed_reset_request_serial) {
-                this->reset_simulation(slot, std::move(timeline));
-                slot.observed_reset_request_serial = slot.workspace->timeline().resetRequestSerial;
-                slot.committed_playback_frame_index.reset();
-                return;
-            }
-            if (timeline.clearRecordingRequestSerial != slot.observed_clear_recording_request_serial) {
-                timeline.recordedFrames.clear();
-                timeline.selectedFrameIndex = 0;
-                CommitRasterizerTimeline(*slot.workspace, std::move(timeline));
-                slot.observed_clear_recording_request_serial = slot.workspace->timeline().clearRecordingRequestSerial;
-                slot.committed_playback_frame_index.reset();
-                return;
-            }
-            if (timeline.mode == scene::SimulationTimelineMode::Playback) {
-                if (timeline.recordedFrames.empty()) return;
-                if (timeline.selectedFrameIndex >= timeline.recordedFrames.size()) throw std::runtime_error("Rasterizer playback selected frame is out of range");
-                if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selectedFrameIndex) return;
-                scene::SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
-                CommitRasterizerFrame(*slot.workspace, std::move(selected_frame), false);
-                slot.committed_playback_frame_index = timeline.selectedFrameIndex;
-                return;
-            }
-            slot.committed_playback_frame_index.reset();
-            if (!timeline.playing) return;
-            if (!std::isfinite(frame.delta_seconds) || frame.delta_seconds < 0.0) throw std::runtime_error("Rasterizer frame delta time is invalid");
-            slot.simulation_accumulator_seconds += frame.delta_seconds;
-            bool advanced = false;
-            scene::SceneFrameSnapshot snapshot{};
-            while (slot.simulation_accumulator_seconds >= fixed_delta_seconds) {
-                slot.simulation_accumulator_seconds -= fixed_delta_seconds;
-                ++slot.simulation_frame_index;
-                slot.simulation_time_seconds += fixed_delta_seconds;
-                snapshot = slot.runtime->step(RasterizerSimulationFrameInfo{
-                    .delta_seconds = fixed_delta_seconds,
-                    .time_seconds  = slot.simulation_time_seconds,
-                    .frame_index   = slot.simulation_frame_index,
-                });
-                advanced = true;
-            }
-            if (!advanced) return;
-            if (timeline.mode == scene::SimulationTimelineMode::Record) {
-                timeline.recordedFrames.push_back(snapshot);
-                timeline.selectedFrameIndex = timeline.recordedFrames.size() - 1u;
-                CommitRasterizerTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
-                return;
-            }
-            CommitRasterizerFrame(*slot.workspace, std::move(snapshot), false);
-        }
-
-    private:
-        RasterizerSceneRegistry registry{};
-        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
-        std::vector<RasterizerSceneSlot> slots{};
-        std::size_t active_index{};
-        std::optional<std::size_t> pending_active_index{};
-
-        RasterizerSceneSlot& ensure_slot(const std::size_t index) {
-            if (index >= this->slots.size()) throw std::runtime_error("Rasterizer scene slot index is out of range");
-            RasterizerSceneSlot& slot = this->slots.at(index);
-            const RasterizerSceneEntry& entry = this->registry.entry(index);
-            if (slot.workspace != nullptr) {
-                if (entry.kind == RasterizerSceneKind::Simulation && slot.runtime == nullptr) throw std::runtime_error("Rasterizer simulation slot has a workspace but no runtime");
-                return slot;
-            }
-            scene::SceneDocument document = entry.kind == RasterizerSceneKind::Static ? this->registry.create_static_document(index) : this->create_simulation_slot(index, &slot);
-            slot.workspace = std::make_shared<scene::SceneWorkspace>(std::move(document));
-            if (entry.kind == RasterizerSceneKind::Static) return slot;
-            if (slot.runtime == nullptr) throw std::runtime_error("Rasterizer simulation slot was not initialized");
-            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
-            const std::shared_ptr<const scene::SceneDocument> scene = slot.workspace->document();
-            if (!scene->timelineEnabled) throw std::runtime_error("Rasterizer simulation scene must enable timeline");
-            scene::SimulationTimeline timeline{
-                .mode            = scene::SimulationTimelineMode::Live,
-                .framesPerSecond = scene->framesPerSecond,
-                .playing         = true,
-                .loop            = true,
-                .cursor          = snapshot.cursor,
-                .selectedFrameIndex = 0,
-                .currentFrame    = snapshot,
-            };
-            CommitRasterizerTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
-            return slot;
-        }
-
-        [[nodiscard]] scene::SceneDocument create_simulation_slot(const std::size_t index, RasterizerSceneSlot* slot) {
-            if (slot == nullptr) throw std::runtime_error("Rasterizer simulation slot pointer must not be null");
-            slot->runtime = this->registry.create_simulation_runtime(index);
-            scene::SceneDocument document = slot->runtime->create_document();
-            if (!document.timelineEnabled) throw std::runtime_error("Rasterizer simulation scene document must enable timeline");
-            return document;
-        }
-
-        void reset_simulation(RasterizerSceneSlot& slot, scene::SimulationTimeline timeline) {
-            slot.simulation_accumulator_seconds = 0.0;
-            slot.simulation_time_seconds        = 0.0;
-            slot.simulation_frame_index         = 0;
-            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
-            timeline.cursor                         = snapshot.cursor;
-            timeline.currentFrame                   = snapshot;
-            timeline.selectedFrameIndex             = 0;
-            CommitRasterizerTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
-        }
-    };
+        ImGui::TextDisabled("%s", selected_entry.id.c_str());
+        ImGui::TextDisabled("%s", selected_entry.kind == scene::SceneSourceKind::Static ? "Static" : "Simulation");
+        if (session.pending_switch()) ImGui::TextDisabled("Switching on next frame");
+    }
 
     class PathtracerSpectraRenderer final {
     public:
@@ -926,10 +594,10 @@ namespace spectra::app {
 
     class RasterizerSpectraRenderer final {
     public:
-        RasterizerSpectraRenderer(RasterizerSceneRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_manager(std::make_shared<RasterizerSceneManager>(std::move(registry), cameraWorkspace)), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_manager->active_workspace(), this->camera_workspace)) {
-            if (this->scene_manager == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene manager");
+        RasterizerSpectraRenderer(scene::SceneSourceRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_session(std::make_shared<scene::SceneSession>(std::move(registry))), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_session->active_workspace(), this->camera_workspace)) {
+            if (this->scene_session == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene session");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
-            this->renderer->set_control_panel_extension([sceneManager = this->scene_manager] { sceneManager->draw_control_panel(); });
+            this->renderer->set_control_panel_extension([sceneSession = this->scene_session] { DrawRasterizerSceneControlPanel(*sceneSession); });
         }
 
         RasterizerSpectraRenderer(const RasterizerSpectraRenderer& other)                = delete;
@@ -959,8 +627,8 @@ namespace spectra::app {
         }
 
         [[nodiscard]] FrameResult begin_frame(Spectra& host, const FrameContext& frame) {
-            this->scene_manager->apply_pending_workspace(*this->renderer);
-            this->scene_manager->update_active_scene(frame);
+            if (this->scene_session->apply_pending_scene()) this->renderer->set_scene_workspace(this->scene_session->active_workspace(), this->camera_workspace);
+            this->scene_session->update_active_scene(frame.delta_seconds);
             const rasterizer::FrameContext rasterizer_frame{
                 .frame_index   = frame.frame_slot_index,
                 .image_index   = frame.image_index,
@@ -980,7 +648,7 @@ namespace spectra::app {
         }
 
     private:
-        std::shared_ptr<RasterizerSceneManager> scene_manager{};
+        std::shared_ptr<scene::SceneSession> scene_session{};
         std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
         std::unique_ptr<rasterizer::Renderer> renderer{};
     };
@@ -988,9 +656,9 @@ namespace spectra::app {
     static_assert(RendererFor<PathtracerSpectraRenderer, Spectra>);
     static_assert(RendererFor<RasterizerSpectraRenderer, Spectra>);
 
-    void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, RasterizerSceneRegistry rasterizerSceneRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
+    void RegisterRenderers(Spectra& app, std::shared_ptr<pathtracer::PbrtSceneLibrary> pbrtSceneLibrary, scene::SceneSourceRegistry sceneSourceRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
         if (cameraWorkspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
-        app.register_renderer(RasterizerSpectraRenderer{std::move(rasterizerSceneRegistry), cameraWorkspace});
+        app.register_renderer(RasterizerSpectraRenderer{std::move(sceneSourceRegistry), cameraWorkspace});
         app.register_renderer(PathtracerSpectraRenderer{std::move(pbrtSceneLibrary), std::move(cameraWorkspace)});
     }
 } // namespace spectra::app
@@ -1000,11 +668,11 @@ int main(const int argc, char**) {
         if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
         std::shared_ptr<spectra::pathtracer::PbrtSceneLibrary> pbrt_scene_library = std::make_shared<spectra::pathtracer::PbrtSceneLibrary>(std::string{spectra::scene::CornellBoxSceneId});
-        spectra::app::RasterizerSceneRegistry rasterizer_scene_registry = spectra::app::MakeRasterizerSceneRegistry();
+        spectra::scene::SceneSourceRegistry scene_source_registry = spectra::app::MakeSceneSourceRegistry();
         std::shared_ptr<spectra::scene::SceneCameraWorkspace> camera_workspace = std::make_shared<spectra::scene::SceneCameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_library), std::move(rasterizer_scene_registry), std::move(camera_workspace));
+        spectra::app::RegisterRenderers(app, std::move(pbrt_scene_library), std::move(scene_source_registry), std::move(camera_workspace));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

@@ -627,7 +627,7 @@ namespace spectra::scene {
             for (const PbrtSceneParameter& parameter : parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = ParameterStringValues(parameter);
-                if (values == nullptr || values->size() != 1) return default_value;
+                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, std::format("PBRT string parameter \"{}\" must contain exactly one string value", name));
                 return values->front();
             }
             return default_value;
@@ -636,8 +636,9 @@ namespace spectra::scene {
         [[nodiscard]] float OneFloatParameter(const std::vector<PbrtSceneParameter>& parameters, const std::string& name, const float default_value) {
             for (const PbrtSceneParameter& parameter : parameters) {
                 if (parameter.name != name) continue;
+                if (parameter.type != "float") throw ParseError(parameter.source, std::format("PBRT parameter \"{}\" must be declared as float", name));
                 const std::vector<float>* values = ParameterFloatValues(parameter);
-                if (values == nullptr || values->size() != 1) return default_value;
+                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, std::format("PBRT float parameter \"{}\" must contain exactly one float value", name));
                 return values->front();
             }
             return default_value;
@@ -696,7 +697,7 @@ namespace spectra::scene {
         [[nodiscard]] std::string ProbeStringParameter(const std::vector<ProbeParameter>& parameters, const std::string& name, std::string default_value) {
             for (const ProbeParameter& parameter : parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
-                if (parameter.stringValues.size() != 1) return default_value;
+                if (parameter.stringValues.size() != 1) throw ParseError(parameter.source, std::format("PBRT probe string parameter \"{}\" must contain exactly one value", name));
                 return parameter.stringValues.front();
             }
             return default_value;
@@ -1938,8 +1939,283 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", requested));
         }
 
+        constexpr std::size_t PbrtCatalogBackgroundWorkerCount = 2u;
     } // namespace
 
+    void PbrtSceneEditBuilder::replaceSnapshot(PbrtSceneSnapshot snapshot, const PbrtSceneDirtyFlags dirty) {
+        if (dirty != PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("PBRT scene snapshot replacement must use snapshot dirty state");
+        this->replacement = std::move(snapshot);
+        this->dirty       = dirty;
+    }
+
+    PbrtSceneWorkspace::PbrtSceneWorkspace(PbrtSceneSnapshot snapshot) {
+        if (snapshot.revision.value == 0) snapshot.revision = SceneRevision{1};
+        this->currentSnapshot = std::make_shared<PbrtSceneSnapshot>(std::move(snapshot));
+    }
+
+    bool PbrtSceneWorkspace::loaded() const {
+        return this->currentSnapshot != nullptr;
+    }
+
+    std::shared_ptr<const PbrtSceneSnapshot> PbrtSceneWorkspace::snapshot() const {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("PBRT scene workspace does not contain a loaded snapshot");
+        return this->currentSnapshot;
+    }
+
+    PbrtSceneEditBatch PbrtSceneWorkspace::commit(PbrtSceneEditBuilder edit) {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded PBRT scene workspace");
+        if (!edit.replacement.has_value()) throw std::runtime_error("Cannot commit an empty PBRT scene edit");
+        if (edit.dirty != PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("PBRT scene edit commit must use snapshot dirty state");
+
+        PbrtSceneSnapshot next = std::move(*edit.replacement);
+        const SceneRevision before_revision = this->currentSnapshot->revision;
+        next.revision = SceneRevision{before_revision.value + 1};
+        this->currentSnapshot = std::make_shared<PbrtSceneSnapshot>(std::move(next));
+
+        PbrtSceneEditBatch batch = this->fullEdit(before_revision);
+        batch.dirty = edit.dirty;
+        this->lastEdit = batch;
+        return batch;
+    }
+
+    PbrtSceneEditBatch PbrtSceneWorkspace::changes_since(const SceneRevision revision) const {
+        if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot query PBRT scene changes from an unloaded workspace");
+        if (revision == this->currentSnapshot->revision) {
+            return PbrtSceneEditBatch{
+                .beforeRevision = revision,
+                .afterRevision  = revision,
+                .dirty          = PbrtSceneDirtyFlags::None,
+            };
+        }
+        if (revision.value == 0) return this->fullEdit(revision);
+        if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
+        throw std::runtime_error("PBRT scene edit history for the requested revision is unavailable");
+    }
+
+    PbrtSceneEditBatch PbrtSceneWorkspace::fullEdit(const SceneRevision before) const {
+        return PbrtSceneEditBatch{
+            .beforeRevision = before,
+            .afterRevision  = this->currentSnapshot->revision,
+            .dirty          = PbrtSceneDirtyFlags::Snapshot,
+        };
+    }
+
+    PbrtSceneInfo DescribeScene(const PbrtSceneSnapshot& scene) {
+        const auto one_float_parameter = [](const std::vector<PbrtSceneParameter>& parameters, const std::string& name, const float default_value) {
+            for (const PbrtSceneParameter& parameter : parameters) {
+                if (parameter.type != "float" && parameter.type != "integer") continue;
+                if (parameter.name != name) continue;
+                if (parameter.type == "float") {
+                    const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
+                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
+                    return values->front();
+                }
+                const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
+                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
+                return static_cast<float>(values->front());
+            }
+            return default_value;
+        };
+
+        std::size_t definition_shape_count = 0;
+        std::size_t definition_area_light_count = 0;
+        for (const PbrtSceneObjectDefinition& definition : scene.objectDefinitions) {
+            definition_shape_count += definition.shapes.size();
+            for (const PbrtSceneShape& shape : definition.shapes)
+                if (shape.areaLight.has_value()) ++definition_area_light_count;
+        }
+
+        std::size_t area_light_count = definition_area_light_count;
+        for (const PbrtSceneShape& shape : scene.shapes)
+            if (shape.areaLight.has_value()) ++area_light_count;
+
+        std::size_t infinite_light_count = 0;
+        for (const PbrtSceneLight& light : scene.lights)
+            if (light.entity.type == "infinite") ++infinite_light_count;
+
+        const float camera_fov = one_float_parameter(scene.renderSettings.camera.parameters, "fov", scene.renderSettings.camera.type == "perspective" ? 90.0f : 45.0f);
+        if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
+
+        return PbrtSceneInfo{
+            .name                    = scene.name,
+            .title                   = scene.title,
+            .camera                  = scene.renderSettings.camera.type,
+            .sampler                 = scene.renderSettings.sampler.type,
+            .integrator              = scene.renderSettings.integrator.type,
+            .accelerator             = scene.renderSettings.accelerator.type,
+            .shape_count             = scene.shapes.size() + definition_shape_count,
+            .material_count          = scene.materials.size(),
+            .texture_count           = scene.textures.size(),
+            .medium_count            = scene.media.size(),
+            .light_count             = scene.lights.size(),
+            .area_light_count        = area_light_count,
+            .infinite_light_count    = infinite_light_count,
+            .object_definition_count = scene.objectDefinitions.size(),
+            .object_instance_count   = scene.objectInstances.size(),
+            .camera_fov_degrees      = camera_fov,
+        };
+    }
+
+    PbrtCatalogSession::PbrtCatalogSession(std::string initial_scene_id) : currentWorkspace(std::make_shared<PbrtSceneWorkspace>()) {
+        if (initial_scene_id.empty()) throw std::runtime_error("PBRT catalog session initial scene id must not be empty");
+        this->catalog = DiscoverPbrtSceneCatalog();
+        this->catalogProbeClaimed.assign(this->catalog.entries.size(), false);
+        const std::vector<PbrtSceneCatalogEntry>::iterator active_scene_iter = std::ranges::find_if(this->catalog.entries, [&initial_scene_id](const PbrtSceneCatalogEntry& entry) { return entry.id == initial_scene_id; });
+        if (active_scene_iter == this->catalog.entries.end()) throw std::runtime_error(std::format("PBRT scene catalog does not contain required initial scene \"{}\"", initial_scene_id));
+        ProbePbrtSceneCatalogEntry(*active_scene_iter);
+        if (active_scene_iter->state == PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("PBRT initial scene \"{}\" is not probeable: {}", initial_scene_id, active_scene_iter->issues.empty() ? "no diagnostics" : active_scene_iter->issues.front().message));
+        if (active_scene_iter->state == PbrtSceneCatalogEntryState::NonScene) throw std::runtime_error(std::format("PBRT initial scene \"{}\" is not a top-level scene", initial_scene_id));
+        if (active_scene_iter->state != PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("PBRT initial scene \"{}\" did not produce a candidate scene probe", initial_scene_id));
+        PbrtSceneSnapshot initial_scene = ParsePbrtSceneCatalogEntry(*active_scene_iter);
+        active_scene_iter->revision = initial_scene.revision;
+        if (active_scene_iter->probe.has_value()) active_scene_iter->probe->revision = initial_scene.revision;
+        active_scene_iter->issues.clear();
+        this->activeSceneIndex = static_cast<std::size_t>(std::distance(this->catalog.entries.begin(), active_scene_iter));
+        *this->currentWorkspace = PbrtSceneWorkspace{std::move(initial_scene)};
+        this->refresh_catalog_counts();
+    }
+
+    PbrtCatalogSession::~PbrtCatalogSession() noexcept {
+        this->stop_background_probe_workers();
+    }
+
+    void PbrtCatalogSession::start_background_probe_workers() {
+        if (!this->backgroundWorkers.empty()) throw std::runtime_error("PBRT catalog background probe workers are already running");
+        {
+            std::scoped_lock lock{this->catalogMutex};
+            this->catalogProbeClaimed.assign(this->catalog.entries.size(), false);
+        }
+        this->backgroundWorkers.reserve(PbrtCatalogBackgroundWorkerCount);
+        for (std::size_t worker_index = 0; worker_index < PbrtCatalogBackgroundWorkerCount; ++worker_index) {
+            this->backgroundWorkers.emplace_back([this](const std::stop_token stop_token) { this->run_background_probe_worker(stop_token); });
+        }
+        this->backgroundCondition.notify_all();
+    }
+
+    void PbrtCatalogSession::stop_background_probe_workers() noexcept {
+        for (std::jthread& worker : this->backgroundWorkers) worker.request_stop();
+        this->backgroundCondition.notify_all();
+        for (std::jthread& worker : this->backgroundWorkers) {
+            if (worker.joinable()) worker.join();
+        }
+        this->backgroundWorkers.clear();
+        std::scoped_lock lock{this->catalogMutex};
+        this->catalogProbeClaimed.assign(this->catalog.entries.size(), false);
+    }
+
+    void PbrtCatalogSession::stop_background_probe_workers_if_idle() noexcept {
+        bool should_stop = false;
+        {
+            std::scoped_lock lock{this->catalogMutex};
+            should_stop = !this->backgroundWorkers.empty() && this->catalog.pending_count == 0;
+        }
+        if (should_stop) this->stop_background_probe_workers();
+    }
+
+    std::shared_ptr<PbrtSceneWorkspace> PbrtCatalogSession::workspace() const {
+        return this->currentWorkspace;
+    }
+
+    PbrtSceneCatalog PbrtCatalogSession::catalog_snapshot() const {
+        std::scoped_lock lock{this->catalogMutex};
+        return this->catalog;
+    }
+
+    std::size_t PbrtCatalogSession::active_scene_index() const {
+        std::scoped_lock lock{this->catalogMutex};
+        return this->activeSceneIndex;
+    }
+
+    PbrtSceneSnapshot PbrtCatalogSession::parse_scene(const std::size_t scene_index) const {
+        PbrtSceneCatalogEntry entry{};
+        {
+            std::scoped_lock lock{this->catalogMutex};
+            if (scene_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT scene load index is out of range");
+            entry = this->catalog.entries.at(scene_index);
+        }
+        if (entry.state != PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Cannot load disabled PBRT scene \"{}\"", entry.id));
+        return ParsePbrtSceneCatalogEntry(entry);
+    }
+
+    PbrtSceneEditBatch PbrtCatalogSession::commit_scene(const std::size_t scene_index, PbrtSceneSnapshot snapshot) {
+        if (this->currentWorkspace == nullptr) throw std::runtime_error("PBRT catalog session workspace is unavailable");
+        if (snapshot.name.empty()) throw std::runtime_error("PBRT catalog session cannot commit a snapshot with an empty scene id");
+        {
+            std::scoped_lock lock{this->catalogMutex};
+            if (scene_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT scene load index is out of range");
+            if (this->catalog.entries.at(scene_index).id != snapshot.name) throw std::runtime_error(std::format("PBRT catalog entry \"{}\" cannot commit snapshot \"{}\"", this->catalog.entries.at(scene_index).id, snapshot.name));
+        }
+        PbrtSceneEditBatch edit_batch{};
+        if (!this->currentWorkspace->loaded()) {
+            *this->currentWorkspace = PbrtSceneWorkspace{std::move(snapshot)};
+            edit_batch = PbrtSceneEditBatch{
+                .beforeRevision = SceneRevision{},
+                .afterRevision  = this->currentWorkspace->snapshot()->revision,
+                .dirty          = PbrtSceneDirtyFlags::Snapshot,
+            };
+        } else {
+            PbrtSceneEditBuilder edit{};
+            edit.replaceSnapshot(std::move(snapshot), PbrtSceneDirtyFlags::Snapshot);
+            edit_batch = this->currentWorkspace->commit(std::move(edit));
+            if (edit_batch.dirty != PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("PBRT catalog session failed to commit a scene replacement");
+        }
+        {
+            std::scoped_lock lock{this->catalogMutex};
+            this->activeSceneIndex = scene_index;
+            this->catalog.entries.at(scene_index).revision = edit_batch.afterRevision;
+            if (this->catalog.entries.at(scene_index).probe.has_value()) this->catalog.entries.at(scene_index).probe->revision = edit_batch.afterRevision;
+            this->catalog.entries.at(scene_index).state = PbrtSceneCatalogEntryState::Candidate;
+            this->catalog.entries.at(scene_index).issues.clear();
+            this->refresh_catalog_counts();
+        }
+        return edit_batch;
+    }
+
+    void PbrtCatalogSession::run_background_probe_worker(const std::stop_token stop_token) {
+        while (!stop_token.stop_requested()) {
+            std::optional<std::size_t> probe_index{};
+            PbrtSceneCatalogEntry probe_entry{};
+            {
+                std::unique_lock lock{this->catalogMutex};
+                if (!this->backgroundCondition.wait(lock, stop_token, [this] { return this->has_background_probe_work_locked(); })) return;
+                probe_index = this->next_catalog_probe_index_locked();
+                if (!probe_index.has_value()) continue;
+                this->catalogProbeClaimed[*probe_index] = true;
+                probe_entry = this->catalog.entries.at(*probe_index);
+            }
+
+            if (stop_token.stop_requested()) return;
+            ProbePbrtSceneCatalogEntry(probe_entry, stop_token);
+            {
+                std::scoped_lock lock{this->catalogMutex};
+                if (stop_token.stop_requested()) return;
+                if (*probe_index >= this->catalog.entries.size()) throw std::runtime_error("PBRT catalog probe index is out of range");
+                if (this->catalog.entries.at(*probe_index).id != probe_entry.id) throw std::runtime_error("PBRT catalog changed while probing");
+                this->catalog.entries.at(*probe_index) = std::move(probe_entry);
+                this->catalogProbeClaimed.at(*probe_index) = false;
+                this->refresh_catalog_counts();
+            }
+            this->backgroundCondition.notify_all();
+        }
+    }
+
+    void PbrtCatalogSession::refresh_catalog_counts() {
+        RefreshCatalogCounts(&this->catalog);
+    }
+
+    bool PbrtCatalogSession::has_background_probe_work_locked() const {
+        return this->next_catalog_probe_index_locked().has_value();
+    }
+
+    std::optional<std::size_t> PbrtCatalogSession::next_catalog_probe_index_locked() const {
+        if (this->catalogProbeClaimed.size() != this->catalog.entries.size()) throw std::runtime_error("PBRT catalog probe claim table is out of sync");
+        for (std::size_t scene_index = 0; scene_index < this->catalog.entries.size(); ++scene_index) {
+            if (this->catalog.entries.at(scene_index).state != PbrtSceneCatalogEntryState::Pending) continue;
+            if (this->catalogProbeClaimed.at(scene_index)) continue;
+            return scene_index;
+        }
+        return {};
+    }
 
     PbrtSceneCatalog DiscoverPbrtSceneCatalog() {
         PbrtSceneCatalog catalog{.root = SceneRoot()};

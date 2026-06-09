@@ -365,7 +365,28 @@ namespace spectra::scene {
         std::vector<SceneFrameSnapshot> recordedFrames{};
     };
 
+    export struct SceneResolvedFrame {
+        SceneRevision revision{};
+        std::shared_ptr<const SceneDocument> document{};
+        SimulationTimeline timeline{};
+        std::optional<SceneFrameSnapshot> frame{};
+        std::vector<SceneMesh> meshes{};
+        std::vector<SceneParticleSet> particleSets{};
+        std::vector<ScenePointCloud> pointClouds{};
+        std::vector<SceneVolumeGrid> volumes{};
+        std::vector<SceneCurveSet> curveSets{};
+        std::vector<SceneSplatSet> splatSets{};
+        std::vector<SceneLineSet> lineSets{};
+        std::vector<SceneDebugPrimitive> debugPrimitives{};
+        std::vector<SceneVectorField> vectorFields{};
+        std::vector<SceneCloth> cloths{};
+        std::vector<SceneRigidBody> rigidBodies{};
+        std::vector<SceneCollider> colliders{};
+    };
+
     export struct SceneEditBatch {
+        SceneRevision beforeRevision{};
+        SceneRevision afterRevision{};
         SceneDirtyFlags dirty{SceneDirtyFlags::None};
     };
 
@@ -394,6 +415,7 @@ namespace spectra::scene {
         [[nodiscard]] std::shared_ptr<const SceneDocument> document() const;
         [[nodiscard]] SimulationTimeline timeline() const;
         [[nodiscard]] std::optional<SceneFrameSnapshot> frame() const;
+        [[nodiscard]] SceneResolvedFrame resolved_frame() const;
         [[nodiscard]] SceneEditBatch commit(SceneEditBuilder edit);
 
     private:

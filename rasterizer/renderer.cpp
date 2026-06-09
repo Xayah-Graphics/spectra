@@ -1299,60 +1299,6 @@ namespace spectra::rasterizer {
         this->selection.frame_count = this->host.frame_count;
     }
 
-    std::vector<scene::SceneMesh> Renderer::collect_render_meshes() const {
-        const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
-        std::vector<scene::SceneMesh> meshes = scene->meshes;
-        const std::optional<scene::SceneFrameSnapshot> frame = this->scene.workspace->frame();
-        if (!frame.has_value()) return meshes;
-        for (const scene::SceneMesh& frame_mesh : frame->meshes) {
-            bool replaced = false;
-            for (scene::SceneMesh& mesh : meshes) {
-                if (mesh.name != frame_mesh.name) continue;
-                mesh     = frame_mesh;
-                replaced = true;
-                break;
-            }
-            if (!replaced) meshes.push_back(frame_mesh);
-        }
-        return meshes;
-    }
-
-    std::vector<scene::SceneParticleSet> Renderer::collect_render_particle_sets() const {
-        const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
-        std::vector<scene::SceneParticleSet> particle_sets = scene->particleSets;
-        const std::optional<scene::SceneFrameSnapshot> frame = this->scene.workspace->frame();
-        if (!frame.has_value()) return particle_sets;
-        for (const scene::SceneParticleSet& frame_particle_set : frame->particleSets) {
-            bool replaced = false;
-            for (scene::SceneParticleSet& particle_set : particle_sets) {
-                if (particle_set.name != frame_particle_set.name) continue;
-                particle_set = frame_particle_set;
-                replaced     = true;
-                break;
-            }
-            if (!replaced) particle_sets.push_back(frame_particle_set);
-        }
-        return particle_sets;
-    }
-
-    std::vector<scene::SceneVolumeGrid> Renderer::collect_render_volumes() const {
-        const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
-        std::vector<scene::SceneVolumeGrid> volumes = scene->volumes;
-        const std::optional<scene::SceneFrameSnapshot> frame = this->scene.workspace->frame();
-        if (!frame.has_value()) return volumes;
-        for (const scene::SceneVolumeGrid& frame_volume : frame->volumes) {
-            bool replaced = false;
-            for (scene::SceneVolumeGrid& volume : volumes) {
-                if (volume.name != frame_volume.name) continue;
-                volume   = frame_volume;
-                replaced = true;
-                break;
-            }
-            if (!replaced) volumes.push_back(frame_volume);
-        }
-        return volumes;
-    }
-
     scene::SceneMaterial Renderer::resolve_material(const std::string_view material_name) const {
         if (material_name.empty()) throw std::runtime_error("Rasterizer material name must not be empty");
         const std::shared_ptr<const scene::SceneDocument> scene = this->scene.workspace->document();
@@ -1374,7 +1320,7 @@ namespace spectra::rasterizer {
         throw std::runtime_error(std::format("Rasterizer volume \"{}\" does not contain required channel \"{}\"", volume.name, channel_name));
     }
 
-    const scene::SceneVolumeGrid* Renderer::select_render_volume_grid(const std::vector<scene::SceneVolumeGrid>& volumes) const {
+    const scene::SceneVolumeGrid* Renderer::select_render_volume_grid(const std::span<const scene::SceneVolumeGrid> volumes) const {
         if (volumes.empty()) return nullptr;
         if (volumes.size() != 1u) throw std::runtime_error("Spectra rasterizer volume pass supports exactly one volume grid");
         return &volumes.front();
@@ -1383,20 +1329,20 @@ namespace spectra::rasterizer {
     void Renderer::rebuild_selection_registry_if_needed() {
         const scene::SceneRevision scene_revision = this->scene.workspace->revision();
         if (this->selection.registry_valid && this->selection.registry_revision == scene_revision) return;
+        const scene::SceneResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
         this->selection.object_ids.clear();
         this->selection.objects_by_id.clear();
         std::set<ObjectKey> unique_keys{};
         std::uint32_t next_id = 1u;
-        for (const scene::SceneMesh& mesh : this->collect_render_meshes()) {
+        for (const scene::SceneMesh& mesh : resolved_frame.meshes) {
             if (mesh.positions.empty()) continue;
             this->register_selectable_object(SelectableObjectKind::Mesh, mesh.name, unique_keys, next_id);
         }
-        for (const scene::SceneParticleSet& particle_set : this->collect_render_particle_sets()) {
+        for (const scene::SceneParticleSet& particle_set : resolved_frame.particleSets) {
             if (particle_set.positions.empty()) continue;
             this->register_selectable_object(SelectableObjectKind::ParticleSet, particle_set.name, unique_keys, next_id);
         }
-        const std::vector<scene::SceneVolumeGrid> volumes = this->collect_render_volumes();
-        const scene::SceneVolumeGrid* volume = this->select_render_volume_grid(volumes);
+        const scene::SceneVolumeGrid* volume = this->select_render_volume_grid(resolved_frame.volumes);
         if (volume != nullptr) this->register_selectable_object(SelectableObjectKind::VolumeGrid, volume->name, unique_keys, next_id);
         this->selection.registry_revision = scene_revision;
         this->selection.registry_valid = true;
@@ -1520,7 +1466,8 @@ namespace spectra::rasterizer {
         std::vector<RasterizerVertex> vertices{};
         std::vector<std::uint32_t> indices{};
         std::vector<RenderDrawCommand> draw_commands{};
-        for (const scene::SceneMesh& mesh : this->collect_render_meshes()) {
+        const scene::SceneResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        for (const scene::SceneMesh& mesh : resolved_frame.meshes) {
             if (mesh.positions.empty()) continue;
             if (mesh.normals.size() != mesh.positions.size()) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" must provide one normal per position", mesh.name));
             if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" must provide triangle indices", mesh.name));
@@ -1576,7 +1523,8 @@ namespace spectra::rasterizer {
 
         std::vector<ParticleInstance> instances{};
         std::vector<ParticleDrawCommand> draw_commands{};
-        for (const scene::SceneParticleSet& particle_set : this->collect_render_particle_sets()) {
+        const scene::SceneResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        for (const scene::SceneParticleSet& particle_set : resolved_frame.particleSets) {
             if (particle_set.positions.empty()) continue;
             if (particle_set.radii.size() != particle_set.positions.size()) throw std::runtime_error(std::format("Rasterizer particle set \"{}\" must provide one radius per position", particle_set.name));
             if (particle_set.colors.size() != particle_set.positions.size()) throw std::runtime_error(std::format("Rasterizer particle set \"{}\" must provide one color per position", particle_set.name));
@@ -1624,8 +1572,8 @@ namespace spectra::rasterizer {
         const scene::SceneRevision scene_revision = this->scene.workspace->revision();
         if (frame_volume.uploadedRevision == scene_revision) return;
 
-        const std::vector<scene::SceneVolumeGrid> volumes = this->collect_render_volumes();
-        const scene::SceneVolumeGrid* selected_volume = this->select_render_volume_grid(volumes);
+        const scene::SceneResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        const scene::SceneVolumeGrid* selected_volume = this->select_render_volume_grid(resolved_frame.volumes);
         if (selected_volume == nullptr) {
             frame_volume.uploadedRevision = scene_revision;
             frame_volume.uploadPending    = false;
@@ -1796,10 +1744,11 @@ namespace spectra::rasterizer {
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
 
-        for (const scene::SceneMesh& mesh : this->collect_render_meshes()) {
+        const scene::SceneResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        for (const scene::SceneMesh& mesh : resolved_frame.meshes) {
             for (const scene::Vector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
         }
-        for (const scene::SceneParticleSet& particle_set : this->collect_render_particle_sets()) {
+        for (const scene::SceneParticleSet& particle_set : resolved_frame.particleSets) {
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
             for (std::size_t index = 0; index < particle_set.positions.size(); ++index) {
                 const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(particle_set.positions.at(index))));
@@ -1808,7 +1757,7 @@ namespace spectra::rasterizer {
                 include_point(scene::Vector3{center.x + radius, center.y + radius, center.z + radius});
             }
         }
-        for (const scene::SceneVolumeGrid& volume : this->collect_render_volumes()) {
+        for (const scene::SceneVolumeGrid& volume : resolved_frame.volumes) {
             include_point(volume.origin);
             include_point(scene::Vector3{
                 volume.origin.x + volume.voxelSize.x * static_cast<float>(volume.dimensions[0]),
@@ -1840,11 +1789,12 @@ namespace spectra::rasterizer {
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
 
-        for (const scene::SceneMesh& mesh : this->collect_render_meshes()) {
+        const scene::SceneResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        for (const scene::SceneMesh& mesh : resolved_frame.meshes) {
             if (!this->object_selected(ObjectKey{SelectableObjectKind::Mesh, mesh.name})) continue;
             for (const scene::Vector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
         }
-        for (const scene::SceneParticleSet& particle_set : this->collect_render_particle_sets()) {
+        for (const scene::SceneParticleSet& particle_set : resolved_frame.particleSets) {
             if (!this->object_selected(ObjectKey{SelectableObjectKind::ParticleSet, particle_set.name})) continue;
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
             for (std::size_t index = 0; index < particle_set.positions.size(); ++index) {
@@ -1854,7 +1804,7 @@ namespace spectra::rasterizer {
                 include_point(scene::Vector3{center.x + radius, center.y + radius, center.z + radius});
             }
         }
-        for (const scene::SceneVolumeGrid& volume : this->collect_render_volumes()) {
+        for (const scene::SceneVolumeGrid& volume : resolved_frame.volumes) {
             if (!this->object_selected(ObjectKey{SelectableObjectKind::VolumeGrid, volume.name})) continue;
             include_point(volume.origin);
             include_point(scene::Vector3{

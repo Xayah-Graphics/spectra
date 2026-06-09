@@ -183,12 +183,9 @@ namespace spectra::rasterizer {
         void ensure_volume_resources();
         void ensure_selection_resources();
 
-        [[nodiscard]] std::vector<scene::SceneMesh> collect_render_meshes() const;
-        [[nodiscard]] std::vector<scene::SceneParticleSet> collect_render_particle_sets() const;
-        [[nodiscard]] std::vector<scene::SceneVolumeGrid> collect_render_volumes() const;
         [[nodiscard]] scene::SceneMaterial resolve_material(std::string_view material_name) const;
         [[nodiscard]] const scene::SceneVolumeChannel& require_volume_channel(const scene::SceneVolumeGrid& volume, std::string_view channel_name, scene::SceneVolumeChannelLayout layout) const;
-        [[nodiscard]] const scene::SceneVolumeGrid* select_render_volume_grid(const std::vector<scene::SceneVolumeGrid>& volumes) const;
+        [[nodiscard]] const scene::SceneVolumeGrid* select_render_volume_grid(std::span<const scene::SceneVolumeGrid> volumes) const;
         void rebuild_selection_registry_if_needed();
         void register_selectable_object(SelectableObjectKind kind, std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id);
         [[nodiscard]] std::uint32_t object_id_for(const ObjectKey& key) const;

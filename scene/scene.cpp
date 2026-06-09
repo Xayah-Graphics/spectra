@@ -38,6 +38,36 @@ namespace spectra::scene {
             if (!(length_squared(cross(view, state.up)) > 1.0e-12f)) throw std::runtime_error("Scene camera up vector must not be parallel to the view direction");
             if (!std::isfinite(state.verticalFovDegrees) || !(state.verticalFovDegrees > 0.0f) || !(state.verticalFovDegrees < 180.0f)) throw std::runtime_error("Scene camera vertical FOV must be inside (0, 180)");
         }
+
+        template <typename Item>
+        void validate_unique_scene_item_names(const std::vector<Item>& items, const std::string_view layer, const std::string_view kind) {
+            std::set<std::string_view> names{};
+            for (const Item& item : items) {
+                if (item.name.empty()) throw std::runtime_error(std::format("{} {} item names must not be empty", layer, kind));
+                if (!names.insert(std::string_view{item.name}).second) throw std::runtime_error(std::format("{} {} item \"{}\" is duplicated", layer, kind, item.name));
+            }
+        }
+
+        template <typename Item>
+        [[nodiscard]] std::vector<Item> resolve_scene_items(const std::vector<Item>& document_items, const std::vector<Item>& frame_items, const std::string_view kind) {
+            validate_unique_scene_item_names(document_items, "Scene document", kind);
+            validate_unique_scene_item_names(frame_items, "Scene frame", kind);
+
+            std::vector<Item> resolved = document_items;
+            std::map<std::string, std::size_t> document_indices{};
+            for (std::size_t index = 0; index < resolved.size(); ++index) document_indices.emplace(resolved.at(index).name, index);
+
+            for (const Item& frame_item : frame_items) {
+                const std::map<std::string, std::size_t>::const_iterator found = document_indices.find(frame_item.name);
+                if (found != document_indices.end()) {
+                    resolved.at(found->second) = frame_item;
+                    continue;
+                }
+                document_indices.emplace(frame_item.name, resolved.size());
+                resolved.push_back(frame_item);
+            }
+            return resolved;
+        }
     } // namespace
 
     void SceneCameraWorkspace::ensure_camera(std::string scene_id, SceneCameraState state) {
@@ -118,10 +148,36 @@ namespace spectra::scene {
         return this->currentTimeline.currentFrame;
     }
 
+    SceneResolvedFrame SceneWorkspace::resolved_frame() const {
+        if (this->currentDocument == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
+        const std::optional<SceneFrameSnapshot> frame = this->currentTimeline.currentFrame;
+        const SceneFrameSnapshot empty_frame{};
+        const SceneFrameSnapshot& frame_value = frame.has_value() ? *frame : empty_frame;
+        return SceneResolvedFrame{
+            .revision        = this->currentRevision,
+            .document        = this->currentDocument,
+            .timeline        = this->currentTimeline,
+            .frame           = frame,
+            .meshes          = resolve_scene_items(this->currentDocument->meshes, frame_value.meshes, "mesh"),
+            .particleSets    = resolve_scene_items(this->currentDocument->particleSets, frame_value.particleSets, "particle set"),
+            .pointClouds     = resolve_scene_items(this->currentDocument->pointClouds, frame_value.pointClouds, "point cloud"),
+            .volumes         = resolve_scene_items(this->currentDocument->volumes, frame_value.volumes, "volume"),
+            .curveSets       = resolve_scene_items(this->currentDocument->curveSets, frame_value.curveSets, "curve set"),
+            .splatSets       = resolve_scene_items(this->currentDocument->splatSets, frame_value.splatSets, "splat set"),
+            .lineSets        = resolve_scene_items(this->currentDocument->lineSets, frame_value.lineSets, "line set"),
+            .debugPrimitives = resolve_scene_items(this->currentDocument->debugPrimitives, frame_value.debugPrimitives, "debug primitive"),
+            .vectorFields    = resolve_scene_items(this->currentDocument->vectorFields, frame_value.vectorFields, "vector field"),
+            .cloths          = resolve_scene_items(this->currentDocument->cloths, frame_value.cloths, "cloth"),
+            .rigidBodies     = resolve_scene_items(this->currentDocument->rigidBodies, frame_value.rigidBodies, "rigid body"),
+            .colliders       = resolve_scene_items(this->currentDocument->colliders, frame_value.colliders, "collider"),
+        };
+    }
+
     SceneEditBatch SceneWorkspace::commit(SceneEditBuilder edit) {
         if (this->currentDocument == nullptr) throw std::runtime_error("Cannot edit an unloaded scene workspace");
         if (edit.dirty == SceneDirtyFlags::None) throw std::runtime_error("Cannot commit an empty scene edit");
 
+        const SceneRevision before_revision = this->currentRevision;
         this->currentRevision = SceneRevision{this->currentRevision.value + 1};
         if (edit.documentReplacement.has_value()) {
             SceneDocument next = std::move(*edit.documentReplacement);
@@ -136,7 +192,9 @@ namespace spectra::scene {
         }
 
         return SceneEditBatch{
-            .dirty = edit.dirty,
+            .beforeRevision = before_revision,
+            .afterRevision  = this->currentRevision,
+            .dirty          = edit.dirty,
         };
     }
 } // namespace spectra::scene

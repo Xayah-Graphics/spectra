@@ -3,17 +3,17 @@ export module spectra.scene.pbrt;
 export import spectra.scene;
 import std;
 
-export namespace spectra::scene {
-    inline constexpr std::string_view CornellBoxSceneId = "cornell-box/cornell-box.pbrt";
+namespace spectra::scene {
+    export inline constexpr std::string_view CornellBoxSceneId = "cornell-box/cornell-box.pbrt";
 
-    enum class PbrtSceneDirtyFlags : std::uint32_t {
+    export enum class PbrtSceneDirtyFlags : std::uint32_t {
         None     = 0,
         Snapshot = 1,
     };
 
-    enum class PbrtColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
+    export enum class PbrtColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
 
-    struct PbrtSceneParameter {
+    export struct PbrtSceneParameter {
         std::string type{};
         std::string name{};
         std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{std::vector<float>{}};
@@ -22,14 +22,14 @@ export namespace spectra::scene {
         SceneSourceLocation source{};
     };
 
-    struct PbrtSceneEntity {
+    export struct PbrtSceneEntity {
         std::string type{};
         std::vector<PbrtSceneParameter> parameters{};
         PbrtColorSpace colorSpace{PbrtColorSpace::sRGB};
         SceneSourceLocation source{};
     };
 
-    struct PbrtSceneTransform {
+    export struct PbrtSceneTransform {
         std::array<float, 16> matrix{
             1.0f,
             0.0f,
@@ -68,7 +68,7 @@ export namespace spectra::scene {
         };
     };
 
-    struct PbrtSceneTransformSet {
+    export struct PbrtSceneTransformSet {
         PbrtSceneTransform start{};
         PbrtSceneTransform end{};
         float startTime{0.0f};
@@ -76,18 +76,18 @@ export namespace spectra::scene {
         bool animated{false};
     };
 
-    struct PbrtSceneOption {
+    export struct PbrtSceneOption {
         std::string name{};
         std::string value{};
         SceneSourceLocation source{};
     };
 
-    struct PbrtSceneMediumInterface {
+    export struct PbrtSceneMediumInterface {
         std::string inside{};
         std::string outside{};
     };
 
-    struct PbrtSceneRenderSettings {
+    export struct PbrtSceneRenderSettings {
         PbrtSceneEntity filter{.type = "gaussian"};
         PbrtSceneEntity film{.type = "rgb"};
         PbrtSceneEntity camera{.type = "perspective"};
@@ -99,36 +99,36 @@ export namespace spectra::scene {
         std::vector<PbrtSceneOption> options{};
     };
 
-    struct PbrtSceneMaterial {
+    export struct PbrtSceneMaterial {
         std::string name{};
         PbrtSceneEntity entity{};
     };
 
-    struct PbrtSceneTexture {
+    export struct PbrtSceneTexture {
         std::string name{};
         std::string kind{};
         PbrtSceneEntity entity{};
         PbrtSceneTransformSet transform{};
     };
 
-    struct PbrtSceneMedium {
+    export struct PbrtSceneMedium {
         std::string name{};
         PbrtSceneEntity entity{};
         PbrtSceneTransformSet transform{};
     };
 
-    struct PbrtSceneLight {
+    export struct PbrtSceneLight {
         std::string name{};
         PbrtSceneEntity entity{};
         PbrtSceneTransformSet transform{};
         std::string medium{};
     };
 
-    struct PbrtSceneAreaLight {
+    export struct PbrtSceneAreaLight {
         PbrtSceneEntity entity{};
     };
 
-    struct PbrtSceneShape {
+    export struct PbrtSceneShape {
         std::string name{};
         PbrtSceneEntity entity{};
         PbrtSceneTransformSet transform{};
@@ -138,20 +138,20 @@ export namespace spectra::scene {
         PbrtSceneMediumInterface mediumInterface{};
     };
 
-    struct PbrtSceneObjectDefinition {
+    export struct PbrtSceneObjectDefinition {
         std::string name{};
         std::vector<PbrtSceneShape> shapes{};
         SceneSourceLocation source{};
     };
 
-    struct PbrtSceneObjectInstance {
+    export struct PbrtSceneObjectInstance {
         std::string name{};
         std::string definitionName{};
         PbrtSceneTransformSet transform{};
         SceneSourceLocation source{};
     };
 
-    struct PbrtSceneSnapshot {
+    export struct PbrtSceneSnapshot {
         SceneRevision revision{};
         std::string name{};
         std::string title{};
@@ -166,19 +166,15 @@ export namespace spectra::scene {
         std::vector<PbrtSceneObjectInstance> objectInstances{};
     };
 
-    struct PbrtSceneEditBatch {
+    export struct PbrtSceneEditBatch {
         SceneRevision beforeRevision{};
         SceneRevision afterRevision{};
         PbrtSceneDirtyFlags dirty{PbrtSceneDirtyFlags::None};
     };
 
-    class PbrtSceneEditBuilder {
+    export class PbrtSceneEditBuilder {
     public:
-        void replaceSnapshot(PbrtSceneSnapshot snapshot, PbrtSceneDirtyFlags dirty) {
-            if (dirty != PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("PBRT scene snapshot replacement must use snapshot dirty state");
-            this->replacement = std::move(snapshot);
-            this->dirty       = dirty;
-        }
+        void replaceSnapshot(PbrtSceneSnapshot snapshot, PbrtSceneDirtyFlags dirty);
 
     private:
         std::optional<PbrtSceneSnapshot> replacement{};
@@ -187,68 +183,24 @@ export namespace spectra::scene {
         friend class PbrtSceneWorkspace;
     };
 
-    class PbrtSceneWorkspace {
+    export class PbrtSceneWorkspace {
     public:
         PbrtSceneWorkspace() = default;
+        explicit PbrtSceneWorkspace(PbrtSceneSnapshot snapshot);
 
-        explicit PbrtSceneWorkspace(PbrtSceneSnapshot snapshot) {
-            if (snapshot.revision.value == 0) snapshot.revision = SceneRevision{1};
-            this->currentSnapshot = std::make_shared<PbrtSceneSnapshot>(std::move(snapshot));
-        }
-
-        [[nodiscard]] bool loaded() const {
-            return this->currentSnapshot != nullptr;
-        }
-
-        [[nodiscard]] std::shared_ptr<const PbrtSceneSnapshot> snapshot() const {
-            if (this->currentSnapshot == nullptr) throw std::runtime_error("PBRT scene workspace does not contain a loaded snapshot");
-            return this->currentSnapshot;
-        }
-
-        [[nodiscard]] PbrtSceneEditBatch commit(PbrtSceneEditBuilder edit) {
-            if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot edit an unloaded PBRT scene workspace");
-            if (!edit.replacement.has_value()) throw std::runtime_error("Cannot commit an empty PBRT scene edit");
-            if (edit.dirty != PbrtSceneDirtyFlags::Snapshot) throw std::runtime_error("PBRT scene edit commit must use snapshot dirty state");
-
-            PbrtSceneSnapshot next                 = std::move(*edit.replacement);
-            const SceneRevision beforeRevision = this->currentSnapshot->revision;
-            next.revision                      = SceneRevision{beforeRevision.value + 1};
-            this->currentSnapshot              = std::make_shared<PbrtSceneSnapshot>(std::move(next));
-
-            PbrtSceneEditBatch batch = this->fullEdit(beforeRevision);
-            batch.dirty          = edit.dirty;
-            this->lastEdit       = batch;
-            return batch;
-        }
-
-        [[nodiscard]] PbrtSceneEditBatch changes_since(SceneRevision revision) const {
-            if (this->currentSnapshot == nullptr) throw std::runtime_error("Cannot query PBRT scene changes from an unloaded workspace");
-            if (revision == this->currentSnapshot->revision) {
-                return PbrtSceneEditBatch{
-                    .beforeRevision = revision,
-                    .afterRevision  = revision,
-                    .dirty          = PbrtSceneDirtyFlags::None,
-                };
-            }
-            if (revision.value == 0) return this->fullEdit(revision);
-            if (this->lastEdit.has_value() && this->lastEdit->beforeRevision == revision) return *this->lastEdit;
-            throw std::runtime_error("PBRT scene edit history for the requested revision is unavailable");
-        }
+        [[nodiscard]] bool loaded() const;
+        [[nodiscard]] std::shared_ptr<const PbrtSceneSnapshot> snapshot() const;
+        [[nodiscard]] PbrtSceneEditBatch commit(PbrtSceneEditBuilder edit);
+        [[nodiscard]] PbrtSceneEditBatch changes_since(SceneRevision revision) const;
 
     private:
-        [[nodiscard]] PbrtSceneEditBatch fullEdit(SceneRevision before) const {
-            return PbrtSceneEditBatch{
-                .beforeRevision = before,
-                .afterRevision  = this->currentSnapshot->revision,
-                .dirty          = PbrtSceneDirtyFlags::Snapshot,
-            };
-        }
+        [[nodiscard]] PbrtSceneEditBatch fullEdit(SceneRevision before) const;
 
         std::shared_ptr<const PbrtSceneSnapshot> currentSnapshot{};
         std::optional<PbrtSceneEditBatch> lastEdit{};
     };
 
-    struct PbrtSceneInfo {
+    export struct PbrtSceneInfo {
         std::string name{};
         std::string title{};
         std::string camera{};
@@ -267,12 +219,12 @@ export namespace spectra::scene {
         float camera_fov_degrees{};
     };
 
-    struct PbrtSceneDiagnostic {
+    export struct PbrtSceneDiagnostic {
         SceneSourceLocation source{};
         std::string message{};
     };
 
-    enum class PbrtSceneProbeFeatureCategory {
+    export enum class PbrtSceneProbeFeatureCategory {
         PixelFilter,
         Film,
         Camera,
@@ -290,14 +242,14 @@ export namespace spectra::scene {
         AnimatedTransform,
     };
 
-    struct PbrtSceneProbeFeature {
+    export struct PbrtSceneProbeFeature {
         PbrtSceneProbeFeatureCategory category{PbrtSceneProbeFeatureCategory::Option};
         std::string type{};
         std::string kind{};
         SceneSourceLocation source{};
     };
 
-    struct PbrtSceneProbeReport {
+    export struct PbrtSceneProbeReport {
         SceneRevision revision{};
         std::string name{};
         std::string title{};
@@ -306,80 +258,22 @@ export namespace spectra::scene {
         std::vector<PbrtSceneDiagnostic> diagnostics{};
     };
 
-    struct PbrtSceneTranslationReport {
+    export struct PbrtSceneTranslationReport {
         std::string target{};
         bool supported{true};
         std::vector<PbrtSceneDiagnostic> diagnostics{};
     };
 
-    [[nodiscard]] PbrtSceneInfo DescribeScene(const PbrtSceneSnapshot& scene) {
-        const auto oneFloatParameter = [](const std::vector<PbrtSceneParameter>& parameters, const std::string& name, const float default_value) {
-            for (const PbrtSceneParameter& parameter : parameters) {
-                if (parameter.type != "float" && parameter.type != "integer") continue;
-                if (parameter.name != name) continue;
-                return std::visit(
-                    [default_value](const auto& values) -> float {
-                        if constexpr (std::same_as<std::remove_cvref_t<decltype(values)>, std::vector<float>>) {
-                            if (!values.empty()) return values.front();
-                        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(values)>, std::vector<int>>) {
-                            if (!values.empty()) return static_cast<float>(values.front());
-                        }
-                        return default_value;
-                    },
-                    parameter.values);
-            }
-            return default_value;
-        };
+    export [[nodiscard]] PbrtSceneInfo DescribeScene(const PbrtSceneSnapshot& scene);
 
-        std::size_t definitionShapeCount     = 0;
-        std::size_t definitionAreaLightCount = 0;
-        for (const PbrtSceneObjectDefinition& definition : scene.objectDefinitions) {
-            definitionShapeCount += definition.shapes.size();
-            for (const PbrtSceneShape& shape : definition.shapes)
-                if (shape.areaLight.has_value()) ++definitionAreaLightCount;
-        }
-
-        std::size_t areaLightCount = definitionAreaLightCount;
-        for (const PbrtSceneShape& shape : scene.shapes)
-            if (shape.areaLight.has_value()) ++areaLightCount;
-
-        std::size_t infiniteLightCount = 0;
-        for (const PbrtSceneLight& light : scene.lights)
-            if (light.entity.type == "infinite") ++infiniteLightCount;
-
-        float cameraFov = oneFloatParameter(scene.renderSettings.camera.parameters, "fov", scene.renderSettings.camera.type == "perspective" ? 90.0f : 45.0f);
-        if (!(cameraFov > 0.0f && cameraFov < 180.0f)) cameraFov = 45.0f;
-
-        return PbrtSceneInfo{
-            .name                    = scene.name,
-            .title                   = scene.title,
-            .camera                  = scene.renderSettings.camera.type,
-            .sampler                 = scene.renderSettings.sampler.type,
-            .integrator              = scene.renderSettings.integrator.type,
-            .accelerator             = scene.renderSettings.accelerator.type,
-            .shape_count             = scene.shapes.size() + definitionShapeCount,
-            .material_count          = scene.materials.size(),
-            .texture_count           = scene.textures.size(),
-            .medium_count            = scene.media.size(),
-            .light_count             = scene.lights.size(),
-            .area_light_count        = areaLightCount,
-            .infinite_light_count    = infiniteLightCount,
-            .object_definition_count = scene.objectDefinitions.size(),
-            .object_instance_count   = scene.objectInstances.size(),
-            .camera_fov_degrees      = cameraFov,
-        };
-    }
-
-
-
-    enum class PbrtSceneCatalogEntryState {
+    export enum class PbrtSceneCatalogEntryState {
         Pending,
         Candidate,
         NonScene,
         Invalid,
     };
 
-    struct PbrtSceneCatalogEntry {
+    export struct PbrtSceneCatalogEntry {
         std::string id{};
         std::string displayName{};
         std::string group{};
@@ -391,7 +285,7 @@ export namespace spectra::scene {
         std::vector<PbrtSceneDiagnostic> issues{};
     };
 
-    struct PbrtSceneCatalog {
+    export struct PbrtSceneCatalog {
         std::filesystem::path root{};
         std::vector<PbrtSceneCatalogEntry> entries{};
         std::size_t pending_count{};
@@ -400,14 +294,47 @@ export namespace spectra::scene {
         std::size_t invalid_count{};
     };
 
-    [[nodiscard]] PbrtSceneCatalog DiscoverPbrtSceneCatalog();
-    [[nodiscard]] PbrtSceneProbeReport ProbePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry);
-    [[nodiscard]] PbrtSceneProbeReport ProbePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
-    [[nodiscard]] PbrtSceneSnapshot ParsePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry);
-    [[nodiscard]] PbrtSceneSnapshot ParsePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
-    void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry);
-    void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
-    [[nodiscard]] PbrtSceneWorkspace BuildPbrtScene(std::string_view name);
+    export class PbrtCatalogSession final {
+    public:
+        explicit PbrtCatalogSession(std::string initial_scene_id);
+        ~PbrtCatalogSession() noexcept;
 
+        PbrtCatalogSession(const PbrtCatalogSession& other) = delete;
+        PbrtCatalogSession(PbrtCatalogSession&& other) = delete;
+        PbrtCatalogSession& operator=(const PbrtCatalogSession& other) = delete;
+        PbrtCatalogSession& operator=(PbrtCatalogSession&& other) = delete;
+
+        void start_background_probe_workers();
+        void stop_background_probe_workers() noexcept;
+        void stop_background_probe_workers_if_idle() noexcept;
+
+        [[nodiscard]] std::shared_ptr<PbrtSceneWorkspace> workspace() const;
+        [[nodiscard]] PbrtSceneCatalog catalog_snapshot() const;
+        [[nodiscard]] std::size_t active_scene_index() const;
+        [[nodiscard]] PbrtSceneSnapshot parse_scene(std::size_t scene_index) const;
+        [[nodiscard]] PbrtSceneEditBatch commit_scene(std::size_t scene_index, PbrtSceneSnapshot snapshot);
+
+    private:
+        void run_background_probe_worker(std::stop_token stop_token);
+        void refresh_catalog_counts();
+        [[nodiscard]] bool has_background_probe_work_locked() const;
+        [[nodiscard]] std::optional<std::size_t> next_catalog_probe_index_locked() const;
+
+        std::shared_ptr<PbrtSceneWorkspace> currentWorkspace{};
+        mutable std::mutex catalogMutex{};
+        std::condition_variable_any backgroundCondition{};
+        PbrtSceneCatalog catalog{};
+        std::vector<bool> catalogProbeClaimed{};
+        std::size_t activeSceneIndex{};
+        std::vector<std::jthread> backgroundWorkers{};
+    };
+
+    export [[nodiscard]] PbrtSceneCatalog DiscoverPbrtSceneCatalog();
+    export [[nodiscard]] PbrtSceneProbeReport ProbePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry);
+    export [[nodiscard]] PbrtSceneProbeReport ProbePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
+    export [[nodiscard]] PbrtSceneSnapshot ParsePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry);
+    export [[nodiscard]] PbrtSceneSnapshot ParsePbrtSceneCatalogEntry(const PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
+    export void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry);
+    export void ProbePbrtSceneCatalogEntry(PbrtSceneCatalogEntry& entry, std::stop_token stop_token);
+    export [[nodiscard]] PbrtSceneWorkspace BuildPbrtScene(std::string_view name);
 } // namespace spectra::scene
-
