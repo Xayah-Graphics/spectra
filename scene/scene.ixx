@@ -1,5 +1,6 @@
 export module spectra.scene;
 
+export import :math;
 import std;
 
 namespace spectra::scene {
@@ -28,32 +29,6 @@ namespace spectra::scene {
         std::string filename{};
         int line{1};
         int column{1};
-    };
-
-    export struct Vector3 {
-        float x{};
-        float y{};
-        float z{};
-    };
-
-    export struct Vector4 {
-        float x{};
-        float y{};
-        float z{};
-        float w{1.0f};
-    };
-
-    export struct Quaternion {
-        float x{};
-        float y{};
-        float z{};
-        float w{1.0f};
-    };
-
-    export struct Transform {
-        Vector3 position{};
-        Quaternion rotation{};
-        Vector3 scale{1.0f, 1.0f, 1.0f};
     };
 
     export struct SceneMaterial {
@@ -603,53 +578,6 @@ namespace spectra::scene {
         std::vector<PbrtSceneParameter> parameters{};
         PbrtColorSpace colorSpace{PbrtColorSpace::sRGB};
         SceneSourceLocation source{};
-    };
-
-    export struct PbrtSceneTransform {
-        std::array<float, 16> matrix{
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-        };
-        std::array<float, 16> inverse{
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-        };
-    };
-
-    export struct PbrtSceneTransformSet {
-        PbrtSceneTransform start{};
-        PbrtSceneTransform end{};
-        float startTime{0.0f};
-        float endTime{1.0f};
-        bool animated{false};
     };
 
     export struct PbrtSceneOption {

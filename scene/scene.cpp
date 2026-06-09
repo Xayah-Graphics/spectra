@@ -8,38 +8,19 @@ module;
 
 module spectra.scene;
 
+import :math;
 import std;
 
 namespace spectra::scene {
     namespace {
-        [[nodiscard]] bool finite_vector(const Vector3 vector) {
-            return std::isfinite(vector.x) && std::isfinite(vector.y) && std::isfinite(vector.z);
-        }
-
-        [[nodiscard]] Vector3 operator-(const Vector3 lhs, const Vector3 rhs) {
-            return Vector3{lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
-        }
-
-        [[nodiscard]] Vector3 cross(const Vector3 lhs, const Vector3 rhs) {
-            return Vector3{
-                lhs.y * rhs.z - lhs.z * rhs.y,
-                lhs.z * rhs.x - lhs.x * rhs.z,
-                lhs.x * rhs.y - lhs.y * rhs.x,
-            };
-        }
-
-        [[nodiscard]] float length_squared(const Vector3 vector) {
-            return vector.x * vector.x + vector.y * vector.y + vector.z * vector.z;
-        }
-
         void validate_scene_id(const std::string_view scene_id) {
             if (scene_id.empty()) throw std::runtime_error("Scene camera workspace requires a non-empty scene id");
         }
 
         void validate_camera_state(const SceneCameraState& state) {
-            if (!finite_vector(state.eye)) throw std::runtime_error("Scene camera eye must be finite");
-            if (!finite_vector(state.target)) throw std::runtime_error("Scene camera target must be finite");
-            if (!finite_vector(state.up)) throw std::runtime_error("Scene camera up vector must be finite");
+            if (!is_finite(state.eye)) throw std::runtime_error("Scene camera eye must be finite");
+            if (!is_finite(state.target)) throw std::runtime_error("Scene camera target must be finite");
+            if (!is_finite(state.up)) throw std::runtime_error("Scene camera up vector must be finite");
             const Vector3 view = state.target - state.eye;
             if (!(length_squared(view) > 1.0e-12f)) throw std::runtime_error("Scene camera eye and target must not overlap");
             if (!(length_squared(state.up) > 1.0e-12f)) throw std::runtime_error("Scene camera up vector must not be zero");
@@ -472,26 +453,8 @@ namespace spectra::scene {
             return matrix.at(row * 4u + column);
         }
 
-        [[nodiscard]] float dot(const Vector3 lhs, const Vector3 rhs) {
-            return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
-        }
-
-        [[nodiscard]] Vector3 subtract(const Vector3 lhs, const Vector3 rhs) {
-            return Vector3{lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
-        }
-
-        [[nodiscard]] float length(const Vector3 value) {
-            return std::sqrt(dot(value, value));
-        }
-
-        [[nodiscard]] Vector3 normalize(const Vector3 value, const std::string_view context) {
-            const float vector_length = length(value);
-            if (!std::isfinite(vector_length) || vector_length <= 0.0f) throw std::runtime_error(std::format("{} contains a zero-length vector", context));
-            return Vector3{value.x / vector_length, value.y / vector_length, value.z / vector_length};
-        }
-
         void include_point(Bounds& bounds, const Vector3 point) {
-            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) throw std::runtime_error("PBRT preview mesh contains a non-finite point");
+            if (!is_finite(point)) throw std::runtime_error("PBRT preview mesh contains a non-finite point");
             if (!bounds.valid) {
                 bounds.minimum = point;
                 bounds.maximum = point;
@@ -705,7 +668,7 @@ namespace spectra::scene {
             const Vector3 up = normalize(Vector3{matrix_value(world_from_camera, 0u, 1u), matrix_value(world_from_camera, 1u, 1u), matrix_value(world_from_camera, 2u, 1u)}, "PBRT preview camera up vector");
             const Vector3 target = center(bounds);
             const float scene_radius = radius(bounds);
-            const float camera_distance = length(subtract(eye, target));
+            const float camera_distance = length(eye - target);
             const float far_plane = std::max(20.0f, camera_distance + scene_radius * 4.0f);
             return SceneCamera{
                 .name               = "camera.main",
@@ -1046,40 +1009,6 @@ namespace spectra::scene {
             throw ParseError(token.source, std::format("\"{}\" is not a Boolean value", token.text));
         }
 
-        struct PbrtPoint3 {
-            float x{};
-            float y{};
-            float z{};
-        };
-
-        struct PbrtVector3 {
-            float x{};
-            float y{};
-            float z{};
-        };
-
-        [[nodiscard]] PbrtVector3 operator-(const PbrtPoint3& a, const PbrtPoint3& b) {
-            return PbrtVector3{a.x - b.x, a.y - b.y, a.z - b.z};
-        }
-
-        [[nodiscard]] PbrtVector3 Cross(const PbrtVector3& a, const PbrtVector3& b) {
-            return PbrtVector3{
-                a.y * b.z - a.z * b.y,
-                a.z * b.x - a.x * b.z,
-                a.x * b.y - a.y * b.x,
-            };
-        }
-
-        [[nodiscard]] float Length(const PbrtVector3& vector) {
-            return std::sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
-        }
-
-        [[nodiscard]] PbrtVector3 Normalize(const PbrtVector3& vector) {
-            const float length = Length(vector);
-            if (!(length > 0.0f)) throw std::runtime_error("Cannot normalize a zero-length PBRT scene vector");
-            return PbrtVector3{vector.x / length, vector.y / length, vector.z / length};
-        }
-
         [[nodiscard]] std::array<float, 16> MultiplyMatrix(const std::array<float, 16>& a, const std::array<float, 16>& b) {
             std::array<float, 16> result{};
             for (std::size_t row = 0; row < 4; ++row) {
@@ -1161,7 +1090,7 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform Translate(const PbrtVector3& delta) {
+        [[nodiscard]] PbrtSceneTransform Translate(const Vector3 delta) {
             return PbrtSceneTransform{
                 .matrix =
                     {
@@ -1247,9 +1176,9 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform Rotate(float degrees, PbrtVector3 axis) {
+        [[nodiscard]] PbrtSceneTransform Rotate(float degrees, Vector3 axis) {
             constexpr float radiansPerDegree = 0.017453292519943295769f;
-            axis                             = Normalize(axis);
+            axis                             = normalize(axis, "PBRT rotate axis");
             const float sinTheta             = std::sin(degrees * radiansPerDegree);
             const float cosTheta             = std::cos(degrees * radiansPerDegree);
             const float oneMinusCosTheta     = 1.0f - cosTheta;
@@ -1277,10 +1206,10 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform LookAt(const PbrtPoint3& position, const PbrtPoint3& look, const PbrtVector3& up) {
-            const PbrtVector3 direction = Normalize(look - position);
-            const PbrtVector3 right     = Normalize(Cross(Normalize(up), direction));
-            const PbrtVector3 newUp     = Cross(direction, right);
+        [[nodiscard]] PbrtSceneTransform LookAt(const Vector3 position, const Vector3 look, const Vector3 up) {
+            const Vector3 direction = normalize(look - position, "PBRT LookAt direction");
+            const Vector3 right     = normalize(cross(normalize(up, "PBRT LookAt up vector"), direction), "PBRT LookAt right vector");
+            const Vector3 newUp     = cross(direction, right);
             const std::array<float, 16> worldFromCamera{
                 right.x,
                 newUp.x,
@@ -1303,15 +1232,15 @@ namespace spectra::scene {
                 right.x,
                 right.y,
                 right.z,
-                -(right.x * position.x + right.y * position.y + right.z * position.z),
+                -dot(right, position),
                 newUp.x,
                 newUp.y,
                 newUp.z,
-                -(newUp.x * position.x + newUp.y * position.y + newUp.z * position.z),
+                -dot(newUp, position),
                 direction.x,
                 direction.y,
                 direction.z,
-                -(direction.x * position.x + direction.y * position.y + direction.z * position.z),
+                -dot(direction, position),
                 0.0f,
                 0.0f,
                 0.0f,
@@ -1658,7 +1587,7 @@ namespace spectra::scene {
                 if (directive.text == "LookAt") {
                     std::array<float, 9> values{};
                     for (float& value : values) value = ParseFloatToken(RequireToken(stream, "LookAt"));
-                    this->ApplyActiveTransform(LookAt(PbrtPoint3{values[0], values[1], values[2]}, PbrtPoint3{values[3], values[4], values[5]}, PbrtVector3{values[6], values[7], values[8]}));
+                    this->ApplyActiveTransform(LookAt(Vector3{values[0], values[1], values[2]}, Vector3{values[3], values[4], values[5]}, Vector3{values[6], values[7], values[8]}));
                     return;
                 }
                 if (directive.text == "MakeNamedMaterial") {
@@ -1730,7 +1659,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float y = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float z = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    this->ApplyActiveTransform(Rotate(angle, PbrtVector3{x, y, z}));
+                    this->ApplyActiveTransform(Rotate(angle, Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "Sampler") {
@@ -1774,7 +1703,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float y = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float z = ParseFloatToken(RequireToken(stream, "Translate"));
-                    this->ApplyActiveTransform(Translate(PbrtVector3{x, y, z}));
+                    this->ApplyActiveTransform(Translate(Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "WorldBegin") {
@@ -2212,7 +2141,7 @@ namespace spectra::scene {
                 if (directive.text == "LookAt") {
                     std::array<float, 9> values{};
                     for (float& value : values) value = ParseFloatToken(RequireToken(stream, "LookAt"));
-                    this->ApplyActiveTransform(LookAt(PbrtPoint3{values[0], values[1], values[2]}, PbrtPoint3{values[3], values[4], values[5]}, PbrtVector3{values[6], values[7], values[8]}));
+                    this->ApplyActiveTransform(LookAt(Vector3{values[0], values[1], values[2]}, Vector3{values[3], values[4], values[5]}, Vector3{values[6], values[7], values[8]}));
                     return;
                 }
                 if (directive.text == "MakeNamedMaterial") {
@@ -2278,7 +2207,7 @@ namespace spectra::scene {
                     const float x     = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float y     = ParseFloatToken(RequireToken(stream, "Rotate"));
                     const float z     = ParseFloatToken(RequireToken(stream, "Rotate"));
-                    this->ApplyActiveTransform(Rotate(angle, PbrtVector3{x, y, z}));
+                    this->ApplyActiveTransform(Rotate(angle, Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "Sampler") {
@@ -2320,7 +2249,7 @@ namespace spectra::scene {
                     const float x = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float y = ParseFloatToken(RequireToken(stream, "Translate"));
                     const float z = ParseFloatToken(RequireToken(stream, "Translate"));
-                    this->ApplyActiveTransform(Translate(PbrtVector3{x, y, z}));
+                    this->ApplyActiveTransform(Translate(Vector3{x, y, z}));
                     return;
                 }
                 if (directive.text == "WorldBegin") {

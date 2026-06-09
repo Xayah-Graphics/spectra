@@ -5,6 +5,7 @@ target_sources(
         spectra_scene
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        math.ixx
         scene.ixx
         PRIVATE
         scene.cpp
