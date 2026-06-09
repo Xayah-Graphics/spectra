@@ -83,25 +83,24 @@ namespace {
         return fallback;
     }
 
-    constexpr std::string_view initial_scene_id = "pbrt-book/book.pbrt";
     constexpr std::size_t scene_background_worker_count = 2;
 } // namespace
 
 namespace spectra::pathtracer {
-    PbrtSceneLibrary::PbrtSceneLibrary() : workspace(std::make_shared<SceneWorkspace>()) {
+    PbrtSceneLibrary::PbrtSceneLibrary(std::string initial_scene_id) : workspace(std::make_shared<SceneWorkspace>()), initial_scene_id(std::move(initial_scene_id)) {
+        if (this->initial_scene_id.empty()) throw std::runtime_error("Spectra PBRT scene library initial scene id must not be empty");
         this->scene_catalog = spectra::pathtracer::DiscoverPbrtSceneCatalog();
         this->scene_catalog_probe_claimed.assign(this->scene_catalog.entries.size(), false);
-        const std::string initial_scene_id_string{initial_scene_id};
-        const auto active_scene_iter = std::ranges::find_if(this->scene_catalog.entries, [&initial_scene_id_string](const spectra::pathtracer::PbrtSceneCatalogEntry& entry) { return entry.id == initial_scene_id_string; });
-        if (active_scene_iter == this->scene_catalog.entries.end()) throw std::runtime_error(std::format("Spectra scene catalog does not contain required initial scene \"{}\"", initial_scene_id));
-        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not parseable: {}", initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
+        const auto active_scene_iter = std::ranges::find_if(this->scene_catalog.entries, [this](const spectra::pathtracer::PbrtSceneCatalogEntry& entry) { return entry.id == this->initial_scene_id; });
+        if (active_scene_iter == this->scene_catalog.entries.end()) throw std::runtime_error(std::format("Spectra scene catalog does not contain required initial scene \"{}\"", this->initial_scene_id));
+        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not parseable: {}", this->initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
         spectra::pathtracer::ProbePbrtSceneCatalogEntry(*active_scene_iter);
-        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not probeable: {}", initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
-        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not a top-level PBRT scene", initial_scene_id));
-        if (active_scene_iter->state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Spectra initial scene \"{}\" did not produce a candidate scene probe", initial_scene_id));
+        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::Invalid) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not probeable: {}", this->initial_scene_id, first_diagnostic_message(active_scene_iter->issues)));
+        if (active_scene_iter->state == spectra::pathtracer::PbrtSceneCatalogEntryState::NonScene) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not a top-level PBRT scene", this->initial_scene_id));
+        if (active_scene_iter->state != spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate) throw std::runtime_error(std::format("Spectra initial scene \"{}\" did not produce a candidate scene probe", this->initial_scene_id));
         spectra::pathtracer::SceneSnapshot initial_document = spectra::pathtracer::ParsePbrtSceneCatalogEntry(*active_scene_iter);
         const spectra::pathtracer::SceneTranslationReport initial_report = this->analyze_document(initial_document);
-        if (!initial_report.supported) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not supported by pathtracer: {}", initial_scene_id, first_diagnostic_message(initial_report.diagnostics)));
+        if (!initial_report.supported) throw std::runtime_error(std::format("Spectra initial scene \"{}\" is not supported by pathtracer: {}", this->initial_scene_id, first_diagnostic_message(initial_report.diagnostics)));
         active_scene_iter->revision = initial_document.revision;
         if (active_scene_iter->probe.has_value()) active_scene_iter->probe->revision = initial_document.revision;
         active_scene_iter->state = spectra::pathtracer::PbrtSceneCatalogEntryState::Candidate;

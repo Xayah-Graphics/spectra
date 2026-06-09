@@ -274,6 +274,7 @@ namespace spectra::rasterizer {
         std::string source{};
         Vector3 gravity{0.0f, -9.8f, 0.0f};
         double framesPerSecond{24.0};
+        bool timelineEnabled{true};
         std::optional<SceneCamera> camera{};
         std::vector<SceneMaterial> materials{};
         std::vector<SceneLight> lights{};

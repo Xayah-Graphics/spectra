@@ -910,6 +910,7 @@ namespace spectra {
         if (action.id.empty()) throw std::runtime_error("Spectra toolbar action id must not be empty");
         if (action.title.empty()) throw std::runtime_error("Spectra toolbar action title must not be empty");
         if (action.icon.empty()) throw std::runtime_error("Spectra toolbar action icon must not be empty");
+        if (!action.enabled) throw std::runtime_error("Spectra toolbar action enabled callback must not be empty");
         if (!action.active) throw std::runtime_error("Spectra toolbar action active callback must not be empty");
         if (!action.trigger) throw std::runtime_error("Spectra toolbar action trigger callback must not be empty");
         for (const ToolbarAction& existing_action : this->workspace.toolbar_actions) {
@@ -982,6 +983,7 @@ namespace spectra {
             }
             for (ToolbarAction& action : this->workspace.toolbar_actions) {
                 if (!this->contribution_belongs_to_active_renderer(action.owner_renderer)) continue;
+                if (!action.enabled()) continue;
                 if (action.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(action.shortcut_key, false)) action.trigger();
             }
         }
@@ -1063,8 +1065,11 @@ namespace spectra {
         }
         for (ToolbarAction* action : visible_actions) {
             const bool active = action->active();
+            const bool enabled = action->enabled();
             push_toolbar_button_style(active);
+            ImGui::BeginDisabled(!enabled);
             if (ImGui::Button(action->icon.c_str(), ImVec2{button_size, button_size})) action->trigger();
+            ImGui::EndDisabled();
             pop_toolbar_button_style();
             if (ImGui::IsItemHovered() && !action->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", action->title.c_str(), action->shortcut_label.c_str());
             if (ImGui::IsItemHovered() && action->shortcut_label.empty()) ImGui::SetTooltip("%s", action->title.c_str());

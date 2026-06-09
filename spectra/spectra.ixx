@@ -54,6 +54,7 @@ namespace spectra {
         std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<bool()> enabled{};
         std::move_only_function<bool()> active{};
         std::move_only_function<void()> trigger{};
     };
@@ -106,6 +107,7 @@ namespace spectra {
         std::string{std::move(action.owner_renderer)};
         std::string{std::move(action.shortcut_label)};
         static_cast<ImGuiKey>(action.shortcut_key);
+        std::move_only_function<bool()>{std::move(action.enabled)};
         std::move_only_function<bool()>{std::move(action.active)};
         std::move_only_function<void()>{std::move(action.trigger)};
     };
@@ -362,6 +364,7 @@ namespace spectra {
             .owner_renderer = this->resolve_contribution_owner(std::string{std::move(action.owner_renderer)}),
             .shortcut_label = std::string{std::move(action.shortcut_label)},
             .shortcut_key   = static_cast<ImGuiKey>(action.shortcut_key),
+            .enabled        = std::move(action.enabled),
             .active         = std::move(action.active),
             .trigger        = std::move(action.trigger),
         });

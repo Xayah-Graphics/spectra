@@ -14,7 +14,7 @@ export namespace spectra::pathtracer {
             Invalid,
         };
 
-        PbrtSceneLibrary();
+        explicit PbrtSceneLibrary(std::string initial_scene_id);
         ~PbrtSceneLibrary() noexcept;
 
         PbrtSceneLibrary(const PbrtSceneLibrary& other)                = delete;
@@ -77,6 +77,7 @@ export namespace spectra::pathtracer {
         void draw_scene_library_window();
 
         std::shared_ptr<SceneWorkspace> workspace{};
+        std::string initial_scene_id{};
         mutable std::mutex scene_catalog_mutex{};
         std::condition_variable_any scene_background_condition{};
         PbrtSceneCatalog scene_catalog{};

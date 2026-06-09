@@ -1999,6 +1999,7 @@ namespace spectra::pathtracer {
             .icon           = ICON_MS_ANALYTICS,
             .shortcut_label = "F9",
             .shortcut_key   = ImGuiKey_F9,
+            .enabled        = [] { return true; },
             .active         = [this] { return this->performance_overlay_visible; },
             .trigger        = [this] { this->performance_overlay_visible = !this->performance_overlay_visible; },
         });

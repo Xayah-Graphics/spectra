@@ -47,6 +47,7 @@ target_include_directories(vendor_imgui PUBLIC ${SPECTRA_ROOT_DIR}/vendor/imgui)
 add_subdirectory(spectra)
 add_subdirectory(pathtracer)
 add_subdirectory(rasterizer)
+add_subdirectory(scene_bridge)
 add_subdirectory(projects)
 
 add_executable(spectra_gui main.cpp)
@@ -57,6 +58,7 @@ target_link_libraries(
         spectra::core
         spectra::pathtracer
         spectra::rasterizer
+        spectra::scene_bridge
         xayah::bouncing_ball
         xayah::sparkles
         xayah::cloth

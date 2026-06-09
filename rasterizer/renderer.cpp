@@ -456,6 +456,7 @@ namespace spectra::rasterizer {
             .icon           = ICON_MS_PLAY_PAUSE,
             .shortcut_label = "Space",
             .shortcut_key   = ImGuiKey_Space,
+            .enabled        = [this] { return this->timeline_enabled(); },
             .active         = [this] { return this->timeline_playing(); },
             .trigger        = [this] { this->toggle_timeline_playback(); },
         });
@@ -465,6 +466,7 @@ namespace spectra::rasterizer {
             .icon           = ICON_MS_RESTART_ALT,
             .shortcut_label = "R",
             .shortcut_key   = ImGuiKey_R,
+            .enabled        = [this] { return this->timeline_enabled(); },
             .active         = [] { return false; },
             .trigger        = [this] { this->request_timeline_reset(); },
         });
@@ -475,7 +477,8 @@ namespace spectra::rasterizer {
         const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
         const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         const SimulationTimeline timeline = this->scene.workspace->timeline();
-        return std::format("{} | {} | {}x{}", scene->title.empty() ? scene->name : scene->title, timeline_mode_text(timeline.mode), width, height);
+        const char* scene_mode = scene->timelineEnabled ? timeline_mode_text(timeline.mode) : "Static";
+        return std::format("{} | {} | {}x{}", scene->title.empty() ? scene->name : scene->title, scene_mode, width, height);
     }
 
     void Renderer::create_viewport_resources(const vk::Extent2D extent) {
@@ -2560,11 +2563,12 @@ namespace spectra::rasterizer {
         const SimulationTimeline timeline = this->scene.workspace->timeline();
         const std::shared_ptr<const SceneDocument> scene = this->scene.workspace->document();
         const char* projection_text = this->viewport.projection == ViewProjection::Perspective ? "Perspective" : "Orthographic";
-        std::string hud = std::format("{} | frame {} | {:.2f}s | {}x{} | {}", timeline_mode_text(timeline.mode), timeline.cursor.frameIndex, timeline.cursor.timeSeconds, this->viewport.extent.width, this->viewport.extent.height, projection_text);
+        const char* scene_mode = scene->timelineEnabled ? timeline_mode_text(timeline.mode) : "Static";
+        std::string hud = scene->timelineEnabled ? std::format("{} | frame {} | {:.2f}s | {}x{} | {}", scene_mode, timeline.cursor.frameIndex, timeline.cursor.timeSeconds, this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {}x{} | {}", scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
         const ImVec2 hud_padding{10.0f, 7.0f};
         ImVec2 hud_text = ImGui::CalcTextSize(hud.c_str());
         if (hud_text.x + hud_padding.x * 2.0f > image_size.x - 24.0f) {
-            hud = std::format("{} | f{} | {}", timeline_mode_text(timeline.mode), timeline.cursor.frameIndex, projection_text);
+            hud = scene->timelineEnabled ? std::format("{} | f{} | {}", scene_mode, timeline.cursor.frameIndex, projection_text) : std::format("{} | {}", scene_mode, projection_text);
             hud_text = ImGui::CalcTextSize(hud.c_str());
         }
         const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
@@ -2628,23 +2632,31 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::commit_timeline_from_ui(SimulationTimeline timeline) {
+        if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline edits");
         SceneEditBuilder edit{};
         edit.replaceTimeline(std::move(timeline));
         const SceneEditBatch batch = this->scene.workspace->commit(std::move(edit));
         if (!HasSceneDirtyFlag(batch.dirty, SceneDirtyFlags::Timeline)) throw std::runtime_error("Rasterizer timeline UI edit did not mark the timeline dirty");
     }
 
+    bool Renderer::timeline_enabled() const {
+        return this->scene.workspace->document()->timelineEnabled;
+    }
+
     bool Renderer::timeline_playing() const {
+        if (!this->timeline_enabled()) return false;
         return this->scene.workspace->timeline().playing;
     }
 
     void Renderer::toggle_timeline_playback() {
+        if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline playback");
         SimulationTimeline timeline = this->scene.workspace->timeline();
         timeline.playing = !timeline.playing;
         this->commit_timeline_from_ui(std::move(timeline));
     }
 
     void Renderer::request_timeline_reset() {
+        if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline reset");
         SimulationTimeline timeline = this->scene.workspace->timeline();
         ++timeline.resetRequestSerial;
         this->commit_timeline_from_ui(std::move(timeline));
@@ -2662,58 +2674,60 @@ namespace spectra::rasterizer {
 
         ImGui::TextUnformatted("Rasterizer");
         ImGui::SameLine();
-        ImGui::TextDisabled("Simulation");
-        ImGui::SeparatorText("Timeline");
-        if (ImGui::Button(timeline.playing ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW)) {
-            timeline.playing = !timeline.playing;
-            timeline_changed = true;
+        ImGui::TextDisabled(scene->timelineEnabled ? "Simulation" : "Static Scene");
+        if (scene->timelineEnabled) {
+            ImGui::SeparatorText("Timeline");
+            if (ImGui::Button(timeline.playing ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW)) {
+                timeline.playing = !timeline.playing;
+                timeline_changed = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_MS_RESTART_ALT)) {
+                ++timeline.resetRequestSerial;
+                timeline_changed = true;
+            }
+            ImGui::SameLine();
+            const bool live_selected = timeline.mode == SimulationTimelineMode::Live;
+            const bool record_selected = timeline.mode == SimulationTimelineMode::Record;
+            const bool playback_selected = timeline.mode == SimulationTimelineMode::Playback;
+            if (ImGui::RadioButton("Live", live_selected)) {
+                timeline.mode = SimulationTimelineMode::Live;
+                timeline_changed = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Record", record_selected)) {
+                timeline.mode = SimulationTimelineMode::Record;
+                timeline_changed = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Playback", playback_selected)) {
+                timeline.mode = SimulationTimelineMode::Playback;
+                timeline_changed = true;
+            }
+            bool loop = timeline.loop;
+            if (ImGui::Checkbox("Loop", &loop)) {
+                timeline.loop = loop;
+                timeline_changed = true;
+            }
+            if (timeline.recordedFrames.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Rasterizer recorded frame count exceeds ImGui slider range");
+            int selected_frame = static_cast<int>(timeline.selectedFrameIndex);
+            const int max_frame = timeline.recordedFrames.empty() ? 0 : static_cast<int>(timeline.recordedFrames.size() - 1u);
+            if (selected_frame > max_frame) selected_frame = max_frame;
+            ImGui::BeginDisabled(timeline.recordedFrames.empty());
+            if (ImGui::SliderInt("Playback Frame", &selected_frame, 0, max_frame)) {
+                timeline.selectedFrameIndex = static_cast<std::uint64_t>(selected_frame);
+                timeline.mode = SimulationTimelineMode::Playback;
+                timeline_changed = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(timeline.recordedFrames.empty());
+            if (ImGui::Button("Clear Recording")) {
+                ++timeline.clearRecordingRequestSerial;
+                timeline_changed = true;
+            }
+            ImGui::EndDisabled();
+            if (timeline_changed) this->commit_timeline_from_ui(std::move(timeline));
         }
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_MS_RESTART_ALT)) {
-            ++timeline.resetRequestSerial;
-            timeline_changed = true;
-        }
-        ImGui::SameLine();
-        const bool live_selected = timeline.mode == SimulationTimelineMode::Live;
-        const bool record_selected = timeline.mode == SimulationTimelineMode::Record;
-        const bool playback_selected = timeline.mode == SimulationTimelineMode::Playback;
-        if (ImGui::RadioButton("Live", live_selected)) {
-            timeline.mode = SimulationTimelineMode::Live;
-            timeline_changed = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Record", record_selected)) {
-            timeline.mode = SimulationTimelineMode::Record;
-            timeline_changed = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Playback", playback_selected)) {
-            timeline.mode = SimulationTimelineMode::Playback;
-            timeline_changed = true;
-        }
-        bool loop = timeline.loop;
-        if (ImGui::Checkbox("Loop", &loop)) {
-            timeline.loop = loop;
-            timeline_changed = true;
-        }
-        if (timeline.recordedFrames.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Rasterizer recorded frame count exceeds ImGui slider range");
-        int selected_frame = static_cast<int>(timeline.selectedFrameIndex);
-        const int max_frame = timeline.recordedFrames.empty() ? 0 : static_cast<int>(timeline.recordedFrames.size() - 1u);
-        if (selected_frame > max_frame) selected_frame = max_frame;
-        ImGui::BeginDisabled(timeline.recordedFrames.empty());
-        if (ImGui::SliderInt("Playback Frame", &selected_frame, 0, max_frame)) {
-            timeline.selectedFrameIndex = static_cast<std::uint64_t>(selected_frame);
-            timeline.mode = SimulationTimelineMode::Playback;
-            timeline_changed = true;
-        }
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(timeline.recordedFrames.empty());
-        if (ImGui::Button("Clear Recording")) {
-            ++timeline.clearRecordingRequestSerial;
-            timeline_changed = true;
-        }
-        ImGui::EndDisabled();
-        if (timeline_changed) this->commit_timeline_from_ui(std::move(timeline));
 
         const SimulationTimeline current_timeline = this->scene.workspace->timeline();
         ImGui::SeparatorText("Status");
@@ -2722,9 +2736,13 @@ namespace spectra::rasterizer {
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_status_row("Renderer", "Mesh / Volume / Particle");
             draw_status_row("Scene", scene->title.empty() ? scene->name : scene->title);
-            draw_status_row("Timeline", timeline_mode_text(current_timeline.mode));
-            draw_status_row("Frame", std::format("{} / {:.3f}s", current_timeline.cursor.frameIndex, current_timeline.cursor.timeSeconds));
-            draw_status_row("Recorded", std::format("{}", current_timeline.recordedFrames.size()));
+            if (scene->timelineEnabled) {
+                draw_status_row("Timeline", timeline_mode_text(current_timeline.mode));
+                draw_status_row("Frame", std::format("{} / {:.3f}s", current_timeline.cursor.frameIndex, current_timeline.cursor.timeSeconds));
+                draw_status_row("Recorded", std::format("{}", current_timeline.recordedFrames.size()));
+            } else {
+                draw_status_row("Scene Type", "Static");
+            }
             draw_status_row("Viewport", std::format("{} x {}", this->viewport.extent.width, this->viewport.extent.height));
             draw_status_row("Swapchain", std::format("{} x {}", this->host.swapchain_extent.width, this->host.swapchain_extent.height));
             ImGui::EndTable();

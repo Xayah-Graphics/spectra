@@ -440,6 +440,7 @@ export namespace spectra::pathtracer {
         std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
+        std::move_only_function<bool()> enabled{};
         std::move_only_function<bool()> active{};
         std::move_only_function<void()> trigger{};
     };
