@@ -1004,6 +1004,7 @@ namespace spectra::pathtracer {
         void create_pathtracer_for_resolution(const std::array<int, 2>& resolution);
         void rebuild_pathtracer_for_resolution(const std::array<int, 2>& resolution, bool force = false, bool preserve_target_samples = true);
         void rebuild_pathtracer_for_sample_config();
+        void request_pathtracer_sample_config_rebuild();
         void unload_pathtracer_noexcept() noexcept;
         void observe_viewport_render_resolution(const std::array<int, 2>& resolution);
         void synchronize_render_resolution();
@@ -1050,6 +1051,7 @@ namespace spectra::pathtracer {
         spectra::Transform scene_camera_from_world{};
         int scene_sampler_sample_count{0};
         int override_pixel_samples_input{interactive_default_pixel_samples};
+        bool sample_config_rebuild_requested{false};
         std::unique_ptr<RenderPipeline> render_pipeline{};
         std::unique_ptr<GpuRuntime> gpu_runtime{};
 
@@ -1259,6 +1261,7 @@ namespace spectra::pathtracer {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
         PathtracerFrameResult result{};
         this->synchronize_render_resolution();
+        if (this->sample_config_rebuild_requested && this->pathtracer_ready()) this->rebuild_pathtracer_for_sample_config();
         if (this->pathtracer_ready()) {
             this->synchronize_camera_workspace();
             result.close_requested                                            = this->process_camera_input();
@@ -1317,6 +1320,7 @@ namespace spectra::pathtracer {
             if (this->scene_sampler_sample_count <= 0) throw std::runtime_error("Spectra pathtracer sampler SPP must be positive");
             this->render_resolution_sync.active_resolution  = resolution;
             this->render_resolution_sync.pathtracer_created = true;
+            this->sample_config_rebuild_requested           = false;
         } catch (...) {
             if (this->gpu_runtime != nullptr) this->gpu_runtime->WaitGpuNoexcept();
             this->unload_pathtracer_noexcept();
@@ -1354,8 +1358,12 @@ namespace spectra::pathtracer {
     }
 
     void PathtracerRenderer::Impl::rebuild_pathtracer_for_sample_config() {
-        if (!this->render_resolution_sync.pathtracer_created) throw std::runtime_error("Cannot rebuild Spectra pathtracer sample configuration before the render pipeline is created");
-        this->rebuild_pathtracer_for_resolution(this->render_resolution_sync.active_resolution, true, false);
+        if (!this->pathtracer_ready()) throw std::runtime_error("Cannot rebuild Spectra pathtracer sample configuration before the render pipeline is ready");
+        this->rebuild_pathtracer_for_resolution(this->render_pipeline->film_resolution(), true, false);
+    }
+
+    void PathtracerRenderer::Impl::request_pathtracer_sample_config_rebuild() {
+        this->sample_config_rebuild_requested = true;
     }
 
     void PathtracerRenderer::Impl::unload_pathtracer_noexcept() noexcept {
@@ -1384,7 +1392,7 @@ namespace spectra::pathtracer {
         if (!this->render_resolution_sync.candidate_known) return;
         if (this->render_resolution_sync.stable_seconds < resolution_stability_seconds) return;
         if (this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == this->render_resolution_sync.candidate_resolution) return;
-        this->rebuild_pathtracer_for_resolution(this->render_resolution_sync.candidate_resolution);
+        this->rebuild_pathtracer_for_resolution(this->render_resolution_sync.candidate_resolution, false, !this->sample_config_rebuild_requested);
     }
 
     [[nodiscard]] bool PathtracerRenderer::Impl::pathtracer_ready() const {
@@ -1409,7 +1417,7 @@ namespace spectra::pathtracer {
         if (this->render_config.pixel_samples.has_value()) return;
         if (this->scene_snapshot == nullptr) throw std::runtime_error("Cannot apply Spectra pathtracer default SPP without an active scene snapshot");
         if (scene_entity_has_integer_parameter(this->scene_snapshot->renderSettings.sampler, "pixelsamples")) return;
-        this->rebuild_pathtracer_for_sample_config();
+        this->request_pathtracer_sample_config_rebuild();
     }
 
     void PathtracerRenderer::Impl::set_override_pixel_samples(const std::optional<int> sample_count) {
@@ -1417,7 +1425,7 @@ namespace spectra::pathtracer {
         if (this->render_config.pixel_samples == sample_count) return;
         this->render_config.pixel_samples = sample_count;
         if (sample_count.has_value()) this->override_pixel_samples_input = *sample_count;
-        this->rebuild_pathtracer_for_sample_config();
+        this->request_pathtracer_sample_config_rebuild();
     }
 
     std::string PathtracerRenderer::Impl::sample_source_text() const {
@@ -1531,6 +1539,10 @@ namespace spectra::pathtracer {
         status.uses_external_completion = this->render_pipeline != nullptr;
         if (this->render_pipeline == nullptr) {
             status.state = "Unavailable";
+            return status;
+        }
+        if (this->sample_config_rebuild_requested) {
+            status.state = "Rebuild Pending";
             return status;
         }
         status.state = sample_range[0] >= sample_range[1] ? "Completed" : "Sampling";
@@ -1802,7 +1814,7 @@ namespace spectra::pathtracer {
 
     void PathtracerRenderer::Impl::draw_render_tab() {
         const PathtracerStatus pathtracer_status = this->pathtracer_status();
-        if (this->render_pipeline == nullptr) {
+        if (!this->pathtracer_ready()) {
             ImGui::TextDisabled("No active render pipeline");
             return;
         }
@@ -1878,7 +1890,7 @@ namespace spectra::pathtracer {
     }
 
     void PathtracerRenderer::Impl::draw_tone_mapping_tab() {
-        if (this->render_pipeline == nullptr) {
+        if (!this->pathtracer_ready()) {
             ImGui::TextDisabled("No active render pipeline");
             return;
         }
