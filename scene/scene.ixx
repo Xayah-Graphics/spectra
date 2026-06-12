@@ -24,24 +24,156 @@ namespace spectra::scene {
             int column{1};
         };
 
-        enum class MaterialModel : std::uint32_t {
+        enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
+
+        struct Parameter {
+            std::string type{};
+            std::string name{};
+            std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{std::vector<float>{}};
+            bool may_be_unused{false};
+            ColorSpace color_space{ColorSpace::sRGB};
+            SourceLocation source{};
+        };
+
+        struct Entity {
+            std::string type{};
+            std::vector<Parameter> parameters{};
+            ColorSpace color_space{ColorSpace::sRGB};
+            SourceLocation source{};
+        };
+
+        struct Option {
+            std::string name{};
+            std::string value{};
+            SourceLocation source{};
+        };
+
+        struct MediumInterface {
+            std::string inside{};
+            std::string outside{};
+        };
+
+        struct RenderSettings {
+            Entity filter{.type = "gaussian"};
+            Entity film{.type = "rgb"};
+            Entity camera{.type = "perspective"};
+            Entity sampler{.type = "zsobol"};
+            Entity integrator{.type = "volpath"};
+            Entity accelerator{.type = "bvh"};
+            SceneTransformSet camera_transform{};
+            std::string camera_medium{};
+            std::vector<Option> options{};
+        };
+
+        struct Material {
+            std::string name{};
+            Entity entity{};
+        };
+
+        struct Texture {
+            std::string name{};
+            std::string kind{};
+            Entity entity{};
+            SceneTransformSet transform{};
+        };
+
+        struct Medium {
+            std::string name{};
+            Entity entity{};
+            SceneTransformSet transform{};
+        };
+
+        struct Light {
+            std::string name{};
+            Entity entity{};
+            SceneTransformSet transform{};
+            std::string medium{};
+        };
+
+        struct AreaLight {
+            Entity entity{};
+        };
+
+        struct Shape {
+            std::string name{};
+            Entity entity{};
+            SceneTransformSet transform{};
+            bool reverse_orientation{false};
+            std::string material_name{};
+            std::optional<AreaLight> area_light{};
+            MediumInterface medium_interface{};
+        };
+
+        struct ObjectDefinition {
+            std::string name{};
+            std::vector<Shape> shapes{};
+            SourceLocation source{};
+        };
+
+        struct ObjectInstance {
+            std::string name{};
+            std::string definition_name{};
+            SceneTransformSet transform{};
+            SourceLocation source{};
+        };
+
+        struct ResolvedScene {
+            Revision revision{};
+            std::string name{};
+            std::string title{};
+            std::string source{};
+            RenderSettings render_settings{};
+            std::vector<Material> materials{};
+            std::vector<Texture> textures{};
+            std::vector<Medium> media{};
+            std::vector<Light> lights{};
+            std::vector<Shape> shapes{};
+            std::vector<ObjectDefinition> object_definitions{};
+            std::vector<ObjectInstance> object_instances{};
+        };
+
+        struct Info {
+            std::string name{};
+            std::string title{};
+            std::string camera{};
+            std::string sampler{};
+            std::string integrator{};
+            std::string accelerator{};
+            std::size_t shape_count{};
+            std::size_t material_count{};
+            std::size_t texture_count{};
+            std::size_t medium_count{};
+            std::size_t light_count{};
+            std::size_t area_light_count{};
+            std::size_t infinite_light_count{};
+            std::size_t object_definition_count{};
+            std::size_t object_instance_count{};
+            float camera_fov_degrees{};
+        };
+
+        struct Diagnostic {
+            SourceLocation source{};
+            std::string message{};
+        };
+
+        enum class PreviewSurfaceKind : std::uint32_t {
             LitSurface      = 0u,
             UnlitSurface    = 1u,
             EmissiveSurface = 2u,
             Volume          = 3u,
-            PointSprite     = 4u,
+            PointGlyph      = 4u,
         };
 
-        enum class MaterialAlphaMode : std::uint32_t {
+        enum class PreviewAlphaMode : std::uint32_t {
             Opaque = 0u,
             Masked = 1u,
             Blend  = 2u,
         };
 
-        struct Material {
+        struct PreviewMaterial {
             std::string name{};
-            MaterialModel model{MaterialModel::LitSurface};
-            MaterialAlphaMode alpha_mode{MaterialAlphaMode::Opaque};
+            PreviewSurfaceKind surface_kind{PreviewSurfaceKind::LitSurface};
+            PreviewAlphaMode alpha_mode{PreviewAlphaMode::Opaque};
             Vector4 base_color{0.8f, 0.8f, 0.8f, 1.0f};
             Vector3 emission_color{};
             float emission_strength{};
@@ -52,7 +184,7 @@ namespace spectra::scene {
             float volume_temperature_scale{0.035f};
         };
 
-        enum class LightKind {
+        enum class PreviewLightKind {
             Directional,
             Point,
             Spot,
@@ -60,9 +192,9 @@ namespace spectra::scene {
             Environment,
         };
 
-        struct Light {
+        struct PreviewLight {
             std::string name{};
-            LightKind kind{LightKind::Directional};
+            PreviewLightKind kind{PreviewLightKind::Directional};
             Transform transform{};
             Vector3 color{1.0f, 1.0f, 1.0f};
             float intensity{1.0f};
@@ -160,8 +292,8 @@ namespace spectra::scene {
             double frames_per_second{24.0};
             bool timeline_enabled{true};
             std::optional<Camera> camera{};
-            std::vector<Material> materials{};
-            std::vector<Light> lights{};
+            std::vector<PreviewMaterial> materials{};
+            std::vector<PreviewLight> lights{};
             std::vector<Mesh> meshes{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
@@ -203,6 +335,33 @@ namespace spectra::scene {
             std::vector<VolumeGrid> volumes{};
         };
 
+        class Builder {
+        public:
+            Builder(std::string name, std::string title, std::string source);
+
+            Builder(const Builder& other) = delete;
+            Builder(Builder&& other) noexcept = default;
+            Builder& operator=(const Builder& other) = delete;
+            Builder& operator=(Builder&& other) noexcept = default;
+            ~Builder() noexcept = default;
+
+            void set_revision(Revision revision);
+            void set_render_settings(RenderSettings render_settings);
+            void add_material(Material material);
+            void add_texture(Texture texture);
+            void add_medium(Medium medium);
+            void add_light(Light light);
+            void add_shape(Shape shape);
+            void add_object_definition(ObjectDefinition definition);
+            void add_object_instance(ObjectInstance instance);
+
+            [[nodiscard]] ResolvedScene resolved_scene() &&;
+            [[nodiscard]] Scene build() &&;
+
+        private:
+            ResolvedScene scene{};
+        };
+
         class Edit {
         public:
             void replace_timeline(Timeline timeline);
@@ -223,12 +382,19 @@ namespace spectra::scene {
         };
 
         explicit Scene(Document document);
+        explicit Scene(ResolvedScene scene);
+        Scene(ResolvedScene scene, Document preview_document);
 
         [[nodiscard]] Revision revision() const;
         [[nodiscard]] std::shared_ptr<const Document> document() const;
         [[nodiscard]] Timeline timeline() const;
         [[nodiscard]] ResolvedFrame resolved_frame() const;
+        [[nodiscard]] ResolvedScene resolved_scene() const;
+        [[nodiscard]] Info info() const;
+        [[nodiscard]] Document make_preview_document() const;
         [[nodiscard]] DirtyFlags commit(Edit edit);
+
+        [[nodiscard]] static Scene parse_pbrt(std::string_view scene_id);
 
         [[nodiscard]] static constexpr DirtyFlags combine_dirty_flags(const DirtyFlags lhs, const DirtyFlags rhs) {
             return static_cast<DirtyFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
@@ -241,156 +407,11 @@ namespace spectra::scene {
         [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
 
     private:
+        [[nodiscard]] const Document& preview_document() const;
+
         Revision current_revision{};
-        std::shared_ptr<const Document> current_document{};
+        mutable std::shared_ptr<const Document> current_document{};
         Timeline current_timeline{};
+        std::optional<ResolvedScene> canonical_scene{};
     };
-
-    export class PbrtScene {
-    public:
-        enum class ColorSpace { sRGB, DCI_P3, Rec2020, ACES2065_1 };
-
-        struct Parameter {
-            std::string type{};
-            std::string name{};
-            std::variant<std::vector<float>, std::vector<int>, std::vector<std::string>, std::vector<std::uint8_t>> values{std::vector<float>{}};
-            bool may_be_unused{false};
-            ColorSpace color_space{ColorSpace::sRGB};
-            Scene::SourceLocation source{};
-        };
-
-        struct Entity {
-            std::string type{};
-            std::vector<Parameter> parameters{};
-            ColorSpace color_space{ColorSpace::sRGB};
-            Scene::SourceLocation source{};
-        };
-
-        struct Option {
-            std::string name{};
-            std::string value{};
-            Scene::SourceLocation source{};
-        };
-
-        struct MediumInterface {
-            std::string inside{};
-            std::string outside{};
-        };
-
-        struct RenderSettings {
-            Entity filter{.type = "gaussian"};
-            Entity film{.type = "rgb"};
-            Entity camera{.type = "perspective"};
-            Entity sampler{.type = "zsobol"};
-            Entity integrator{.type = "volpath"};
-            Entity accelerator{.type = "bvh"};
-            PbrtSceneTransformSet camera_transform{};
-            std::string camera_medium{};
-            std::vector<Option> options{};
-        };
-
-        struct Material {
-            std::string name{};
-            Entity entity{};
-        };
-
-        struct Texture {
-            std::string name{};
-            std::string kind{};
-            Entity entity{};
-            PbrtSceneTransformSet transform{};
-        };
-
-        struct Medium {
-            std::string name{};
-            Entity entity{};
-            PbrtSceneTransformSet transform{};
-        };
-
-        struct Light {
-            std::string name{};
-            Entity entity{};
-            PbrtSceneTransformSet transform{};
-            std::string medium{};
-        };
-
-        struct AreaLight {
-            Entity entity{};
-        };
-
-        struct Shape {
-            std::string name{};
-            Entity entity{};
-            PbrtSceneTransformSet transform{};
-            bool reverse_orientation{false};
-            std::string material_name{};
-            std::optional<AreaLight> area_light{};
-            MediumInterface medium_interface{};
-        };
-
-        struct ObjectDefinition {
-            std::string name{};
-            std::vector<Shape> shapes{};
-            Scene::SourceLocation source{};
-        };
-
-        struct ObjectInstance {
-            std::string name{};
-            std::string definition_name{};
-            PbrtSceneTransformSet transform{};
-            Scene::SourceLocation source{};
-        };
-
-        struct Snapshot {
-            Scene::Revision revision{};
-            std::string name{};
-            std::string title{};
-            std::string source{};
-            RenderSettings render_settings{};
-            std::vector<Material> materials{};
-            std::vector<Texture> textures{};
-            std::vector<Medium> media{};
-            std::vector<Light> lights{};
-            std::vector<Shape> shapes{};
-            std::vector<ObjectDefinition> object_definitions{};
-            std::vector<ObjectInstance> object_instances{};
-        };
-
-        struct Info {
-            std::string name{};
-            std::string title{};
-            std::string camera{};
-            std::string sampler{};
-            std::string integrator{};
-            std::string accelerator{};
-            std::size_t shape_count{};
-            std::size_t material_count{};
-            std::size_t texture_count{};
-            std::size_t medium_count{};
-            std::size_t light_count{};
-            std::size_t area_light_count{};
-            std::size_t infinite_light_count{};
-            std::size_t object_definition_count{};
-            std::size_t object_instance_count{};
-            float camera_fov_degrees{};
-        };
-
-        struct Diagnostic {
-            Scene::SourceLocation source{};
-            std::string message{};
-        };
-
-        PbrtScene() = default;
-        explicit PbrtScene(Snapshot snapshot);
-
-        [[nodiscard]] static PbrtScene parse(std::string_view scene_id);
-
-        [[nodiscard]] Info info() const;
-        [[nodiscard]] const Snapshot& snapshot() const;
-        [[nodiscard]] Scene::Document make_preview_document() const;
-
-    private:
-        Snapshot scene{};
-    };
-
 } // namespace spectra::scene

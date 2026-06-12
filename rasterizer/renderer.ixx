@@ -94,7 +94,7 @@ namespace spectra::rasterizer {
             std::uint32_t indexCount{};
             scene::Vector3 sortPoint{};
             scene::Transform transform{};
-            scene::Scene::Material material{};
+            scene::Scene::PreviewMaterial material{};
         };
 
         struct PointCloudDrawCommand {
@@ -108,7 +108,7 @@ namespace spectra::rasterizer {
             ObjectKey objectKey{};
             std::uint32_t objectId{};
             scene::Scene::VolumeGrid volume{};
-            scene::Scene::Material material{};
+            scene::Scene::PreviewMaterial material{};
         };
 
         struct SceneBounds {
@@ -184,7 +184,7 @@ namespace spectra::rasterizer {
         void ensure_volume_resources();
         void ensure_selection_resources();
 
-        [[nodiscard]] scene::Scene::Material resolve_material(std::string_view material_name) const;
+        [[nodiscard]] scene::Scene::PreviewMaterial resolve_material(std::string_view material_name) const;
         [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;

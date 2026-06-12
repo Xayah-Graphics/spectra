@@ -29,7 +29,7 @@ namespace spectra::scene {
         Vector3 scale{1.0f, 1.0f, 1.0f};
     };
 
-    export struct PbrtSceneTransform {
+    export struct SceneTransform {
         std::array<float, 16> matrix{
             1.0f,
             0.0f,
@@ -68,9 +68,9 @@ namespace spectra::scene {
         };
     };
 
-    export struct PbrtSceneTransformSet {
-        PbrtSceneTransform start{};
-        PbrtSceneTransform end{};
+    export struct SceneTransformSet {
+        SceneTransform start{};
+        SceneTransform end{};
         float start_time{0.0f};
         float end_time{1.0f};
         bool animated{false};

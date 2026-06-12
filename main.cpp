@@ -47,10 +47,11 @@ namespace {
 
     class PathtracerRendererAdapter final {
     public:
-        PathtracerRendererAdapter(std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) : pbrt_scene(std::move(pbrt_scene)), camera_workspace(std::move(camera_workspace)) {
-            if (this->pbrt_scene == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene");
+        PathtracerRendererAdapter(std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) : visualization_controller(std::move(visualization_controller)), camera_workspace(std::move(camera_workspace)) {
+            if (this->visualization_controller == nullptr) throw std::runtime_error("Pathtracer adapter requires a visualization controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
-            this->renderer = std::make_unique<spectra::pathtracer::PathtracerRenderer>(this->pbrt_scene, this->camera_workspace);
+            this->active_workspace = this->visualization_controller->active_workspace();
+            this->renderer = std::make_unique<spectra::pathtracer::PathtracerRenderer>(this->active_workspace, this->camera_workspace);
         }
 
         PathtracerRendererAdapter(const PathtracerRendererAdapter& other) = delete;
@@ -80,6 +81,9 @@ namespace {
         }
 
         [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
+            static_cast<void>(this->visualization_controller->apply_pending_visualization());
+            this->sync_scene_workspace();
+            this->visualization_controller->update_active_visualization(frame.delta_seconds);
             const spectra::pathtracer::PathtracerFrameInfo pathtracer_frame{
                 .frame_index = frame.frame_slot_index,
                 .image_index = frame.image_index,
@@ -97,16 +101,26 @@ namespace {
         }
 
     private:
-        std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene{};
+        void sync_scene_workspace() {
+            std::shared_ptr<spectra::scene::Scene> current_workspace = this->visualization_controller->active_workspace();
+            if (this->active_workspace == current_workspace) return;
+            this->renderer->set_scene_workspace(current_workspace, this->camera_workspace);
+            this->active_workspace = std::move(current_workspace);
+        }
+
+        std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller{};
         std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace{};
+        std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::pathtracer::PathtracerRenderer> renderer{};
     };
 
     class RasterizerRendererAdapter final {
     public:
-        RasterizerRendererAdapter(spectra::rasterizer::VisualizationRegistry registry, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) : visualization_controller(std::make_shared<spectra::rasterizer::VisualizationController>(std::move(registry))), camera_workspace(std::move(camera_workspace)), renderer(std::make_unique<spectra::rasterizer::Renderer>(this->visualization_controller->active_workspace(), this->camera_workspace)) {
+        RasterizerRendererAdapter(std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) : visualization_controller(std::move(visualization_controller)), camera_workspace(std::move(camera_workspace)) {
             if (this->visualization_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a visualization controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
+            this->active_workspace = this->visualization_controller->active_workspace();
+            this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace);
             this->renderer->set_control_panel_extension([visualization_controller = this->visualization_controller] { draw_rasterizer_scene_control_panel(*visualization_controller); });
         }
 
@@ -137,7 +151,8 @@ namespace {
         }
 
         [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
-            if (this->visualization_controller->apply_pending_visualization()) this->renderer->set_scene_workspace(this->visualization_controller->active_workspace(), this->camera_workspace);
+            static_cast<void>(this->visualization_controller->apply_pending_visualization());
+            this->sync_scene_workspace();
             this->visualization_controller->update_active_visualization(frame.delta_seconds);
             const spectra::rasterizer::FrameContext rasterizer_frame{
                 .frame_index   = frame.frame_slot_index,
@@ -158,8 +173,16 @@ namespace {
         }
 
     private:
+        void sync_scene_workspace() {
+            std::shared_ptr<spectra::scene::Scene> current_workspace = this->visualization_controller->active_workspace();
+            if (this->active_workspace == current_workspace) return;
+            this->renderer->set_scene_workspace(current_workspace, this->camera_workspace);
+            this->active_workspace = std::move(current_workspace);
+        }
+
         std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller{};
         std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace{};
+        std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::rasterizer::Renderer> renderer{};
     };
 
@@ -173,19 +196,19 @@ namespace {
         registry.register_source<xayah::projects::pyro::Visualization>();
     }
 
-    [[nodiscard]] spectra::rasterizer::VisualizationRegistry make_visualization_registry(std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene) {
-        if (pbrt_scene == nullptr) throw std::runtime_error("Visualization registry requires a PBRT preview source scene");
+    [[nodiscard]] spectra::rasterizer::VisualizationRegistry make_visualization_registry(std::shared_ptr<spectra::scene::Scene> scene) {
+        if (scene == nullptr) throw std::runtime_error("Visualization registry requires a preview source scene");
         spectra::rasterizer::VisualizationRegistry registry{};
-        registry.register_static_visualization(std::string{CornellBoxSceneId}, "Cornell Box", [pbrt_scene = std::move(pbrt_scene)] { return pbrt_scene->make_preview_document(); });
+        registry.register_static_visualization(std::string{CornellBoxSceneId}, "Cornell Box", [scene = std::move(scene)] { return scene; });
         register_project_visualizations(registry);
         return registry;
     }
 
-    void register_renderers(spectra::Spectra& application, std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene, spectra::rasterizer::VisualizationRegistry visualizations, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) {
-        if (pbrt_scene == nullptr) throw std::runtime_error("Renderer registration requires a PBRT scene snapshot");
+    void register_renderers(spectra::Spectra& application, spectra::rasterizer::VisualizationRegistry visualizations, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) {
         if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
-        application.register_renderer(RasterizerRendererAdapter{std::move(visualizations), camera_workspace});
-        application.register_renderer(PathtracerRendererAdapter{std::move(pbrt_scene), std::move(camera_workspace)});
+        std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller = std::make_shared<spectra::rasterizer::VisualizationController>(std::move(visualizations));
+        application.register_renderer(RasterizerRendererAdapter{visualization_controller, camera_workspace});
+        application.register_renderer(PathtracerRendererAdapter{std::move(visualization_controller), std::move(camera_workspace)});
     }
 } // namespace
 
@@ -193,12 +216,12 @@ int main(const int argc, char**) {
     try {
         if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
-        std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene = std::make_shared<spectra::scene::PbrtScene>(spectra::scene::PbrtScene::parse(CornellBoxSceneId));
-        spectra::rasterizer::VisualizationRegistry visualizations = make_visualization_registry(pbrt_scene);
+        std::shared_ptr<spectra::scene::Scene> scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(CornellBoxSceneId));
+        spectra::rasterizer::VisualizationRegistry visualizations = make_visualization_registry(scene);
         std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::Scene::CameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        register_renderers(app, std::move(pbrt_scene), std::move(visualizations), std::move(camera_workspace));
+        register_renderers(app, std::move(visualizations), std::move(camera_workspace));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

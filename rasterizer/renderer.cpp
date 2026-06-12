@@ -129,38 +129,38 @@ namespace {
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) && std::isfinite(value.w);
     }
 
-    [[nodiscard]] const char* material_model_name(const spectra::scene::Scene::MaterialModel model) {
-        switch (model) {
-        case spectra::scene::Scene::MaterialModel::LitSurface: return "LitSurface";
-        case spectra::scene::Scene::MaterialModel::UnlitSurface: return "UnlitSurface";
-        case spectra::scene::Scene::MaterialModel::EmissiveSurface: return "EmissiveSurface";
-        case spectra::scene::Scene::MaterialModel::Volume: return "Volume";
-        case spectra::scene::Scene::MaterialModel::PointSprite: return "PointSprite";
+    [[nodiscard]] const char* preview_surface_kind_name(const spectra::scene::Scene::PreviewSurfaceKind surface_kind) {
+        switch (surface_kind) {
+        case spectra::scene::Scene::PreviewSurfaceKind::LitSurface: return "LitSurface";
+        case spectra::scene::Scene::PreviewSurfaceKind::UnlitSurface: return "UnlitSurface";
+        case spectra::scene::Scene::PreviewSurfaceKind::EmissiveSurface: return "EmissiveSurface";
+        case spectra::scene::Scene::PreviewSurfaceKind::Volume: return "Volume";
+        case spectra::scene::Scene::PreviewSurfaceKind::PointGlyph: return "PointGlyph";
         }
-        throw std::runtime_error("Unknown Spectra rasterizer material model");
+        throw std::runtime_error("Unknown Spectra rasterizer preview surface kind");
     }
 
-    [[nodiscard]] std::uint32_t material_model_code(const spectra::scene::Scene::MaterialModel model) {
-        switch (model) {
-        case spectra::scene::Scene::MaterialModel::LitSurface:
-        case spectra::scene::Scene::MaterialModel::UnlitSurface:
-        case spectra::scene::Scene::MaterialModel::EmissiveSurface:
-        case spectra::scene::Scene::MaterialModel::Volume:
-        case spectra::scene::Scene::MaterialModel::PointSprite: return static_cast<std::uint32_t>(model);
+    [[nodiscard]] std::uint32_t preview_surface_kind_code(const spectra::scene::Scene::PreviewSurfaceKind surface_kind) {
+        switch (surface_kind) {
+        case spectra::scene::Scene::PreviewSurfaceKind::LitSurface:
+        case spectra::scene::Scene::PreviewSurfaceKind::UnlitSurface:
+        case spectra::scene::Scene::PreviewSurfaceKind::EmissiveSurface:
+        case spectra::scene::Scene::PreviewSurfaceKind::Volume:
+        case spectra::scene::Scene::PreviewSurfaceKind::PointGlyph: return static_cast<std::uint32_t>(surface_kind);
         }
-        throw std::runtime_error("Unknown Spectra rasterizer material model");
+        throw std::runtime_error("Unknown Spectra rasterizer preview surface kind");
     }
 
-    [[nodiscard]] std::uint32_t material_alpha_mode_code(const spectra::scene::Scene::MaterialAlphaMode alpha_mode) {
+    [[nodiscard]] std::uint32_t preview_alpha_mode_code(const spectra::scene::Scene::PreviewAlphaMode alpha_mode) {
         switch (alpha_mode) {
-        case spectra::scene::Scene::MaterialAlphaMode::Opaque:
-        case spectra::scene::Scene::MaterialAlphaMode::Masked:
-        case spectra::scene::Scene::MaterialAlphaMode::Blend: return static_cast<std::uint32_t>(alpha_mode);
+        case spectra::scene::Scene::PreviewAlphaMode::Opaque:
+        case spectra::scene::Scene::PreviewAlphaMode::Masked:
+        case spectra::scene::Scene::PreviewAlphaMode::Blend: return static_cast<std::uint32_t>(alpha_mode);
         }
         throw std::runtime_error("Unknown Spectra rasterizer material alpha mode");
     }
 
-    void validate_material_values(const spectra::scene::Scene::Material& material) {
+    void validate_material_values(const spectra::scene::Scene::PreviewMaterial& material) {
         if (material.name.empty()) throw std::runtime_error("Rasterizer material names must not be empty");
         if (!finite_scene_vector(material.base_color)) throw std::runtime_error(std::format("Rasterizer material \"{}\" base color must be finite", material.name));
         if (!finite_scene_vector(material.emission_color)) throw std::runtime_error(std::format("Rasterizer material \"{}\" emission color must be finite", material.name));
@@ -173,54 +173,54 @@ namespace {
         if (!std::isfinite(material.alpha_cutoff) || material.alpha_cutoff < 0.0f || material.alpha_cutoff > 1.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" alpha cutoff must be inside [0, 1]", material.name));
         if (!std::isfinite(material.volume_density_scale) || material.volume_density_scale <= 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" volume density scale must be finite and positive", material.name));
         if (!std::isfinite(material.volume_temperature_scale) || material.volume_temperature_scale < 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" volume temperature scale must be finite and non-negative", material.name));
-        static_cast<void>(material_model_code(material.model));
-        static_cast<void>(material_alpha_mode_code(material.alpha_mode));
-        if ((material.model == spectra::scene::Scene::MaterialModel::PointSprite || material.model == spectra::scene::Scene::MaterialModel::Volume) && material.alpha_mode != spectra::scene::Scene::MaterialAlphaMode::Blend) throw std::runtime_error(std::format("Rasterizer {} material \"{}\" must use Blend alpha mode", material_model_name(material.model), material.name));
+        static_cast<void>(preview_surface_kind_code(material.surface_kind));
+        static_cast<void>(preview_alpha_mode_code(material.alpha_mode));
+        if ((material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::PointGlyph || material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::Volume) && material.alpha_mode != spectra::scene::Scene::PreviewAlphaMode::Blend) throw std::runtime_error(std::format("Rasterizer {} material \"{}\" must use Blend alpha mode", preview_surface_kind_name(material.surface_kind), material.name));
     }
 
     void validate_material_library(const spectra::scene::Scene::Document& scene) {
         std::set<std::string_view> names{};
-        for (const spectra::scene::Scene::Material& material : scene.materials) {
+        for (const spectra::scene::Scene::PreviewMaterial& material : scene.materials) {
             validate_material_values(material);
             const bool inserted = names.insert(std::string_view{material.name}).second;
             if (!inserted) throw std::runtime_error(std::format("Rasterizer material \"{}\" is duplicated", material.name));
         }
     }
 
-    void require_surface_material(const spectra::scene::Scene::Material& material, const std::string_view mesh_name) {
-        if (material.model == spectra::scene::Scene::MaterialModel::LitSurface || material.model == spectra::scene::Scene::MaterialModel::UnlitSurface || material.model == spectra::scene::Scene::MaterialModel::EmissiveSurface) return;
-        throw std::runtime_error(std::format("Rasterizer mesh \"{}\" requires a surface material, got {} material \"{}\"", mesh_name, material_model_name(material.model), material.name));
+    void require_surface_material(const spectra::scene::Scene::PreviewMaterial& material, const std::string_view mesh_name) {
+        if (material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::LitSurface || material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::UnlitSurface || material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::EmissiveSurface) return;
+        throw std::runtime_error(std::format("Rasterizer mesh \"{}\" requires a surface material, got {} material \"{}\"", mesh_name, preview_surface_kind_name(material.surface_kind), material.name));
     }
 
-    void require_point_sprite_material(const spectra::scene::Scene::Material& material, const std::string_view point_cloud_name) {
-        if (material.model == spectra::scene::Scene::MaterialModel::PointSprite) return;
-        throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" requires a PointSprite material, got {} material \"{}\"", point_cloud_name, material_model_name(material.model), material.name));
+    void require_point_glyph_material(const spectra::scene::Scene::PreviewMaterial& material, const std::string_view point_cloud_name) {
+        if (material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::PointGlyph) return;
+        throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" requires a PointGlyph material, got {} material \"{}\"", point_cloud_name, preview_surface_kind_name(material.surface_kind), material.name));
     }
 
-    void require_volume_material(const spectra::scene::Scene::Material& material, const std::string_view volume_name) {
-        if (material.model == spectra::scene::Scene::MaterialModel::Volume) return;
-        throw std::runtime_error(std::format("Rasterizer volume \"{}\" requires a Volume material, got {} material \"{}\"", volume_name, material_model_name(material.model), material.name));
+    void require_volume_material(const spectra::scene::Scene::PreviewMaterial& material, const std::string_view volume_name) {
+        if (material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::Volume) return;
+        throw std::runtime_error(std::format("Rasterizer volume \"{}\" requires a Volume material, got {} material \"{}\"", volume_name, preview_surface_kind_name(material.surface_kind), material.name));
     }
 
-    [[nodiscard]] DrawPushConstantsData make_draw_push_constants(const spectra::scene::Transform& transform, const spectra::scene::Scene::Material& material) {
+    [[nodiscard]] DrawPushConstantsData make_draw_push_constants(const spectra::scene::Transform& transform, const spectra::scene::Scene::PreviewMaterial& material) {
         const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
         return DrawPushConstantsData{
             .model      = model_matrix.values,
             .base_color = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
             .emission   = {material.emission_color.x * material.emission_strength, material.emission_color.y * material.emission_strength, material.emission_color.z * material.emission_strength, 0.0f},
             .material   = {material.roughness, material.metallic, material.alpha_cutoff, 0.0f},
-            .flags      = {material_model_code(material.model), material_alpha_mode_code(material.alpha_mode), 0u, 0u},
+            .flags      = {preview_surface_kind_code(material.surface_kind), preview_alpha_mode_code(material.alpha_mode), 0u, 0u},
         };
     }
 
-    [[nodiscard]] SelectionPushConstantsData make_selection_push_constants(const spectra::scene::Transform& transform, const spectra::scene::Scene::Material& material, const std::array<float, 4>& color, const std::uint32_t object_id) {
+    [[nodiscard]] SelectionPushConstantsData make_selection_push_constants(const spectra::scene::Transform& transform, const spectra::scene::Scene::PreviewMaterial& material, const std::array<float, 4>& color, const std::uint32_t object_id) {
         const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
         return SelectionPushConstantsData{
             .model      = model_matrix.values,
             .color      = color,
             .base_color = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
             .material   = {material.roughness, material.metallic, material.alpha_cutoff, 0.0f},
-            .flags      = {object_id, material_alpha_mode_code(material.alpha_mode), 0u, 0u},
+            .flags      = {object_id, preview_alpha_mode_code(material.alpha_mode), 0u, 0u},
         };
     }
 
@@ -232,8 +232,8 @@ namespace {
 
     [[nodiscard]] LightUniformData scene_light_uniform(const spectra::scene::Scene::Document& scene) {
         LightUniformData data{};
-        for (const spectra::scene::Scene::Light& light : scene.lights) {
-            if (light.kind != spectra::scene::Scene::LightKind::Directional) continue;
+        for (const spectra::scene::Scene::PreviewLight& light : scene.lights) {
+            if (light.kind != spectra::scene::Scene::PreviewLightKind::Directional) continue;
             data.color      = to_render_vector(light.color);
             data.intensity  = light.intensity;
             break;
@@ -1424,10 +1424,10 @@ namespace spectra::rasterizer {
         this->selection.frame_count = this->host.frame_count;
     }
 
-    scene::Scene::Material Renderer::resolve_material(const std::string_view material_name) const {
+    scene::Scene::PreviewMaterial Renderer::resolve_material(const std::string_view material_name) const {
         if (material_name.empty()) throw std::runtime_error("Rasterizer material name must not be empty");
         const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
-        for (const scene::Scene::Material& material : scene->materials) {
+        for (const scene::Scene::PreviewMaterial& material : scene->materials) {
             if (material.name == material_name) return material;
         }
         throw std::runtime_error(std::format("Rasterizer material \"{}\" does not exist", material_name));
@@ -1602,7 +1602,7 @@ namespace spectra::rasterizer {
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
         for (const scene::Scene::Mesh& mesh : resolved_frame.meshes) {
             if (mesh.positions.empty()) continue;
-            const scene::Scene::Material material = this->resolve_material(mesh.material_name);
+            const scene::Scene::PreviewMaterial material = this->resolve_material(mesh.material_name);
             require_surface_material(material, mesh.name);
             if (mesh.normals.size() != mesh.positions.size()) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" must provide one normal per position", mesh.name));
             if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" must provide triangle indices", mesh.name));
@@ -1679,8 +1679,8 @@ namespace spectra::rasterizer {
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
         for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
             if (point_cloud.positions.empty()) continue;
-            const scene::Scene::Material material = this->resolve_material(point_cloud.material_name);
-            require_point_sprite_material(material, point_cloud.name);
+            const scene::Scene::PreviewMaterial material = this->resolve_material(point_cloud.material_name);
+            require_point_glyph_material(material, point_cloud.name);
             if (point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one radius per position", point_cloud.name));
             if (point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one color per position", point_cloud.name));
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer point cloud instance count exceeds uint32 range");
@@ -1742,7 +1742,7 @@ namespace spectra::rasterizer {
             return;
         }
         const scene::Scene::VolumeGrid& volume = *selected_volume;
-        const scene::Scene::Material material = this->resolve_material(volume.material_name);
+        const scene::Scene::PreviewMaterial material = this->resolve_material(volume.material_name);
         require_volume_material(material, volume.name);
         if (volume.dimensions[0] == 0 || volume.dimensions[1] == 0 || volume.dimensions[2] == 0) throw std::runtime_error(std::format("Rasterizer volume \"{}\" has zero dimensions", volume.name));
         if (!finite_scene_vector(volume.origin)) throw std::runtime_error(std::format("Rasterizer volume \"{}\" origin must be finite", volume.name));
@@ -2127,7 +2127,7 @@ namespace spectra::rasterizer {
         command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
         command_buffer.bindIndexBuffer(*frame_scene.indexBuffer.buffer, 0, vk::IndexType::eUint32);
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
-            if (draw_command.material.alpha_mode == scene::Scene::MaterialAlphaMode::Blend) continue;
+            if (draw_command.material.alpha_mode == scene::Scene::PreviewAlphaMode::Blend) continue;
             const DrawPushConstantsData push_constants = make_draw_push_constants(draw_command.transform, draw_command.material);
             command_buffer.pushConstants(*this->mesh_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
             command_buffer.drawIndexed(draw_command.indexCount, 1u, draw_command.firstIndex, 0, 0u);
@@ -2146,7 +2146,7 @@ namespace spectra::rasterizer {
         const scene::Scene::CameraState camera_state = this->current_viewport_camera_state();
         const spectra::rasterizer::math::Vector3 camera_position = to_render_vector(camera_state.eye);
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
-            if (draw_command.material.alpha_mode != scene::Scene::MaterialAlphaMode::Blend) continue;
+            if (draw_command.material.alpha_mode != scene::Scene::PreviewAlphaMode::Blend) continue;
             const spectra::rasterizer::math::Vector3 sort_point = spectra::rasterizer::math::transform_point(spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform)), to_render_vector(draw_command.sortPoint));
             const spectra::rasterizer::math::Vector3 delta = sort_point - camera_position;
             draw_commands.push_back(TransparentMeshSortItem{
@@ -2193,7 +2193,7 @@ namespace spectra::rasterizer {
         FrameVolumeResources& frame_volume = this->volume_pass.frame_volumes.at(this->lifecycle.active_frame_index);
         if (!frame_volume.descriptorValid || frame_volume.drawCommand.volume.name.empty()) return;
         const scene::Scene::VolumeGrid& volume = frame_volume.drawCommand.volume;
-        const scene::Scene::Material& material = frame_volume.drawCommand.material;
+        const scene::Scene::PreviewMaterial& material = frame_volume.drawCommand.material;
         const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
         const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
         command_buffer.setViewport(0u, viewport);

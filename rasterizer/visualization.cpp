@@ -28,12 +28,12 @@ namespace spectra::rasterizer {
         }
     } // namespace
 
-    VisualizationEntry::VisualizationEntry(std::string id, std::string title, const VisualizationKind kind, std::move_only_function<scene::Scene::Document()> create_static_document, std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source) : id(std::move(id)), title(std::move(title)), kind(kind), create_static_document(std::move(create_static_document)), create_dynamic_source(std::move(create_dynamic_source)) {}
+    VisualizationEntry::VisualizationEntry(std::string id, std::string title, const VisualizationKind kind, std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene, std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source) : id(std::move(id)), title(std::move(title)), kind(kind), create_static_scene(std::move(create_static_scene)), create_dynamic_source(std::move(create_dynamic_source)) {}
 
-    void VisualizationRegistry::register_static_visualization(std::string id, std::string title, std::move_only_function<scene::Scene::Document()> create_document) {
-        if (!create_document) throw std::runtime_error("Static visualization entry requires a document factory");
+    void VisualizationRegistry::register_static_visualization(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> create_scene) {
+        if (!create_scene) throw std::runtime_error("Static visualization entry requires a scene factory");
         this->ensure_unique_visualization_id(id);
-        this->entries.push_back(VisualizationEntry{std::move(id), std::move(title), VisualizationKind::Static, std::move(create_document), std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()>{}});
+        this->entries.push_back(VisualizationEntry{std::move(id), std::move(title), VisualizationKind::Static, std::move(create_scene), std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()>{}});
     }
 
     std::unique_ptr<VisualizationSourceInstance> VisualizationRegistry::create_dynamic_source(const std::size_t index) {
@@ -45,13 +45,15 @@ namespace spectra::rasterizer {
         return source.create_dynamic_source();
     }
 
-    scene::Scene::Document VisualizationRegistry::create_static_document(const std::size_t index) {
+    std::shared_ptr<scene::Scene> VisualizationRegistry::create_static_scene(const std::size_t index) {
         if (this->entries.empty()) throw std::runtime_error("Visualization registry is empty");
         if (index >= this->entries.size()) throw std::runtime_error("Visualization registry index is out of range");
         VisualizationEntry& source = this->entries.at(index);
         if (source.kind != VisualizationKind::Static) throw std::runtime_error("Visualization registry entry is not static");
-        if (!source.create_static_document) throw std::runtime_error("Static visualization entry has no document factory");
-        return source.create_static_document();
+        if (!source.create_static_scene) throw std::runtime_error("Static visualization entry has no scene factory");
+        std::shared_ptr<scene::Scene> scene = source.create_static_scene();
+        if (scene == nullptr) throw std::runtime_error("Static visualization scene factory returned null");
+        return scene;
     }
 
     const VisualizationEntry& VisualizationRegistry::entry(const std::size_t index) const {
@@ -185,9 +187,12 @@ namespace spectra::rasterizer {
             if (source.kind == VisualizationKind::Dynamic && slot.source == nullptr) throw std::runtime_error("Dynamic visualization slot has a workspace but no source instance");
             return slot;
         }
-        scene::Scene::Document document = source.kind == VisualizationKind::Static ? this->registry.create_static_document(index) : this->create_dynamic_slot(index, &slot);
+        if (source.kind == VisualizationKind::Static) {
+            slot.workspace = this->registry.create_static_scene(index);
+            return slot;
+        }
+        scene::Scene::Document document = this->create_dynamic_slot(index, &slot);
         slot.workspace = std::make_shared<scene::Scene>(std::move(document));
-        if (source.kind == VisualizationKind::Static) return slot;
         if (slot.source == nullptr) throw std::runtime_error("Dynamic visualization slot was not initialized");
         scene::Scene::FrameSnapshot snapshot = slot.source->create_scene_frame(scene::Scene::FrameInfo{
             .delta_seconds = 0.0,

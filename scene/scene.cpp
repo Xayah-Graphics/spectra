@@ -11,6 +11,9 @@ module spectra.scene;
 import std;
 
 namespace spectra::scene {
+    [[nodiscard]] Scene::Document make_preview_document_from_pbrt(const Scene::ResolvedScene& scene);
+    [[nodiscard]] Scene::Info describe_scene(const Scene::ResolvedScene& scene);
+
     namespace {
         void validate_scene_id(const std::string_view scene_id) {
             if (scene_id.empty()) throw std::runtime_error("Scene camera workspace requires a non-empty scene id");
@@ -56,6 +59,441 @@ namespace spectra::scene {
             }
             return resolved;
         }
+
+        [[nodiscard]] bool contains_name(const std::set<std::string>& values, const std::string& value) {
+            return values.find(value) != values.end();
+        }
+
+        [[nodiscard]] std::string scene_source_string(const Scene::SourceLocation& source) {
+            if (source.filename.empty()) return "<generated>";
+            return std::format("{}:{}:{}", source.filename, source.line, source.column);
+        }
+
+        [[noreturn]] void throw_scene_validation_error(const Scene::SourceLocation& source, const std::string_view message) {
+            throw std::runtime_error(std::format("{}: {}", scene_source_string(source), message));
+        }
+
+        void require_supported_entity(const Scene::Entity& entity, const std::set<std::string>& supported, const std::string_view kind) {
+            if (entity.type.empty()) throw_scene_validation_error(entity.source, std::format("Scene {} type must not be empty", kind));
+            if (!contains_name(supported, entity.type)) throw_scene_validation_error(entity.source, std::format("Scene pathtracer backend does not support {} type \"{}\"", kind, entity.type));
+        }
+
+        void require_static_scene_transform(const SceneTransformSet& transform, const Scene::SourceLocation& source, const std::string_view owner) {
+            if (transform.animated) throw_scene_validation_error(source, std::format("{} uses animated transforms, which are not supported by the canonical pathtracer backend", owner));
+        }
+
+        [[nodiscard]] std::string scene_string_parameter(const std::vector<Scene::Parameter>& parameters, const std::string_view name) {
+            for (const Scene::Parameter& parameter : parameters) {
+                if (parameter.name != name) continue;
+                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+                if (values != nullptr && !values->empty()) return values->front();
+            }
+            return {};
+        }
+
+        void require_unique_canonical_name(std::set<std::string>* names, const std::string& name, const Scene::SourceLocation& source, const std::string_view kind) {
+            if (names == nullptr) throw std::runtime_error("Scene canonical validation requires a name set");
+            if (name.empty()) throw_scene_validation_error(source, std::format("Scene {} name must not be empty", kind));
+            if (!names->insert(name).second) throw_scene_validation_error(source, std::format("Scene {} \"{}\" is duplicated", kind, name));
+        }
+
+        void validate_canonical_scene(const Scene::ResolvedScene& scene) {
+            static const std::set<std::string> supported_filters{"box", "gaussian", "mitchell", "sinc", "triangle"};
+            static const std::set<std::string> supported_films{"rgb", "gbuffer", "spectral"};
+            static const std::set<std::string> supported_cameras{"perspective", "orthographic", "realistic", "spherical"};
+            static const std::set<std::string> supported_samplers{"zsobol", "paddedsobol", "halton", "sobol", "pmj02bn", "independent", "stratified"};
+            static const std::set<std::string> supported_integrators{"path", "volpath"};
+            static const std::set<std::string> supported_accelerators{"bvh"};
+            static const std::set<std::string> supported_materials{"none", "interface", "diffuse", "coateddiffuse", "coatedconductor", "diffusetransmission", "dielectric", "thindielectric", "hair", "conductor", "measured", "subsurface", "mix"};
+            static const std::set<std::string> supported_textures{"constant", "scale", "mix", "directionmix", "bilerp", "imagemap", "checkerboard", "dots", "fbm", "wrinkled", "windy", "marble", "ptex"};
+            static const std::set<std::string> supported_media{"homogeneous", "uniformgrid", "rgbgrid", "cloud", "nanovdb"};
+            static const std::set<std::string> supported_lights{"point", "spot", "goniometric", "projection", "distant", "infinite"};
+            static const std::set<std::string> supported_area_lights{"diffuse"};
+            static const std::set<std::string> supported_shapes{"sphere", "cylinder", "disk", "bilinearmesh", "curve", "trianglemesh", "plymesh", "loopsubdiv"};
+            static const std::set<std::string> supported_light_samplers{"uniform", "power", "bvh", "exhaustive"};
+
+            if (scene.revision.value == 0u) throw std::runtime_error("Scene canonical revision must not be zero");
+            if (scene.name.empty()) throw std::runtime_error("Scene canonical name must not be empty");
+            if (scene.title.empty()) throw std::runtime_error("Scene canonical title must not be empty");
+            if (scene.source.empty()) throw std::runtime_error("Scene canonical source must not be empty");
+
+            require_supported_entity(scene.render_settings.filter, supported_filters, "pixel filter");
+            require_supported_entity(scene.render_settings.film, supported_films, "film");
+            require_supported_entity(scene.render_settings.camera, supported_cameras, "camera");
+            require_supported_entity(scene.render_settings.sampler, supported_samplers, "sampler");
+            require_supported_entity(scene.render_settings.integrator, supported_integrators, "integrator");
+            require_supported_entity(scene.render_settings.accelerator, supported_accelerators, "accelerator");
+            require_static_scene_transform(scene.render_settings.camera_transform, scene.render_settings.camera.source, "Scene camera");
+            if (!scene.render_settings.options.empty()) throw_scene_validation_error(scene.render_settings.options.front().source, std::format("Scene Option \"{}\" is represented but not supported by the canonical pathtracer backend", scene.render_settings.options.front().name));
+
+            const std::string light_sampler = scene_string_parameter(scene.render_settings.integrator.parameters, "lightsampler");
+            if (!light_sampler.empty() && !contains_name(supported_light_samplers, light_sampler)) throw_scene_validation_error(scene.render_settings.integrator.source, std::format("Scene pathtracer backend does not support light sampler \"{}\"", light_sampler));
+
+            std::set<std::string> material_names{};
+            for (const Scene::Material& material : scene.materials) {
+                require_unique_canonical_name(&material_names, material.name, material.entity.source, "material");
+                require_supported_entity(material.entity, supported_materials, "material");
+            }
+
+            std::set<std::string> medium_names{};
+            for (const Scene::Medium& medium : scene.media) {
+                require_unique_canonical_name(&medium_names, medium.name, medium.entity.source, "medium");
+                require_supported_entity(medium.entity, supported_media, "medium");
+                require_static_scene_transform(medium.transform, medium.entity.source, std::format("Scene medium \"{}\"", medium.name));
+            }
+
+            std::set<std::string> texture_names{};
+            for (const Scene::Texture& texture : scene.textures) {
+                require_unique_canonical_name(&texture_names, texture.name, texture.entity.source, "texture");
+                if (texture.kind != "float" && texture.kind != "spectrum") throw_scene_validation_error(texture.entity.source, std::format("Scene pathtracer backend does not support texture value kind \"{}\"", texture.kind));
+                require_supported_entity(texture.entity, supported_textures, "texture");
+                if (texture.kind == "float" && texture.entity.type == "marble") throw_scene_validation_error(texture.entity.source, "\"marble\" is only a spectrum texture in the canonical pathtracer backend");
+                if (texture.kind == "spectrum" && (texture.entity.type == "fbm" || texture.entity.type == "wrinkled" || texture.entity.type == "windy")) throw_scene_validation_error(texture.entity.source, std::format("\"{}\" is only a float texture in the canonical pathtracer backend", texture.entity.type));
+                require_static_scene_transform(texture.transform, texture.entity.source, std::format("Scene texture \"{}\"", texture.name));
+            }
+
+            const auto validate_shape = [&material_names, &medium_names](const Scene::Shape& shape, const std::string_view owner) {
+                if (shape.name.empty()) throw_scene_validation_error(shape.entity.source, std::format("{} name must not be empty", owner));
+                require_supported_entity(shape.entity, supported_shapes, "shape");
+                require_static_scene_transform(shape.transform, shape.entity.source, owner);
+                if (shape.material_name.empty() || !contains_name(material_names, shape.material_name)) throw_scene_validation_error(shape.entity.source, std::format("{} references unknown material \"{}\"", owner, shape.material_name));
+                if (!shape.medium_interface.inside.empty() && !contains_name(medium_names, shape.medium_interface.inside)) throw_scene_validation_error(shape.entity.source, std::format("{} references unknown inside medium \"{}\"", owner, shape.medium_interface.inside));
+                if (!shape.medium_interface.outside.empty() && !contains_name(medium_names, shape.medium_interface.outside)) throw_scene_validation_error(shape.entity.source, std::format("{} references unknown outside medium \"{}\"", owner, shape.medium_interface.outside));
+                if (shape.area_light.has_value()) require_supported_entity(shape.area_light->entity, supported_area_lights, "area light");
+            };
+
+            std::set<std::string> shape_names{};
+            for (const Scene::Shape& shape : scene.shapes) {
+                require_unique_canonical_name(&shape_names, shape.name, shape.entity.source, "shape");
+                validate_shape(shape, std::format("Scene shape \"{}\"", shape.name));
+            }
+
+            std::set<std::string> light_names{};
+            for (const Scene::Light& light : scene.lights) {
+                require_unique_canonical_name(&light_names, light.name, light.entity.source, "light");
+                require_supported_entity(light.entity, supported_lights, "light");
+                require_static_scene_transform(light.transform, light.entity.source, std::format("Scene light \"{}\"", light.name));
+                if (!light.medium.empty() && !contains_name(medium_names, light.medium)) throw_scene_validation_error(light.entity.source, std::format("Scene light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
+            }
+
+            std::set<std::string> object_definition_names{};
+            for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
+                require_unique_canonical_name(&object_definition_names, definition.name, definition.source, "object definition");
+                std::set<std::string> definition_shape_names{};
+                for (const Scene::Shape& shape : definition.shapes) {
+                    require_unique_canonical_name(&definition_shape_names, shape.name, shape.entity.source, "object definition shape");
+                    validate_shape(shape, std::format("Scene object definition \"{}\" shape", definition.name));
+                    if (shape.area_light.has_value()) throw_scene_validation_error(shape.entity.source, std::format("Scene object definition \"{}\" contains an area light shape; instanced area lights are not supported by the canonical pathtracer backend", definition.name));
+                }
+            }
+
+            std::set<std::string> object_instance_names{};
+            for (const Scene::ObjectInstance& instance : scene.object_instances) {
+                require_unique_canonical_name(&object_instance_names, instance.name, instance.source, "object instance");
+                if (!contains_name(object_definition_names, instance.definition_name)) throw_scene_validation_error(instance.source, std::format("Scene object instance references unknown definition \"{}\"", instance.definition_name));
+                require_static_scene_transform(instance.transform, instance.source, std::format("Scene object instance \"{}\"", instance.name));
+            }
+        }
+
+        [[nodiscard]] Scene::Parameter float_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "float", .name = std::move(name), .values = std::move(values), .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter integer_parameter(std::string name, std::vector<int> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "integer", .name = std::move(name), .values = std::move(values), .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter rgb_parameter(std::string name, const Vector3 value, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "rgb", .name = std::move(name), .values = std::vector<float>{value.x, value.y, value.z}, .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter point3_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "point3", .name = std::move(name), .values = std::move(values), .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter normal_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "normal", .name = std::move(name), .values = std::move(values), .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter string_parameter(std::string name, std::vector<std::string> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "string", .name = std::move(name), .values = std::move(values), .source = source};
+        }
+
+        [[nodiscard]] Quaternion normalized_quaternion(const Quaternion value, const std::string_view context) {
+            const float length_squared_value = value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
+            if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(std::format("{} has an invalid rotation quaternion", context));
+            const float inv_length = 1.0f / std::sqrt(length_squared_value);
+            return Quaternion{value.x * inv_length, value.y * inv_length, value.z * inv_length, value.w * inv_length};
+        }
+
+        [[nodiscard]] Vector3 rotate_vector(const Quaternion rotation, const Vector3 value) {
+            const Vector3 qv{rotation.x, rotation.y, rotation.z};
+            const Vector3 uv = cross(qv, value);
+            const Vector3 uuv = cross(qv, uv);
+            return value + ((uv * rotation.w) + uuv) * 2.0f;
+        }
+
+        [[nodiscard]] Vector3 transform_point(const Transform& transform, const Vector3 point, const std::string_view context) {
+            if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            const Quaternion rotation = normalized_quaternion(transform.rotation, context);
+            return transform.position + rotate_vector(rotation, Vector3{point.x * transform.scale.x, point.y * transform.scale.y, point.z * transform.scale.z});
+        }
+
+        [[nodiscard]] Vector3 transform_normal(const Transform& transform, const Vector3 normal, const std::string_view context) {
+            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            const Quaternion rotation = normalized_quaternion(transform.rotation, context);
+            return normalize(rotate_vector(rotation, Vector3{normal.x / transform.scale.x, normal.y / transform.scale.y, normal.z / transform.scale.z}), context);
+        }
+
+        [[nodiscard]] SceneTransform make_translation_transform(const Vector3 position) {
+            SceneTransform transform{};
+            transform.matrix[3] = position.x;
+            transform.matrix[7] = position.y;
+            transform.matrix[11] = position.z;
+            transform.inverse[3] = -position.x;
+            transform.inverse[7] = -position.y;
+            transform.inverse[11] = -position.z;
+            return transform;
+        }
+
+        [[nodiscard]] float preview_scalar(const Vector4 color) {
+            return std::max(0.0f, (color.x + color.y + color.z) / 3.0f);
+        }
+
+        [[nodiscard]] const Scene::PreviewMaterial* find_preview_material(const Scene::Document& document, const std::string& name) {
+            for (const Scene::PreviewMaterial& material : document.materials)
+                if (material.name == name) return &material;
+            return nullptr;
+        }
+
+        void append_canonical_materials(Scene::ResolvedScene& scene, const Scene::Document& document, const bool needs_volume_interface_material) {
+            std::set<std::string> names{};
+            for (const Scene::PreviewMaterial& material : document.materials) {
+                if (material.name.empty()) throw std::runtime_error("Preview material name must not be empty when building canonical scene");
+                if (!names.insert(material.name).second) throw std::runtime_error(std::format("Preview material \"{}\" is duplicated when building canonical scene", material.name));
+                if (material.surface_kind == Scene::PreviewSurfaceKind::Volume) continue;
+                const Vector3 reflectance{std::max(0.0f, material.base_color.x), std::max(0.0f, material.base_color.y), std::max(0.0f, material.base_color.z)};
+                scene.materials.push_back(Scene::Material{
+                    .name = material.name,
+                    .entity = Scene::Entity{
+                        .type = "diffuse",
+                        .parameters = {rgb_parameter("reflectance", reflectance, {})},
+                    },
+                });
+            }
+            if (needs_volume_interface_material) {
+                constexpr std::string_view volume_interface_material_name = "__spectra_volume_interface";
+                if (names.contains(std::string{volume_interface_material_name})) throw std::runtime_error(std::format("Preview material \"{}\" conflicts with a reserved canonical volume material name", volume_interface_material_name));
+                scene.materials.push_back(Scene::Material{
+                    .name = std::string{volume_interface_material_name},
+                    .entity = Scene::Entity{.type = "interface"},
+                });
+            }
+        }
+
+        void append_mesh_shape(Scene::ResolvedScene& scene, const Scene::Mesh& mesh) {
+            if (mesh.name.empty()) throw std::runtime_error("Preview mesh name must not be empty when building canonical scene");
+            if (mesh.material_name.empty()) throw std::runtime_error(std::format("Preview mesh \"{}\" material name must not be empty when building canonical scene", mesh.name));
+            if (mesh.positions.empty()) throw std::runtime_error(std::format("Preview mesh \"{}\" has no positions when building canonical scene", mesh.name));
+            if (mesh.normals.size() != mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" normal count does not match position count when building canonical scene", mesh.name));
+            if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("Preview mesh \"{}\" has invalid triangle indices when building canonical scene", mesh.name));
+            std::vector<float> positions{};
+            std::vector<float> normals{};
+            std::vector<int> indices{};
+            positions.reserve(mesh.positions.size() * 3u);
+            normals.reserve(mesh.normals.size() * 3u);
+            indices.reserve(mesh.indices.size());
+            const std::string context = std::format("Preview mesh \"{}\"", mesh.name);
+            for (std::size_t index = 0u; index < mesh.positions.size(); ++index) {
+                const Vector3 point = transform_point(mesh.transform, mesh.positions.at(index), context);
+                const Vector3 normal = transform_normal(mesh.transform, mesh.normals.at(index), context);
+                positions.insert(positions.end(), {point.x, point.y, point.z});
+                normals.insert(normals.end(), {normal.x, normal.y, normal.z});
+            }
+            for (const std::uint32_t index : mesh.indices) {
+                if (index >= mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" has an out-of-range triangle index when building canonical scene", mesh.name));
+                if (index > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error(std::format("Preview mesh \"{}\" triangle index exceeds PBRT integer range", mesh.name));
+                indices.push_back(static_cast<int>(index));
+            }
+            scene.shapes.push_back(Scene::Shape{
+                .name = mesh.name,
+                .entity = Scene::Entity{
+                    .type = "trianglemesh",
+                    .parameters = {
+                        point3_parameter("P", std::move(positions), mesh.source),
+                        normal_parameter("N", std::move(normals), mesh.source),
+                        integer_parameter("indices", std::move(indices), mesh.source),
+                    },
+                    .source = mesh.source,
+                },
+                .material_name = mesh.material_name,
+            });
+        }
+
+        void append_point_cloud_shapes(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::PointCloud& point_cloud) {
+            if (point_cloud.name.empty()) throw std::runtime_error("Preview point cloud name must not be empty when building canonical scene");
+            if (point_cloud.positions.size() != point_cloud.radii.size()) throw std::runtime_error(std::format("Preview point cloud \"{}\" radius count does not match point count when building canonical scene", point_cloud.name));
+            const Scene::PreviewMaterial* material = find_preview_material(document, point_cloud.material_name);
+            if (material == nullptr) throw std::runtime_error(std::format("Preview point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
+            const float material_scale = std::max(1.0e-4f, preview_scalar(material->base_color));
+            const std::string context = std::format("Preview point cloud \"{}\"", point_cloud.name);
+            for (std::size_t index = 0u; index < point_cloud.positions.size(); ++index) {
+                const float radius = point_cloud.radii.at(index);
+                if (!std::isfinite(radius) || radius <= 0.0f) throw std::runtime_error(std::format("Preview point cloud \"{}\" has an invalid radius", point_cloud.name));
+                const Vector3 point = transform_point(point_cloud.transform, point_cloud.positions.at(index), context);
+                const float point_scale = point_cloud.colors.size() == point_cloud.positions.size() ? std::max(1.0e-4f, preview_scalar(point_cloud.colors.at(index))) : 1.0f;
+                const std::string material_name = std::format("{}.__point_material_{}", point_cloud.name, index);
+                scene.materials.push_back(Scene::Material{
+                    .name = material_name,
+                    .entity = Scene::Entity{
+                        .type = "diffuse",
+                        .parameters = {rgb_parameter("reflectance", Vector3{material_scale * point_scale, material_scale * point_scale, material_scale * point_scale}, point_cloud.source)},
+                        .source = point_cloud.source,
+                    },
+                });
+                scene.shapes.push_back(Scene::Shape{
+                    .name = std::format("{}.__point_{}", point_cloud.name, index),
+                    .entity = Scene::Entity{
+                        .type = "sphere",
+                        .parameters = {float_parameter("radius", {radius}, point_cloud.source)},
+                        .source = point_cloud.source,
+                    },
+                    .transform = SceneTransformSet{.start = make_translation_transform(point), .end = make_translation_transform(point)},
+                    .material_name = material_name,
+                });
+            }
+        }
+
+        [[nodiscard]] const Scene::VolumeChannel* find_volume_channel(const Scene::VolumeGrid& volume, const std::string_view name) {
+            for (const Scene::VolumeChannel& channel : volume.channels)
+                if (channel.name == name) return &channel;
+            return nullptr;
+        }
+
+        void append_volume(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::VolumeGrid& volume) {
+            if (volume.name.empty()) throw std::runtime_error("Preview volume name must not be empty when building canonical scene");
+            const Scene::PreviewMaterial* material = find_preview_material(document, volume.material_name);
+            if (material == nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
+            const Scene::VolumeChannel* density = find_volume_channel(volume, "density");
+            if (density == nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" requires a density channel for canonical path tracing", volume.name));
+            const Scene::VolumeChannel* temperature = find_volume_channel(volume, "temperature");
+            const std::uint64_t value_count = static_cast<std::uint64_t>(volume.dimensions[0]) * static_cast<std::uint64_t>(volume.dimensions[1]) * static_cast<std::uint64_t>(volume.dimensions[2]);
+            if (density->values.size() != value_count) throw std::runtime_error(std::format("Preview volume \"{}\" density count does not match dimensions", volume.name));
+            std::vector<Scene::Parameter> parameters{
+                integer_parameter("nx", {static_cast<int>(volume.dimensions[0])}, volume.source),
+                integer_parameter("ny", {static_cast<int>(volume.dimensions[1])}, volume.source),
+                integer_parameter("nz", {static_cast<int>(volume.dimensions[2])}, volume.source),
+                float_parameter("density", density->values, volume.source),
+                float_parameter("scale", {material->volume_density_scale}, volume.source),
+                float_parameter("temperaturescale", {material->volume_temperature_scale}, volume.source),
+                rgb_parameter("sigma_a", Vector3{0.08f, 0.08f, 0.08f}, volume.source),
+                rgb_parameter("sigma_s", Vector3{0.92f, 0.92f, 0.92f}, volume.source),
+            };
+            if (temperature != nullptr) {
+                if (temperature->values.size() != value_count) throw std::runtime_error(std::format("Preview volume \"{}\" temperature count does not match dimensions", volume.name));
+                parameters.push_back(float_parameter("temperature", temperature->values, volume.source));
+            }
+            const std::string medium_name = std::format("{}.__medium", volume.name);
+            scene.media.push_back(Scene::Medium{
+                .name = medium_name,
+                .entity = Scene::Entity{.type = "uniformgrid", .parameters = std::move(parameters), .source = volume.source},
+            });
+
+            const Vector3 p0 = volume.origin;
+            const Vector3 p1{
+                volume.origin.x + static_cast<float>(volume.dimensions[0]) * volume.voxel_size.x,
+                volume.origin.y + static_cast<float>(volume.dimensions[1]) * volume.voxel_size.y,
+                volume.origin.z + static_cast<float>(volume.dimensions[2]) * volume.voxel_size.z,
+            };
+            std::vector<float> positions{
+                p0.x, p0.y, p0.z, p1.x, p0.y, p0.z, p1.x, p1.y, p0.z, p0.x, p1.y, p0.z,
+                p0.x, p0.y, p1.z, p1.x, p0.y, p1.z, p1.x, p1.y, p1.z, p0.x, p1.y, p1.z,
+            };
+            std::vector<float> normals{
+                0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, -1.0f,
+                0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+            };
+            std::vector<int> indices{0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0};
+            scene.shapes.push_back(Scene::Shape{
+                .name = std::format("{}.__medium_boundary", volume.name),
+                .entity = Scene::Entity{
+                    .type = "trianglemesh",
+                    .parameters = {
+                        point3_parameter("P", std::move(positions), volume.source),
+                        normal_parameter("N", std::move(normals), volume.source),
+                        integer_parameter("indices", std::move(indices), volume.source),
+                    },
+                    .source = volume.source,
+                },
+                .material_name = "__spectra_volume_interface",
+                .medium_interface = Scene::MediumInterface{.inside = medium_name},
+            });
+        }
+
+        void append_preview_lights(Scene::ResolvedScene& scene, const Scene::Document& document) {
+            for (const Scene::PreviewLight& light : document.lights) {
+                if (light.name.empty()) throw std::runtime_error("Preview light name must not be empty when building canonical scene");
+                if (light.kind != Scene::PreviewLightKind::Directional && light.kind != Scene::PreviewLightKind::Environment) throw std::runtime_error(std::format("Preview light \"{}\" uses a light kind that is not mapped to canonical path tracing yet", light.name));
+                scene.lights.push_back(Scene::Light{
+                    .name = light.name,
+                    .entity = Scene::Entity{
+                        .type = light.kind == Scene::PreviewLightKind::Environment ? "infinite" : "distant",
+                        .parameters = {
+                            rgb_parameter("L", light.color, light.source),
+                            float_parameter("scale", {light.intensity}, light.source),
+                        },
+                        .source = light.source,
+                    },
+                });
+            }
+        }
+
+        [[nodiscard]] SceneTransform make_look_at_transform(const Vector3 eye, const Vector3 target, const Vector3 up) {
+            const Vector3 forward = normalize(target - eye, "canonical camera forward");
+            const Vector3 right = normalize(cross(normalize(up, "canonical camera up"), forward), "canonical camera right");
+            const Vector3 camera_up = cross(forward, right);
+            SceneTransform transform{};
+            transform.matrix = {
+                right.x, camera_up.x, forward.x, eye.x,
+                right.y, camera_up.y, forward.y, eye.y,
+                right.z, camera_up.z, forward.z, eye.z,
+                0.0f, 0.0f, 0.0f, 1.0f,
+            };
+            transform.inverse = {
+                right.x, right.y, right.z, -dot(right, eye),
+                camera_up.x, camera_up.y, camera_up.z, -dot(camera_up, eye),
+                forward.x, forward.y, forward.z, -dot(forward, eye),
+                0.0f, 0.0f, 0.0f, 1.0f,
+            };
+            return transform;
+        }
+
+        [[nodiscard]] Scene::ResolvedScene make_resolved_scene_from_preview(const Scene::Document& document, const Scene::ResolvedFrame& frame, const Scene::Revision revision) {
+            if (document.name.empty()) throw std::runtime_error("Preview document name must not be empty when building canonical scene");
+            if (!document.camera.has_value()) throw std::runtime_error(std::format("Preview document \"{}\" requires a camera for canonical path tracing", document.name));
+            Scene::ResolvedScene scene{
+                .revision = revision,
+                .name = document.name,
+                .title = document.title.empty() ? document.name : document.title,
+                .source = document.source.empty() ? std::format("scene://{}", document.name) : document.source,
+            };
+            scene.render_settings.camera = Scene::Entity{
+                .type = "perspective",
+                .parameters = {float_parameter("fov", {document.camera->vertical_fov_degrees}, document.camera->source)},
+                .source = document.camera->source,
+            };
+            scene.render_settings.camera_transform = SceneTransformSet{.start = make_look_at_transform(document.camera->transform.position, document.camera->target, document.camera->up), .end = make_look_at_transform(document.camera->transform.position, document.camera->target, document.camera->up)};
+            append_canonical_materials(scene, document, !frame.volumes.empty());
+            append_preview_lights(scene, document);
+            for (const Scene::Mesh& mesh : frame.meshes) append_mesh_shape(scene, mesh);
+            for (const Scene::PointCloud& point_cloud : frame.point_clouds) append_point_cloud_shapes(scene, document, point_cloud);
+            for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume);
+            if (scene.shapes.empty()) throw std::runtime_error(std::format("Preview document \"{}\" produced no canonical pathtracer shapes", document.name));
+            return scene;
+        }
     } // namespace
 
     void Scene::CameraWorkspace::ensure_camera(std::string scene_id, Scene::CameraState state) {
@@ -100,6 +538,79 @@ namespace spectra::scene {
         this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Frame);
     }
 
+    Scene::Builder::Builder(std::string name, std::string title, std::string source) {
+        if (name.empty()) throw std::runtime_error("Scene builder requires a non-empty scene name");
+        if (title.empty()) throw std::runtime_error("Scene builder requires a non-empty scene title");
+        if (source.empty()) throw std::runtime_error("Scene builder requires a non-empty scene source");
+        this->scene.name = std::move(name);
+        this->scene.title = std::move(title);
+        this->scene.source = std::move(source);
+        this->scene.revision = Scene::Revision{1};
+    }
+
+    void Scene::Builder::set_revision(const Scene::Revision revision) {
+        if (revision.value == 0u) throw std::runtime_error("Scene builder revision must not be zero");
+        this->scene.revision = revision;
+    }
+
+    void Scene::Builder::set_render_settings(Scene::RenderSettings render_settings) {
+        this->scene.render_settings = std::move(render_settings);
+    }
+
+    void Scene::Builder::add_material(Scene::Material material) {
+        if (material.name.empty()) throw std::runtime_error("Scene builder material name must not be empty");
+        for (const Scene::Material& existing : this->scene.materials) if (existing.name == material.name) throw std::runtime_error(std::format("Scene builder material \"{}\" is duplicated", material.name));
+        this->scene.materials.push_back(std::move(material));
+    }
+
+    void Scene::Builder::add_texture(Scene::Texture texture) {
+        if (texture.name.empty()) throw std::runtime_error("Scene builder texture name must not be empty");
+        for (const Scene::Texture& existing : this->scene.textures) if (existing.name == texture.name) throw std::runtime_error(std::format("Scene builder texture \"{}\" is duplicated", texture.name));
+        this->scene.textures.push_back(std::move(texture));
+    }
+
+    void Scene::Builder::add_medium(Scene::Medium medium) {
+        if (medium.name.empty()) throw std::runtime_error("Scene builder medium name must not be empty");
+        for (const Scene::Medium& existing : this->scene.media) if (existing.name == medium.name) throw std::runtime_error(std::format("Scene builder medium \"{}\" is duplicated", medium.name));
+        this->scene.media.push_back(std::move(medium));
+    }
+
+    void Scene::Builder::add_light(Scene::Light light) {
+        if (light.name.empty()) throw std::runtime_error("Scene builder light name must not be empty");
+        for (const Scene::Light& existing : this->scene.lights) if (existing.name == light.name) throw std::runtime_error(std::format("Scene builder light \"{}\" is duplicated", light.name));
+        this->scene.lights.push_back(std::move(light));
+    }
+
+    void Scene::Builder::add_shape(Scene::Shape shape) {
+        if (shape.name.empty()) throw std::runtime_error("Scene builder shape name must not be empty");
+        for (const Scene::Shape& existing : this->scene.shapes) if (existing.name == shape.name) throw std::runtime_error(std::format("Scene builder shape \"{}\" is duplicated", shape.name));
+        this->scene.shapes.push_back(std::move(shape));
+    }
+
+    void Scene::Builder::add_object_definition(Scene::ObjectDefinition definition) {
+        if (definition.name.empty()) throw std::runtime_error("Scene builder object definition name must not be empty");
+        for (const Scene::ObjectDefinition& existing : this->scene.object_definitions) if (existing.name == definition.name) throw std::runtime_error(std::format("Scene builder object definition \"{}\" is duplicated", definition.name));
+        this->scene.object_definitions.push_back(std::move(definition));
+    }
+
+    void Scene::Builder::add_object_instance(Scene::ObjectInstance instance) {
+        if (instance.name.empty()) throw std::runtime_error("Scene builder object instance name must not be empty");
+        if (instance.definition_name.empty()) throw std::runtime_error(std::format("Scene builder object instance \"{}\" definition name must not be empty", instance.name));
+        for (const Scene::ObjectInstance& existing : this->scene.object_instances) if (existing.name == instance.name) throw std::runtime_error(std::format("Scene builder object instance \"{}\" is duplicated", instance.name));
+        this->scene.object_instances.push_back(std::move(instance));
+    }
+
+    Scene::ResolvedScene Scene::Builder::resolved_scene() && {
+        if (this->scene.revision.value == 0u) throw std::runtime_error("Scene builder revision must not be zero");
+        validate_canonical_scene(this->scene);
+        return std::move(this->scene);
+    }
+
+    Scene Scene::Builder::build() && {
+        Scene::ResolvedScene scene = std::move(*this).resolved_scene();
+        return Scene{std::move(scene)};
+    }
+
     Scene::Scene(Scene::Document document) {
         if (document.revision.value == 0) document.revision = Scene::Revision{1};
         this->current_revision = document.revision;
@@ -107,34 +618,82 @@ namespace spectra::scene {
         this->current_timeline.frames_per_second = this->current_document->frames_per_second;
     }
 
+    Scene::Scene(Scene::ResolvedScene scene) {
+        if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
+        validate_canonical_scene(scene);
+        this->current_revision = scene.revision;
+        this->canonical_scene = std::move(scene);
+    }
+
+    Scene::Scene(Scene::ResolvedScene scene, Scene::Document preview_document) {
+        if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
+        if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
+        validate_canonical_scene(scene);
+        this->current_revision = scene.revision;
+        this->current_document = std::make_shared<Scene::Document>(std::move(preview_document));
+        this->current_timeline.frames_per_second = this->current_document->frames_per_second;
+        this->canonical_scene = std::move(scene);
+    }
+
     Scene::Revision Scene::revision() const {
-        if (this->current_document == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
+        if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
         return this->current_revision;
     }
 
     std::shared_ptr<const Scene::Document> Scene::document() const {
-        if (this->current_document == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
+        static_cast<void>(this->preview_document());
         return this->current_document;
     }
 
     Scene::Timeline Scene::timeline() const {
-        if (this->current_document == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
+        if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
         return this->current_timeline;
     }
 
     Scene::ResolvedFrame Scene::resolved_frame() const {
-        if (this->current_document == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
+        const Scene::Document& document = this->preview_document();
         const Scene::FrameSnapshot empty_frame{};
         const Scene::FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
         return Scene::ResolvedFrame{
-            .meshes          = resolve_scene_items(this->current_document->meshes, frame_value.meshes, "mesh"),
-            .point_clouds     = resolve_scene_items(this->current_document->point_clouds, frame_value.point_clouds, "point cloud"),
-            .volumes         = resolve_scene_items(this->current_document->volumes, frame_value.volumes, "volume"),
+            .meshes          = resolve_scene_items(document.meshes, frame_value.meshes, "mesh"),
+            .point_clouds     = resolve_scene_items(document.point_clouds, frame_value.point_clouds, "point cloud"),
+            .volumes         = resolve_scene_items(document.volumes, frame_value.volumes, "volume"),
         };
     }
 
+    Scene::ResolvedScene Scene::resolved_scene() const {
+        if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
+        if (this->canonical_scene.has_value() && !this->current_timeline.current_frame.has_value()) {
+            Scene::ResolvedScene scene = *this->canonical_scene;
+            scene.revision = this->current_revision;
+            validate_canonical_scene(scene);
+            return scene;
+        }
+        const Scene::Document& document = this->preview_document();
+        Scene::ResolvedScene scene = make_resolved_scene_from_preview(document, this->resolved_frame(), this->current_revision);
+        validate_canonical_scene(scene);
+        return scene;
+    }
+
+    Scene::Info Scene::info() const {
+        return describe_scene(this->resolved_scene());
+    }
+
+    Scene::Document Scene::make_preview_document() const {
+        return this->preview_document();
+    }
+
+    const Scene::Document& Scene::preview_document() const {
+        if (this->current_document != nullptr) return *this->current_document;
+        if (!this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
+        Scene::Document preview_document = make_preview_document_from_pbrt(*this->canonical_scene);
+        if (preview_document.revision.value == 0) preview_document.revision = this->current_revision;
+        this->current_document = std::make_shared<Scene::Document>(std::move(preview_document));
+        return *this->current_document;
+    }
+
     Scene::DirtyFlags Scene::commit(Scene::Edit edit) {
-        if (this->current_document == nullptr) throw std::runtime_error("Cannot edit an unloaded scene workspace");
+        if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Cannot edit an unloaded scene workspace");
         if (edit.dirty == Scene::DirtyFlags::None) throw std::runtime_error("Cannot commit an empty scene edit");
 
         this->current_revision = Scene::Revision{this->current_revision.value + 1};
@@ -199,8 +758,8 @@ namespace spectra::scene {
             });
         }
 
-        [[nodiscard]] const std::vector<float>& required_float_values(const PbrtScene::Entity& entity, const std::string_view type, const std::string_view name, const std::string_view context) {
-            for (const PbrtScene::Parameter& parameter : entity.parameters) {
+        [[nodiscard]] const std::vector<float>& required_float_values(const Scene::Entity& entity, const std::string_view type, const std::string_view name, const std::string_view context) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != type || parameter.name != name) continue;
                 const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
                 if (values == nullptr) throw std::runtime_error(std::format("{} parameter \"{}\" must contain float values", context, name));
@@ -209,8 +768,8 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} requires \"{} {}\"", context, type, name));
         }
 
-        [[nodiscard]] const std::vector<int>& required_int_values(const PbrtScene::Entity& entity, const std::string_view name, const std::string_view context) {
-            for (const PbrtScene::Parameter& parameter : entity.parameters) {
+        [[nodiscard]] const std::vector<int>& required_int_values(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "integer" || parameter.name != name) continue;
                 const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
                 if (values == nullptr) throw std::runtime_error(std::format("{} parameter \"{}\" must contain integer values", context, name));
@@ -219,14 +778,14 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} requires \"integer {}\"", context, name));
         }
 
-        [[nodiscard]] Vector3 required_rgb_value(const PbrtScene::Entity& entity, const std::string_view name, const std::string_view context) {
+        [[nodiscard]] Vector3 required_rgb_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
             const std::vector<float>& values = required_float_values(entity, "rgb", name, context);
             if (values.size() != 3u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly three RGB values", context, name));
             return Vector3{values.at(0), values.at(1), values.at(2)};
         }
 
-        [[nodiscard]] float required_one_float_value(const PbrtScene::Entity& entity, const std::string_view name, const std::string_view context) {
-            for (const PbrtScene::Parameter& parameter : entity.parameters) {
+        [[nodiscard]] float required_one_float_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "float" || parameter.name != name) continue;
                 const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
                 if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one float", context, name));
@@ -235,7 +794,7 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} requires \"float {}\"", context, name));
         }
 
-        [[nodiscard]] Vector3 transform_point(const PbrtSceneTransform& transform, const Vector3 point) {
+        [[nodiscard]] Vector3 transform_point(const SceneTransform& transform, const Vector3 point) {
             const std::array<float, 16>& matrix = transform.matrix;
             const float x = matrix_value(matrix, 0u, 0u) * point.x + matrix_value(matrix, 0u, 1u) * point.y + matrix_value(matrix, 0u, 2u) * point.z + matrix_value(matrix, 0u, 3u);
             const float y = matrix_value(matrix, 1u, 0u) * point.x + matrix_value(matrix, 1u, 1u) * point.y + matrix_value(matrix, 1u, 2u) * point.z + matrix_value(matrix, 1u, 3u);
@@ -245,7 +804,7 @@ namespace spectra::scene {
             return Vector3{x / w, y / w, z / w};
         }
 
-        [[nodiscard]] Vector3 transform_normal(const PbrtSceneTransform& transform, const Vector3 normal) {
+        [[nodiscard]] Vector3 transform_normal(const SceneTransform& transform, const Vector3 normal) {
             const std::array<float, 16>& inverse = transform.inverse;
             const Vector3 transformed{
                 matrix_value(inverse, 0u, 0u) * normal.x + matrix_value(inverse, 1u, 0u) * normal.y + matrix_value(inverse, 2u, 0u) * normal.z,
@@ -255,11 +814,11 @@ namespace spectra::scene {
             return normalize(transformed, "PBRT preview mesh normal transform");
         }
 
-        void require_static_transform(const PbrtSceneTransformSet& transform, const std::string_view context) {
+        void require_static_transform(const SceneTransformSet& transform, const std::string_view context) {
             if (transform.animated) throw std::runtime_error(std::format("{} uses animated transforms, which are not supported by the PBRT preview scene loader", context));
         }
 
-        [[nodiscard]] std::string object_source_prefix(const PbrtScene::Snapshot& scene) {
+        [[nodiscard]] std::string object_source_prefix(const Scene::ResolvedScene& scene) {
             if (scene.source.empty()) throw std::runtime_error("PBRT preview scene source must not be empty");
             if (scene.source.starts_with("pbrt://")) return scene.source;
             return std::format("pbrt://{}", scene.source);
@@ -269,27 +828,27 @@ namespace spectra::scene {
             return std::format("{}#shape:{}", object_source_prefix_value, shape_index);
         }
 
-        [[nodiscard]] std::set<std::string> referenced_shape_material_names(const PbrtScene::Snapshot& scene) {
+        [[nodiscard]] std::set<std::string> referenced_shape_material_names(const Scene::ResolvedScene& scene) {
             std::set<std::string> names{};
-            for (const PbrtScene::Shape& shape : scene.shapes) {
+            for (const Scene::Shape& shape : scene.shapes) {
                 if (shape.material_name.empty()) throw std::runtime_error("PBRT preview shape references an empty material name");
                 names.insert(shape.material_name);
             }
             return names;
         }
 
-        [[nodiscard]] std::map<std::string, std::size_t> append_materials(const PbrtScene::Snapshot& scene, const std::set<std::string>& referenced_material_names, Scene::Document& document) {
+        [[nodiscard]] std::map<std::string, std::size_t> append_materials(const Scene::ResolvedScene& scene, const std::set<std::string>& referenced_material_names, Scene::Document& document) {
             std::map<std::string, std::size_t> material_indices{};
-            for (const PbrtScene::Material& material : scene.materials) {
+            for (const Scene::Material& material : scene.materials) {
                 if (!referenced_material_names.contains(material.name)) continue;
                 if (material.name.empty()) throw std::runtime_error("PBRT preview material name must not be empty");
                 if (material.entity.type != "diffuse") throw std::runtime_error(std::format("PBRT preview material \"{}\" uses unsupported type \"{}\"", material.name, material.entity.type));
                 const Vector3 reflectance = required_rgb_value(material.entity, "reflectance", std::format("PBRT preview material \"{}\"", material.name));
                 const bool inserted = material_indices.emplace(material.name, document.materials.size()).second;
                 if (!inserted) throw std::runtime_error(std::format("PBRT preview material \"{}\" is duplicated", material.name));
-                document.materials.push_back(Scene::Material{
+                document.materials.push_back(Scene::PreviewMaterial{
                     .name       = material.name,
-                    .model      = Scene::MaterialModel::LitSurface,
+                    .surface_kind = Scene::PreviewSurfaceKind::LitSurface,
                     .base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f},
                     .roughness  = 0.72f,
                 });
@@ -300,25 +859,25 @@ namespace spectra::scene {
             return material_indices;
         }
 
-        [[nodiscard]] Scene::Material& material_for_name(Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, const std::string& name) {
+        [[nodiscard]] Scene::PreviewMaterial& material_for_name(Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, const std::string& name) {
             const std::map<std::string, std::size_t>::const_iterator iter = material_indices.find(name);
             if (iter == material_indices.end()) throw std::runtime_error(std::format("PBRT preview shape references unknown material \"{}\"", name));
             return document.materials.at(iter->second);
         }
 
-        void apply_area_light_material(const PbrtScene::Shape& shape, const std::size_t shape_index, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices) {
+        void apply_area_light_material(const Scene::Shape& shape, const std::size_t shape_index, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices) {
             if (!shape.area_light.has_value()) return;
             const std::string context = std::format("PBRT preview shape #{}", shape_index);
             if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
-            Scene::Material& material = material_for_name(document, material_indices, shape.material_name);
+            Scene::PreviewMaterial& material = material_for_name(document, material_indices, shape.material_name);
             const Vector3 radiance = required_rgb_value(shape.area_light->entity, "L", context);
             if (material.emission_strength != 0.0f && (material.emission_color.x != radiance.x || material.emission_color.y != radiance.y || material.emission_color.z != radiance.z)) throw std::runtime_error(std::format("PBRT preview material \"{}\" is reused by area lights with different radiance", material.name));
-            material.model             = Scene::MaterialModel::EmissiveSurface;
+            material.surface_kind      = Scene::PreviewSurfaceKind::EmissiveSurface;
             material.emission_color    = radiance;
             material.emission_strength = 1.0f;
         }
 
-        [[nodiscard]] Scene::Mesh make_mesh(const std::string_view object_source_prefix_value, const PbrtScene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
+        [[nodiscard]] Scene::Mesh make_mesh(const std::string_view object_source_prefix_value, const Scene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             const std::string context = std::format("PBRT preview shape #{}", shape_index);
             if (shape.entity.type != "trianglemesh") throw std::runtime_error(std::format("PBRT preview scene loader only supports trianglemesh shapes, got \"{}\"", shape.entity.type));
             require_static_transform(shape.transform, context);
@@ -360,10 +919,10 @@ namespace spectra::scene {
             return mesh;
         }
 
-        void append_meshes(const std::string_view object_source_prefix_value, const PbrtScene::Snapshot& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
+        void append_meshes(const std::string_view object_source_prefix_value, const Scene::ResolvedScene& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             std::map<std::string, bool> material_used_by_area_light{};
             for (std::size_t shape_index = 0; shape_index < scene.shapes.size(); ++shape_index) {
-                const PbrtScene::Shape& shape = scene.shapes.at(shape_index);
+                const Scene::Shape& shape = scene.shapes.at(shape_index);
                 const bool is_area_light = shape.area_light.has_value();
                 const std::pair<std::map<std::string, bool>::iterator, bool> material_usage = material_used_by_area_light.emplace(shape.material_name, is_area_light);
                 if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(std::format("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
@@ -374,7 +933,7 @@ namespace spectra::scene {
             if (document.meshes.empty()) throw std::runtime_error("PBRT preview scene loader did not find any trianglemesh shapes");
         }
 
-        [[nodiscard]] Scene::Camera make_camera(const PbrtScene::Snapshot& scene, const Bounds& bounds) {
+        [[nodiscard]] Scene::Camera make_camera(const Scene::ResolvedScene& scene, const Bounds& bounds) {
             if (scene.render_settings.camera.type != "perspective") throw std::runtime_error(std::format("PBRT preview scene loader only supports perspective cameras, got \"{}\"", scene.render_settings.camera.type));
             require_static_transform(scene.render_settings.camera_transform, "PBRT preview camera");
             const std::array<float, 16>& world_from_camera = scene.render_settings.camera_transform.start.matrix;
@@ -396,7 +955,7 @@ namespace spectra::scene {
             };
         }
 
-        void reject_unsupported_scene_content(const PbrtScene::Snapshot& scene) {
+        void reject_unsupported_scene_content(const Scene::ResolvedScene& scene) {
             if (!scene.textures.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT textures");
             if (!scene.media.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT media");
             if (!scene.lights.empty()) throw std::runtime_error("PBRT preview scene loader only supports mesh area lights");
@@ -404,7 +963,7 @@ namespace spectra::scene {
         }
     } // namespace
 
-    Scene::Document make_preview_document_from_pbrt(const PbrtScene::Snapshot& scene) {
+    Scene::Document make_preview_document_from_pbrt(const Scene::ResolvedScene& scene) {
         reject_unsupported_scene_content(scene);
         if (scene.revision.value == 0u) throw std::runtime_error("PBRT preview scene revision must not be zero");
         if (scene.name.empty()) throw std::runtime_error("PBRT preview scene name must not be empty");
@@ -424,9 +983,9 @@ namespace spectra::scene {
         const std::map<std::string, std::size_t> material_indices = append_materials(scene, referenced_material_names, document);
         append_meshes(object_source_prefix_value, scene, document, material_indices, bounds);
         document.camera = make_camera(scene, bounds);
-        document.lights.push_back(Scene::Light{
+        document.lights.push_back(Scene::PreviewLight{
             .name      = "preview.key",
-            .kind      = Scene::LightKind::Directional,
+            .kind      = Scene::PreviewLightKind::Directional,
             .color     = Vector3{1.0f, 0.96f, 0.86f},
             .intensity = 1.8f,
         });
@@ -462,7 +1021,7 @@ namespace spectra::scene {
             return Lowercase(path.extension().string()) == Lowercase(std::string(extension));
         }
 
-        [[nodiscard]] bool IsPbrtSceneFile(const std::filesystem::path& path) {
+        [[nodiscard]] bool IsSceneFile(const std::filesystem::path& path) {
             if (HasExtension(path, ".pbrt")) return true;
             if (!HasExtension(path, ".gz")) return false;
             return HasExtension(path.stem(), ".pbrt");
@@ -751,22 +1310,22 @@ namespace spectra::scene {
             return inverse;
         }
 
-        [[nodiscard]] PbrtSceneTransform Multiply(const PbrtSceneTransform& a, const PbrtSceneTransform& b) {
-            return PbrtSceneTransform{
+        [[nodiscard]] SceneTransform Multiply(const SceneTransform& a, const SceneTransform& b) {
+            return SceneTransform{
                 .matrix  = MultiplyMatrix(a.matrix, b.matrix),
                 .inverse = MultiplyMatrix(b.inverse, a.inverse),
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform Inverse(const PbrtSceneTransform& transform) {
-            return PbrtSceneTransform{
+        [[nodiscard]] SceneTransform Inverse(const SceneTransform& transform) {
+            return SceneTransform{
                 .matrix  = transform.inverse,
                 .inverse = transform.matrix,
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform Translate(const Vector3 delta) {
-            return PbrtSceneTransform{
+        [[nodiscard]] SceneTransform Translate(const Vector3 delta) {
+            return SceneTransform{
                 .matrix =
                     {
                         1.0f,
@@ -808,8 +1367,8 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform Scale(float x, float y, float z) {
-            return PbrtSceneTransform{
+        [[nodiscard]] SceneTransform Scale(float x, float y, float z) {
+            return SceneTransform{
                 .matrix =
                     {
                         x,
@@ -851,7 +1410,7 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform Rotate(float degrees, Vector3 axis) {
+        [[nodiscard]] SceneTransform Rotate(float degrees, Vector3 axis) {
             constexpr float radiansPerDegree = 0.017453292519943295769f;
             axis                             = normalize(axis, "PBRT rotate axis");
             const float sinTheta             = std::sin(degrees * radiansPerDegree);
@@ -875,13 +1434,13 @@ namespace spectra::scene {
                 0.0f,
                 1.0f,
             };
-            return PbrtSceneTransform{
+            return SceneTransform{
                 .matrix  = matrix,
                 .inverse = TransposeMatrix(matrix),
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform LookAt(const Vector3 position, const Vector3 look, const Vector3 up) {
+        [[nodiscard]] SceneTransform LookAt(const Vector3 position, const Vector3 look, const Vector3 up) {
             const Vector3 direction = normalize(look - position, "PBRT LookAt direction");
             const Vector3 right     = normalize(cross(normalize(up, "PBRT LookAt up vector"), direction), "PBRT LookAt right vector");
             const Vector3 newUp     = cross(direction, right);
@@ -921,63 +1480,63 @@ namespace spectra::scene {
                 0.0f,
                 1.0f,
             };
-            return PbrtSceneTransform{
+            return SceneTransform{
                 .matrix  = cameraFromWorld,
                 .inverse = worldFromCamera,
             };
         }
 
-        [[nodiscard]] PbrtSceneTransform TransformFromPbrtMatrix(const std::array<float, 16>& pbrtMatrix, const Scene::SourceLocation& source) {
+        [[nodiscard]] SceneTransform TransformFromPbrtMatrix(const std::array<float, 16>& pbrtMatrix, const Scene::SourceLocation& source) {
             const std::array<float, 16> matrix = TransposeMatrix(pbrtMatrix);
-            return PbrtSceneTransform{
+            return SceneTransform{
                 .matrix  = matrix,
                 .inverse = InverseMatrix(matrix, source),
             };
         }
 
-        [[nodiscard]] bool TransformDiffers(const PbrtSceneTransform& left, const PbrtSceneTransform& right) {
+        [[nodiscard]] bool TransformDiffers(const SceneTransform& left, const SceneTransform& right) {
             return left.matrix != right.matrix || left.inverse != right.inverse;
         }
 
-        void RefreshAnimatedFlag(PbrtSceneTransformSet* transform) {
+        void RefreshAnimatedFlag(SceneTransformSet* transform) {
             transform->animated = TransformDiffers(transform->start, transform->end);
         }
 
-        void ApplyTransform(PbrtSceneTransformSet* transform, const PbrtSceneTransform& value, const bool startActive, const bool endActive) {
+        void ApplyTransform(SceneTransformSet* transform, const SceneTransform& value, const bool startActive, const bool endActive) {
             if (startActive) transform->start = Multiply(transform->start, value);
             if (endActive) transform->end = Multiply(transform->end, value);
             RefreshAnimatedFlag(transform);
         }
 
-        void SetTransform(PbrtSceneTransformSet* transform, const PbrtSceneTransform& value, const bool startActive, const bool endActive) {
+        void SetTransform(SceneTransformSet* transform, const SceneTransform& value, const bool startActive, const bool endActive) {
             if (startActive) transform->start = value;
             if (endActive) transform->end = value;
             RefreshAnimatedFlag(transform);
         }
 
-        [[nodiscard]] PbrtScene::ColorSpace ParseColorSpaceName(const std::string& name, const Scene::SourceLocation& source) {
+        [[nodiscard]] Scene::ColorSpace ParseColorSpaceName(const std::string& name, const Scene::SourceLocation& source) {
             const std::string lower = Lowercase(name);
-            if (lower == "srgb") return PbrtScene::ColorSpace::sRGB;
-            if (lower == "dci-p3") return PbrtScene::ColorSpace::DCI_P3;
-            if (lower == "rec2020") return PbrtScene::ColorSpace::Rec2020;
-            if (lower == "aces2065-1") return PbrtScene::ColorSpace::ACES2065_1;
+            if (lower == "srgb") return Scene::ColorSpace::sRGB;
+            if (lower == "dci-p3") return Scene::ColorSpace::DCI_P3;
+            if (lower == "rec2020") return Scene::ColorSpace::Rec2020;
+            if (lower == "aces2065-1") return Scene::ColorSpace::ACES2065_1;
             throw ParseError(source, std::format("\"{}\" is not a supported PBRT color space", name));
         }
 
-        [[nodiscard]] std::vector<std::string>* ParameterStringValues(PbrtScene::Parameter* parameter) {
+        [[nodiscard]] std::vector<std::string>* ParameterStringValues(Scene::Parameter* parameter) {
             return std::get_if<std::vector<std::string>>(&parameter->values);
         }
 
-        [[nodiscard]] const std::vector<std::string>* ParameterStringValues(const PbrtScene::Parameter& parameter) {
+        [[nodiscard]] const std::vector<std::string>* ParameterStringValues(const Scene::Parameter& parameter) {
             return std::get_if<std::vector<std::string>>(&parameter.values);
         }
 
-        [[nodiscard]] const std::vector<float>* ParameterFloatValues(const PbrtScene::Parameter& parameter) {
+        [[nodiscard]] const std::vector<float>* ParameterFloatValues(const Scene::Parameter& parameter) {
             return std::get_if<std::vector<float>>(&parameter.values);
         }
 
-        [[nodiscard]] std::string OneStringParameter(const std::vector<PbrtScene::Parameter>& parameters, const std::string& name, std::string default_value) {
-            for (const PbrtScene::Parameter& parameter : parameters) {
+        [[nodiscard]] std::string OneStringParameter(const std::vector<Scene::Parameter>& parameters, const std::string& name, std::string default_value) {
+            for (const Scene::Parameter& parameter : parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = ParameterStringValues(parameter);
                 if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, std::format("PBRT string parameter \"{}\" must contain exactly one string value", name));
@@ -986,8 +1545,8 @@ namespace spectra::scene {
             return default_value;
         }
 
-        [[nodiscard]] float OneFloatParameter(const std::vector<PbrtScene::Parameter>& parameters, const std::string& name, const float default_value) {
-            for (const PbrtScene::Parameter& parameter : parameters) {
+        [[nodiscard]] float OneFloatParameter(const std::vector<Scene::Parameter>& parameters, const std::string& name, const float default_value) {
+            for (const Scene::Parameter& parameter : parameters) {
                 if (parameter.name != name) continue;
                 if (parameter.type != "float") throw ParseError(parameter.source, std::format("PBRT parameter \"{}\" must be declared as float", name));
                 const std::vector<float>* values = ParameterFloatValues(parameter);
@@ -1002,39 +1561,39 @@ namespace spectra::scene {
         }
 
         struct GraphicsState {
-            PbrtSceneTransformSet transform{};
+            SceneTransformSet transform{};
             bool activeStart{true};
             bool activeEnd{true};
-            PbrtScene::ColorSpace color_space{PbrtScene::ColorSpace::sRGB};
+            Scene::ColorSpace color_space{Scene::ColorSpace::sRGB};
             std::string currentMaterialName{DefaultMaterialName};
-            std::optional<PbrtScene::AreaLight> area_light{};
-            PbrtScene::MediumInterface medium_interface{};
+            std::optional<Scene::AreaLight> area_light{};
+            Scene::MediumInterface medium_interface{};
             bool reverse_orientation{false};
-            std::vector<PbrtScene::Parameter> shapeAttributes{};
-            std::vector<PbrtScene::Parameter> lightAttributes{};
-            std::vector<PbrtScene::Parameter> materialAttributes{};
-            std::vector<PbrtScene::Parameter> mediumAttributes{};
-            std::vector<PbrtScene::Parameter> textureAttributes{};
+            std::vector<Scene::Parameter> shapeAttributes{};
+            std::vector<Scene::Parameter> lightAttributes{};
+            std::vector<Scene::Parameter> materialAttributes{};
+            std::vector<Scene::Parameter> mediumAttributes{};
+            std::vector<Scene::Parameter> textureAttributes{};
         };
 
-        class PbrtSceneBuilder {
+        class ScenePbrtBuilder {
         public:
-            explicit PbrtSceneBuilder(std::filesystem::path inputFile) : inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
+            explicit ScenePbrtBuilder(std::filesystem::path inputFile) : inputFile(std::filesystem::absolute(std::move(inputFile)).lexically_normal()), searchDirectory(this->inputFile.parent_path()) {
                 this->scene.name   = this->inputFile.stem().string();
                 this->scene.title  = this->inputFile.stem().string();
                 this->scene.source = this->inputFile.string();
 
                 const Scene::SourceLocation source{.filename = this->inputFile.string(), .line = 1, .column = 1};
                 this->SetDefaultEntitySources(source);
-                this->scene.materials.push_back(PbrtScene::Material{
+                this->scene.materials.push_back(Scene::Material{
                     .name   = DefaultMaterialName,
-                    .entity = PbrtScene::Entity{.type = "diffuse", .color_space = PbrtScene::ColorSpace::sRGB, .source = source},
+                    .entity = Scene::Entity{.type = "diffuse", .color_space = Scene::ColorSpace::sRGB, .source = source},
                 });
                 this->material_names.insert(DefaultMaterialName);
                 this->namedCoordinateSystems["world"] = this->graphicsState.transform;
             }
 
-            [[nodiscard]] PbrtScene::Snapshot Parse() {
+            [[nodiscard]] Scene::ResolvedScene Parse() {
                 this->ParseFile(this->inputFile);
                 this->Finish();
                 return std::move(this->scene);
@@ -1063,8 +1622,8 @@ namespace spectra::scene {
                 return std::filesystem::absolute(path).lexically_normal();
             }
 
-            void ResolveParameterPaths(std::vector<PbrtScene::Parameter>* parameters, const EntityUse entityUse) const {
-                for (PbrtScene::Parameter& parameter : *parameters) {
+            void ResolveParameterPaths(std::vector<Scene::Parameter>* parameters, const EntityUse entityUse) const {
+                for (Scene::Parameter& parameter : *parameters) {
                     std::vector<std::string>* values = ParameterStringValues(&parameter);
                     if (values == nullptr) continue;
                     if (entityUse == EntityUse::Film && parameter.name == "filename") continue;
@@ -1083,23 +1642,23 @@ namespace spectra::scene {
                 }
             }
 
-            [[nodiscard]] std::vector<PbrtScene::Parameter> MergeParameters(const std::vector<PbrtScene::Parameter>& attributes, std::vector<PbrtScene::Parameter> parameters, const EntityUse entityUse) const {
-                std::vector<PbrtScene::Parameter> merged;
+            [[nodiscard]] std::vector<Scene::Parameter> MergeParameters(const std::vector<Scene::Parameter>& attributes, std::vector<Scene::Parameter> parameters, const EntityUse entityUse) const {
+                std::vector<Scene::Parameter> merged;
                 merged.reserve(attributes.size() + parameters.size());
-                for (PbrtScene::Parameter parameter : attributes) {
+                for (Scene::Parameter parameter : attributes) {
                     parameter.may_be_unused = true;
                     merged.push_back(std::move(parameter));
                 }
-                for (PbrtScene::Parameter& parameter : parameters) {
+                for (Scene::Parameter& parameter : parameters) {
                     merged.push_back(std::move(parameter));
                 }
                 this->ResolveParameterPaths(&merged, entityUse);
                 return merged;
             }
 
-            [[nodiscard]] PbrtScene::Entity Entity(std::string type, std::vector<PbrtScene::Parameter> parameters, const EntityUse entityUse, const Scene::SourceLocation& source, const PbrtScene::ColorSpace color_space) const {
+            [[nodiscard]] Scene::Entity Entity(std::string type, std::vector<Scene::Parameter> parameters, const EntityUse entityUse, const Scene::SourceLocation& source, const Scene::ColorSpace color_space) const {
                 this->ResolveParameterPaths(&parameters, entityUse);
-                return PbrtScene::Entity{
+                return Scene::Entity{
                     .type       = std::move(type),
                     .parameters = std::move(parameters),
                     .color_space = color_space,
@@ -1107,8 +1666,8 @@ namespace spectra::scene {
                 };
             }
 
-            [[nodiscard]] PbrtScene::Entity EntityWithAttributes(std::string type, std::vector<PbrtScene::Parameter> parameters, const std::vector<PbrtScene::Parameter>& attributes, const EntityUse entityUse, const Scene::SourceLocation& source, const PbrtScene::ColorSpace color_space) const {
-                return PbrtScene::Entity{
+            [[nodiscard]] Scene::Entity EntityWithAttributes(std::string type, std::vector<Scene::Parameter> parameters, const std::vector<Scene::Parameter>& attributes, const EntityUse entityUse, const Scene::SourceLocation& source, const Scene::ColorSpace color_space) const {
+                return Scene::Entity{
                     .type       = std::move(type),
                     .parameters = this->MergeParameters(attributes, std::move(parameters), entityUse),
                     .color_space = color_space,
@@ -1123,8 +1682,8 @@ namespace spectra::scene {
                 }
             }
 
-            [[nodiscard]] std::vector<PbrtScene::Parameter> ParseParameters(PbrtTokenStream& stream) {
-                std::vector<PbrtScene::Parameter> parameters;
+            [[nodiscard]] std::vector<Scene::Parameter> ParseParameters(PbrtTokenStream& stream) {
+                std::vector<Scene::Parameter> parameters;
                 while (true) {
                     std::optional<Token> declaration = stream.Next();
                     if (!declaration.has_value()) return parameters;
@@ -1133,7 +1692,7 @@ namespace spectra::scene {
                         return parameters;
                     }
 
-                    PbrtScene::Parameter parameter = this->ParseParameterDeclaration(*declaration);
+                    Scene::Parameter parameter = this->ParseParameterDeclaration(*declaration);
                     Token value              = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
                     if (value.kind == TokenKind::LeftBracket) {
                         while (true) {
@@ -1148,7 +1707,7 @@ namespace spectra::scene {
                 }
             }
 
-            [[nodiscard]] PbrtScene::Parameter ParseParameterDeclaration(const Token& declaration) const {
+            [[nodiscard]] Scene::Parameter ParseParameterDeclaration(const Token& declaration) const {
                 const std::string& text = declaration.text;
                 std::size_t typeBegin = 0;
                 while (typeBegin < text.size() && std::isspace(static_cast<unsigned char>(text[typeBegin]))) ++typeBegin;
@@ -1164,7 +1723,7 @@ namespace spectra::scene {
                 std::size_t nameEnd = nameBegin;
                 while (nameEnd < text.size() && !std::isspace(static_cast<unsigned char>(text[nameEnd]))) ++nameEnd;
 
-                return PbrtScene::Parameter{
+                return Scene::Parameter{
                     .type       = text.substr(typeBegin, typeEnd - typeBegin),
                     .name       = text.substr(nameBegin, nameEnd - nameBegin),
                     .color_space = this->graphicsState.color_space,
@@ -1172,7 +1731,7 @@ namespace spectra::scene {
                 };
             }
 
-            void AppendParameterValue(PbrtScene::Parameter* parameter, const Token& value) const {
+            void AppendParameterValue(Scene::Parameter* parameter, const Token& value) const {
                 if (parameter->type == "integer") {
                     if (value.kind == TokenKind::QuotedString) throw ParseError(value.source, std::format("\"integer {}\" expects numeric values", parameter->name));
                     if (!std::holds_alternative<std::vector<int>>(parameter->values)) parameter->values = std::vector<int>{};
@@ -1216,7 +1775,7 @@ namespace spectra::scene {
                 if (directive.text == "AreaLightSource") {
                     this->RequireWorld(directive, "AreaLightSource");
                     const std::string type = RequireStringToken(stream, "AreaLightSource");
-                    this->graphicsState.area_light = PbrtScene::AreaLight{.entity = this->EntityWithAttributes(type, this->ParseParameters(stream), this->graphicsState.lightAttributes, EntityUse::AreaLight, directive.source, this->graphicsState.color_space)};
+                    this->graphicsState.area_light = Scene::AreaLight{.entity = this->EntityWithAttributes(type, this->ParseParameters(stream), this->graphicsState.lightAttributes, EntityUse::AreaLight, directive.source, this->graphicsState.color_space)};
                     return;
                 }
                 if (directive.text == "Accelerator") {
@@ -1227,7 +1786,7 @@ namespace spectra::scene {
                 }
                 if (directive.text == "Attribute") {
                     std::string target = RequireStringToken(stream, "Attribute");
-                    std::vector<PbrtScene::Parameter> parameters = this->ParseParameters(stream);
+                    std::vector<Scene::Parameter> parameters = this->ParseParameters(stream);
                     this->Attribute(std::move(target), std::move(parameters), directive.source);
                     return;
                 }
@@ -1254,7 +1813,7 @@ namespace spectra::scene {
                 }
                 if (directive.text == "CoordSysTransform") {
                     const std::string name = RequireStringToken(stream, "CoordSysTransform");
-                    const std::map<std::string, PbrtSceneTransformSet>::const_iterator iter = this->namedCoordinateSystems.find(name);
+                    const std::map<std::string, SceneTransformSet>::const_iterator iter = this->namedCoordinateSystems.find(name);
                     if (iter == this->namedCoordinateSystems.end()) throw ParseError(directive.source, std::format("Unknown coordinate system \"{}\"", name));
                     this->graphicsState.transform = iter->second;
                     return;
@@ -1266,7 +1825,7 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "Identity") {
-                    this->SetActiveTransform(PbrtSceneTransform{});
+                    this->SetActiveTransform(SceneTransform{});
                     return;
                 }
                 if (directive.text == "Import") {
@@ -1298,20 +1857,20 @@ namespace spectra::scene {
                 if (directive.text == "MakeNamedMaterial") {
                     this->RequireWorld(directive, "MakeNamedMaterial");
                     std::string name = RequireStringToken(stream, "MakeNamedMaterial");
-                    std::vector<PbrtScene::Parameter> parameters = this->ParseParameters(stream);
+                    std::vector<Scene::Parameter> parameters = this->ParseParameters(stream);
                     this->MakeNamedMaterial(std::move(name), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "MakeNamedMedium") {
                     std::string name = RequireStringToken(stream, "MakeNamedMedium");
-                    std::vector<PbrtScene::Parameter> parameters = this->ParseParameters(stream);
+                    std::vector<Scene::Parameter> parameters = this->ParseParameters(stream);
                     this->MakeNamedMedium(std::move(name), std::move(parameters), directive.source);
                     return;
                 }
                 if (directive.text == "Material") {
                     this->RequireWorld(directive, "Material");
                     std::string type = RequireStringToken(stream, "Material");
-                    std::vector<PbrtScene::Parameter> parameters = this->ParseParameters(stream);
+                    std::vector<Scene::Parameter> parameters = this->ParseParameters(stream);
                     this->Material(std::move(type), std::move(parameters), directive.source);
                     return;
                 }
@@ -1377,7 +1936,7 @@ namespace spectra::scene {
                 if (directive.text == "Shape") {
                     this->RequireWorld(directive, "Shape");
                     std::string type = RequireStringToken(stream, "Shape");
-                    std::vector<PbrtScene::Parameter> parameters = this->ParseParameters(stream);
+                    std::vector<Scene::Parameter> parameters = this->ParseParameters(stream);
                     this->Shape(std::move(type), std::move(parameters), directive.source);
                     return;
                 }
@@ -1408,7 +1967,7 @@ namespace spectra::scene {
                     const float start_time = this->graphicsState.transform.start_time;
                     const float end_time   = this->graphicsState.transform.end_time;
                     this->currentBlock = BlockState::World;
-                    this->graphicsState.transform   = PbrtSceneTransformSet{.start_time = start_time, .end_time = end_time};
+                    this->graphicsState.transform   = SceneTransformSet{.start_time = start_time, .end_time = end_time};
                     this->graphicsState.activeStart = true;
                     this->graphicsState.activeEnd   = true;
                     this->namedCoordinateSystems["world"] = this->graphicsState.transform;
@@ -1430,11 +1989,11 @@ namespace spectra::scene {
                 if (this->currentBlock != BlockState::World) throw ParseError(source, std::format("{} is only valid after WorldBegin", name));
             }
 
-            void ApplyActiveTransform(const PbrtSceneTransform& transform) {
+            void ApplyActiveTransform(const SceneTransform& transform) {
                 ApplyTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
             }
 
-            void SetActiveTransform(const PbrtSceneTransform& transform) {
+            void SetActiveTransform(const SceneTransform& transform) {
                 SetTransform(&this->graphicsState.transform, transform, this->graphicsState.activeStart, this->graphicsState.activeEnd);
             }
 
@@ -1458,8 +2017,8 @@ namespace spectra::scene {
                 throw ParseError(source, std::format("Unknown ActiveTransform target \"{}\"", token.text));
             }
 
-            [[nodiscard]] PbrtSceneTransformSet WorldFromCameraTransform() const {
-                PbrtSceneTransformSet result{
+            [[nodiscard]] SceneTransformSet WorldFromCameraTransform() const {
+                SceneTransformSet result{
                     .start     = Inverse(this->graphicsState.transform.start),
                     .end       = Inverse(this->graphicsState.transform.end),
                     .start_time = this->graphicsState.transform.start_time,
@@ -1497,8 +2056,8 @@ namespace spectra::scene {
                 this->stackKinds.pop_back();
             }
 
-            void Attribute(std::string target, std::vector<PbrtScene::Parameter> parameters, const Scene::SourceLocation& source) {
-                std::vector<PbrtScene::Parameter>* currentAttributes = nullptr;
+            void Attribute(std::string target, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
+                std::vector<Scene::Parameter>* currentAttributes = nullptr;
                 if (target == "shape")
                     currentAttributes = &this->graphicsState.shapeAttributes;
                 else if (target == "light")
@@ -1512,7 +2071,7 @@ namespace spectra::scene {
                 else
                     throw ParseError(source, std::format("Unknown Attribute target \"{}\"", target));
 
-                for (PbrtScene::Parameter& parameter : parameters) {
+                for (Scene::Parameter& parameter : parameters) {
                     parameter.may_be_unused = true;
                     parameter.color_space  = this->graphicsState.color_space;
                     currentAttributes->push_back(std::move(parameter));
@@ -1520,7 +2079,7 @@ namespace spectra::scene {
             }
 
             void Option(std::string name, std::string value, const Scene::SourceLocation& source) {
-                this->scene.render_settings.options.push_back(PbrtScene::Option{
+                this->scene.render_settings.options.push_back(Scene::Option{
                     .name   = std::move(name),
                     .value  = std::move(value),
                     .source = source,
@@ -1531,25 +2090,25 @@ namespace spectra::scene {
                 const std::string inside = RequireStringToken(stream, "MediumInterface");
                 std::optional<Token> outsideToken = stream.Next();
                 if (!outsideToken.has_value()) {
-                    this->graphicsState.medium_interface = PbrtScene::MediumInterface{.inside = inside, .outside = inside};
+                    this->graphicsState.medium_interface = Scene::MediumInterface{.inside = inside, .outside = inside};
                     return;
                 }
                 if (outsideToken->kind == TokenKind::QuotedString) {
-                    this->graphicsState.medium_interface = PbrtScene::MediumInterface{.inside = inside, .outside = std::move(outsideToken->text)};
+                    this->graphicsState.medium_interface = Scene::MediumInterface{.inside = inside, .outside = std::move(outsideToken->text)};
                     return;
                 }
                 stream.PushBack(std::move(*outsideToken));
-                this->graphicsState.medium_interface = PbrtScene::MediumInterface{.inside = inside, .outside = inside};
+                this->graphicsState.medium_interface = Scene::MediumInterface{.inside = inside, .outside = inside};
             }
 
-            void MakeNamedMedium(std::string name, std::vector<PbrtScene::Parameter> parameters, const Scene::SourceLocation& source) {
+            void MakeNamedMedium(std::string name, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
                 this->RequireUniqueName(this->mediumNames, "medium", name, source);
-                PbrtScene::Entity entity = this->EntityWithAttributes("", std::move(parameters), this->graphicsState.mediumAttributes, EntityUse::Medium, source, this->graphicsState.color_space);
+                Scene::Entity entity = this->EntityWithAttributes("", std::move(parameters), this->graphicsState.mediumAttributes, EntityUse::Medium, source, this->graphicsState.color_space);
                 const std::string type = OneStringParameter(entity.parameters, "type", "");
                 if (type.empty()) throw ParseError(source, std::format("MakeNamedMedium \"{}\" requires \"string type\"", name));
                 entity.type = type;
                 this->mediumNames.insert(name);
-                this->scene.media.push_back(PbrtScene::Medium{
+                this->scene.media.push_back(Scene::Medium{
                     .name      = std::move(name),
                     .entity    = std::move(entity),
                     .transform = this->graphicsState.transform,
@@ -1558,7 +2117,7 @@ namespace spectra::scene {
 
             void LightSource(PbrtTokenStream& stream, const Scene::SourceLocation& source) {
                 const std::string type = RequireStringToken(stream, "LightSource");
-                this->scene.lights.push_back(PbrtScene::Light{
+                this->scene.lights.push_back(Scene::Light{
                     .name      = std::format("__light_{}", this->scene.lights.size()),
                     .entity    = this->EntityWithAttributes(type, this->ParseParameters(stream), this->graphicsState.lightAttributes, EntityUse::Light, source, this->graphicsState.color_space),
                     .transform = this->graphicsState.transform,
@@ -1566,11 +2125,11 @@ namespace spectra::scene {
                 });
             }
 
-            void Material(std::string type, std::vector<PbrtScene::Parameter> parameters, const Scene::SourceLocation& source) {
+            void Material(std::string type, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
                 if (type.empty()) type = "interface";
                 const std::string name = std::format("__inline_material_{}", this->inlineMaterialCount);
                 ++this->inlineMaterialCount;
-                this->scene.materials.push_back(PbrtScene::Material{
+                this->scene.materials.push_back(Scene::Material{
                     .name   = name,
                     .entity = this->EntityWithAttributes(std::move(type), std::move(parameters), this->graphicsState.materialAttributes, EntityUse::Material, source, this->graphicsState.color_space),
                 });
@@ -1578,14 +2137,14 @@ namespace spectra::scene {
                 this->graphicsState.currentMaterialName = name;
             }
 
-            void MakeNamedMaterial(std::string name, std::vector<PbrtScene::Parameter> parameters, const Scene::SourceLocation& source) {
+            void MakeNamedMaterial(std::string name, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
                 this->RequireUniqueName(this->material_names, "material", name, source);
-                PbrtScene::Entity entity = this->EntityWithAttributes("", std::move(parameters), this->graphicsState.materialAttributes, EntityUse::Material, source, this->graphicsState.color_space);
+                Scene::Entity entity = this->EntityWithAttributes("", std::move(parameters), this->graphicsState.materialAttributes, EntityUse::Material, source, this->graphicsState.color_space);
                 const std::string type = OneStringParameter(entity.parameters, "type", "");
                 if (type.empty()) throw ParseError(source, std::format("MakeNamedMaterial \"{}\" requires \"string type\"", name));
                 entity.type = type;
                 this->material_names.insert(name);
-                this->scene.materials.push_back(PbrtScene::Material{
+                this->scene.materials.push_back(Scene::Material{
                     .name   = std::move(name),
                     .entity = std::move(entity),
                 });
@@ -1601,7 +2160,7 @@ namespace spectra::scene {
                     this->floatTextureNames.insert(name);
                 else
                     this->spectrumTextureNames.insert(name);
-                this->scene.textures.push_back(PbrtScene::Texture{
+                this->scene.textures.push_back(Scene::Texture{
                     .name      = std::move(name),
                     .kind      = std::move(kind),
                     .entity    = this->EntityWithAttributes(std::move(type), this->ParseParameters(stream), this->graphicsState.textureAttributes, EntityUse::Texture, source, this->graphicsState.color_space),
@@ -1609,8 +2168,8 @@ namespace spectra::scene {
                 });
             }
 
-            void Shape(std::string type, std::vector<PbrtScene::Parameter> parameters, const Scene::SourceLocation& source) {
-                PbrtScene::Shape shape{
+            void Shape(std::string type, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
+                Scene::Shape shape{
                     .name               = std::format("__shape_{}", this->shapeCount),
                     .entity             = this->EntityWithAttributes(std::move(type), std::move(parameters), this->graphicsState.shapeAttributes, EntityUse::Shape, source, this->graphicsState.color_space),
                     .transform          = this->graphicsState.transform,
@@ -1634,7 +2193,7 @@ namespace spectra::scene {
                 this->stateStack.push_back(this->graphicsState);
                 this->stackKinds.push_back('o');
                 this->objectDefinitionNames.insert(name);
-                this->activeObjectDefinition = PbrtScene::ObjectDefinition{.name = std::move(name), .source = source};
+                this->activeObjectDefinition = Scene::ObjectDefinition{.name = std::move(name), .source = source};
             }
 
             void ObjectEnd(const Scene::SourceLocation& source) {
@@ -1651,7 +2210,7 @@ namespace spectra::scene {
             void ObjectInstance(std::string name, const Scene::SourceLocation& source) {
                 this->RequireWorld(source, "ObjectInstance");
                 if (this->activeObjectDefinition.has_value()) throw ParseError(source, "ObjectInstance cannot be used inside ObjectBegin");
-                this->scene.object_instances.push_back(PbrtScene::ObjectInstance{
+                this->scene.object_instances.push_back(Scene::ObjectInstance{
                     .name           = std::format("__instance_{}", this->scene.object_instances.size()),
                     .definition_name = std::move(name),
                     .transform      = this->graphicsState.transform,
@@ -1676,15 +2235,15 @@ namespace spectra::scene {
                 if (this->activeObjectDefinition.has_value()) throw std::runtime_error(std::format("{}: missing ObjectEnd", this->scene.source));
             }
 
-            PbrtScene::Snapshot scene{};
+            Scene::ResolvedScene scene{};
             std::filesystem::path inputFile;
             std::filesystem::path searchDirectory;
             GraphicsState graphicsState{};
             BlockState currentBlock{BlockState::Options};
             std::vector<GraphicsState> stateStack{};
             std::vector<char> stackKinds{};
-            std::map<std::string, PbrtSceneTransformSet> namedCoordinateSystems{};
-            std::optional<PbrtScene::ObjectDefinition> activeObjectDefinition{};
+            std::map<std::string, SceneTransformSet> namedCoordinateSystems{};
+            std::optional<Scene::ObjectDefinition> activeObjectDefinition{};
             std::set<std::string> material_names{};
             std::set<std::string> mediumNames{};
             std::set<std::string> floatTextureNames{};
@@ -1698,7 +2257,7 @@ namespace spectra::scene {
             return std::filesystem::absolute(std::filesystem::path(SPECTRA_SCENES_ROOT)).lexically_normal();
         }
 
-        [[nodiscard]] std::filesystem::path PbrtSceneFilenameStem(const std::filesystem::path& path) {
+        [[nodiscard]] std::filesystem::path SceneFilenameStem(const std::filesystem::path& path) {
             std::filesystem::path filename = path.filename();
             if (HasExtension(filename, ".gz")) filename = filename.stem();
             if (HasExtension(filename, ".pbrt")) filename = filename.stem();
@@ -1706,7 +2265,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] std::string SceneDisplayName(const std::filesystem::path& relativePath) {
-            return PbrtSceneFilenameStem(relativePath).string();
+            return SceneFilenameStem(relativePath).string();
         }
 
         [[nodiscard]] std::filesystem::path ResolveScenePathByUniqueStem(const std::filesystem::path& root, const std::string& name) {
@@ -1715,8 +2274,8 @@ namespace spectra::scene {
             for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(root)) {
                 if (!entry.is_regular_file()) continue;
                 const std::filesystem::path path = entry.path();
-                if (!IsPbrtSceneFile(path)) continue;
-                if (PbrtSceneFilenameStem(path).string() != name) continue;
+                if (!IsSceneFile(path)) continue;
+                if (SceneFilenameStem(path).string() != name) continue;
                 if (match.has_value()) throw std::runtime_error(std::format("Scene alias \"{}\" is ambiguous; pass a scene-root-relative .pbrt path", name));
                 match = path;
             }
@@ -1742,87 +2301,71 @@ namespace spectra::scene {
         }
     } // namespace
 
-    namespace {
-        PbrtScene::Info describe_scene(const PbrtScene::Snapshot& scene) {
-            const auto one_float_parameter = [](const std::vector<PbrtScene::Parameter>& parameters, const std::string& name, const float default_value) {
-                for (const PbrtScene::Parameter& parameter : parameters) {
-                    if (parameter.type != "float" && parameter.type != "integer") continue;
-                    if (parameter.name != name) continue;
-                    if (parameter.type == "float") {
-                        const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
-                        if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
-                        return values->front();
-                    }
-                    const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
-                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
-                    return static_cast<float>(values->front());
+    Scene::Info describe_scene(const Scene::ResolvedScene& scene) {
+        const auto one_float_parameter = [](const std::vector<Scene::Parameter>& parameters, const std::string& name, const float default_value) {
+            for (const Scene::Parameter& parameter : parameters) {
+                if (parameter.type != "float" && parameter.type != "integer") continue;
+                if (parameter.name != name) continue;
+                if (parameter.type == "float") {
+                    const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
+                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
+                    return values->front();
                 }
-                return default_value;
-            };
-
-            std::size_t definition_shape_count = 0;
-            std::size_t definition_area_light_count = 0;
-            for (const PbrtScene::ObjectDefinition& definition : scene.object_definitions) {
-                definition_shape_count += definition.shapes.size();
-                for (const PbrtScene::Shape& shape : definition.shapes)
-                    if (shape.area_light.has_value()) ++definition_area_light_count;
+                const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
+                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
+                return static_cast<float>(values->front());
             }
+            return default_value;
+        };
 
-            std::size_t area_light_count = definition_area_light_count;
-            for (const PbrtScene::Shape& shape : scene.shapes)
-                if (shape.area_light.has_value()) ++area_light_count;
-
-            std::size_t infinite_light_count = 0;
-            for (const PbrtScene::Light& light : scene.lights)
-                if (light.entity.type == "infinite") ++infinite_light_count;
-
-            const float camera_fov = one_float_parameter(scene.render_settings.camera.parameters, "fov", scene.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
-            if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
-
-            return PbrtScene::Info{
-                .name                    = scene.name,
-                .title                   = scene.title,
-                .camera                  = scene.render_settings.camera.type,
-                .sampler                 = scene.render_settings.sampler.type,
-                .integrator              = scene.render_settings.integrator.type,
-                .accelerator             = scene.render_settings.accelerator.type,
-                .shape_count             = scene.shapes.size() + definition_shape_count,
-                .material_count          = scene.materials.size(),
-                .texture_count           = scene.textures.size(),
-                .medium_count            = scene.media.size(),
-                .light_count             = scene.lights.size(),
-                .area_light_count        = area_light_count,
-                .infinite_light_count    = infinite_light_count,
-                .object_definition_count = scene.object_definitions.size(),
-                .object_instance_count   = scene.object_instances.size(),
-                .camera_fov_degrees      = camera_fov,
-            };
+        std::size_t definition_shape_count = 0;
+        std::size_t definition_area_light_count = 0;
+        for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
+            definition_shape_count += definition.shapes.size();
+            for (const Scene::Shape& shape : definition.shapes)
+                if (shape.area_light.has_value()) ++definition_area_light_count;
         }
-    } // namespace
 
-    PbrtScene::PbrtScene(PbrtScene::Snapshot snapshot) : scene(std::move(snapshot)) {}
+        std::size_t area_light_count = definition_area_light_count;
+        for (const Scene::Shape& shape : scene.shapes)
+            if (shape.area_light.has_value()) ++area_light_count;
 
-    PbrtScene PbrtScene::parse(const std::string_view scene_id) {
+        std::size_t infinite_light_count = 0;
+        for (const Scene::Light& light : scene.lights)
+            if (light.entity.type == "infinite") ++infinite_light_count;
+
+        const float camera_fov = one_float_parameter(scene.render_settings.camera.parameters, "fov", scene.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
+        if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
+
+        return Scene::Info{
+            .name                    = scene.name,
+            .title                   = scene.title,
+            .camera                  = scene.render_settings.camera.type,
+            .sampler                 = scene.render_settings.sampler.type,
+            .integrator              = scene.render_settings.integrator.type,
+            .accelerator             = scene.render_settings.accelerator.type,
+            .shape_count             = scene.shapes.size() + definition_shape_count,
+            .material_count          = scene.materials.size(),
+            .texture_count           = scene.textures.size(),
+            .medium_count            = scene.media.size(),
+            .light_count             = scene.lights.size(),
+            .area_light_count        = area_light_count,
+            .infinite_light_count    = infinite_light_count,
+            .object_definition_count = scene.object_definitions.size(),
+            .object_instance_count   = scene.object_instances.size(),
+            .camera_fov_degrees      = camera_fov,
+        };
+    }
+
+    Scene Scene::parse_pbrt(const std::string_view scene_id) {
         if (scene_id.empty()) throw std::runtime_error("PBRT scene parse requires a non-empty scene id");
         const std::filesystem::path scenePath = ResolveScenePath(scene_id);
-        PbrtSceneBuilder builder(scenePath);
-        PbrtScene::Snapshot scene = builder.Parse();
+        ScenePbrtBuilder builder(scenePath);
+        Scene::ResolvedScene scene = builder.Parse();
         scene.name = std::string{scene_id};
         scene.title = SceneDisplayName(scenePath);
         if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
-        return PbrtScene{std::move(scene)};
-    }
-
-    PbrtScene::Info PbrtScene::info() const {
-        return describe_scene(this->scene);
-    }
-
-    const PbrtScene::Snapshot& PbrtScene::snapshot() const {
-        return this->scene;
-    }
-
-    Scene::Document PbrtScene::make_preview_document() const {
-        return make_preview_document_from_pbrt(this->scene);
+        return Scene{std::move(scene)};
     }
 
 } // namespace spectra::scene

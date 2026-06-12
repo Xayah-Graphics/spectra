@@ -248,39 +248,39 @@ namespace spectra::rasterizer {
             };
         }
 
-        [[nodiscard]] static scene::Scene::MaterialModel material_model_from_string(const std::string_view value, const std::string_view material_name) {
-            if (value == "lit_surface") return scene::Scene::MaterialModel::LitSurface;
-            if (value == "unlit_surface") return scene::Scene::MaterialModel::UnlitSurface;
-            if (value == "emissive_surface") return scene::Scene::MaterialModel::EmissiveSurface;
-            if (value == "volume") return scene::Scene::MaterialModel::Volume;
-            if (value == "point_sprite") return scene::Scene::MaterialModel::PointSprite;
-            throw std::runtime_error(std::format("Visualization material \"{}\" has invalid model \"{}\"", material_name, value));
+        [[nodiscard]] static scene::Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
+            if (value == "lit_surface") return scene::Scene::PreviewSurfaceKind::LitSurface;
+            if (value == "unlit_surface") return scene::Scene::PreviewSurfaceKind::UnlitSurface;
+            if (value == "emissive_surface") return scene::Scene::PreviewSurfaceKind::EmissiveSurface;
+            if (value == "volume") return scene::Scene::PreviewSurfaceKind::Volume;
+            if (value == "point_sprite") return scene::Scene::PreviewSurfaceKind::PointGlyph;
+            throw std::runtime_error(std::format("Visualization material \"{}\" has invalid preview surface kind \"{}\"", material_name, value));
         }
 
-        [[nodiscard]] static scene::Scene::MaterialAlphaMode material_alpha_mode_from_string(const std::string_view value, const std::string_view material_name) {
-            if (value == "opaque") return scene::Scene::MaterialAlphaMode::Opaque;
-            if (value == "masked") return scene::Scene::MaterialAlphaMode::Masked;
-            if (value == "blend") return scene::Scene::MaterialAlphaMode::Blend;
+        [[nodiscard]] static scene::Scene::PreviewAlphaMode preview_alpha_mode_from_string(const std::string_view value, const std::string_view material_name) {
+            if (value == "opaque") return scene::Scene::PreviewAlphaMode::Opaque;
+            if (value == "masked") return scene::Scene::PreviewAlphaMode::Masked;
+            if (value == "blend") return scene::Scene::PreviewAlphaMode::Blend;
             throw std::runtime_error(std::format("Visualization material \"{}\" has invalid alpha mode \"{}\"", material_name, value));
         }
 
-        [[nodiscard]] static scene::Scene::LightKind light_kind_from_string(const std::string_view value, const std::string_view light_name) {
-            if (value == "directional") return scene::Scene::LightKind::Directional;
-            if (value == "point") return scene::Scene::LightKind::Point;
-            if (value == "spot") return scene::Scene::LightKind::Spot;
-            if (value == "area") return scene::Scene::LightKind::Area;
-            if (value == "environment") return scene::Scene::LightKind::Environment;
+        [[nodiscard]] static scene::Scene::PreviewLightKind light_kind_from_string(const std::string_view value, const std::string_view light_name) {
+            if (value == "directional") return scene::Scene::PreviewLightKind::Directional;
+            if (value == "point") return scene::Scene::PreviewLightKind::Point;
+            if (value == "spot") return scene::Scene::PreviewLightKind::Spot;
+            if (value == "area") return scene::Scene::PreviewLightKind::Area;
+            if (value == "environment") return scene::Scene::PreviewLightKind::Environment;
             throw std::runtime_error(std::format("Visualization light \"{}\" has invalid kind \"{}\"", light_name, value));
         }
 
         template <VisualizationMaterial Material>
-        [[nodiscard]] static scene::Scene::Material make_material(const Material& material) {
+        [[nodiscard]] static scene::Scene::PreviewMaterial make_material(const Material& material) {
             const std::string_view name{material.name};
             if (name.empty()) throw std::runtime_error("Visualization material name must not be empty");
-            return scene::Scene::Material{
+            return scene::Scene::PreviewMaterial{
                 .name                     = std::string{name},
-                .model                    = material_model_from_string(std::string_view{material.model}, name),
-                .alpha_mode               = material_alpha_mode_from_string(std::string_view{material.alpha_mode}, name),
+                .surface_kind             = preview_surface_kind_from_string(std::string_view{material.model}, name),
+                .alpha_mode               = preview_alpha_mode_from_string(std::string_view{material.alpha_mode}, name),
                 .base_color               = make_vector4(material.base_color, std::format("Visualization material \"{}\" base color", name)),
                 .emission_color           = make_vector3(material.emission_color, std::format("Visualization material \"{}\" emission color", name)),
                 .emission_strength        = finite_float(static_cast<float>(material.emission_strength), std::format("Visualization material \"{}\" emission strength", name)),
@@ -293,10 +293,10 @@ namespace spectra::rasterizer {
         }
 
         template <VisualizationLight Light>
-        [[nodiscard]] static scene::Scene::Light make_light(const Light& light) {
+        [[nodiscard]] static scene::Scene::PreviewLight make_light(const Light& light) {
             const std::string_view name{light.name};
             if (name.empty()) throw std::runtime_error("Visualization light name must not be empty");
-            return scene::Scene::Light{
+            return scene::Scene::PreviewLight{
                 .name               = std::string{name},
                 .kind               = light_kind_from_string(std::string_view{light.kind}, name),
                 .transform          = make_transform(light.transform, std::format("Visualization light \"{}\"", name)),
@@ -491,9 +491,9 @@ namespace spectra::rasterizer {
         VisualizationKind kind{VisualizationKind::Static};
 
     private:
-        VisualizationEntry(std::string id, std::string title, VisualizationKind kind, std::move_only_function<scene::Scene::Document()> create_static_document, std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source);
+        VisualizationEntry(std::string id, std::string title, VisualizationKind kind, std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene, std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source);
 
-        std::move_only_function<scene::Scene::Document()> create_static_document{};
+        std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene{};
         std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source{};
 
         friend class VisualizationRegistry;
@@ -510,17 +510,17 @@ namespace spectra::rasterizer {
         VisualizationRegistry& operator=(VisualizationRegistry&& other) noexcept = default;
         ~VisualizationRegistry() noexcept = default;
 
-        void register_static_visualization(std::string id, std::string title, std::move_only_function<scene::Scene::Document()> create_document);
+        void register_static_visualization(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> create_scene);
 
         template <VisualizationSource Source>
         void register_source() {
             const std::string id{Source::visualization_id()};
             this->ensure_unique_visualization_id(id);
-            this->entries.push_back(VisualizationEntry{id, std::string{Source::visualization_title()}, VisualizationKind::Dynamic, std::move_only_function<scene::Scene::Document()>{}, [] { return std::make_unique<VisualizationSourceModel<Source>>(); }});
+            this->entries.push_back(VisualizationEntry{id, std::string{Source::visualization_title()}, VisualizationKind::Dynamic, std::move_only_function<std::shared_ptr<scene::Scene>()>{}, [] { return std::make_unique<VisualizationSourceModel<Source>>(); }});
         }
 
         [[nodiscard]] std::unique_ptr<VisualizationSourceInstance> create_dynamic_source(std::size_t index);
-        [[nodiscard]] scene::Scene::Document create_static_document(std::size_t index);
+        [[nodiscard]] std::shared_ptr<scene::Scene> create_static_scene(std::size_t index);
         [[nodiscard]] const VisualizationEntry& entry(std::size_t index) const;
         [[nodiscard]] std::size_t size() const;
 
