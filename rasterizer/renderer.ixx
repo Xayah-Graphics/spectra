@@ -19,6 +19,8 @@ import std;
 namespace spectra::rasterizer {
     export class Renderer final {
     public:
+        static constexpr std::uint32_t MaxViewportDirectLights = 8u;
+
         Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
         ~Renderer() noexcept;
 
@@ -80,8 +82,10 @@ namespace spectra::rasterizer {
             std::array<float, 16> viewProjection{};
             std::array<float, 16> inverseViewProjection{};
             std::array<float, 4> cameraPosition{};
-            std::array<float, 4> lightDirection{};
-            std::array<float, 4> lightColorIntensity{};
+            std::array<float, 4> environmentColorIntensity{};
+            std::array<std::array<float, 4>, MaxViewportDirectLights> lightDirections{};
+            std::array<std::array<float, 4>, MaxViewportDirectLights> lightColorIntensities{};
+            std::array<std::uint32_t, 4> lightCounts{};
             std::array<float, 4> cameraRight{};
             std::array<float, 4> cameraUp{};
             std::array<float, 4> viewport{};
@@ -273,6 +277,7 @@ namespace spectra::rasterizer {
             std::shared_ptr<scene::Scene> workspace{};
             std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
             scene::Scene::Revision observed_camera_revision{};
+            mutable std::vector<std::string> light_diagnostics{};
         } scene;
 
         struct {

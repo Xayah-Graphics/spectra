@@ -26,11 +26,11 @@ namespace xayah::projects::bouncing_ball {
 
     export struct VisualLight {
         std::string_view name{};
-        std::string_view kind{"directional"};
+        std::string_view kind{};
         VisualTransform transform{};
-        std::array<float, 3> color{1.0f, 1.0f, 1.0f};
-        float intensity{1.0f};
-        float cone_angle_degrees{45.0f};
+        std::array<float, 3> color{};
+        float intensity{};
+        float cone_angle_degrees{};
     };
 
     export struct VisualCamera {
@@ -109,7 +109,7 @@ namespace xayah::projects::bouncing_ball {
             VisualLight{
                 .name      = "key",
                 .kind      = "directional",
-                .transform = VisualTransform{.rotation = std::array<float, 4>{0.35f, 0.0f, 0.0f, 0.94f}},
+                .transform = VisualTransform{.rotation = std::array<float, 4>{-0.35f, 0.0f, 0.0f, 0.94f}},
                 .color     = std::array<float, 3>{1.0f, 0.97f, 0.92f},
                 .intensity = 3.0f,
             },

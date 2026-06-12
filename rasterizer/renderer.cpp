@@ -224,19 +224,70 @@ namespace {
         };
     }
 
-    struct LightUniformData {
-        spectra::rasterizer::math::Vector3 direction{-0.35f, -0.8f, -0.45f};
-        spectra::rasterizer::math::Vector3 color{1.0f, 1.0f, 1.0f};
-        float intensity{1.0f};
+    struct ViewportLightingData {
+        std::array<float, 4> environmentColorIntensity{};
+        std::array<std::array<float, 4>, spectra::rasterizer::Renderer::MaxViewportDirectLights> lightDirections{};
+        std::array<std::array<float, 4>, spectra::rasterizer::Renderer::MaxViewportDirectLights> lightColorIntensities{};
+        std::array<std::uint32_t, 4> lightCounts{};
+        std::vector<std::string> diagnostics{};
     };
 
-    [[nodiscard]] LightUniformData scene_light_uniform(const spectra::scene::Scene::Document& scene) {
-        LightUniformData data{};
+    [[nodiscard]] const char* preview_light_kind_name(const spectra::scene::Scene::PreviewLightKind kind) {
+        switch (kind) {
+        case spectra::scene::Scene::PreviewLightKind::Directional: return "Directional";
+        case spectra::scene::Scene::PreviewLightKind::Point: return "Point";
+        case spectra::scene::Scene::PreviewLightKind::Spot: return "Spot";
+        case spectra::scene::Scene::PreviewLightKind::Area: return "Area";
+        case spectra::scene::Scene::PreviewLightKind::Environment: return "Environment";
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer preview light kind");
+    }
+
+    void validate_preview_light_values(const spectra::scene::Scene::PreviewLight& light) {
+        if (light.name.empty()) throw std::runtime_error("Rasterizer preview light names must not be empty");
+        if (!finite_scene_vector(light.transform.position)) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" position must be finite", light.name));
+        if (!finite_scene_vector(light.transform.scale)) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" scale must be finite", light.name));
+        if (light.transform.scale.x == 0.0f || light.transform.scale.y == 0.0f || light.transform.scale.z == 0.0f) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" scale must not contain zero", light.name));
+        if (!std::isfinite(light.transform.rotation.x) || !std::isfinite(light.transform.rotation.y) || !std::isfinite(light.transform.rotation.z) || !std::isfinite(light.transform.rotation.w)) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" rotation must be finite", light.name));
+        const float rotation_length_squared = light.transform.rotation.x * light.transform.rotation.x + light.transform.rotation.y * light.transform.rotation.y + light.transform.rotation.z * light.transform.rotation.z + light.transform.rotation.w * light.transform.rotation.w;
+        if (!std::isfinite(rotation_length_squared) || rotation_length_squared <= 0.0f) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" rotation must not be zero length", light.name));
+        if (!finite_scene_vector(light.color)) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" color must be finite", light.name));
+        if (light.color.x < 0.0f || light.color.y < 0.0f || light.color.z < 0.0f) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" color must be non-negative", light.name));
+        if (!std::isfinite(light.intensity) || light.intensity < 0.0f) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" intensity must be finite and non-negative", light.name));
+        if (light.kind == spectra::scene::Scene::PreviewLightKind::Spot && (!std::isfinite(light.cone_angle_degrees) || light.cone_angle_degrees <= 0.0f || light.cone_angle_degrees >= 180.0f)) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" cone angle must be inside (0, 180)", light.name));
+    }
+
+    [[nodiscard]] spectra::rasterizer::math::Vector3 preview_light_forward_direction(const spectra::scene::Scene::PreviewLight& light) {
+        spectra::rasterizer::math::Transform transform = to_render_transform(light.transform);
+        transform.scale = spectra::rasterizer::math::Vector3{1.0f, 1.0f, 1.0f};
+        const spectra::rasterizer::math::Matrix4 rotation = spectra::rasterizer::math::transform_matrix(transform);
+        return spectra::rasterizer::math::normalize(spectra::rasterizer::math::Vector3{-rotation(2u, 0u), -rotation(2u, 1u), -rotation(2u, 2u)});
+    }
+
+    [[nodiscard]] ViewportLightingData explicit_scene_lighting_uniform(const spectra::scene::Scene::Document& scene) {
+        ViewportLightingData data{};
+        std::set<std::string_view> names{};
         for (const spectra::scene::Scene::PreviewLight& light : scene.lights) {
-            if (light.kind != spectra::scene::Scene::PreviewLightKind::Directional) continue;
-            data.color      = to_render_vector(light.color);
-            data.intensity  = light.intensity;
-            break;
+            validate_preview_light_values(light);
+            const bool inserted = names.insert(std::string_view{light.name}).second;
+            if (!inserted) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" is duplicated", light.name));
+            if (light.kind == spectra::scene::Scene::PreviewLightKind::Directional) {
+                if (data.lightCounts.at(0) >= spectra::rasterizer::Renderer::MaxViewportDirectLights) throw std::runtime_error(std::format("Rasterizer viewport supports at most {} explicit directional lights", spectra::rasterizer::Renderer::MaxViewportDirectLights));
+                const spectra::rasterizer::math::Vector3 direction = preview_light_forward_direction(light);
+                const std::size_t index = data.lightCounts.at(0);
+                data.lightDirections.at(index) = {direction.x, direction.y, direction.z, 0.0f};
+                data.lightColorIntensities.at(index) = {light.color.x, light.color.y, light.color.z, light.intensity};
+                ++data.lightCounts.at(0);
+                continue;
+            }
+            if (light.kind == spectra::scene::Scene::PreviewLightKind::Environment) {
+                data.environmentColorIntensity.at(0) += light.color.x * light.intensity;
+                data.environmentColorIntensity.at(1) += light.color.y * light.intensity;
+                data.environmentColorIntensity.at(2) += light.color.z * light.intensity;
+                data.environmentColorIntensity.at(3) = 1.0f;
+                continue;
+            }
+            data.diagnostics.push_back(std::format("Explicit {} light \"{}\" is not supported by the rasterizer preview", preview_light_kind_name(light.kind), light.name));
         }
         return data;
     }
@@ -2067,17 +2118,19 @@ namespace spectra::rasterizer {
         const spectra::rasterizer::math::Matrix4 inverse_projection = spectra::rasterizer::math::inverse_perspective_matrix(this->viewport.camera_vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
         const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::look_at_matrix(basis) * projection;
         const spectra::rasterizer::math::Matrix4 inverse_view_projection = inverse_projection * spectra::rasterizer::math::inverse_look_at_matrix(basis);
-        const LightUniformData light = scene_light_uniform(*scene);
-        const spectra::rasterizer::math::Vector3 normalized_light_direction = spectra::rasterizer::math::normalize(light.direction);
+        const ViewportLightingData lighting = explicit_scene_lighting_uniform(*scene);
+        this->scene.light_diagnostics = lighting.diagnostics;
         return CameraUniformData{
-            .viewProjection        = view_projection.values,
-            .inverseViewProjection = inverse_view_projection.values,
-            .cameraPosition        = {basis.eye.x, basis.eye.y, basis.eye.z, 0.0f},
-            .lightDirection        = {normalized_light_direction.x, normalized_light_direction.y, normalized_light_direction.z, 0.0f},
-            .lightColorIntensity   = {light.color.x, light.color.y, light.color.z, light.intensity},
-            .cameraRight           = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
-            .cameraUp              = {basis.up.x, basis.up.y, basis.up.z, 0.0f},
-            .viewport              = {static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, this->viewport.camera_distance},
+            .viewProjection            = view_projection.values,
+            .inverseViewProjection     = inverse_view_projection.values,
+            .cameraPosition            = {basis.eye.x, basis.eye.y, basis.eye.z, 0.0f},
+            .environmentColorIntensity = lighting.environmentColorIntensity,
+            .lightDirections           = lighting.lightDirections,
+            .lightColorIntensities     = lighting.lightColorIntensities,
+            .lightCounts               = lighting.lightCounts,
+            .cameraRight               = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
+            .cameraUp                  = {basis.up.x, basis.up.y, basis.up.z, 0.0f},
+            .viewport                  = {static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, this->viewport.camera_distance},
         };
     }
 
@@ -2966,6 +3019,7 @@ namespace spectra::rasterizer {
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_status_row("Materials", std::format("{}", scene->materials.size()));
             draw_status_row("Lights", std::format("{}", scene->lights.size()));
+            if (!this->scene.light_diagnostics.empty()) draw_status_row("Light Preview", this->scene.light_diagnostics.front());
             draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
             draw_status_row("Point Clouds", std::format("{}", scene->point_clouds.size()));
             draw_status_row("Volumes", std::format("{}", scene->volumes.size()));

@@ -26,11 +26,11 @@ namespace xayah::projects::cloth {
 
     export struct VisualLight {
         std::string_view name{};
-        std::string_view kind{"directional"};
+        std::string_view kind{};
         VisualTransform transform{};
-        std::array<float, 3> color{1.0f, 1.0f, 1.0f};
-        float intensity{1.0f};
-        float cone_angle_degrees{45.0f};
+        std::array<float, 3> color{};
+        float intensity{};
+        float cone_angle_degrees{};
     };
 
     export struct VisualCamera {
@@ -112,7 +112,7 @@ namespace xayah::projects::cloth {
             VisualLight{
                 .name      = "key",
                 .kind      = "directional",
-                .transform = VisualTransform{.rotation = std::array<float, 4>{0.45f, 0.18f, 0.0f, 0.87f}},
+                .transform = VisualTransform{.rotation = std::array<float, 4>{-0.45f, 0.18f, 0.0f, 0.87f}},
                 .color     = std::array<float, 3>{0.92f, 0.96f, 1.0f},
                 .intensity = 3.6f,
             },

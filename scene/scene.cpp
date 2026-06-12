@@ -259,6 +259,75 @@ namespace spectra::scene {
             return transform;
         }
 
+        [[nodiscard]] SceneTransform make_preview_scene_transform(const Transform& transform, const std::string_view context) {
+            if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            const Quaternion rotation = normalized_quaternion(transform.rotation, context);
+            const float x = rotation.x;
+            const float y = rotation.y;
+            const float z = rotation.z;
+            const float w = rotation.w;
+            const float r00 = 1.0f - 2.0f * y * y - 2.0f * z * z;
+            const float r01 = 2.0f * x * y - 2.0f * w * z;
+            const float r02 = 2.0f * x * z + 2.0f * w * y;
+            const float r10 = 2.0f * x * y + 2.0f * w * z;
+            const float r11 = 1.0f - 2.0f * x * x - 2.0f * z * z;
+            const float r12 = 2.0f * y * z - 2.0f * w * x;
+            const float r20 = 2.0f * x * z - 2.0f * w * y;
+            const float r21 = 2.0f * y * z + 2.0f * w * x;
+            const float r22 = 1.0f - 2.0f * x * x - 2.0f * y * y;
+            const float inv00 = r00 / transform.scale.x;
+            const float inv01 = r10 / transform.scale.x;
+            const float inv02 = r20 / transform.scale.x;
+            const float inv10 = r01 / transform.scale.y;
+            const float inv11 = r11 / transform.scale.y;
+            const float inv12 = r21 / transform.scale.y;
+            const float inv20 = r02 / transform.scale.z;
+            const float inv21 = r12 / transform.scale.z;
+            const float inv22 = r22 / transform.scale.z;
+            return SceneTransform{
+                .matrix =
+                    {
+                        r00 * transform.scale.x,
+                        r01 * transform.scale.y,
+                        r02 * transform.scale.z,
+                        transform.position.x,
+                        r10 * transform.scale.x,
+                        r11 * transform.scale.y,
+                        r12 * transform.scale.z,
+                        transform.position.y,
+                        r20 * transform.scale.x,
+                        r21 * transform.scale.y,
+                        r22 * transform.scale.z,
+                        transform.position.z,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                    },
+                .inverse =
+                    {
+                        inv00,
+                        inv01,
+                        inv02,
+                        -(inv00 * transform.position.x + inv01 * transform.position.y + inv02 * transform.position.z),
+                        inv10,
+                        inv11,
+                        inv12,
+                        -(inv10 * transform.position.x + inv11 * transform.position.y + inv12 * transform.position.z),
+                        inv20,
+                        inv21,
+                        inv22,
+                        -(inv20 * transform.position.x + inv21 * transform.position.y + inv22 * transform.position.z),
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                        1.0f,
+                    },
+            };
+        }
+
         [[nodiscard]] float preview_scalar(const Vector4 color) {
             return std::max(0.0f, (color.x + color.y + color.z) / 3.0f);
         }
@@ -436,17 +505,48 @@ namespace spectra::scene {
         void append_preview_lights(Scene::ResolvedScene& scene, const Scene::Document& document) {
             for (const Scene::PreviewLight& light : document.lights) {
                 if (light.name.empty()) throw std::runtime_error("Preview light name must not be empty when building canonical scene");
-                if (light.kind != Scene::PreviewLightKind::Directional && light.kind != Scene::PreviewLightKind::Environment) throw std::runtime_error(std::format("Preview light \"{}\" uses a light kind that is not mapped to canonical path tracing yet", light.name));
+                if (light.kind == Scene::PreviewLightKind::Area) throw std::runtime_error(std::format("Preview light \"{}\" uses an area light kind without explicit area geometry", light.name));
+                if (!is_finite(light.color)) throw std::runtime_error(std::format("Preview light \"{}\" color must be finite when building canonical scene", light.name));
+                if (light.color.x < 0.0f || light.color.y < 0.0f || light.color.z < 0.0f) throw std::runtime_error(std::format("Preview light \"{}\" color must be non-negative when building canonical scene", light.name));
+                if (!std::isfinite(light.intensity) || light.intensity < 0.0f) throw std::runtime_error(std::format("Preview light \"{}\" intensity must be finite and non-negative when building canonical scene", light.name));
+                if (light.kind == Scene::PreviewLightKind::Spot && (!std::isfinite(light.cone_angle_degrees) || light.cone_angle_degrees <= 0.0f || light.cone_angle_degrees >= 180.0f)) throw std::runtime_error(std::format("Preview light \"{}\" cone angle must be inside (0, 180) when building canonical scene", light.name));
+                const SceneTransform transform = make_preview_scene_transform(light.transform, std::format("Preview light \"{}\"", light.name));
+                std::vector<Scene::Parameter> parameters{};
+                std::string type{};
+                if (light.kind == Scene::PreviewLightKind::Directional) {
+                    type = "distant";
+                    parameters.push_back(rgb_parameter("L", light.color, light.source));
+                    parameters.push_back(float_parameter("scale", {light.intensity}, light.source));
+                    parameters.push_back(point3_parameter("from", {0.0f, 0.0f, 1.0f}, light.source));
+                    parameters.push_back(point3_parameter("to", {0.0f, 0.0f, 0.0f}, light.source));
+                }
+                if (light.kind == Scene::PreviewLightKind::Environment) {
+                    type = "infinite";
+                    parameters.push_back(rgb_parameter("L", light.color, light.source));
+                    parameters.push_back(float_parameter("scale", {light.intensity}, light.source));
+                }
+                if (light.kind == Scene::PreviewLightKind::Point) {
+                    type = "point";
+                    parameters.push_back(rgb_parameter("I", light.color, light.source));
+                    parameters.push_back(float_parameter("scale", {light.intensity}, light.source));
+                }
+                if (light.kind == Scene::PreviewLightKind::Spot) {
+                    type = "spot";
+                    parameters.push_back(rgb_parameter("I", light.color, light.source));
+                    parameters.push_back(float_parameter("scale", {light.intensity}, light.source));
+                    parameters.push_back(point3_parameter("from", {0.0f, 0.0f, 0.0f}, light.source));
+                    parameters.push_back(point3_parameter("to", {0.0f, 0.0f, -1.0f}, light.source));
+                    parameters.push_back(float_parameter("coneangle", {light.cone_angle_degrees}, light.source));
+                }
+                if (type.empty()) throw std::runtime_error(std::format("Preview light \"{}\" uses an unmapped light kind", light.name));
                 scene.lights.push_back(Scene::Light{
                     .name = light.name,
                     .entity = Scene::Entity{
-                        .type = light.kind == Scene::PreviewLightKind::Environment ? "infinite" : "distant",
-                        .parameters = {
-                            rgb_parameter("L", light.color, light.source),
-                            float_parameter("scale", {light.intensity}, light.source),
-                        },
+                        .type = std::move(type),
+                        .parameters = std::move(parameters),
                         .source = light.source,
                     },
+                    .transform = SceneTransformSet{.start = transform, .end = transform},
                 });
             }
         }
@@ -768,6 +868,16 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} requires \"{} {}\"", context, type, name));
         }
 
+        [[nodiscard]] const std::vector<float>* optional_float_values(const Scene::Entity& entity, const std::string_view type, const std::string_view name) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != type || parameter.name != name) continue;
+                const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
+                if (values == nullptr) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain float values", name));
+                return values;
+            }
+            return nullptr;
+        }
+
         [[nodiscard]] const std::vector<int>& required_int_values(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "integer" || parameter.name != name) continue;
@@ -784,6 +894,13 @@ namespace spectra::scene {
             return Vector3{values.at(0), values.at(1), values.at(2)};
         }
 
+        [[nodiscard]] Vector3 optional_rgb_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value) {
+            const std::vector<float>* values = optional_float_values(entity, "rgb", name);
+            if (values == nullptr) return default_value;
+            if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly three RGB values", name));
+            return Vector3{values->at(0), values->at(1), values->at(2)};
+        }
+
         [[nodiscard]] float required_one_float_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "float" || parameter.name != name) continue;
@@ -792,6 +909,20 @@ namespace spectra::scene {
                 return values->front();
             }
             throw std::runtime_error(std::format("{} requires \"float {}\"", context, name));
+        }
+
+        [[nodiscard]] float optional_one_float_value(const Scene::Entity& entity, const std::string_view name, const float default_value) {
+            const std::vector<float>* values = optional_float_values(entity, "float", name);
+            if (values == nullptr) return default_value;
+            if (values->size() != 1u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly one float", name));
+            return values->front();
+        }
+
+        [[nodiscard]] Vector3 optional_point3_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value) {
+            const std::vector<float>* values = optional_float_values(entity, "point3", name);
+            if (values == nullptr) return default_value;
+            if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly three point values", name));
+            return Vector3{values->at(0), values->at(1), values->at(2)};
         }
 
         [[nodiscard]] Vector3 transform_point(const SceneTransform& transform, const Vector3 point) {
@@ -812,6 +943,30 @@ namespace spectra::scene {
                 matrix_value(inverse, 0u, 2u) * normal.x + matrix_value(inverse, 1u, 2u) * normal.y + matrix_value(inverse, 2u, 2u) * normal.z,
             };
             return normalize(transformed, "PBRT preview mesh normal transform");
+        }
+
+        [[nodiscard]] Vector3 transform_vector(const SceneTransform& transform, const Vector3 vector) {
+            const std::array<float, 16>& matrix = transform.matrix;
+            return Vector3{
+                matrix_value(matrix, 0u, 0u) * vector.x + matrix_value(matrix, 0u, 1u) * vector.y + matrix_value(matrix, 0u, 2u) * vector.z,
+                matrix_value(matrix, 1u, 0u) * vector.x + matrix_value(matrix, 1u, 1u) * vector.y + matrix_value(matrix, 1u, 2u) * vector.z,
+                matrix_value(matrix, 2u, 0u) * vector.x + matrix_value(matrix, 2u, 1u) * vector.y + matrix_value(matrix, 2u, 2u) * vector.z,
+            };
+        }
+
+        [[nodiscard]] Vector3 transform_position(const SceneTransform& transform) {
+            const std::array<float, 16>& matrix = transform.matrix;
+            return Vector3{matrix_value(matrix, 0u, 3u), matrix_value(matrix, 1u, 3u), matrix_value(matrix, 2u, 3u)};
+        }
+
+        [[nodiscard]] Quaternion quaternion_from_light_forward(const Vector3 light_forward) {
+            const Vector3 source{0.0f, 0.0f, -1.0f};
+            const Vector3 target = normalize(light_forward, "PBRT preview distant light direction");
+            const float cosine = dot(source, target);
+            if (cosine > 0.999999f) return Quaternion{};
+            if (cosine < -0.999999f) return Quaternion{0.0f, 1.0f, 0.0f, 0.0f};
+            const Vector3 axis = cross(source, target);
+            return normalized_quaternion(Quaternion{axis.x, axis.y, axis.z, 1.0f + cosine}, "PBRT preview distant light rotation");
         }
 
         void require_static_transform(const SceneTransformSet& transform, const std::string_view context) {
@@ -958,8 +1113,66 @@ namespace spectra::scene {
         void reject_unsupported_scene_content(const Scene::ResolvedScene& scene) {
             if (!scene.textures.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT textures");
             if (!scene.media.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT media");
-            if (!scene.lights.empty()) throw std::runtime_error("PBRT preview scene loader only supports mesh area lights");
             if (!scene.object_definitions.empty() || !scene.object_instances.empty()) throw std::runtime_error("PBRT preview scene loader only supports top-level trianglemesh shapes");
+        }
+
+        void append_pbrt_preview_lights(const Scene::ResolvedScene& scene, Scene::Document& document) {
+            for (const Scene::Light& light : scene.lights) {
+                const std::string context = std::format("PBRT preview light \"{}\"", light.name);
+                require_static_transform(light.transform, context);
+                if (light.entity.type == "infinite") {
+                    document.lights.push_back(Scene::PreviewLight{
+                        .name      = light.name,
+                        .kind      = Scene::PreviewLightKind::Environment,
+                        .transform = Transform{.position = transform_position(light.transform.start)},
+                        .color     = optional_rgb_value(light.entity, "L", Vector3{1.0f, 1.0f, 1.0f}),
+                        .intensity = optional_one_float_value(light.entity, "scale", 1.0f),
+                        .source    = light.entity.source,
+                    });
+                    continue;
+                }
+                if (light.entity.type == "distant") {
+                    const Vector3 from = optional_point3_value(light.entity, "from", Vector3{0.0f, 0.0f, 0.0f});
+                    const Vector3 to = optional_point3_value(light.entity, "to", Vector3{0.0f, 0.0f, 1.0f});
+                    const Vector3 local_light_forward = normalize(to - from, context);
+                    const Vector3 world_light_forward = normalize(transform_vector(light.transform.start, local_light_forward), context);
+                    document.lights.push_back(Scene::PreviewLight{
+                        .name      = light.name,
+                        .kind      = Scene::PreviewLightKind::Directional,
+                        .transform = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward)},
+                        .color     = optional_rgb_value(light.entity, "L", Vector3{1.0f, 1.0f, 1.0f}),
+                        .intensity = optional_one_float_value(light.entity, "scale", 1.0f),
+                        .source    = light.entity.source,
+                    });
+                    continue;
+                }
+                if (light.entity.type == "point") {
+                    document.lights.push_back(Scene::PreviewLight{
+                        .name      = light.name,
+                        .kind      = Scene::PreviewLightKind::Point,
+                        .transform = Transform{.position = transform_point(light.transform.start, optional_point3_value(light.entity, "from", Vector3{}))},
+                        .color     = optional_rgb_value(light.entity, "I", Vector3{1.0f, 1.0f, 1.0f}),
+                        .intensity = optional_one_float_value(light.entity, "scale", 1.0f),
+                        .source    = light.entity.source,
+                    });
+                    continue;
+                }
+                if (light.entity.type == "spot") {
+                    const Vector3 from = optional_point3_value(light.entity, "from", Vector3{0.0f, 0.0f, 0.0f});
+                    const Vector3 to = optional_point3_value(light.entity, "to", Vector3{0.0f, 0.0f, 1.0f});
+                    const Vector3 local_light_forward = normalize(to - from, context);
+                    const Vector3 world_light_forward = normalize(transform_vector(light.transform.start, local_light_forward), context);
+                    document.lights.push_back(Scene::PreviewLight{
+                        .name               = light.name,
+                        .kind               = Scene::PreviewLightKind::Spot,
+                        .transform          = Transform{.position = transform_point(light.transform.start, from), .rotation = quaternion_from_light_forward(world_light_forward)},
+                        .color              = optional_rgb_value(light.entity, "I", Vector3{1.0f, 1.0f, 1.0f}),
+                        .intensity          = optional_one_float_value(light.entity, "scale", 1.0f),
+                        .cone_angle_degrees = optional_one_float_value(light.entity, "coneangle", 30.0f),
+                        .source             = light.entity.source,
+                    });
+                }
+            }
         }
     } // namespace
 
@@ -983,12 +1196,7 @@ namespace spectra::scene {
         const std::map<std::string, std::size_t> material_indices = append_materials(scene, referenced_material_names, document);
         append_meshes(object_source_prefix_value, scene, document, material_indices, bounds);
         document.camera = make_camera(scene, bounds);
-        document.lights.push_back(Scene::PreviewLight{
-            .name      = "preview.key",
-            .kind      = Scene::PreviewLightKind::Directional,
-            .color     = Vector3{1.0f, 0.96f, 0.86f},
-            .intensity = 1.8f,
-        });
+        append_pbrt_preview_lights(scene, document);
         return document;
     }
 

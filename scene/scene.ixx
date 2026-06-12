@@ -197,7 +197,7 @@ namespace spectra::scene {
             PreviewLightKind kind{PreviewLightKind::Directional};
             Transform transform{};
             Vector3 color{1.0f, 1.0f, 1.0f};
-            float intensity{1.0f};
+            float intensity{};
             float cone_angle_degrees{45.0f};
             SourceLocation source{};
         };
