@@ -43,35 +43,6 @@ namespace xayah::projects::pyro {
         float far_plane{200.0f};
     };
 
-    export struct PyroVisualMeshVertex {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-    };
-
-    export struct PyroVisualMesh {
-        std::string_view name{};
-        std::vector<PyroVisualMeshVertex> vertices{};
-        std::vector<std::uint32_t> indices{};
-        std::string_view material_name{};
-        PyroVisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    export struct PyroVisualPoint {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-        std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
-        float radius{0.01f};
-    };
-
-    export struct PyroVisualPointCloud {
-        std::string_view name{};
-        std::vector<PyroVisualPoint> points{};
-        std::string_view material_name{};
-        PyroVisualTransform transform{};
-        bool dynamic{true};
-    };
-
     export struct PyroVisualVolumeChannel {
         std::string_view name{};
         std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
@@ -128,14 +99,6 @@ namespace xayah::projects::pyro {
             return this->visual_camera;
         }
 
-        [[nodiscard]] const std::vector<PyroVisualMesh>& meshes() const {
-            return this->visual_meshes;
-        }
-
-        [[nodiscard]] const std::vector<PyroVisualPointCloud>& point_clouds() const {
-            return this->visual_point_clouds;
-        }
-
         [[nodiscard]] const std::vector<PyroVisualVolume>& volumes() const {
             return this->visual_volumes;
         }
@@ -171,8 +134,6 @@ namespace xayah::projects::pyro {
             .near_plane           = 0.03f,
             .far_plane            = 80.0f,
         };
-        std::vector<PyroVisualMesh> visual_meshes{};
-        std::vector<PyroVisualPointCloud> visual_point_clouds{};
         std::vector<PyroVisualVolume> visual_volumes{};
 
         [[nodiscard]] static int to_solver_frame_index(const std::uint64_t index) {

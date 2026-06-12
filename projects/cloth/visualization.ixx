@@ -57,37 +57,6 @@ namespace xayah::projects::cloth {
         bool dynamic{true};
     };
 
-    export struct ClothVisualPoint {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-        std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
-        float radius{0.01f};
-    };
-
-    export struct ClothVisualPointCloud {
-        std::string_view name{};
-        std::vector<ClothVisualPoint> points{};
-        std::string_view material_name{};
-        ClothVisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    export struct ClothVisualVolumeChannel {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::vector<float> values{};
-    };
-
-    export struct ClothVisualVolume {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> voxel_size{1.0f, 1.0f, 1.0f};
-        std::vector<ClothVisualVolumeChannel> channels{};
-        std::string_view material_name{};
-        bool dynamic{true};
-    };
-
     export class ClothVisualization final {
     public:
         ClothVisualization() : solver(this->config, this->collider) {}
@@ -130,14 +99,6 @@ namespace xayah::projects::cloth {
             return this->visual_meshes;
         }
 
-        [[nodiscard]] const std::vector<ClothVisualPointCloud>& point_clouds() const {
-            return this->visual_point_clouds;
-        }
-
-        [[nodiscard]] const std::vector<ClothVisualVolume>& volumes() const {
-            return this->visual_volumes;
-        }
-
     private:
         ClothConfig config{};
         ClothSphereCollider collider{};
@@ -165,8 +126,6 @@ namespace xayah::projects::cloth {
             .far_plane            = 90.0f,
         };
         std::vector<ClothVisualMesh> visual_meshes{};
-        std::vector<ClothVisualPointCloud> visual_point_clouds{};
-        std::vector<ClothVisualVolume> visual_volumes{};
 
         [[nodiscard]] ClothVisualMesh make_floor_mesh() const {
             return ClothVisualMesh{

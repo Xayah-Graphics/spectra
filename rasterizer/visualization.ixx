@@ -144,7 +144,25 @@ namespace spectra::rasterizer {
     concept VisualizationVolumeRange = std::ranges::input_range<std::remove_cvref_t<Range>> && VisualizationVolume<std::ranges::range_reference_t<std::remove_cvref_t<Range>>>;
 
     export template <typename Source>
-    concept VisualizationSource = std::default_initializable<Source> && requires(Source& source, const Source& const_source, const float delta_seconds) {
+    concept VisualizationMeshProvider = requires(const Source& source) {
+        { source.meshes() } -> VisualizationMeshRange;
+    };
+
+    export template <typename Source>
+    concept VisualizationPointCloudProvider = requires(const Source& source) {
+        { source.point_clouds() } -> VisualizationPointCloudRange;
+    };
+
+    export template <typename Source>
+    concept VisualizationVolumeProvider = requires(const Source& source) {
+        { source.volumes() } -> VisualizationVolumeRange;
+    };
+
+    export template <typename Source>
+    concept VisualizationPrimitiveProvider = VisualizationMeshProvider<Source> || VisualizationPointCloudProvider<Source> || VisualizationVolumeProvider<Source>;
+
+    export template <typename Source>
+    concept VisualizationSource = std::default_initializable<Source> && VisualizationPrimitiveProvider<Source> && requires(Source& source, const Source& const_source, const float delta_seconds) {
         { Source::visualization_id() } -> VisualizationString;
         { Source::visualization_title() } -> VisualizationString;
         { const_source.frames_per_second() } -> std::convertible_to<double>;
@@ -153,9 +171,6 @@ namespace spectra::rasterizer {
         { const_source.materials() } -> VisualizationMaterialRange;
         { const_source.lights() } -> VisualizationLightRange;
         { const_source.camera() } -> VisualizationCamera;
-        { const_source.meshes() } -> VisualizationMeshRange;
-        { const_source.point_clouds() } -> VisualizationPointCloudRange;
-        { const_source.volumes() } -> VisualizationVolumeRange;
     };
 
     export class VisualizationSourceInstance {
@@ -195,9 +210,9 @@ namespace spectra::rasterizer {
             scene::Scene::FrameSnapshot snapshot{
                 .cursor = scene::Scene::make_frame_cursor(frame),
             };
-            append_meshes(snapshot.meshes, this->source.meshes(), true);
-            append_point_clouds(snapshot.point_clouds, this->source.point_clouds(), true);
-            append_volumes(snapshot.volumes, this->source.volumes(), true);
+            if constexpr (VisualizationMeshProvider<Source>) append_meshes(snapshot.meshes, this->source.meshes(), true);
+            if constexpr (VisualizationPointCloudProvider<Source>) append_point_clouds(snapshot.point_clouds, this->source.point_clouds(), true);
+            if constexpr (VisualizationVolumeProvider<Source>) append_volumes(snapshot.volumes, this->source.volumes(), true);
             return snapshot;
         }
 
@@ -457,9 +472,9 @@ namespace spectra::rasterizer {
             };
             for (const auto& material : source.materials()) document.materials.push_back(make_material(material));
             for (const auto& light : source.lights()) document.lights.push_back(make_light(light));
-            append_meshes(document.meshes, source.meshes(), false);
-            append_point_clouds(document.point_clouds, source.point_clouds(), false);
-            append_volumes(document.volumes, source.volumes(), false);
+            if constexpr (VisualizationMeshProvider<Source>) append_meshes(document.meshes, source.meshes(), false);
+            if constexpr (VisualizationPointCloudProvider<Source>) append_point_clouds(document.point_clouds, source.point_clouds(), false);
+            if constexpr (VisualizationVolumeProvider<Source>) append_volumes(document.volumes, source.volumes(), false);
             return document;
         }
     };

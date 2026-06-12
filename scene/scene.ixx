@@ -152,58 +152,6 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
-        enum class CurveTopology {
-            Segments,
-            Polyline,
-        };
-
-        struct CurveSet {
-            std::string name{};
-            CurveTopology topology{CurveTopology::Polyline};
-            std::vector<Vector3> points{};
-            std::vector<std::uint32_t> curve_offsets{};
-            std::vector<float> radii{};
-            std::vector<Vector4> colors{};
-            std::string material_name{};
-            Transform transform{};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
-        struct SplatSet {
-            std::string name{};
-            std::vector<Vector3> centers{};
-            std::vector<Quaternion> rotations{};
-            std::vector<Vector3> scales{};
-            std::vector<Vector4> colors{};
-            std::vector<float> opacities{};
-            std::string material_name{};
-            Transform transform{};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
-        struct LineSet {
-            std::string name{};
-            std::vector<Vector3> points{};
-            std::vector<std::uint32_t> indices{};
-            std::vector<Vector4> colors{};
-            Transform transform{};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
-        struct VectorField {
-            std::string name{};
-            std::vector<Vector3> origins{};
-            std::vector<Vector3> vectors{};
-            std::vector<Vector4> colors{};
-            float scale{1.0f};
-            Transform transform{};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
         struct Document {
             Revision revision{};
             std::string name{};
@@ -217,10 +165,6 @@ namespace spectra::scene {
             std::vector<Mesh> meshes{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
-            std::vector<CurveSet> curve_sets{};
-            std::vector<SplatSet> splat_sets{};
-            std::vector<LineSet> line_sets{};
-            std::vector<VectorField> vector_fields{};
         };
 
         enum class TimelineMode {
@@ -235,22 +179,16 @@ namespace spectra::scene {
         };
 
         struct FrameSnapshot {
-            Revision revision{};
             FrameCursor cursor{};
             std::vector<Mesh> meshes{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
-            std::vector<CurveSet> curve_sets{};
-            std::vector<SplatSet> splat_sets{};
-            std::vector<LineSet> line_sets{};
-            std::vector<VectorField> vector_fields{};
         };
 
         struct Timeline {
             TimelineMode mode{TimelineMode::Playback};
             double frames_per_second{24.0};
             bool playing{true};
-            bool loop{true};
             FrameCursor cursor{};
             std::uint64_t selected_frame_index{};
             std::uint64_t reset_request_serial{};
@@ -260,17 +198,9 @@ namespace spectra::scene {
         };
 
         struct ResolvedFrame {
-            Revision revision{};
-            std::shared_ptr<const Document> document{};
-            Timeline timeline{};
-            std::optional<FrameSnapshot> frame{};
             std::vector<Mesh> meshes{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
-            std::vector<CurveSet> curve_sets{};
-            std::vector<SplatSet> splat_sets{};
-            std::vector<LineSet> line_sets{};
-            std::vector<VectorField> vector_fields{};
         };
 
         class Edit {
@@ -454,7 +384,6 @@ namespace spectra::scene {
         explicit PbrtScene(Snapshot snapshot);
 
         [[nodiscard]] static PbrtScene parse(std::string_view scene_id);
-        [[nodiscard]] static Scene::Document load_preview_document(std::string_view scene_id);
 
         [[nodiscard]] Info info() const;
         [[nodiscard]] const Snapshot& snapshot() const;

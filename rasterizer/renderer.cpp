@@ -572,7 +572,7 @@ namespace spectra::rasterizer {
             .icon           = ICON_MS_PLAY_PAUSE,
             .shortcut_label = "Space",
             .shortcut_key   = ImGuiKey_Space,
-            .enabled        = [this] { return this->timeline_enabled(); },
+            .enabled        = [this] { return this->timeline_streaming_enabled(); },
             .active         = [this] { return this->timeline_playing(); },
             .trigger        = [this] { this->toggle_timeline_playback(); },
         });
@@ -2790,7 +2790,7 @@ namespace spectra::rasterizer {
         draw_list->AddRect(selection_min, selection_max, this->selection.active_object.has_value() ? IM_COL32(60, 198, 232, 112) : IM_COL32(92, 102, 112, 72), 7.0f);
         draw_list->AddText(ImVec2{selection_min.x + selection_padding.x, selection_min.y + selection_padding.y}, IM_COL32(218, 236, 242, 255), selection_text.c_str());
 
-        const std::size_t primitive_count = scene->meshes.size() + scene->point_clouds.size() + scene->volumes.size() + scene->curve_sets.size() + scene->splat_sets.size() + scene->line_sets.size() + scene->vector_fields.size();
+        const std::size_t primitive_count = scene->meshes.size() + scene->point_clouds.size() + scene->volumes.size();
         std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, this->viewport.camera_distance);
         const ImVec2 chip_padding{10.0f, 7.0f};
         ImVec2 chip_text = ImGui::CalcTextSize(chip.c_str());
@@ -2843,13 +2843,18 @@ namespace spectra::rasterizer {
         return this->scene.workspace->document()->timeline_enabled;
     }
 
-    bool Renderer::timeline_playing() const {
+    bool Renderer::timeline_streaming_enabled() const {
         if (!this->timeline_enabled()) return false;
+        return this->scene.workspace->timeline().mode != scene::Scene::TimelineMode::Playback;
+    }
+
+    bool Renderer::timeline_playing() const {
+        if (!this->timeline_streaming_enabled()) return false;
         return this->scene.workspace->timeline().playing;
     }
 
     void Renderer::toggle_timeline_playback() {
-        if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline playback");
+        if (!this->timeline_streaming_enabled()) throw std::runtime_error("Rasterizer timeline playback can only be toggled in Live or Record mode");
         scene::Scene::Timeline timeline = this->scene.workspace->timeline();
         timeline.playing = !timeline.playing;
         this->commit_timeline_from_ui(std::move(timeline));
@@ -2877,10 +2882,13 @@ namespace spectra::rasterizer {
         ImGui::TextDisabled(scene->timeline_enabled ? "Dynamic Scene" : "Static Scene");
         if (scene->timeline_enabled) {
             ImGui::SeparatorText("Timeline");
+            const bool streaming_controls_enabled = timeline.mode != scene::Scene::TimelineMode::Playback;
+            ImGui::BeginDisabled(!streaming_controls_enabled);
             if (ImGui::Button(timeline.playing ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW)) {
                 timeline.playing = !timeline.playing;
                 timeline_changed = true;
             }
+            ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button(ICON_MS_RESTART_ALT)) {
                 ++timeline.reset_request_serial;
@@ -2902,11 +2910,6 @@ namespace spectra::rasterizer {
             ImGui::SameLine();
             if (ImGui::RadioButton("Playback", playback_selected)) {
                 timeline.mode = scene::Scene::TimelineMode::Playback;
-                timeline_changed = true;
-            }
-            bool loop = timeline.loop;
-            if (ImGui::Checkbox("Loop", &loop)) {
-                timeline.loop = loop;
                 timeline_changed = true;
             }
             if (timeline.recorded_frames.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Rasterizer recorded frame count exceeds ImGui slider range");
@@ -2970,10 +2973,6 @@ namespace spectra::rasterizer {
             draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
             draw_status_row("Point Clouds", std::format("{}", scene->point_clouds.size()));
             draw_status_row("Volumes", std::format("{}", scene->volumes.size()));
-            draw_status_row("Curves", std::format("{}", scene->curve_sets.size()));
-            draw_status_row("Splats", std::format("{}", scene->splat_sets.size()));
-            draw_status_row("Line Sets", std::format("{}", scene->line_sets.size()));
-            draw_status_row("Vector Fields", std::format("{}", scene->vector_fields.size()));
             ImGui::EndTable();
         }
     }

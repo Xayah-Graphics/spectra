@@ -124,21 +124,12 @@ namespace spectra::scene {
 
     Scene::ResolvedFrame Scene::resolved_frame() const {
         if (this->current_document == nullptr) throw std::runtime_error("Scene workspace does not contain a loaded document");
-        const std::optional<Scene::FrameSnapshot> frame = this->current_timeline.current_frame;
         const Scene::FrameSnapshot empty_frame{};
-        const Scene::FrameSnapshot& frame_value = frame.has_value() ? *frame : empty_frame;
+        const Scene::FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
         return Scene::ResolvedFrame{
-            .revision        = this->current_revision,
-            .document        = this->current_document,
-            .timeline        = this->current_timeline,
-            .frame           = frame,
             .meshes          = resolve_scene_items(this->current_document->meshes, frame_value.meshes, "mesh"),
             .point_clouds     = resolve_scene_items(this->current_document->point_clouds, frame_value.point_clouds, "point cloud"),
             .volumes         = resolve_scene_items(this->current_document->volumes, frame_value.volumes, "volume"),
-            .curve_sets       = resolve_scene_items(this->current_document->curve_sets, frame_value.curve_sets, "curve set"),
-            .splat_sets       = resolve_scene_items(this->current_document->splat_sets, frame_value.splat_sets, "splat set"),
-            .line_sets        = resolve_scene_items(this->current_document->line_sets, frame_value.line_sets, "line set"),
-            .vector_fields    = resolve_scene_items(this->current_document->vector_fields, frame_value.vector_fields, "vector field"),
         };
     }
 
@@ -149,7 +140,6 @@ namespace spectra::scene {
         this->current_revision = Scene::Revision{this->current_revision.value + 1};
         if (edit.timeline_replacement.has_value()) this->current_timeline = std::move(*edit.timeline_replacement);
         if (edit.frame_replacement.has_value()) {
-            edit.frame_replacement->revision = this->current_revision;
             this->current_timeline.cursor = edit.frame_replacement->cursor;
             this->current_timeline.current_frame = std::move(*edit.frame_replacement);
         }
@@ -1821,10 +1811,6 @@ namespace spectra::scene {
         scene.title = SceneDisplayName(scenePath);
         if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
         return PbrtScene{std::move(scene)};
-    }
-
-    Scene::Document PbrtScene::load_preview_document(const std::string_view scene_id) {
-        return PbrtScene::parse(scene_id).make_preview_document();
     }
 
     PbrtScene::Info PbrtScene::info() const {

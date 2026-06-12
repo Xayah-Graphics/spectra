@@ -123,10 +123,9 @@ namespace spectra::rasterizer {
         if (slot.source == nullptr) throw std::runtime_error("Dynamic visualization slot has no source instance");
         const std::shared_ptr<const scene::Scene::Document> document = slot.workspace->document();
         if (!document->timeline_enabled) throw std::runtime_error("Dynamic visualization must enable timeline");
-        if (document->frames_per_second <= 0.0) throw std::runtime_error("Dynamic visualization frame rate must be positive");
-        const double fixed_delta_seconds = 1.0 / document->frames_per_second;
         scene::Scene::Timeline timeline = slot.workspace->timeline();
         if (timeline.frames_per_second <= 0.0) throw std::runtime_error("Visualization timeline frame rate must be positive");
+        const double fixed_delta_seconds = 1.0 / timeline.frames_per_second;
         if (timeline.reset_request_serial != slot.observed_reset_request_serial) {
             this->reset_dynamic_visualization(slot, std::move(timeline));
             slot.observed_reset_request_serial = slot.workspace->timeline().reset_request_serial;
@@ -201,7 +200,6 @@ namespace spectra::rasterizer {
             .mode                 = scene::Scene::TimelineMode::Live,
             .frames_per_second    = scene_document->frames_per_second,
             .playing              = true,
-            .loop                 = true,
             .selected_frame_index = 0,
         };
         commit_scene_timeline_and_frame(*slot.workspace, std::move(timeline), std::move(snapshot));

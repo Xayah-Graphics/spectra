@@ -251,6 +251,7 @@ namespace spectra::rasterizer {
         void draw_rasterizer_window();
         void commit_timeline_from_ui(scene::Scene::Timeline timeline);
         [[nodiscard]] bool timeline_enabled() const;
+        [[nodiscard]] bool timeline_streaming_enabled() const;
         [[nodiscard]] bool timeline_playing() const;
         void toggle_timeline_playback();
         void request_timeline_reset();

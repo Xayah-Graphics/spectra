@@ -57,37 +57,6 @@ namespace xayah::projects::bouncing_ball {
         bool dynamic{true};
     };
 
-    export struct BouncingBallVisualPoint {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-        std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
-        float radius{0.01f};
-    };
-
-    export struct BouncingBallVisualPointCloud {
-        std::string_view name{};
-        std::vector<BouncingBallVisualPoint> points{};
-        std::string_view material_name{};
-        BouncingBallVisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    export struct BouncingBallVisualVolumeChannel {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::vector<float> values{};
-    };
-
-    export struct BouncingBallVisualVolume {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> voxel_size{1.0f, 1.0f, 1.0f};
-        std::vector<BouncingBallVisualVolumeChannel> channels{};
-        std::string_view material_name{};
-        bool dynamic{true};
-    };
-
     export class BouncingBallVisualization final {
     public:
         BouncingBallVisualization() = default;
@@ -130,14 +99,6 @@ namespace xayah::projects::bouncing_ball {
             return this->visual_meshes;
         }
 
-        [[nodiscard]] const std::vector<BouncingBallVisualPointCloud>& point_clouds() const {
-            return this->visual_point_clouds;
-        }
-
-        [[nodiscard]] const std::vector<BouncingBallVisualVolume>& volumes() const {
-            return this->visual_volumes;
-        }
-
     private:
         BouncingBallSolver solver{};
         std::vector<BouncingBallVisualMaterial> visual_materials{
@@ -162,8 +123,6 @@ namespace xayah::projects::bouncing_ball {
             .far_plane            = 80.0f,
         };
         std::vector<BouncingBallVisualMesh> visual_meshes{};
-        std::vector<BouncingBallVisualPointCloud> visual_point_clouds{};
-        std::vector<BouncingBallVisualVolume> visual_volumes{};
 
         [[nodiscard]] BouncingBallVisualMesh make_floor_mesh() const {
             return BouncingBallVisualMesh{

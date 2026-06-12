@@ -43,20 +43,6 @@ namespace xayah::projects::sparkles {
         float far_plane{200.0f};
     };
 
-    export struct SparklesVisualMeshVertex {
-        std::array<float, 3> position{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
-    };
-
-    export struct SparklesVisualMesh {
-        std::string_view name{};
-        std::vector<SparklesVisualMeshVertex> vertices{};
-        std::vector<std::uint32_t> indices{};
-        std::string_view material_name{};
-        SparklesVisualTransform transform{};
-        bool dynamic{true};
-    };
-
     export struct SparklesVisualPoint {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
@@ -69,22 +55,6 @@ namespace xayah::projects::sparkles {
         std::vector<SparklesVisualPoint> points{};
         std::string_view material_name{};
         SparklesVisualTransform transform{};
-        bool dynamic{true};
-    };
-
-    export struct SparklesVisualVolumeChannel {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::vector<float> values{};
-    };
-
-    export struct SparklesVisualVolume {
-        std::string_view name{};
-        std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
-        std::array<float, 3> voxel_size{1.0f, 1.0f, 1.0f};
-        std::vector<SparklesVisualVolumeChannel> channels{};
-        std::string_view material_name{};
         bool dynamic{true};
     };
 
@@ -126,16 +96,8 @@ namespace xayah::projects::sparkles {
             return this->visual_camera;
         }
 
-        [[nodiscard]] const std::vector<SparklesVisualMesh>& meshes() const {
-            return this->visual_meshes;
-        }
-
         [[nodiscard]] const std::vector<SparklesVisualPointCloud>& point_clouds() const {
             return this->visual_point_clouds;
-        }
-
-        [[nodiscard]] const std::vector<SparklesVisualVolume>& volumes() const {
-            return this->visual_volumes;
         }
 
     private:
@@ -167,9 +129,7 @@ namespace xayah::projects::sparkles {
             .near_plane           = 0.05f,
             .far_plane            = 90.0f,
         };
-        std::vector<SparklesVisualMesh> visual_meshes{};
         std::vector<SparklesVisualPointCloud> visual_point_clouds{};
-        std::vector<SparklesVisualVolume> visual_volumes{};
 
         void rebuild_point_clouds() {
             SparklesVisualPointCloud point_cloud{
