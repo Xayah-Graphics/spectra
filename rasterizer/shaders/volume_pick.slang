@@ -124,7 +124,7 @@ uint fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_T
         float t = startT + (float(stepIndex) + 0.5) * stepLength;
         if (t > endT || accumulatedAlpha > 0.55) break;
         float density = max(densityTexture.SampleLevel(volumeSampler, cameraLocal + rayDirection * t, 0.0), 0.0) * densityScale;
-        float alpha = saturate(1.0 - exp(-density * 0.08));
+        float alpha = saturate(1.0 - exp(-density));
         accumulatedAlpha += (1.0 - accumulatedAlpha) * alpha;
     }
     if (accumulatedAlpha <= 0.025) discard;

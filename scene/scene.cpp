@@ -299,9 +299,10 @@ namespace spectra::scene {
                 const bool inserted = material_indices.emplace(material.name, document.materials.size()).second;
                 if (!inserted) throw std::runtime_error(std::format("PBRT preview material \"{}\" is duplicated", material.name));
                 document.materials.push_back(Scene::Material{
-                    .name      = material.name,
+                    .name       = material.name,
+                    .model      = Scene::MaterialModel::LitSurface,
                     .base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f},
-                    .roughness = 0.72f,
+                    .roughness  = 0.72f,
                 });
             }
             for (const std::string& material_name : referenced_material_names) {
@@ -323,6 +324,7 @@ namespace spectra::scene {
             Scene::Material& material = material_for_name(document, material_indices, shape.material_name);
             const Vector3 radiance = required_rgb_value(shape.area_light->entity, "L", context);
             if (material.emission_strength != 0.0f && (material.emission_color.x != radiance.x || material.emission_color.y != radiance.y || material.emission_color.z != radiance.z)) throw std::runtime_error(std::format("PBRT preview material \"{}\" is reused by area lights with different radiance", material.name));
+            material.model             = Scene::MaterialModel::EmissiveSurface;
             material.emission_color    = radiance;
             material.emission_strength = 1.0f;
         }

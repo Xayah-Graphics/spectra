@@ -17,11 +17,15 @@ struct CameraUniform {
 struct SelectionPushConstants {
     row_major float4x4 model;
     float4 color;
-    uint objectId;
+    float4 base_color;
+    float4 material;
+    uint4 flags;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
 [[vk::push_constant]] ConstantBuffer<SelectionPushConstants> selection;
+
+static const uint MaterialAlphaModeMasked = 1;
 
 struct VertexInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -35,5 +39,6 @@ float4 vertex_main(VertexInput input) : SV_Position {
 
 [shader("fragment")]
 uint fragment_main() : SV_Target {
-    return selection.objectId;
+    if (selection.flags.y == MaterialAlphaModeMasked && selection.base_color.a < selection.material.z) discard;
+    return selection.flags.x;
 }

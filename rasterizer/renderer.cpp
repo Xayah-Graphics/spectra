@@ -64,6 +64,8 @@ namespace {
         std::array<float, 16> model{};
         std::array<float, 4> base_color{};
         std::array<float, 4> emission{};
+        std::array<float, 4> material{};
+        std::array<std::uint32_t, 4> flags{};
     };
 
     struct VolumePushConstantsData {
@@ -71,12 +73,15 @@ namespace {
         std::array<float, 4> extentStepScale{};
         std::array<float, 4> base_color{};
         std::array<float, 4> emission{};
+        std::array<float, 4> material{};
     };
 
     struct SelectionPushConstantsData {
         std::array<float, 16> model{};
         std::array<float, 4> color{};
-        std::uint32_t objectId{};
+        std::array<float, 4> base_color{};
+        std::array<float, 4> material{};
+        std::array<std::uint32_t, 4> flags{};
     };
 
     struct ParticleSelectionPushConstantsData {
@@ -114,6 +119,108 @@ namespace {
 
     [[nodiscard]] spectra::scene::Vector3 to_scene_vector(const spectra::rasterizer::math::Vector3& value) {
         return spectra::scene::Vector3{value.x, value.y, value.z};
+    }
+
+    [[nodiscard]] bool finite_scene_vector(const spectra::scene::Vector3 value) {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    }
+
+    [[nodiscard]] bool finite_scene_vector(const spectra::scene::Vector4 value) {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) && std::isfinite(value.w);
+    }
+
+    [[nodiscard]] const char* material_model_name(const spectra::scene::Scene::MaterialModel model) {
+        switch (model) {
+        case spectra::scene::Scene::MaterialModel::LitSurface: return "LitSurface";
+        case spectra::scene::Scene::MaterialModel::UnlitSurface: return "UnlitSurface";
+        case spectra::scene::Scene::MaterialModel::EmissiveSurface: return "EmissiveSurface";
+        case spectra::scene::Scene::MaterialModel::Volume: return "Volume";
+        case spectra::scene::Scene::MaterialModel::PointSprite: return "PointSprite";
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer material model");
+    }
+
+    [[nodiscard]] std::uint32_t material_model_code(const spectra::scene::Scene::MaterialModel model) {
+        switch (model) {
+        case spectra::scene::Scene::MaterialModel::LitSurface: return 0u;
+        case spectra::scene::Scene::MaterialModel::UnlitSurface: return 1u;
+        case spectra::scene::Scene::MaterialModel::EmissiveSurface: return 2u;
+        case spectra::scene::Scene::MaterialModel::Volume: return 3u;
+        case spectra::scene::Scene::MaterialModel::PointSprite: return 4u;
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer material model");
+    }
+
+    [[nodiscard]] std::uint32_t material_alpha_mode_code(const spectra::scene::Scene::MaterialAlphaMode alpha_mode) {
+        switch (alpha_mode) {
+        case spectra::scene::Scene::MaterialAlphaMode::Opaque: return 0u;
+        case spectra::scene::Scene::MaterialAlphaMode::Masked: return 1u;
+        case spectra::scene::Scene::MaterialAlphaMode::Blend: return 2u;
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer material alpha mode");
+    }
+
+    void validate_material_values(const spectra::scene::Scene::Material& material) {
+        if (material.name.empty()) throw std::runtime_error("Rasterizer material names must not be empty");
+        if (!finite_scene_vector(material.base_color)) throw std::runtime_error(std::format("Rasterizer material \"{}\" base color must be finite", material.name));
+        if (!finite_scene_vector(material.emission_color)) throw std::runtime_error(std::format("Rasterizer material \"{}\" emission color must be finite", material.name));
+        if (material.base_color.x < 0.0f || material.base_color.y < 0.0f || material.base_color.z < 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" base color RGB must be non-negative", material.name));
+        if (material.base_color.w < 0.0f || material.base_color.w > 1.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" alpha must be inside [0, 1]", material.name));
+        if (material.emission_color.x < 0.0f || material.emission_color.y < 0.0f || material.emission_color.z < 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" emission color must be non-negative", material.name));
+        if (!std::isfinite(material.emission_strength) || material.emission_strength < 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" emission strength must be finite and non-negative", material.name));
+        if (!std::isfinite(material.roughness) || material.roughness <= 0.0f || material.roughness > 1.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" roughness must be inside (0, 1]", material.name));
+        if (!std::isfinite(material.metallic) || material.metallic < 0.0f || material.metallic > 1.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" metallic must be inside [0, 1]", material.name));
+        if (!std::isfinite(material.alpha_cutoff) || material.alpha_cutoff < 0.0f || material.alpha_cutoff > 1.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" alpha cutoff must be inside [0, 1]", material.name));
+        if (!std::isfinite(material.volume_density_scale) || material.volume_density_scale <= 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" volume density scale must be finite and positive", material.name));
+        if (!std::isfinite(material.volume_temperature_scale) || material.volume_temperature_scale < 0.0f) throw std::runtime_error(std::format("Rasterizer material \"{}\" volume temperature scale must be finite and non-negative", material.name));
+        static_cast<void>(material_model_code(material.model));
+        static_cast<void>(material_alpha_mode_code(material.alpha_mode));
+    }
+
+    void validate_material_library(const spectra::scene::Scene::Document& scene) {
+        std::set<std::string_view> names{};
+        for (const spectra::scene::Scene::Material& material : scene.materials) {
+            validate_material_values(material);
+            const bool inserted = names.insert(std::string_view{material.name}).second;
+            if (!inserted) throw std::runtime_error(std::format("Rasterizer material \"{}\" is duplicated", material.name));
+        }
+    }
+
+    void require_surface_material(const spectra::scene::Scene::Material& material, const std::string_view mesh_name) {
+        if (material.model == spectra::scene::Scene::MaterialModel::LitSurface || material.model == spectra::scene::Scene::MaterialModel::UnlitSurface || material.model == spectra::scene::Scene::MaterialModel::EmissiveSurface) return;
+        throw std::runtime_error(std::format("Rasterizer mesh \"{}\" requires a surface material, got {} material \"{}\"", mesh_name, material_model_name(material.model), material.name));
+    }
+
+    void require_point_sprite_material(const spectra::scene::Scene::Material& material, const std::string_view point_cloud_name) {
+        if (material.model == spectra::scene::Scene::MaterialModel::PointSprite) return;
+        throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" requires a PointSprite material, got {} material \"{}\"", point_cloud_name, material_model_name(material.model), material.name));
+    }
+
+    void require_volume_material(const spectra::scene::Scene::Material& material, const std::string_view volume_name) {
+        if (material.model == spectra::scene::Scene::MaterialModel::Volume) return;
+        throw std::runtime_error(std::format("Rasterizer volume \"{}\" requires a Volume material, got {} material \"{}\"", volume_name, material_model_name(material.model), material.name));
+    }
+
+    [[nodiscard]] DrawPushConstantsData make_draw_push_constants(const spectra::scene::Transform& transform, const spectra::scene::Scene::Material& material) {
+        const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
+        return DrawPushConstantsData{
+            .model      = model_matrix.values,
+            .base_color = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
+            .emission   = {material.emission_color.x * material.emission_strength, material.emission_color.y * material.emission_strength, material.emission_color.z * material.emission_strength, 0.0f},
+            .material   = {material.roughness, material.metallic, material.alpha_cutoff, 0.0f},
+            .flags      = {material_model_code(material.model), material_alpha_mode_code(material.alpha_mode), 0u, 0u},
+        };
+    }
+
+    [[nodiscard]] SelectionPushConstantsData make_selection_push_constants(const spectra::scene::Transform& transform, const spectra::scene::Scene::Material& material, const std::array<float, 4>& color, const std::uint32_t object_id) {
+        const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
+        return SelectionPushConstantsData{
+            .model      = model_matrix.values,
+            .color      = color,
+            .base_color = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
+            .material   = {material.roughness, material.metallic, material.alpha_cutoff, 0.0f},
+            .flags      = {object_id, material_alpha_mode_code(material.alpha_mode), 0u, 0u},
+        };
     }
 
     struct LightUniformData {
@@ -727,16 +834,17 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::destroy_mesh_resources() noexcept {
-        if (this->mesh_pass.frame_count == 0 && !*this->mesh_pass.pipeline_layout && !*this->mesh_pass.pipeline && this->mesh_pass.frame_scenes.empty()) return;
+        if (this->mesh_pass.frame_count == 0 && !*this->mesh_pass.pipeline_layout && !*this->mesh_pass.pipeline && !*this->mesh_pass.transparent_pipeline && this->mesh_pass.frame_scenes.empty()) return;
         this->wait_device_idle_for_cleanup();
         for (FrameSceneResources& frame_scene : this->mesh_pass.frame_scenes) {
             this->destroy_host_buffer(frame_scene.vertexBuffer);
             this->destroy_host_buffer(frame_scene.indexBuffer);
         }
         this->mesh_pass.frame_scenes.clear();
-        this->mesh_pass.pipeline        = nullptr;
-        this->mesh_pass.pipeline_layout = nullptr;
-        this->mesh_pass.frame_count     = 0;
+        this->mesh_pass.transparent_pipeline = nullptr;
+        this->mesh_pass.pipeline             = nullptr;
+        this->mesh_pass.pipeline_layout      = nullptr;
+        this->mesh_pass.frame_count          = 0;
     }
 
     void Renderer::destroy_viewport_grid_resources() noexcept {
@@ -855,7 +963,7 @@ namespace spectra::rasterizer {
     void Renderer::ensure_mesh_resources() {
         if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer mesh resources without Vulkan handles");
         if (!*this->camera.descriptor_set_layout) throw std::runtime_error("Spectra rasterizer mesh pass requires camera descriptors");
-        if (*this->mesh_pass.pipeline && this->mesh_pass.frame_count == this->host.frame_count) return;
+        if (*this->mesh_pass.pipeline && *this->mesh_pass.transparent_pipeline && this->mesh_pass.frame_count == this->host.frame_count) return;
         this->destroy_mesh_resources();
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_mesh_vertex_spv_sizeInBytes, spectra_rasterizer_mesh_vertex_spv};
@@ -877,8 +985,9 @@ namespace spectra::rasterizer {
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
         const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
         const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
+        const vk::PipelineDepthStencilStateCreateInfo opaque_depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo transparent_depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineColorBlendAttachmentState opaque_color_blend_attachment{
             VK_FALSE,
             vk::BlendFactor::eOne,
             vk::BlendFactor::eZero,
@@ -888,7 +997,18 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        constexpr vk::PipelineColorBlendAttachmentState transparent_color_blend_attachment{
+            VK_TRUE,
+            vk::BlendFactor::eSrcAlpha,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        };
+        const vk::PipelineColorBlendStateCreateInfo opaque_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &opaque_color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo transparent_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &transparent_color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(DrawPushConstantsData)};
@@ -897,20 +1017,24 @@ namespace spectra::rasterizer {
         this->mesh_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
         const vk::Format color_format = this->viewport.format;
         const vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{{}, 1u, &color_format, this->viewport.depth_format};
-        vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{};
-        graphics_pipeline_create_info.setPNext(&pipeline_rendering_create_info);
-        graphics_pipeline_create_info.setStageCount(static_cast<std::uint32_t>(shader_stages.size()));
-        graphics_pipeline_create_info.setPStages(shader_stages.data());
-        graphics_pipeline_create_info.setPVertexInputState(&vertex_input_state);
-        graphics_pipeline_create_info.setPInputAssemblyState(&input_assembly_state);
-        graphics_pipeline_create_info.setPViewportState(&viewport_state);
-        graphics_pipeline_create_info.setPRasterizationState(&rasterization_state);
-        graphics_pipeline_create_info.setPMultisampleState(&multisample_state);
-        graphics_pipeline_create_info.setPDepthStencilState(&depth_stencil_state);
-        graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
-        graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
-        graphics_pipeline_create_info.setLayout(*this->mesh_pass.pipeline_layout);
-        this->mesh_pass.pipeline = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        const auto create_mesh_pipeline = [&](const vk::PipelineDepthStencilStateCreateInfo& depth_state, const vk::PipelineColorBlendStateCreateInfo& blend_state) {
+            vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{};
+            graphics_pipeline_create_info.setPNext(&pipeline_rendering_create_info);
+            graphics_pipeline_create_info.setStageCount(static_cast<std::uint32_t>(shader_stages.size()));
+            graphics_pipeline_create_info.setPStages(shader_stages.data());
+            graphics_pipeline_create_info.setPVertexInputState(&vertex_input_state);
+            graphics_pipeline_create_info.setPInputAssemblyState(&input_assembly_state);
+            graphics_pipeline_create_info.setPViewportState(&viewport_state);
+            graphics_pipeline_create_info.setPRasterizationState(&rasterization_state);
+            graphics_pipeline_create_info.setPMultisampleState(&multisample_state);
+            graphics_pipeline_create_info.setPDepthStencilState(&depth_state);
+            graphics_pipeline_create_info.setPColorBlendState(&blend_state);
+            graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
+            graphics_pipeline_create_info.setLayout(*this->mesh_pass.pipeline_layout);
+            return vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        };
+        this->mesh_pass.pipeline = create_mesh_pipeline(opaque_depth_stencil_state, opaque_color_blend_state);
+        this->mesh_pass.transparent_pipeline = create_mesh_pipeline(transparent_depth_stencil_state, transparent_color_blend_state);
         this->mesh_pass.frame_scenes.resize(this->host.frame_count);
         this->mesh_pass.frame_count = this->host.frame_count;
     }
@@ -1314,6 +1438,9 @@ namespace spectra::rasterizer {
             const std::uint64_t expected_count = static_cast<std::uint64_t>(channel.dimensions[0]) * static_cast<std::uint64_t>(channel.dimensions[1]) * static_cast<std::uint64_t>(channel.dimensions[2]);
             if (expected_count == 0u) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" has zero dimensions", channel.name));
             if (expected_count != channel.values.size()) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" value count does not match dimensions", channel.name));
+            for (const float value : channel.values) {
+                if (!std::isfinite(value)) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" contains a non-finite value", channel.name));
+            }
             return &channel;
         }
         return nullptr;
@@ -1474,14 +1601,33 @@ namespace spectra::rasterizer {
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
         for (const scene::Scene::Mesh& mesh : resolved_frame.meshes) {
             if (mesh.positions.empty()) continue;
+            const scene::Scene::Material material = this->resolve_material(mesh.material_name);
+            require_surface_material(material, mesh.name);
             if (mesh.normals.size() != mesh.positions.size()) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" must provide one normal per position", mesh.name));
             if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" must provide triangle indices", mesh.name));
             if (vertices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer vertex count exceeds uint32 range");
             const std::uint32_t vertex_offset = static_cast<std::uint32_t>(vertices.size());
+            scene::Vector3 minimum{};
+            scene::Vector3 maximum{};
+            bool bounds_valid{false};
             vertices.reserve(vertices.size() + mesh.positions.size());
             for (std::size_t vertex_index = 0; vertex_index < mesh.positions.size(); ++vertex_index) {
                 const scene::Vector3 position = mesh.positions.at(vertex_index);
                 const scene::Vector3 normal   = mesh.normals.at(vertex_index);
+                if (!finite_scene_vector(position)) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" contains a non-finite position", mesh.name));
+                if (!finite_scene_vector(normal)) throw std::runtime_error(std::format("Rasterizer mesh \"{}\" contains a non-finite normal", mesh.name));
+                if (!bounds_valid) {
+                    minimum      = position;
+                    maximum      = position;
+                    bounds_valid = true;
+                } else {
+                    minimum.x = std::min(minimum.x, position.x);
+                    minimum.y = std::min(minimum.y, position.y);
+                    minimum.z = std::min(minimum.z, position.z);
+                    maximum.x = std::max(maximum.x, position.x);
+                    maximum.y = std::max(maximum.y, position.y);
+                    maximum.z = std::max(maximum.z, position.z);
+                }
                 vertices.push_back(RasterizerVertex{
                     .px = position.x,
                     .py = position.y,
@@ -1503,8 +1649,9 @@ namespace spectra::rasterizer {
                 .objectId   = this->object_id_for(object_key),
                 .firstIndex = first_index,
                 .indexCount = static_cast<std::uint32_t>(mesh.indices.size()),
+                .sortPoint  = scene::Vector3{(minimum.x + maximum.x) * 0.5f, (minimum.y + maximum.y) * 0.5f, (minimum.z + maximum.z) * 0.5f},
                 .transform  = mesh.transform,
-                .material   = this->resolve_material(mesh.material_name),
+                .material   = material,
             });
         }
 
@@ -1531,28 +1678,35 @@ namespace spectra::rasterizer {
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
         for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
             if (point_cloud.positions.empty()) continue;
+            const scene::Scene::Material material = this->resolve_material(point_cloud.material_name);
+            require_point_sprite_material(material, point_cloud.name);
             if (point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one radius per position", point_cloud.name));
             if (point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one color per position", point_cloud.name));
-            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer particle instance count exceeds uint32 range");
+            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer point cloud instance count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
             const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            const float emission_red = material.emission_color.x * material.emission_strength;
+            const float emission_green = material.emission_color.y * material.emission_strength;
+            const float emission_blue = material.emission_color.z * material.emission_strength;
             instances.reserve(instances.size() + point_cloud.positions.size());
             for (std::size_t particle_index = 0; particle_index < point_cloud.positions.size(); ++particle_index) {
                 if (!std::isfinite(point_cloud.radii.at(particle_index)) || point_cloud.radii.at(particle_index) <= 0.0f) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains an invalid radius", point_cloud.name));
-                const spectra::rasterizer::math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(point_cloud.positions.at(particle_index)));
+                if (!finite_scene_vector(point_cloud.positions.at(particle_index))) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains a non-finite position", point_cloud.name));
                 const scene::Vector4 color = point_cloud.colors.at(particle_index);
+                if (!finite_scene_vector(color)) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains a non-finite color", point_cloud.name));
+                if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains an invalid color", point_cloud.name));
+                const spectra::rasterizer::math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(point_cloud.positions.at(particle_index)));
                 instances.push_back(ParticleInstance{
                     .px = position.x,
                     .py = position.y,
                     .pz = position.z,
                     .radius = point_cloud.radii.at(particle_index),
-                    .r = color.x,
-                    .g = color.y,
-                    .b = color.z,
-                    .a = color.w,
+                    .r = color.x * material.base_color.x + emission_red,
+                    .g = color.y * material.base_color.y + emission_green,
+                    .b = color.z * material.base_color.z + emission_blue,
+                    .a = color.w * material.base_color.w,
                 });
             }
-            static_cast<void>(this->resolve_material(point_cloud.material_name));
             const ObjectKey object_key{SelectableObjectKind::PointCloud, point_cloud.name};
             draw_commands.push_back(ParticleDrawCommand{
                 .objectKey     = object_key,
@@ -1587,7 +1741,11 @@ namespace spectra::rasterizer {
             return;
         }
         const scene::Scene::VolumeGrid& volume = *selected_volume;
+        const scene::Scene::Material material = this->resolve_material(volume.material_name);
+        require_volume_material(material, volume.name);
         if (volume.dimensions[0] == 0 || volume.dimensions[1] == 0 || volume.dimensions[2] == 0) throw std::runtime_error(std::format("Rasterizer volume \"{}\" has zero dimensions", volume.name));
+        if (!finite_scene_vector(volume.origin)) throw std::runtime_error(std::format("Rasterizer volume \"{}\" origin must be finite", volume.name));
+        if (!finite_scene_vector(volume.voxel_size) || volume.voxel_size.x <= 0.0f || volume.voxel_size.y <= 0.0f || volume.voxel_size.z <= 0.0f) throw std::runtime_error(std::format("Rasterizer volume \"{}\" voxel size must be finite and positive", volume.name));
         const scene::Scene::VolumeChannel& density_channel = this->require_volume_channel(volume, "density");
         const scene::Scene::VolumeChannel* temperature_channel = this->find_volume_channel(volume, "temperature");
         if (density_channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel dimensions must match the volume dimensions", volume.name));
@@ -1625,7 +1783,7 @@ namespace spectra::rasterizer {
             .objectKey = object_key,
             .objectId  = this->object_id_for(object_key),
             .volume   = volume,
-            .material = this->resolve_material(volume.material_name),
+            .material = material,
         };
         frame_volume.uploadPending    = true;
         frame_volume.uploadedRevision = scene_revision;
@@ -1945,6 +2103,7 @@ namespace spectra::rasterizer {
         this->ensure_selection_resources();
         this->rebuild_selection_registry_if_needed();
         this->synchronize_viewport_camera();
+        validate_material_library(*this->scene.workspace->document());
         this->upload_scene_resources(frame.frame_index);
         this->upload_particle_resources(frame.frame_index);
         this->upload_volume_resources(frame.frame_index);
@@ -1967,12 +2126,51 @@ namespace spectra::rasterizer {
         command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
         command_buffer.bindIndexBuffer(*frame_scene.indexBuffer.buffer, 0, vk::IndexType::eUint32);
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
-            const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform));
-            const DrawPushConstantsData push_constants{
-                .model     = model_matrix.values,
-                .base_color = {draw_command.material.base_color.x, draw_command.material.base_color.y, draw_command.material.base_color.z, draw_command.material.base_color.w},
-                .emission  = {draw_command.material.emission_color.x * draw_command.material.emission_strength, draw_command.material.emission_color.y * draw_command.material.emission_strength, draw_command.material.emission_color.z * draw_command.material.emission_strength, 0.0f},
-            };
+            if (draw_command.material.alpha_mode == scene::Scene::MaterialAlphaMode::Blend) continue;
+            const DrawPushConstantsData push_constants = make_draw_push_constants(draw_command.transform, draw_command.material);
+            command_buffer.pushConstants(*this->mesh_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
+            command_buffer.drawIndexed(draw_command.indexCount, 1u, draw_command.firstIndex, 0, 0u);
+        }
+    }
+
+    void Renderer::record_transparent_mesh_pass(const vk::raii::CommandBuffer& command_buffer) {
+        FrameSceneResources& frame_scene = this->mesh_pass.frame_scenes.at(this->lifecycle.active_frame_index);
+        if (frame_scene.drawCommands.empty()) return;
+        struct TransparentMeshSortItem {
+            const RenderDrawCommand* command{};
+            float distanceSquared{};
+        };
+        std::vector<TransparentMeshSortItem> draw_commands{};
+        draw_commands.reserve(frame_scene.drawCommands.size());
+        const scene::Scene::CameraState camera_state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 camera_position = to_render_vector(camera_state.eye);
+        for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
+            if (draw_command.material.alpha_mode != scene::Scene::MaterialAlphaMode::Blend) continue;
+            const spectra::rasterizer::math::Vector3 sort_point = spectra::rasterizer::math::transform_point(spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform)), to_render_vector(draw_command.sortPoint));
+            const spectra::rasterizer::math::Vector3 delta = sort_point - camera_position;
+            draw_commands.push_back(TransparentMeshSortItem{
+                .command = &draw_command,
+                .distanceSquared = spectra::rasterizer::math::dot(delta, delta),
+            });
+        }
+        if (draw_commands.empty()) return;
+        std::ranges::sort(draw_commands, [](const TransparentMeshSortItem& left, const TransparentMeshSortItem& right) {
+            return left.distanceSquared > right.distanceSquared;
+        });
+
+        const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
+        command_buffer.setViewport(0u, viewport);
+        command_buffer.setScissor(0u, scissor);
+        command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.transparent_pipeline);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->mesh_pass.pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
+        const std::array<vk::Buffer, 1> vertex_buffers{*frame_scene.vertexBuffer.buffer};
+        constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
+        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+        command_buffer.bindIndexBuffer(*frame_scene.indexBuffer.buffer, 0, vk::IndexType::eUint32);
+        for (const TransparentMeshSortItem& item : draw_commands) {
+            const RenderDrawCommand& draw_command = *item.command;
+            const DrawPushConstantsData push_constants = make_draw_push_constants(draw_command.transform, draw_command.material);
             command_buffer.pushConstants(*this->mesh_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
             command_buffer.drawIndexed(draw_command.indexCount, 1u, draw_command.firstIndex, 0, 0u);
         }
@@ -2002,10 +2200,11 @@ namespace spectra::rasterizer {
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->volume_pass.pipeline);
         command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->volume_pass.pipeline_layout, 0u, *this->volume_pass.descriptor_sets.at(this->lifecycle.active_frame_index), {});
         const VolumePushConstantsData push_constants{
-            .originDensityScale = {volume.origin.x, volume.origin.y, volume.origin.z, 1.0f},
+            .originDensityScale = {volume.origin.x, volume.origin.y, volume.origin.z, material.volume_density_scale},
             .extentStepScale    = {volume.voxel_size.x * static_cast<float>(volume.dimensions[0]), volume.voxel_size.y * static_cast<float>(volume.dimensions[1]), volume.voxel_size.z * static_cast<float>(volume.dimensions[2]), 1.0f},
             .base_color          = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
             .emission           = {material.emission_color.x * material.emission_strength, material.emission_color.y * material.emission_strength, material.emission_color.z * material.emission_strength, 0.0f},
+            .material           = {material.volume_temperature_scale, 0.0f, 0.0f, 0.0f},
         };
         command_buffer.pushConstants(*this->volume_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
         command_buffer.draw(36u, 1u, 0u, 0u);
@@ -2067,6 +2266,7 @@ namespace spectra::rasterizer {
         this->record_viewport_grid_pass(command_buffer);
         this->record_volume_pass(command_buffer);
         this->record_particle_pass(command_buffer);
+        this->record_transparent_mesh_pass(command_buffer);
         command_buffer.endRendering();
 
         this->record_selection_visuals(command_buffer);
@@ -2102,12 +2302,7 @@ namespace spectra::rasterizer {
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
             const std::array<float, 4> color = picking ? std::array<float, 4>{} : this->selection_mask_color(draw_command.objectKey);
             if (!picking && color[0] == 0.0f && color[1] == 0.0f && color[2] == 0.0f) continue;
-            const spectra::rasterizer::math::Matrix4 model_matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform));
-            const SelectionPushConstantsData push_constants{
-                .model    = model_matrix.values,
-                .color    = color,
-                .objectId = draw_command.objectId,
-            };
+            const SelectionPushConstantsData push_constants = make_selection_push_constants(draw_command.transform, draw_command.material, color, draw_command.objectId);
             command_buffer.pushConstants(picking ? *this->selection.mesh_picking_pipeline_layout : *this->selection.mesh_mask_pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
             command_buffer.drawIndexed(draw_command.indexCount, 1u, draw_command.firstIndex, 0, 0u);
         }
@@ -2143,7 +2338,7 @@ namespace spectra::rasterizer {
         command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, picking ? *this->selection.volume_picking_pipeline_layout : *this->selection.volume_mask_pipeline_layout, 0u, *this->volume_pass.descriptor_sets.at(this->lifecycle.active_frame_index), {});
         const scene::Scene::VolumeGrid& volume = draw_command.volume;
         const VolumeSelectionPushConstantsData push_constants{
-            .originDensityScale = {volume.origin.x, volume.origin.y, volume.origin.z, 1.0f},
+            .originDensityScale = {volume.origin.x, volume.origin.y, volume.origin.z, draw_command.material.volume_density_scale},
             .extentStepScale    = {volume.voxel_size.x * static_cast<float>(volume.dimensions[0]), volume.voxel_size.y * static_cast<float>(volume.dimensions[1]), volume.voxel_size.z * static_cast<float>(volume.dimensions[2]), 1.0f},
             .color              = color,
             .objectId           = draw_command.objectId,

@@ -19,6 +19,7 @@ struct VolumePushConstants {
     float4 extentStepScale;
     float4 base_color;
     float4 emission;
+    float4 material;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
@@ -113,6 +114,7 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
     if (!isFrontFace) discard;
     float3 origin = volume.originDensityScale.xyz;
     float densityScale = volume.originDensityScale.w;
+    float temperatureScale = volume.material.x;
     float3 extent = volume.extentStepScale.xyz;
     float stepScale = volume.extentStepScale.w;
     float3 cameraLocal = (camera.cameraPosition.xyz - origin) / extent;
@@ -130,8 +132,8 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
         float3 samplePosition = cameraLocal + rayDirection * t;
         float density = max(densityTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0) * densityScale;
         float temperature = max(temperatureTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0);
-        float alpha = saturate(1.0 - exp(-density * 0.08));
-        float3 smokeColor = volume.base_color.rgb + volume.emission.rgb * saturate(temperature * 0.035);
+        float alpha = saturate(1.0 - exp(-density));
+        float3 smokeColor = volume.base_color.rgb + volume.emission.rgb * saturate(temperature * temperatureScale);
         float contribution = (1.0 - accumulated.a) * alpha;
         accumulated.rgb += smokeColor * contribution;
         accumulated.a += contribution;

@@ -24,13 +24,32 @@ namespace spectra::scene {
             int column{1};
         };
 
+        enum class MaterialModel {
+            LitSurface,
+            UnlitSurface,
+            EmissiveSurface,
+            Volume,
+            PointSprite,
+        };
+
+        enum class MaterialAlphaMode {
+            Opaque,
+            Masked,
+            Blend,
+        };
+
         struct Material {
             std::string name{};
+            MaterialModel model{MaterialModel::LitSurface};
+            MaterialAlphaMode alpha_mode{MaterialAlphaMode::Opaque};
             Vector4 base_color{0.8f, 0.8f, 0.8f, 1.0f};
             Vector3 emission_color{};
             float emission_strength{};
             float roughness{0.5f};
             float metallic{};
+            float alpha_cutoff{0.5f};
+            float volume_density_scale{0.08f};
+            float volume_temperature_scale{0.035f};
         };
 
         enum class LightKind {

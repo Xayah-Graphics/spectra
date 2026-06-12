@@ -92,6 +92,7 @@ namespace spectra::rasterizer {
             std::uint32_t objectId{};
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
+            scene::Vector3 sortPoint{};
             scene::Transform transform{};
             scene::Scene::Material material{};
         };
@@ -208,6 +209,7 @@ namespace spectra::rasterizer {
         void update_camera_uniform(std::uint32_t frame_index);
 
         void record_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_transparent_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
@@ -323,6 +325,7 @@ namespace spectra::rasterizer {
             std::uint32_t frame_count{};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
+            vk::raii::Pipeline transparent_pipeline{nullptr};
             std::vector<FrameSceneResources> frame_scenes{};
         } mesh_pass;
 
