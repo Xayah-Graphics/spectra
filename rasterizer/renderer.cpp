@@ -2660,33 +2660,21 @@ namespace spectra::rasterizer {
             std::uint8_t line_red{};
             std::uint8_t line_green{};
             std::uint8_t line_blue{};
-            std::uint8_t text_red{};
-            std::uint8_t text_green{};
-            std::uint8_t text_blue{};
-            ImVec2 endpoint{};
+            ImVec2 tip{};
+            ImVec2 label_center{};
             float depth{};
         };
 
-        const float yaw = -this->viewport.camera_yaw;
-        const float pitch = this->viewport.camera_pitch;
-        const float yaw_cos = std::cos(yaw);
-        const float yaw_sin = std::sin(yaw);
-        const float pitch_cos = std::cos(pitch);
-        const float pitch_sin = std::sin(pitch);
-        constexpr float axis_radius = 25.0f;
+        constexpr float axis_radius = 22.0f;
+        const spectra::rasterizer::math::CameraBasis orbit_basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
+        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(orbit_basis.eye, orbit_basis.target, to_render_vector(this->viewport.camera_up));
 
         const auto project_axis = [&](const spectra::rasterizer::math::Vector3 axis) {
-            const spectra::rasterizer::math::Vector3 pitched{
-                axis.x,
-                axis.y * pitch_cos - axis.z * pitch_sin,
-                axis.y * pitch_sin + axis.z * pitch_cos,
+            return spectra::rasterizer::math::Vector3{
+                spectra::rasterizer::math::dot(axis, basis.side),
+                spectra::rasterizer::math::dot(axis, basis.up),
+                -spectra::rasterizer::math::dot(axis, basis.forward),
             };
-            const spectra::rasterizer::math::Vector3 projected{
-                pitched.x * yaw_cos + pitched.z * yaw_sin,
-                pitched.y,
-                -pitched.x * yaw_sin + pitched.z * yaw_cos,
-            };
-            return projected;
         };
 
         std::array<GizmoAxis, 3> axes{{
@@ -2698,9 +2686,6 @@ namespace spectra::rasterizer {
                 .line_red       = 232,
                 .line_green     = 94,
                 .line_blue      = 82,
-                .text_red       = 255,
-                .text_green     = 136,
-                .text_blue      = 128,
             },
             GizmoAxis{
                 .id             = "y",
@@ -2710,9 +2695,6 @@ namespace spectra::rasterizer {
                 .line_red       = 112,
                 .line_green     = 202,
                 .line_blue      = 124,
-                .text_red       = 154,
-                .text_green     = 226,
-                .text_blue      = 166,
             },
             GizmoAxis{
                 .id             = "z",
@@ -2722,31 +2704,45 @@ namespace spectra::rasterizer {
                 .line_red       = 96,
                 .line_green     = 152,
                 .line_blue      = 238,
-                .text_red       = 136,
-                .text_green     = 178,
-                .text_blue      = 255,
             },
         }};
 
         for (GizmoAxis& axis : axes) {
             const spectra::rasterizer::math::Vector3 projected = project_axis(axis.axis);
-            axis.endpoint = ImVec2{center.x + projected.x * axis_radius, center.y - projected.y * axis_radius};
+            axis.tip = ImVec2{center.x + projected.x * axis_radius, center.y - projected.y * axis_radius};
             axis.depth = projected.z;
         }
 
+        constexpr float arrow_length = 6.5f;
+        constexpr float arrow_half_width = 3.8f;
+        constexpr float label_gap = 8.0f;
         std::ranges::sort(axes, {}, &GizmoAxis::depth);
-        for (const GizmoAxis& axis : axes) {
+        for (GizmoAxis& axis : axes) {
             const int line_alpha = axis.depth < 0.0f ? 150 : 232;
             const int text_alpha = axis.depth < 0.0f ? 190 : 255;
-            draw_list->AddLine(center, axis.endpoint, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, line_alpha), 2.0f);
-            draw_list->AddCircleFilled(axis.endpoint, 3.0f, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, text_alpha), 12);
-            draw_list->AddText(ImVec2{axis.endpoint.x - 4.0f, axis.endpoint.y - 7.0f}, IM_COL32(axis.text_red, axis.text_green, axis.text_blue, text_alpha), axis.label);
+            const ImVec2 delta{axis.tip.x - center.x, axis.tip.y - center.y};
+            const float length = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+            ImVec2 direction{1.0f, 0.0f};
+            if (length > 0.001f) direction = ImVec2{delta.x / length, delta.y / length};
+            const ImVec2 perpendicular{-direction.y, direction.x};
+            const ImVec2 arrow_base{axis.tip.x - direction.x * arrow_length, axis.tip.y - direction.y * arrow_length};
+            const ImVec2 arrow_left{arrow_base.x + perpendicular.x * arrow_half_width, arrow_base.y + perpendicular.y * arrow_half_width};
+            const ImVec2 arrow_right{arrow_base.x - perpendicular.x * arrow_half_width, arrow_base.y - perpendicular.y * arrow_half_width};
+            draw_list->AddLine(center, arrow_base, IM_COL32(0, 0, 0, 95), 3.0f);
+            draw_list->AddLine(center, arrow_base, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, line_alpha), 2.0f);
+            draw_list->AddTriangleFilled(axis.tip, arrow_left, arrow_right, IM_COL32(0, 0, 0, 86));
+            draw_list->AddTriangleFilled(axis.tip, arrow_left, arrow_right, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, line_alpha));
+            axis.label_center = ImVec2{axis.tip.x + direction.x * label_gap, axis.tip.y + direction.y * label_gap};
+            const ImVec2 text_size = ImGui::CalcTextSize(axis.label);
+            const ImVec2 text_position{axis.label_center.x - text_size.x * 0.5f, axis.label_center.y - text_size.y * 0.5f};
+            draw_list->AddText(ImVec2{text_position.x + 1.0f, text_position.y + 1.0f}, IM_COL32(0, 0, 0, 180), axis.label);
+            draw_list->AddText(text_position, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, text_alpha), axis.label);
         }
 
         ImGui::PushID("SpectraRasterizerOrientationGizmo");
         for (const GizmoAxis& axis : axes) {
-            ImGui::SetCursorScreenPos(ImVec2{axis.endpoint.x - 10.0f, axis.endpoint.y - 10.0f});
-            if (ImGui::InvisibleButton(axis.id, ImVec2{20.0f, 20.0f})) this->set_viewport_axis_view(axis.view_direction);
+            ImGui::SetCursorScreenPos(ImVec2{axis.label_center.x - 12.0f, axis.label_center.y - 12.0f});
+            if (ImGui::InvisibleButton(axis.id, ImVec2{24.0f, 24.0f})) this->set_viewport_axis_view(axis.view_direction);
         }
         ImGui::PopID();
     }
