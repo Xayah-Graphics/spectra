@@ -275,8 +275,8 @@ namespace spectra::scene {
             return std::format("pbrt://{}", scene.source);
         }
 
-        [[nodiscard]] std::string make_shape_object_name(const std::string_view scene_source_prefix, const std::size_t shape_index) {
-            return std::format("{}#shape:{}", scene_source_prefix, shape_index);
+        [[nodiscard]] std::string make_shape_object_name(const std::string_view object_source_prefix_value, const std::size_t shape_index) {
+            return std::format("{}#shape:{}", object_source_prefix_value, shape_index);
         }
 
         [[nodiscard]] std::set<std::string> referenced_shape_material_names(const PbrtScene::Snapshot& scene) {
@@ -328,14 +328,14 @@ namespace spectra::scene {
             material.emission_strength = 1.0f;
         }
 
-        [[nodiscard]] Scene::Mesh make_mesh(const std::string_view scene_source_prefix, const PbrtScene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
+        [[nodiscard]] Scene::Mesh make_mesh(const std::string_view object_source_prefix_value, const PbrtScene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             const std::string context = std::format("PBRT preview shape #{}", shape_index);
             if (shape.entity.type != "trianglemesh") throw std::runtime_error(std::format("PBRT preview scene loader only supports trianglemesh shapes, got \"{}\"", shape.entity.type));
             require_static_transform(shape.transform, context);
             if (shape.reverse_orientation) throw std::runtime_error(std::format("{} uses ReverseOrientation, which is not supported by the PBRT preview scene loader", context));
             if (!shape.medium_interface.inside.empty() || !shape.medium_interface.outside.empty()) throw std::runtime_error(std::format("{} uses MediumInterface, which is not supported by the PBRT preview scene loader", context));
             if (!material_indices.contains(shape.material_name)) throw std::runtime_error(std::format("{} references unknown material \"{}\"", context, shape.material_name));
-            const std::string object_name = make_shape_object_name(scene_source_prefix, shape_index);
+            const std::string object_name = make_shape_object_name(object_source_prefix_value, shape_index);
             const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
             const std::vector<float>& normals = required_float_values(shape.entity, "normal", "N", context);
             const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
@@ -370,7 +370,7 @@ namespace spectra::scene {
             return mesh;
         }
 
-        void append_meshes(const std::string_view scene_source_prefix, const PbrtScene::Snapshot& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
+        void append_meshes(const std::string_view object_source_prefix_value, const PbrtScene::Snapshot& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             std::map<std::string, bool> material_used_by_area_light{};
             for (std::size_t shape_index = 0; shape_index < scene.shapes.size(); ++shape_index) {
                 const PbrtScene::Shape& shape = scene.shapes.at(shape_index);
@@ -378,7 +378,7 @@ namespace spectra::scene {
                 const std::pair<std::map<std::string, bool>::iterator, bool> material_usage = material_used_by_area_light.emplace(shape.material_name, is_area_light);
                 if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(std::format("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
                 apply_area_light_material(shape, shape_index, document, material_indices);
-                Scene::Mesh mesh = make_mesh(scene_source_prefix, shape, shape_index, material_indices, bounds);
+                Scene::Mesh mesh = make_mesh(object_source_prefix_value, shape, shape_index, material_indices, bounds);
                 document.meshes.push_back(std::move(mesh));
             }
             if (document.meshes.empty()) throw std::runtime_error("PBRT preview scene loader did not find any trianglemesh shapes");
@@ -420,19 +420,19 @@ namespace spectra::scene {
         if (scene.name.empty()) throw std::runtime_error("PBRT preview scene name must not be empty");
         if (scene.title.empty()) throw std::runtime_error("PBRT preview scene title must not be empty");
         if (scene.source.empty()) throw std::runtime_error("PBRT preview scene source must not be empty");
-        const std::string scene_source_prefix = object_source_prefix(scene);
+        const std::string object_source_prefix_value = object_source_prefix(scene);
         Scene::Document document{
             .revision        = Scene::Revision{scene.revision.value},
             .name            = scene.name,
             .title           = scene.title,
-            .source          = scene_source_prefix,
+            .source          = object_source_prefix_value,
             .frames_per_second = 24.0,
             .timeline_enabled = false,
         };
         Bounds bounds{};
         const std::set<std::string> referenced_material_names = referenced_shape_material_names(scene);
         const std::map<std::string, std::size_t> material_indices = append_materials(scene, referenced_material_names, document);
-        append_meshes(scene_source_prefix, scene, document, material_indices, bounds);
+        append_meshes(object_source_prefix_value, scene, document, material_indices, bounds);
         document.camera = make_camera(scene, bounds);
         document.lights.push_back(Scene::Light{
             .name      = "preview.key",

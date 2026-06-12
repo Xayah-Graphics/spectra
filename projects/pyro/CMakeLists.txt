@@ -21,6 +21,7 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         pyro.ixx
+        visualization.ixx
         PRIVATE
         pyro.cpp
         pyro.cu
