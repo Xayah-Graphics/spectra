@@ -1308,15 +1308,20 @@ namespace spectra::rasterizer {
         throw std::runtime_error(std::format("Rasterizer material \"{}\" does not exist", material_name));
     }
 
-    const scene::Scene::VolumeChannel& Renderer::require_volume_channel(const scene::Scene::VolumeGrid& volume, const std::string_view channel_name, const scene::Scene::VolumeChannelLayout layout) const {
+    const scene::Scene::VolumeChannel* Renderer::find_volume_channel(const scene::Scene::VolumeGrid& volume, const std::string_view channel_name) const {
         for (const scene::Scene::VolumeChannel& channel : volume.channels) {
             if (channel.name != channel_name) continue;
-            if (channel.layout != layout) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" has the wrong layout", channel.name));
             const std::uint64_t expected_count = static_cast<std::uint64_t>(channel.dimensions[0]) * static_cast<std::uint64_t>(channel.dimensions[1]) * static_cast<std::uint64_t>(channel.dimensions[2]);
             if (expected_count == 0u) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" has zero dimensions", channel.name));
             if (expected_count != channel.values.size()) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" value count does not match dimensions", channel.name));
-            return channel;
+            return &channel;
         }
+        return nullptr;
+    }
+
+    const scene::Scene::VolumeChannel& Renderer::require_volume_channel(const scene::Scene::VolumeGrid& volume, const std::string_view channel_name) const {
+        const scene::Scene::VolumeChannel* channel = this->find_volume_channel(volume, channel_name);
+        if (channel != nullptr) return *channel;
         throw std::runtime_error(std::format("Rasterizer volume \"{}\" does not contain required channel \"{}\"", volume.name, channel_name));
     }
 
@@ -1338,9 +1343,9 @@ namespace spectra::rasterizer {
             if (mesh.positions.empty()) continue;
             this->register_selectable_object(SelectableObjectKind::Mesh, mesh.name, unique_keys, next_id);
         }
-        for (const scene::Scene::ParticleSet& particle_set : resolved_frame.particle_sets) {
-            if (particle_set.positions.empty()) continue;
-            this->register_selectable_object(SelectableObjectKind::ParticleSet, particle_set.name, unique_keys, next_id);
+        for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
+            if (point_cloud.positions.empty()) continue;
+            this->register_selectable_object(SelectableObjectKind::PointCloud, point_cloud.name, unique_keys, next_id);
         }
         const scene::Scene::VolumeGrid* volume = this->select_render_volume_grid(resolved_frame.volumes);
         if (volume != nullptr) this->register_selectable_object(SelectableObjectKind::VolumeGrid, volume->name, unique_keys, next_id);
@@ -1409,7 +1414,7 @@ namespace spectra::rasterizer {
         const char* kind_text = "Object";
         switch (key.kind) {
         case SelectableObjectKind::Mesh: kind_text = "Mesh"; break;
-        case SelectableObjectKind::ParticleSet: kind_text = "Particle Set"; break;
+        case SelectableObjectKind::PointCloud: kind_text = "Point Cloud"; break;
         case SelectableObjectKind::VolumeGrid: kind_text = "Volume"; break;
         }
         return std::format("{} | {}", kind_text, key.name);
@@ -1524,36 +1529,36 @@ namespace spectra::rasterizer {
         std::vector<ParticleInstance> instances{};
         std::vector<ParticleDrawCommand> draw_commands{};
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
-        for (const scene::Scene::ParticleSet& particle_set : resolved_frame.particle_sets) {
-            if (particle_set.positions.empty()) continue;
-            if (particle_set.radii.size() != particle_set.positions.size()) throw std::runtime_error(std::format("Rasterizer particle set \"{}\" must provide one radius per position", particle_set.name));
-            if (particle_set.colors.size() != particle_set.positions.size()) throw std::runtime_error(std::format("Rasterizer particle set \"{}\" must provide one color per position", particle_set.name));
+        for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
+            if (point_cloud.positions.empty()) continue;
+            if (point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one radius per position", point_cloud.name));
+            if (point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one color per position", point_cloud.name));
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer particle instance count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
-            const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
-            instances.reserve(instances.size() + particle_set.positions.size());
-            for (std::size_t particle_index = 0; particle_index < particle_set.positions.size(); ++particle_index) {
-                if (!std::isfinite(particle_set.radii.at(particle_index)) || particle_set.radii.at(particle_index) <= 0.0f) throw std::runtime_error(std::format("Rasterizer particle set \"{}\" contains an invalid radius", particle_set.name));
-                const spectra::rasterizer::math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(particle_set.positions.at(particle_index)));
-                const scene::Vector4 color = particle_set.colors.at(particle_index);
+            const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            instances.reserve(instances.size() + point_cloud.positions.size());
+            for (std::size_t particle_index = 0; particle_index < point_cloud.positions.size(); ++particle_index) {
+                if (!std::isfinite(point_cloud.radii.at(particle_index)) || point_cloud.radii.at(particle_index) <= 0.0f) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains an invalid radius", point_cloud.name));
+                const spectra::rasterizer::math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(point_cloud.positions.at(particle_index)));
+                const scene::Vector4 color = point_cloud.colors.at(particle_index);
                 instances.push_back(ParticleInstance{
                     .px = position.x,
                     .py = position.y,
                     .pz = position.z,
-                    .radius = particle_set.radii.at(particle_index),
+                    .radius = point_cloud.radii.at(particle_index),
                     .r = color.x,
                     .g = color.y,
                     .b = color.z,
                     .a = color.w,
                 });
             }
-            static_cast<void>(this->resolve_material(particle_set.material_name));
-            const ObjectKey object_key{SelectableObjectKind::ParticleSet, particle_set.name};
+            static_cast<void>(this->resolve_material(point_cloud.material_name));
+            const ObjectKey object_key{SelectableObjectKind::PointCloud, point_cloud.name};
             draw_commands.push_back(ParticleDrawCommand{
                 .objectKey     = object_key,
                 .objectId      = this->object_id_for(object_key),
                 .firstInstance = first_instance,
-                .instanceCount = static_cast<std::uint32_t>(particle_set.positions.size()),
+                .instanceCount = static_cast<std::uint32_t>(point_cloud.positions.size()),
             });
         }
 
@@ -1582,12 +1587,11 @@ namespace spectra::rasterizer {
             return;
         }
         const scene::Scene::VolumeGrid& volume = *selected_volume;
-        if (volume.kind != scene::Scene::VolumeKind::GasDensity && volume.kind != scene::Scene::VolumeKind::GasTemperature) throw std::runtime_error(std::format("Spectra rasterizer volume pass currently renders gas density/temperature grids only; volume \"{}\" uses an unsupported grid kind", volume.name));
         if (volume.dimensions[0] == 0 || volume.dimensions[1] == 0 || volume.dimensions[2] == 0) throw std::runtime_error(std::format("Rasterizer volume \"{}\" has zero dimensions", volume.name));
-        const scene::Scene::VolumeChannel& density_channel = this->require_volume_channel(volume, "density", scene::Scene::VolumeChannelLayout::CellCentered);
-        const scene::Scene::VolumeChannel& temperature_channel = this->require_volume_channel(volume, "temperature", scene::Scene::VolumeChannelLayout::CellCentered);
+        const scene::Scene::VolumeChannel& density_channel = this->require_volume_channel(volume, "density");
+        const scene::Scene::VolumeChannel* temperature_channel = this->find_volume_channel(volume, "temperature");
         if (density_channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel dimensions must match the volume dimensions", volume.name));
-        if (temperature_channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel dimensions must match the volume dimensions", volume.name));
+        if (temperature_channel != nullptr && temperature_channel->dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel dimensions must match the volume dimensions", volume.name));
 
         const vk::Extent3D image_extent{volume.dimensions[0], volume.dimensions[1], volume.dimensions[2]};
         if (!*frame_volume.densityImage.image || frame_volume.densityImage.extent != image_extent) {
@@ -1599,7 +1603,8 @@ namespace spectra::rasterizer {
         this->ensure_host_buffer(frame_volume.densityStagingBuffer, channel_bytes, vk::BufferUsageFlagBits::eTransferSrc);
         this->ensure_host_buffer(frame_volume.temperatureStagingBuffer, channel_bytes, vk::BufferUsageFlagBits::eTransferSrc);
         std::memcpy(frame_volume.densityStagingBuffer.mapped, density_channel.values.data(), static_cast<std::size_t>(channel_bytes));
-        std::memcpy(frame_volume.temperatureStagingBuffer.mapped, temperature_channel.values.data(), static_cast<std::size_t>(channel_bytes));
+        if (temperature_channel != nullptr) std::memcpy(frame_volume.temperatureStagingBuffer.mapped, temperature_channel->values.data(), static_cast<std::size_t>(channel_bytes));
+        else std::memset(frame_volume.temperatureStagingBuffer.mapped, 0, static_cast<std::size_t>(channel_bytes));
 
         if (!frame_volume.descriptorValid) {
             const vk::DescriptorBufferInfo camera_buffer_info{*this->camera.uniform_buffers.at(frame_index).buffer, 0, sizeof(CameraUniformData)};
@@ -1748,11 +1753,11 @@ namespace spectra::rasterizer {
         for (const scene::Scene::Mesh& mesh : resolved_frame.meshes) {
             for (const scene::Vector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
         }
-        for (const scene::Scene::ParticleSet& particle_set : resolved_frame.particle_sets) {
-            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
-            for (std::size_t index = 0; index < particle_set.positions.size(); ++index) {
-                const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(particle_set.positions.at(index))));
-                const float radius = index < particle_set.radii.size() ? std::max(0.0f, particle_set.radii.at(index)) : 0.0f;
+        for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
+            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            for (std::size_t index = 0; index < point_cloud.positions.size(); ++index) {
+                const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point_cloud.positions.at(index))));
+                const float radius = index < point_cloud.radii.size() ? std::max(0.0f, point_cloud.radii.at(index)) : 0.0f;
                 include_point(scene::Vector3{center.x - radius, center.y - radius, center.z - radius});
                 include_point(scene::Vector3{center.x + radius, center.y + radius, center.z + radius});
             }
@@ -1794,12 +1799,12 @@ namespace spectra::rasterizer {
             if (!this->object_selected(ObjectKey{SelectableObjectKind::Mesh, mesh.name})) continue;
             for (const scene::Vector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
         }
-        for (const scene::Scene::ParticleSet& particle_set : resolved_frame.particle_sets) {
-            if (!this->object_selected(ObjectKey{SelectableObjectKind::ParticleSet, particle_set.name})) continue;
-            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(particle_set.transform));
-            for (std::size_t index = 0; index < particle_set.positions.size(); ++index) {
-                const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(particle_set.positions.at(index))));
-                const float radius = index < particle_set.radii.size() ? std::max(0.0f, particle_set.radii.at(index)) : 0.0f;
+        for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
+            if (!this->object_selected(ObjectKey{SelectableObjectKind::PointCloud, point_cloud.name})) continue;
+            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            for (std::size_t index = 0; index < point_cloud.positions.size(); ++index) {
+                const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point_cloud.positions.at(index))));
+                const float radius = index < point_cloud.radii.size() ? std::max(0.0f, point_cloud.radii.at(index)) : 0.0f;
                 include_point(scene::Vector3{center.x - radius, center.y - radius, center.z - radius});
                 include_point(scene::Vector3{center.x + radius, center.y + radius, center.z + radius});
             }
@@ -2589,7 +2594,7 @@ namespace spectra::rasterizer {
         draw_list->AddRect(selection_min, selection_max, this->selection.active_object.has_value() ? IM_COL32(60, 198, 232, 112) : IM_COL32(92, 102, 112, 72), 7.0f);
         draw_list->AddText(ImVec2{selection_min.x + selection_padding.x, selection_min.y + selection_padding.y}, IM_COL32(218, 236, 242, 255), selection_text.c_str());
 
-        const std::size_t primitive_count = scene->meshes.size() + scene->particle_sets.size() + scene->point_clouds.size() + scene->volumes.size() + scene->curve_sets.size() + scene->splat_sets.size() + scene->line_sets.size() + scene->debug_primitives.size() + scene->vector_fields.size();
+        const std::size_t primitive_count = scene->meshes.size() + scene->point_clouds.size() + scene->volumes.size() + scene->curve_sets.size() + scene->splat_sets.size() + scene->line_sets.size() + scene->debug_primitives.size() + scene->vector_fields.size();
         std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, this->viewport.camera_distance);
         const ImVec2 chip_padding{10.0f, 7.0f};
         ImVec2 chip_text = ImGui::CalcTextSize(chip.c_str());
@@ -2733,7 +2738,7 @@ namespace spectra::rasterizer {
         if (ImGui::BeginTable("SpectraRasterizerStatus", 2, table_flags)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_status_row("Renderer", "Mesh / Volume / Particle");
+            draw_status_row("Renderer", "Mesh / Volume / Point Cloud");
             draw_status_row("Scene", scene->title.empty() ? scene->name : scene->title);
             if (scene->timeline_enabled) {
                 draw_status_row("Timeline", timeline_mode_text(current_timeline.mode));
@@ -2767,7 +2772,6 @@ namespace spectra::rasterizer {
             draw_status_row("Materials", std::format("{}", scene->materials.size()));
             draw_status_row("Lights", std::format("{}", scene->lights.size()));
             draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
-            draw_status_row("Particle Sets", std::format("{}", scene->particle_sets.size()));
             draw_status_row("Point Clouds", std::format("{}", scene->point_clouds.size()));
             draw_status_row("Volumes", std::format("{}", scene->volumes.size()));
             draw_status_row("Curves", std::format("{}", scene->curve_sets.size()));
@@ -2775,9 +2779,6 @@ namespace spectra::rasterizer {
             draw_status_row("Line Sets", std::format("{}", scene->line_sets.size()));
             draw_status_row("Debug Primitives", std::format("{}", scene->debug_primitives.size()));
             draw_status_row("Vector Fields", std::format("{}", scene->vector_fields.size()));
-            draw_status_row("Cloths", std::format("{}", scene->cloths.size()));
-            draw_status_row("Rigid Bodies", std::format("{}", scene->rigid_bodies.size()));
-            draw_status_row("Colliders", std::format("{}", scene->colliders.size()));
             ImGui::EndTable();
         }
     }

@@ -80,13 +80,6 @@ namespace spectra::app {
             };
             document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_mesh());
-            document.rigid_bodies.push_back(scene::Scene::RigidBody{
-                .name         = "ball.body",
-                .mesh_name     = "ball.mesh",
-                .material_name = "ball",
-                .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
-                .mass         = 1.0f,
-            });
             return document;
         }
 
@@ -147,13 +140,6 @@ namespace spectra::app {
                 .cursor = scene::Scene::make_frame_cursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
-            snapshot.rigid_bodies.push_back(scene::Scene::RigidBody{
-                .name         = "ball.body",
-                .mesh_name     = "ball.mesh",
-                .material_name = "ball",
-                .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
-                .mass         = 1.0f,
-            });
             return snapshot;
         }
     };
@@ -191,7 +177,7 @@ namespace spectra::app {
                 .near_plane = 0.05f,
                 .far_plane  = 90.0f,
             };
-            document.particle_sets.push_back(this->make_particles());
+            document.point_clouds.push_back(this->make_point_cloud());
             return document;
         }
 
@@ -208,29 +194,29 @@ namespace spectra::app {
     private:
         xayah::projects::sparkles::SparklesSolver solver{};
 
-        [[nodiscard]] scene::Scene::ParticleSet make_particles() const {
-            scene::Scene::ParticleSet particles{
-                .name         = "sparkles.particles",
+        [[nodiscard]] scene::Scene::PointCloud make_point_cloud() const {
+            scene::Scene::PointCloud point_cloud{
+                .name         = "sparkles.points",
                 .material_name = "sparkle",
                 .dynamic      = true,
             };
             const std::span<const xayah::projects::sparkles::SparklesParticle> visibleParticles = this->solver.particles();
-            particles.positions.reserve(visibleParticles.size());
-            particles.radii.reserve(visibleParticles.size());
-            particles.colors.reserve(visibleParticles.size());
+            point_cloud.positions.reserve(visibleParticles.size());
+            point_cloud.radii.reserve(visibleParticles.size());
+            point_cloud.colors.reserve(visibleParticles.size());
             for (const xayah::projects::sparkles::SparklesParticle& particle : visibleParticles) {
-                particles.positions.push_back(ToSceneVector3(particle.position));
-                particles.radii.push_back(particle.radius);
-                particles.colors.push_back(scene::Vector4{particle.color[0], particle.color[1], particle.color[2], 1.0f});
+                point_cloud.positions.push_back(ToSceneVector3(particle.position));
+                point_cloud.radii.push_back(particle.radius);
+                point_cloud.colors.push_back(scene::Vector4{particle.color[0], particle.color[1], particle.color[2], 1.0f});
             }
-            return particles;
+            return point_cloud;
         }
 
         [[nodiscard]] scene::Scene::FrameSnapshot make_frame(const scene::Scene::FrameInfo& frame) const {
             scene::Scene::FrameSnapshot snapshot{
                 .cursor = scene::Scene::make_frame_cursor(frame),
             };
-            snapshot.particle_sets.push_back(this->make_particles());
+            snapshot.point_clouds.push_back(this->make_point_cloud());
             return snapshot;
         }
     };
@@ -282,18 +268,6 @@ namespace spectra::app {
             document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_collider_mesh());
             document.meshes.push_back(this->make_mesh());
-            document.cloths.push_back(scene::Scene::Cloth{
-                .name         = "cloth.body",
-                .mesh_name     = "cloth.mesh",
-                .material_name = "cloth",
-                .dynamic      = true,
-            });
-            document.colliders.push_back(scene::Scene::Collider{
-                .name      = "cloth.collider",
-                .mesh_name  = "cloth.collider.mesh",
-                .transform = scene::Transform{.position = ToSceneVector3(this->collider.center)},
-                .friction  = 0.54f,
-            });
             return document;
         }
 
@@ -393,12 +367,6 @@ namespace spectra::app {
                 .cursor = scene::Scene::make_frame_cursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
-            snapshot.cloths.push_back(scene::Scene::Cloth{
-                .name         = "cloth.body",
-                .mesh_name     = "cloth.mesh",
-                .material_name = "cloth",
-                .dynamic      = true,
-            });
             return snapshot;
         }
     };
@@ -455,10 +423,9 @@ namespace spectra::app {
         std::array<std::uint32_t, 3> resolution{64u, 96u, 64u};
         float cell_size{0.01875f};
 
-        [[nodiscard]] scene::Scene::VolumeChannel make_volume_channel(std::string name, const scene::Scene::VolumeChannelLayout layout, const std::array<std::uint32_t, 3> dimensions, std::vector<float> values) const {
+        [[nodiscard]] scene::Scene::VolumeChannel make_volume_channel(std::string name, const std::array<std::uint32_t, 3> dimensions, std::vector<float> values) const {
             return scene::Scene::VolumeChannel{
                 .name       = std::move(name),
-                .layout     = layout,
                 .dimensions = dimensions,
                 .values     = std::move(values),
             };
@@ -467,7 +434,6 @@ namespace spectra::app {
         [[nodiscard]] scene::Scene::VolumeGrid make_volume_metadata(const std::uint64_t) const {
             return scene::Scene::VolumeGrid{
                 .name         = "pyro.volume",
-                .kind         = scene::Scene::VolumeKind::GasDensity,
                 .dimensions   = this->resolution,
                 .origin       = scene::Vector3{0.0f, 0.0f, 0.0f},
                 .voxel_size    = scene::Vector3{this->cell_size, this->cell_size, this->cell_size},
@@ -480,11 +446,8 @@ namespace spectra::app {
             scene::Scene::VolumeGrid volume = this->make_volume_metadata(static_cast<std::uint64_t>(frame.frame_index));
             volume.dimensions = frame.resolution;
             volume.voxel_size = scene::Vector3{frame.cell_size, frame.cell_size, frame.cell_size};
-            volume.channels.push_back(this->make_volume_channel("density", scene::Scene::VolumeChannelLayout::CellCentered, frame.resolution, frame.density));
-            volume.channels.push_back(this->make_volume_channel("temperature", scene::Scene::VolumeChannelLayout::CellCentered, frame.resolution, frame.temperature));
-            volume.channels.push_back(this->make_volume_channel("velocity_x", scene::Scene::VolumeChannelLayout::FaceX, std::array<std::uint32_t, 3>{frame.resolution[0] + 1u, frame.resolution[1], frame.resolution[2]}, frame.velocity_x));
-            volume.channels.push_back(this->make_volume_channel("velocity_y", scene::Scene::VolumeChannelLayout::FaceY, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1] + 1u, frame.resolution[2]}, frame.velocity_y));
-            volume.channels.push_back(this->make_volume_channel("velocity_z", scene::Scene::VolumeChannelLayout::FaceZ, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1], frame.resolution[2] + 1u}, frame.velocity_z));
+            volume.channels.push_back(this->make_volume_channel("density", frame.resolution, frame.density));
+            volume.channels.push_back(this->make_volume_channel("temperature", frame.resolution, frame.temperature));
             return volume;
         }
 

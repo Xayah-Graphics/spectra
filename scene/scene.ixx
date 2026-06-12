@@ -104,19 +104,6 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
-        struct ParticleSet {
-            std::string name{};
-            std::vector<Vector3> positions{};
-            std::vector<Vector3> velocities{};
-            std::vector<float> radii{};
-            std::vector<Vector4> colors{};
-            std::string material_name{};
-            Transform transform{};
-            float mass{1.0f};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
         struct PointCloud {
             std::string name{};
             std::vector<Vector3> positions{};
@@ -129,32 +116,14 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
-        enum class VolumeKind {
-            LiquidLevelSet,
-            GasDensity,
-            GasTemperature,
-            GasVelocity,
-            SignedDistanceField,
-            TruncatedSignedDistanceField,
-        };
-
-        enum class VolumeChannelLayout {
-            CellCentered,
-            FaceX,
-            FaceY,
-            FaceZ,
-        };
-
         struct VolumeChannel {
             std::string name{};
-            VolumeChannelLayout layout{VolumeChannelLayout::CellCentered};
             std::array<std::uint32_t, 3> dimensions{};
             std::vector<float> values{};
         };
 
         struct VolumeGrid {
             std::string name{};
-            VolumeKind kind{VolumeKind::GasDensity};
             std::array<std::uint32_t, 3> dimensions{};
             Vector3 origin{};
             Vector3 voxel_size{1.0f, 1.0f, 1.0f};
@@ -233,53 +202,17 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
-        struct Cloth {
-            std::string name{};
-            std::string mesh_name{};
-            std::string material_name{};
-            Transform transform{};
-            float mass_per_area{1.0f};
-            float stretch_stiffness{1.0f};
-            float bend_stiffness{0.2f};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
-        struct RigidBody {
-            std::string name{};
-            std::string mesh_name{};
-            std::string material_name{};
-            Transform transform{};
-            Vector3 linear_velocity{};
-            Vector3 angular_velocity{};
-            float mass{1.0f};
-            bool static_body{false};
-            SourceLocation source{};
-        };
-
-        struct Collider {
-            std::string name{};
-            std::string mesh_name{};
-            Transform transform{};
-            float friction{0.5f};
-            float restitution{0.1f};
-            bool dynamic{false};
-            SourceLocation source{};
-        };
-
         struct Document {
             Revision revision{};
             std::string name{};
             std::string title{};
             std::string source{};
-            Vector3 gravity{0.0f, -9.8f, 0.0f};
             double frames_per_second{24.0};
             bool timeline_enabled{true};
             std::optional<Camera> camera{};
             std::vector<Material> materials{};
             std::vector<Light> lights{};
             std::vector<Mesh> meshes{};
-            std::vector<ParticleSet> particle_sets{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
             std::vector<CurveSet> curve_sets{};
@@ -287,9 +220,6 @@ namespace spectra::scene {
             std::vector<LineSet> line_sets{};
             std::vector<DebugPrimitive> debug_primitives{};
             std::vector<VectorField> vector_fields{};
-            std::vector<Cloth> cloths{};
-            std::vector<RigidBody> rigid_bodies{};
-            std::vector<Collider> colliders{};
         };
 
         enum class TimelineMode {
@@ -307,7 +237,6 @@ namespace spectra::scene {
             Revision revision{};
             FrameCursor cursor{};
             std::vector<Mesh> meshes{};
-            std::vector<ParticleSet> particle_sets{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
             std::vector<CurveSet> curve_sets{};
@@ -315,9 +244,6 @@ namespace spectra::scene {
             std::vector<LineSet> line_sets{};
             std::vector<DebugPrimitive> debug_primitives{};
             std::vector<VectorField> vector_fields{};
-            std::vector<Cloth> cloths{};
-            std::vector<RigidBody> rigid_bodies{};
-            std::vector<Collider> colliders{};
         };
 
         struct Timeline {
@@ -339,7 +265,6 @@ namespace spectra::scene {
             Timeline timeline{};
             std::optional<FrameSnapshot> frame{};
             std::vector<Mesh> meshes{};
-            std::vector<ParticleSet> particle_sets{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
             std::vector<CurveSet> curve_sets{};
@@ -347,9 +272,6 @@ namespace spectra::scene {
             std::vector<LineSet> line_sets{};
             std::vector<DebugPrimitive> debug_primitives{};
             std::vector<VectorField> vector_fields{};
-            std::vector<Cloth> cloths{};
-            std::vector<RigidBody> rigid_bodies{};
-            std::vector<Collider> colliders{};
         };
 
         class Edit {

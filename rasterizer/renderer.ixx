@@ -65,7 +65,7 @@ namespace spectra::rasterizer {
 
         enum class SelectableObjectKind {
             Mesh,
-            ParticleSet,
+            PointCloud,
             VolumeGrid,
         };
 
@@ -184,7 +184,8 @@ namespace spectra::rasterizer {
         void ensure_selection_resources();
 
         [[nodiscard]] scene::Scene::Material resolve_material(std::string_view material_name) const;
-        [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name, scene::Scene::VolumeChannelLayout layout) const;
+        [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
+        [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
         void rebuild_selection_registry_if_needed();
         void register_selectable_object(SelectableObjectKind kind, std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id);
