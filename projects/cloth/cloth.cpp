@@ -6,6 +6,7 @@ module;
 module xayah.projects.cloth;
 import std;
 
+namespace xayah::projects::cloth {
 namespace {
     std::uint32_t cloth_index(const std::uint32_t column, const std::uint32_t row, const std::uint32_t columns) {
         return row * columns + column;
@@ -19,7 +20,7 @@ namespace {
         return (value + divisor - 1u) / divisor;
     }
 
-    void validate_config(const xayah::projects::cloth::ClothConfig& config, const xayah::projects::cloth::ClothSphereCollider& collider) {
+    void validate_config(const Config& config, const SphereCollider& collider) {
         if (config.columns < 3u || config.rows < 3u) throw std::runtime_error("CUDA cloth grid must be at least 3 x 3");
         if (config.width <= 0.0f || config.depth <= 0.0f) throw std::runtime_error("Cloth size must be positive");
         if (config.velocity_damping < 0.0f || config.velocity_damping > 1.0f) throw std::runtime_error("Cloth velocity_damping must be in [0, 1]");
@@ -47,8 +48,7 @@ namespace {
     }
 } // namespace
 
-namespace xayah::projects::cloth {
-    ClothSolver::ClothSolver(const ClothConfig& config, const ClothSphereCollider& collider) : config{config}, collider{collider} {
+    Solver::Solver(const Config& config, const SphereCollider& collider) : config{config}, collider{collider} {
         validate_config(this->config, this->collider);
 
         this->host.columns                          = this->config.columns;
@@ -94,11 +94,11 @@ namespace xayah::projects::cloth {
         this->reset();
     }
 
-    ClothSolver::~ClothSolver() noexcept {
+    Solver::~Solver() noexcept {
         this->destroy_device();
     }
 
-    void ClothSolver::create_device() {
+    void Solver::create_device() {
         if (this->device.stream != nullptr) throw std::runtime_error("Cloth CUDA device is already initialized");
         try {
             cudaStream_t stream{};
@@ -135,7 +135,7 @@ namespace xayah::projects::cloth {
         }
     }
 
-    void ClothSolver::destroy_device() noexcept {
+    void Solver::destroy_device() noexcept {
         try {
             if (this->device.stream != nullptr) cudaStreamSynchronize(cloth_stream(this->device.stream));
             if (this->device.position_x != nullptr) cudaFree(this->device.position_x);
@@ -165,24 +165,24 @@ namespace xayah::projects::cloth {
         this->device = {};
     }
 
-    void ClothSolver::clear_constraint_lambdas(float* lambda, const std::uint32_t count) {
+    void Solver::clear_constraint_lambdas(float* lambda, const std::uint32_t count) {
         if (count == 0u) return;
         check_cuda(cudaMemsetAsync(lambda, 0, static_cast<std::size_t>(count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth lambda");
     }
 
-    void ClothSolver::solve_constraint_batch(const std::uint32_t kind, const std::uint32_t color, float* lambda, const std::uint32_t count, const float compliance, const float rest_length, const float substep_seconds) {
+    void Solver::solve_constraint_batch(const std::uint32_t kind, const std::uint32_t color, float* lambda, const std::uint32_t count, const float compliance, const float rest_length, const float substep_seconds) {
         if (count == 0u) return;
-        xayah::projects::cloth::cuda::launch_solve_distance_constraints(cloth_stream(this->device.stream), ceil_div_u32(count, this->host.block_size), this->host.block_size, kind, color, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, lambda, this->device.error_flag, count, this->host.columns, this->host.rows, rest_length, compliance, substep_seconds);
+        cuda::launch_solve_distance_constraints(cloth_stream(this->device.stream), ceil_div_u32(count, this->host.block_size), this->host.block_size, kind, color, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, lambda, this->device.error_flag, count, this->host.columns, this->host.rows, rest_length, compliance, substep_seconds);
     }
 
-    void ClothSolver::reset() {
+    void Solver::reset() {
         if (this->device.stream == nullptr) throw std::runtime_error("Cannot reset cloth before CUDA device creation");
         check_cuda(cudaMemsetAsync(this->device.error_flag, 0, sizeof(int), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth error_flag");
-        xayah::projects::cloth::cuda::launch_reset(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.columns, this->host.rows, this->config.origin[0], this->config.origin[1], this->config.origin[2], this->host.dx, this->host.dz);
+        cuda::launch_reset(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.columns, this->host.rows, this->config.origin[0], this->config.origin[1], this->config.origin[2], this->host.dx, this->host.dz);
         this->compute_normals();
     }
 
-    void ClothSolver::step(const float delta_seconds) {
+    void Solver::step(const float delta_seconds) {
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0f) throw std::runtime_error("Cloth delta_seconds must be finite and non-negative");
         if (delta_seconds == 0.0f) return;
         if (this->device.stream == nullptr) throw std::runtime_error("Cannot step cloth before CUDA device creation");
@@ -193,7 +193,7 @@ namespace xayah::projects::cloth {
             const float substep_seconds = std::min(remaining_seconds, this->config.max_substep_seconds);
             remaining_seconds -= substep_seconds;
             const float damping = std::pow(this->config.velocity_damping, substep_seconds * 60.0f);
-            xayah::projects::cloth::cuda::launch_integrate(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, this->config.gravity[0], this->config.gravity[1], this->config.gravity[2], substep_seconds, damping);
+            cuda::launch_integrate(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, this->config.gravity[0], this->config.gravity[1], this->config.gravity[2], substep_seconds, damping);
 
             this->clear_constraint_lambdas(this->device.horizontal_lambda, this->host.horizontal_constraint_count);
             this->clear_constraint_lambdas(this->device.vertical_lambda, this->host.vertical_constraint_count);
@@ -213,22 +213,22 @@ namespace xayah::projects::cloth {
                     this->solve_constraint_batch(4u, color, this->device.horizontal_bend_lambda, this->host.horizontal_bend_constraint_count, this->config.bend_compliance, this->host.dx * 2.0f, substep_seconds);
                     this->solve_constraint_batch(5u, color, this->device.vertical_bend_lambda, this->host.vertical_bend_constraint_count, this->config.bend_compliance, this->host.dz * 2.0f, substep_seconds);
                 }
-                xayah::projects::cloth::cuda::launch_solve_sphere_collision(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, this->device.error_flag, this->host.vertex_count, this->collider.center[0], this->collider.center[1], this->collider.center[2], this->collider.radius + this->config.collision_margin);
+                cuda::launch_solve_sphere_collision(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.inverse_mass, this->device.error_flag, this->host.vertex_count, this->collider.center[0], this->collider.center[1], this->collider.center[2], this->collider.radius + this->config.collision_margin);
             }
-            xayah::projects::cloth::cuda::launch_update_velocities(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, substep_seconds);
+            cuda::launch_update_velocities(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.previous_x, this->device.previous_y, this->device.previous_z, this->device.velocity_x, this->device.velocity_y, this->device.velocity_z, this->device.inverse_mass, this->host.vertex_count, substep_seconds);
         }
         this->compute_normals();
     }
 
-    void ClothSolver::compute_normals() {
+    void Solver::compute_normals() {
         check_cuda(cudaMemsetAsync(this->device.normal_x, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_x");
         check_cuda(cudaMemsetAsync(this->device.normal_y, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_y");
         check_cuda(cudaMemsetAsync(this->device.normal_z, 0, static_cast<std::size_t>(this->host.vertex_count) * sizeof(float), cloth_stream(this->device.stream)), "cudaMemsetAsync cloth normal_z");
-        xayah::projects::cloth::cuda::launch_accumulate_normals(cloth_stream(this->device.stream), this->host.triangle_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.indices, this->device.error_flag, this->host.triangle_count);
-        xayah::projects::cloth::cuda::launch_normalize_normals(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.error_flag, this->host.vertex_count);
+        cuda::launch_accumulate_normals(cloth_stream(this->device.stream), this->host.triangle_grid, this->host.block_size, this->device.position_x, this->device.position_y, this->device.position_z, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.indices, this->device.error_flag, this->host.triangle_count);
+        cuda::launch_normalize_normals(cloth_stream(this->device.stream), this->host.vertex_grid, this->host.block_size, this->device.normal_x, this->device.normal_y, this->device.normal_z, this->device.error_flag, this->host.vertex_count);
     }
 
-    const std::vector<ClothVertex>& ClothSolver::download_vertices() const {
+    const std::vector<Vertex>& Solver::download_vertices() const {
         int error_flag          = 0;
         const std::size_t bytes = static_cast<std::size_t>(this->host.vertex_count) * sizeof(float);
         check_cuda(cudaMemcpyAsync(this->host.position_x.data(), this->device.position_x, bytes, cudaMemcpyDeviceToHost, cloth_stream(this->device.stream)), "cudaMemcpyAsync cloth position_x download");
@@ -248,11 +248,11 @@ namespace xayah::projects::cloth {
         return this->host.vertices;
     }
 
-    const std::vector<ClothVertex>& ClothSolver::mesh_vertices() const {
+    const std::vector<Vertex>& Solver::mesh_vertices() const {
         return this->download_vertices();
     }
 
-    const std::vector<std::uint32_t>& ClothSolver::mesh_indices() const {
+    const std::vector<std::uint32_t>& Solver::mesh_indices() const {
         return this->host.indices;
     }
 } // namespace xayah::projects::cloth

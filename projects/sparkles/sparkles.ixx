@@ -2,13 +2,13 @@ export module xayah.projects.sparkles;
 import std;
 
 namespace xayah::projects::sparkles {
-    export struct SparklesParticle {
+    export struct Particle {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         float radius{0.02f};
         std::array<float, 3> color{1.0f, 0.82f, 0.30f};
     };
 
-    export struct SparklesConfig {
+    export struct Config {
         std::uint32_t seed{20260514u};
         std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
         float launch_speed{5.8f};
@@ -25,13 +25,13 @@ namespace xayah::projects::sparkles {
         bool automatic_relaunch{true};
     };
 
-    export class SparklesSolver {
+    export class Solver {
     public:
-        explicit SparklesSolver(const SparklesConfig& config = {});
+        explicit Solver(const Config& config = {});
 
         void reset();
         void step(float delta_seconds);
-        [[nodiscard]] std::span<const SparklesParticle> particles() const;
+        [[nodiscard]] std::span<const Particle> particles() const;
 
     private:
         enum class Phase : std::uint32_t {
@@ -59,7 +59,7 @@ namespace xayah::projects::sparkles {
             ParticleKind kind{ParticleKind::burst};
         };
 
-        SparklesConfig config{};
+        Config config{};
         std::mt19937 random{};
         Phase phase{Phase::launch};
         std::array<float, 3> rocket_position{};
@@ -69,7 +69,7 @@ namespace xayah::projects::sparkles {
         float cooldown{0.0f};
         float trail_accumulator{0.0f};
         std::vector<ParticleState> states{};
-        std::vector<SparklesParticle> visible_particles{};
+        std::vector<Particle> visible_particles{};
 
         void start_rocket();
         void emit_trail(float delta_seconds);

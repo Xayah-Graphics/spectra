@@ -78,16 +78,16 @@ int main(const int argc, char* argv[]) {
             return 0;
         }
 
-        xayah::projects::cloth::ClothSolver solver{xayah::projects::cloth::ClothConfig{}, xayah::projects::cloth::ClothSphereCollider{}};
+        xayah::projects::cloth::Solver solver{xayah::projects::cloth::Config{}, xayah::projects::cloth::SphereCollider{}};
         for (std::uint32_t frame = 0; frame < options.frames; ++frame) {
             solver.step(options.delta_seconds);
             if (!options.quiet) std::cout << "frame " << frame + 1u << "/" << options.frames << "\n";
         }
 
-        const std::vector<xayah::projects::cloth::ClothVertex>& vertices = solver.mesh_vertices();
+        const std::vector<xayah::projects::cloth::Vertex>& vertices = solver.mesh_vertices();
         float minimum_y                                                    = std::numeric_limits<float>::max();
         float maximum_y                                                    = std::numeric_limits<float>::lowest();
-        for (const xayah::projects::cloth::ClothVertex& vertex : vertices) {
+        for (const xayah::projects::cloth::Vertex& vertex : vertices) {
             minimum_y = std::min(minimum_y, vertex.position[1]);
             maximum_y = std::max(maximum_y, vertex.position[1]);
         }

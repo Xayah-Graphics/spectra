@@ -78,19 +78,19 @@ int main(const int argc, char* argv[]) {
             return 0;
         }
 
-        xayah::projects::sparkles::SparklesSolver solver{};
+        xayah::projects::sparkles::Solver solver{};
         for (std::uint32_t frame = 0; frame < options.frames; ++frame) {
             solver.step(options.delta_seconds);
             if (!options.quiet) std::cout << "frame " << frame + 1u << "/" << options.frames << "\n";
         }
 
-        const std::span<const xayah::projects::sparkles::SparklesParticle> particles = solver.particles();
+        const std::span<const xayah::projects::sparkles::Particle> particles = solver.particles();
         std::cout << std::fixed << std::setprecision(6);
         std::cout << "sparkles frames=" << options.frames
                   << " dt=" << options.delta_seconds
                   << " particles=" << particles.size();
         if (!particles.empty()) {
-            const xayah::projects::sparkles::SparklesParticle& first = particles.front();
+            const xayah::projects::sparkles::Particle& first = particles.front();
             std::cout << " first=(" << first.position[0] << ", " << first.position[1] << ", " << first.position[2] << ")";
         }
         std::cout << "\n";

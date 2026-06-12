@@ -79,13 +79,13 @@ int main(const int argc, char* argv[]) {
             return 0;
         }
 
-        xayah::projects::pyro::PyroSolver solver{};
+        xayah::projects::pyro::Solver solver{};
         for (std::uint32_t frame = 0; frame < options.frames; ++frame) {
             solver.step(options.delta_seconds);
             if (!options.quiet) std::cout << "frame " << frame + 1u << "/" << options.frames << "\n";
         }
 
-        xayah::projects::pyro::PyroFrame frame = solver.read_frame(static_cast<int>(options.frames));
+        xayah::projects::pyro::Frame frame = solver.read_frame(static_cast<int>(options.frames));
         const double density_sum                 = std::accumulate(frame.density.begin(), frame.density.end(), 0.0);
         const double temperature_sum             = std::accumulate(frame.temperature.begin(), frame.temperature.end(), 0.0);
 

@@ -4,13 +4,13 @@ import std;
 import xayah.projects.sparkles;
 
 namespace xayah::projects::sparkles {
-    export struct SparklesVisualTransform {
+    export struct VisualTransform {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 4> rotation{0.0f, 0.0f, 0.0f, 1.0f};
         std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
     };
 
-    export struct SparklesVisualMaterial {
+    export struct VisualMaterial {
         std::string_view name{};
         std::string_view model{"lit_surface"};
         std::string_view alpha_mode{"opaque"};
@@ -24,18 +24,18 @@ namespace xayah::projects::sparkles {
         float volume_temperature_scale{0.035f};
     };
 
-    export struct SparklesVisualLight {
+    export struct VisualLight {
         std::string_view name{};
         std::string_view kind{"directional"};
-        SparklesVisualTransform transform{};
+        VisualTransform transform{};
         std::array<float, 3> color{1.0f, 1.0f, 1.0f};
         float intensity{1.0f};
         float cone_angle_degrees{45.0f};
     };
 
-    export struct SparklesVisualCamera {
+    export struct VisualCamera {
         std::string_view name{};
-        SparklesVisualTransform transform{};
+        VisualTransform transform{};
         std::array<float, 3> target{0.0f, 0.0f, 0.0f};
         std::array<float, 3> up{0.0f, 1.0f, 0.0f};
         float vertical_fov_degrees{45.0f};
@@ -43,24 +43,24 @@ namespace xayah::projects::sparkles {
         float far_plane{200.0f};
     };
 
-    export struct SparklesVisualPoint {
+    export struct VisualPoint {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
         std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
         float radius{0.01f};
     };
 
-    export struct SparklesVisualPointCloud {
+    export struct VisualPointCloud {
         std::string_view name{};
-        std::vector<SparklesVisualPoint> points{};
+        std::vector<VisualPoint> points{};
         std::string_view material_name{};
-        SparklesVisualTransform transform{};
+        VisualTransform transform{};
         bool dynamic{true};
     };
 
-    export class SparklesVisualization final {
+    export class Visualization final {
     public:
-        SparklesVisualization() = default;
+        Visualization() = default;
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.sparkles";
@@ -84,26 +84,26 @@ namespace xayah::projects::sparkles {
             this->rebuild_point_clouds();
         }
 
-        [[nodiscard]] const std::vector<SparklesVisualMaterial>& materials() const {
+        [[nodiscard]] const std::vector<VisualMaterial>& materials() const {
             return this->visual_materials;
         }
 
-        [[nodiscard]] const std::vector<SparklesVisualLight>& lights() const {
+        [[nodiscard]] const std::vector<VisualLight>& lights() const {
             return this->visual_lights;
         }
 
-        [[nodiscard]] const SparklesVisualCamera& camera() const {
+        [[nodiscard]] const VisualCamera& camera() const {
             return this->visual_camera;
         }
 
-        [[nodiscard]] const std::vector<SparklesVisualPointCloud>& point_clouds() const {
+        [[nodiscard]] const std::vector<VisualPointCloud>& point_clouds() const {
             return this->visual_point_clouds;
         }
 
     private:
-        SparklesSolver solver{};
-        std::vector<SparklesVisualMaterial> visual_materials{
-            SparklesVisualMaterial{
+        Solver solver{};
+        std::vector<VisualMaterial> visual_materials{
+            VisualMaterial{
                 .name              = "sparkle",
                 .model             = "point_sprite",
                 .alpha_mode        = "blend",
@@ -113,34 +113,34 @@ namespace xayah::projects::sparkles {
                 .roughness         = 0.2f,
             },
         };
-        std::vector<SparklesVisualLight> visual_lights{
-            SparklesVisualLight{
+        std::vector<VisualLight> visual_lights{
+            VisualLight{
                 .name      = "environment",
                 .kind      = "environment",
                 .color     = std::array<float, 3>{0.22f, 0.26f, 0.34f},
                 .intensity = 0.8f,
             },
         };
-        SparklesVisualCamera visual_camera{
+        VisualCamera visual_camera{
             .name                 = "camera.main",
-            .transform            = SparklesVisualTransform{.position = std::array<float, 3>{4.6f, 3.1f, 6.0f}},
+            .transform            = VisualTransform{.position = std::array<float, 3>{4.6f, 3.1f, 6.0f}},
             .target               = std::array<float, 3>{0.0f, 1.9f, 0.0f},
             .vertical_fov_degrees = 42.0f,
             .near_plane           = 0.05f,
             .far_plane            = 90.0f,
         };
-        std::vector<SparklesVisualPointCloud> visual_point_clouds{};
+        std::vector<VisualPointCloud> visual_point_clouds{};
 
         void rebuild_point_clouds() {
-            SparklesVisualPointCloud point_cloud{
+            VisualPointCloud point_cloud{
                 .name          = "sparkles.points",
                 .material_name = "sparkle",
                 .dynamic       = true,
             };
-            const std::span<const SparklesParticle> particles = this->solver.particles();
+            const std::span<const Particle> particles = this->solver.particles();
             point_cloud.points.reserve(particles.size());
-            for (const SparklesParticle& particle : particles) {
-                point_cloud.points.push_back(SparklesVisualPoint{
+            for (const Particle& particle : particles) {
+                point_cloud.points.push_back(VisualPoint{
                     .position = particle.position,
                     .color    = std::array<float, 4>{particle.color[0], particle.color[1], particle.color[2], 1.0f},
                     .radius   = particle.radius,

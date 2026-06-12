@@ -22,10 +22,10 @@ namespace {
     static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::PathtracerDockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
     static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::rasterizer::DockSlot::Center) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Center));
     static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::rasterizer::DockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
-    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::bouncing_ball::BouncingBallVisualization>);
-    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::sparkles::SparklesVisualization>);
-    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::cloth::ClothVisualization>);
-    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::pyro::PyroVisualization>);
+    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::bouncing_ball::Visualization>);
+    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::sparkles::Visualization>);
+    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::cloth::Visualization>);
+    static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::pyro::Visualization>);
 
     void draw_rasterizer_scene_control_panel(spectra::rasterizer::VisualizationController& controller) {
         const std::size_t selected_index = controller.selected_index();
@@ -167,10 +167,10 @@ namespace {
     static_assert(spectra::RendererFor<RasterizerRendererAdapter, spectra::Spectra>);
 
     void register_project_visualizations(spectra::rasterizer::VisualizationRegistry& registry) {
-        registry.register_source<xayah::projects::bouncing_ball::BouncingBallVisualization>();
-        registry.register_source<xayah::projects::sparkles::SparklesVisualization>();
-        registry.register_source<xayah::projects::cloth::ClothVisualization>();
-        registry.register_source<xayah::projects::pyro::PyroVisualization>();
+        registry.register_source<xayah::projects::bouncing_ball::Visualization>();
+        registry.register_source<xayah::projects::sparkles::Visualization>();
+        registry.register_source<xayah::projects::cloth::Visualization>();
+        registry.register_source<xayah::projects::pyro::Visualization>();
     }
 
     [[nodiscard]] spectra::rasterizer::VisualizationRegistry make_visualization_registry(std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene) {

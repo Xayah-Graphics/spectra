@@ -4,13 +4,13 @@ import std;
 import xayah.projects.pyro;
 
 namespace xayah::projects::pyro {
-    export struct PyroVisualTransform {
+    export struct VisualTransform {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 4> rotation{0.0f, 0.0f, 0.0f, 1.0f};
         std::array<float, 3> scale{1.0f, 1.0f, 1.0f};
     };
 
-    export struct PyroVisualMaterial {
+    export struct VisualMaterial {
         std::string_view name{};
         std::string_view model{"lit_surface"};
         std::string_view alpha_mode{"opaque"};
@@ -24,18 +24,18 @@ namespace xayah::projects::pyro {
         float volume_temperature_scale{0.035f};
     };
 
-    export struct PyroVisualLight {
+    export struct VisualLight {
         std::string_view name{};
         std::string_view kind{"directional"};
-        PyroVisualTransform transform{};
+        VisualTransform transform{};
         std::array<float, 3> color{1.0f, 1.0f, 1.0f};
         float intensity{1.0f};
         float cone_angle_degrees{45.0f};
     };
 
-    export struct PyroVisualCamera {
+    export struct VisualCamera {
         std::string_view name{};
-        PyroVisualTransform transform{};
+        VisualTransform transform{};
         std::array<float, 3> target{0.0f, 0.0f, 0.0f};
         std::array<float, 3> up{0.0f, 1.0f, 0.0f};
         float vertical_fov_degrees{45.0f};
@@ -43,25 +43,25 @@ namespace xayah::projects::pyro {
         float far_plane{200.0f};
     };
 
-    export struct PyroVisualVolumeChannel {
+    export struct VisualVolumeChannel {
         std::string_view name{};
         std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
         std::span<const float> values{};
     };
 
-    export struct PyroVisualVolume {
+    export struct VisualVolume {
         std::string_view name{};
         std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
         std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
         std::array<float, 3> voxel_size{1.0f, 1.0f, 1.0f};
-        std::vector<PyroVisualVolumeChannel> channels{};
+        std::vector<VisualVolumeChannel> channels{};
         std::string_view material_name{};
         bool dynamic{true};
     };
 
-    export class PyroVisualization final {
+    export class Visualization final {
     public:
-        PyroVisualization() = default;
+        Visualization() = default;
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.pyro";
@@ -87,28 +87,28 @@ namespace xayah::projects::pyro {
             this->rebuild_volume(this->to_solver_frame_index(this->frame_index));
         }
 
-        [[nodiscard]] const std::vector<PyroVisualMaterial>& materials() const {
+        [[nodiscard]] const std::vector<VisualMaterial>& materials() const {
             return this->visual_materials;
         }
 
-        [[nodiscard]] const std::vector<PyroVisualLight>& lights() const {
+        [[nodiscard]] const std::vector<VisualLight>& lights() const {
             return this->visual_lights;
         }
 
-        [[nodiscard]] const PyroVisualCamera& camera() const {
+        [[nodiscard]] const VisualCamera& camera() const {
             return this->visual_camera;
         }
 
-        [[nodiscard]] const std::vector<PyroVisualVolume>& volumes() const {
+        [[nodiscard]] const std::vector<VisualVolume>& volumes() const {
             return this->visual_volumes;
         }
 
     private:
-        PyroSolver solver{};
-        PyroFrame current_frame{};
+        Solver solver{};
+        Frame current_frame{};
         std::uint64_t frame_index{};
-        std::vector<PyroVisualMaterial> visual_materials{
-            PyroVisualMaterial{
+        std::vector<VisualMaterial> visual_materials{
+            VisualMaterial{
                 .name              = "smoke",
                 .model             = "volume",
                 .alpha_mode        = "blend",
@@ -118,23 +118,23 @@ namespace xayah::projects::pyro {
                 .roughness         = 0.9f,
             },
         };
-        std::vector<PyroVisualLight> visual_lights{
-            PyroVisualLight{
+        std::vector<VisualLight> visual_lights{
+            VisualLight{
                 .name      = "environment",
                 .kind      = "environment",
                 .color     = std::array<float, 3>{0.24f, 0.26f, 0.30f},
                 .intensity = 0.7f,
             },
         };
-        PyroVisualCamera visual_camera{
+        VisualCamera visual_camera{
             .name                 = "camera.main",
-            .transform            = PyroVisualTransform{.position = std::array<float, 3>{2.35f, 1.65f, 2.8f}},
+            .transform            = VisualTransform{.position = std::array<float, 3>{2.35f, 1.65f, 2.8f}},
             .target               = std::array<float, 3>{0.6f, 0.86f, 0.6f},
             .vertical_fov_degrees = 39.0f,
             .near_plane           = 0.03f,
             .far_plane            = 80.0f,
         };
-        std::vector<PyroVisualVolume> visual_volumes{};
+        std::vector<VisualVolume> visual_volumes{};
 
         [[nodiscard]] static int to_solver_frame_index(const std::uint64_t index) {
             if (index > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Pyro visualization frame index exceeds int range");
@@ -143,7 +143,7 @@ namespace xayah::projects::pyro {
 
         void rebuild_volume(const int solver_frame_index) {
             this->current_frame = this->solver.read_frame(solver_frame_index);
-            PyroVisualVolume volume{
+            VisualVolume volume{
                 .name          = "pyro.volume",
                 .dimensions    = this->current_frame.resolution,
                 .origin        = std::array<float, 3>{0.0f, 0.0f, 0.0f},
@@ -151,12 +151,12 @@ namespace xayah::projects::pyro {
                 .material_name = "smoke",
                 .dynamic       = true,
             };
-            volume.channels.push_back(PyroVisualVolumeChannel{
+            volume.channels.push_back(VisualVolumeChannel{
                 .name       = "density",
                 .dimensions = this->current_frame.resolution,
                 .values     = std::span<const float>{this->current_frame.density.data(), this->current_frame.density.size()},
             });
-            volume.channels.push_back(PyroVisualVolumeChannel{
+            volume.channels.push_back(VisualVolumeChannel{
                 .name       = "temperature",
                 .dimensions = this->current_frame.resolution,
                 .values     = std::span<const float>{this->current_frame.temperature.data(), this->current_frame.temperature.size()},

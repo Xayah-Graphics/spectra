@@ -1,6 +1,7 @@
 module xayah.projects.sparkles;
 import std;
 
+namespace xayah::projects::sparkles {
 namespace {
     void validate_float(const float value, const char* label) {
         if (!std::isfinite(value)) throw std::runtime_error(std::string{label} + " must be finite");
@@ -11,7 +12,7 @@ namespace {
         if (value <= 0.0f) throw std::runtime_error(std::string{label} + " must be positive");
     }
 
-    void validate_config(const xayah::projects::sparkles::SparklesConfig& config) {
+    void validate_config(const Config& config) {
         for (const float value : config.origin) validate_float(value, "Sparkles origin");
         validate_positive(config.launch_speed, "Sparkles launch_speed");
         if (config.launch_speed_jitter < 0.0f || !std::isfinite(config.launch_speed_jitter)) throw std::runtime_error("Sparkles launch_speed_jitter must be finite and non-negative");
@@ -57,15 +58,14 @@ namespace {
 
 } // namespace
 
-namespace xayah::projects::sparkles {
-    SparklesSolver::SparklesSolver(const SparklesConfig& config) : config{config} {
+    Solver::Solver(const Config& config) : config{config} {
         validate_config(this->config);
         this->states.reserve(static_cast<std::size_t>(this->config.explosion_particles + this->config.ring_particles + this->config.glitter_particles + 512u));
         this->visible_particles.reserve(this->states.capacity() + 1u);
         this->reset();
     }
 
-    void SparklesSolver::reset() {
+    void Solver::reset() {
         validate_config(this->config);
         this->random.seed(this->config.seed);
         this->states.clear();
@@ -75,7 +75,7 @@ namespace xayah::projects::sparkles {
         this->start_rocket();
     }
 
-    void SparklesSolver::step(const float delta_seconds) {
+    void Solver::step(const float delta_seconds) {
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0f) throw std::runtime_error("Sparkles delta_seconds must be finite and non-negative");
         if (delta_seconds == 0.0f) return;
 
@@ -100,11 +100,11 @@ namespace xayah::projects::sparkles {
         this->rebuild_visible_particles();
     }
 
-    std::span<const SparklesParticle> SparklesSolver::particles() const {
+    std::span<const Particle> Solver::particles() const {
         return this->visible_particles;
     }
 
-    void SparklesSolver::start_rocket() {
+    void Solver::start_rocket() {
         this->phase           = Phase::launch;
         this->rocket_age      = 0.0f;
         this->cooldown        = 0.0f;
@@ -118,7 +118,7 @@ namespace xayah::projects::sparkles {
         this->rebuild_visible_particles();
     }
 
-    void SparklesSolver::emit_trail(const float delta_seconds) {
+    void Solver::emit_trail(const float delta_seconds) {
         this->trail_accumulator += this->config.trail_particles_per_second * delta_seconds;
         const auto spawn_count = static_cast<std::uint32_t>(std::floor(this->trail_accumulator));
         this->trail_accumulator -= static_cast<float>(spawn_count);
@@ -137,7 +137,7 @@ namespace xayah::projects::sparkles {
         }
     }
 
-    void SparklesSolver::explode() {
+    void Solver::explode() {
         this->phase    = Phase::fade;
         this->cooldown = 0.0f;
 
@@ -206,7 +206,7 @@ namespace xayah::projects::sparkles {
         }
     }
 
-    void SparklesSolver::update_particles(const float delta_seconds) {
+    void Solver::update_particles(const float delta_seconds) {
         for (ParticleState& state : this->states) {
             state.age += delta_seconds;
             state.velocity[1] -= this->config.gravity * state.gravity_scale * delta_seconds;
@@ -217,10 +217,10 @@ namespace xayah::projects::sparkles {
         std::erase_if(this->states, [](const ParticleState& state) { return state.age >= state.lifetime; });
     }
 
-    void SparklesSolver::rebuild_visible_particles() {
+    void Solver::rebuild_visible_particles() {
         this->visible_particles.clear();
         if (this->phase == Phase::launch) {
-            this->visible_particles.emplace_back(SparklesParticle{this->rocket_position, 0.07f, mix_color(this->rocket_color, {1.0f, 0.95f, 0.72f}, 0.45f)});
+            this->visible_particles.emplace_back(Particle{this->rocket_position, 0.07f, mix_color(this->rocket_color, {1.0f, 0.95f, 0.72f}, 0.45f)});
         }
 
         for (const ParticleState& state : this->states) {
@@ -229,7 +229,7 @@ namespace xayah::projects::sparkles {
             if (state.kind == ParticleKind::glitter) fade *= 0.42f + 0.58f * std::abs(std::sin(normalized_age * std::numbers::pi_v<float> * 18.0f));
             if (fade <= 0.0f) continue;
             const float radius = state.radius * std::lerp(0.18f, 1.0f, fade);
-            this->visible_particles.emplace_back(SparklesParticle{
+            this->visible_particles.emplace_back(Particle{
                 state.position,
                 radius,
                 {
@@ -241,12 +241,12 @@ namespace xayah::projects::sparkles {
         }
     }
 
-    float SparklesSolver::random_range(const float minimum, const float maximum) {
+    float Solver::random_range(const float minimum, const float maximum) {
         std::uniform_real_distribution<float> distribution{minimum, maximum};
         return distribution(this->random);
     }
 
-    std::array<float, 3> SparklesSolver::random_sphere_direction() {
+    std::array<float, 3> Solver::random_sphere_direction() {
         const float z     = this->random_range(-1.0f, 1.0f);
         const float theta = this->random_range(0.0f, std::numbers::pi_v<float> * 2.0f);
         const float r     = std::sqrt(std::max(0.0f, 1.0f - z * z));

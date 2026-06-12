@@ -78,7 +78,7 @@ int main(const int argc, char* argv[]) {
             return 0;
         }
 
-        xayah::projects::bouncing_ball::BouncingBallSolver solver{};
+        xayah::projects::bouncing_ball::Solver solver{};
         for (std::uint32_t frame = 0; frame < options.frames; ++frame) {
             solver.step(options.delta_seconds);
             if (!options.quiet) std::cout << "frame " << frame + 1u << "/" << options.frames << "\n";

@@ -2,12 +2,12 @@ export module xayah.projects.bouncing_ball;
 import std;
 
 namespace xayah::projects::bouncing_ball {
-    export struct BouncingBallVertex {
+    export struct Vertex {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
     };
 
-    export struct BouncingBallConfig {
+    export struct Config {
         float radius{0.35f};
         std::array<float, 3> start_position{0.0f, 3.0f, 0.0f};
         std::array<float, 3> initial_velocity{0.0f, 0.0f, 0.0f};
@@ -18,21 +18,21 @@ namespace xayah::projects::bouncing_ball {
         std::uint32_t longitude_segments{36};
     };
 
-    export class BouncingBallSolver {
+    export class Solver {
     public:
-        explicit BouncingBallSolver(const BouncingBallConfig& config = {});
+        explicit Solver(const Config& config = {});
 
         void reset();
         void step(float delta_seconds);
         [[nodiscard]] const std::array<float, 3>& current_position() const;
-        [[nodiscard]] const std::vector<BouncingBallVertex>& mesh_vertices() const;
+        [[nodiscard]] const std::vector<Vertex>& mesh_vertices() const;
         [[nodiscard]] const std::vector<std::uint32_t>& mesh_indices() const;
 
     private:
-        BouncingBallConfig config{};
+        Config config{};
         std::array<float, 3> position{};
         std::array<float, 3> velocity{};
-        std::vector<BouncingBallVertex> vertices{};
+        std::vector<Vertex> vertices{};
         std::vector<std::uint32_t> indices{};
     };
 } // namespace xayah::projects::bouncing_ball

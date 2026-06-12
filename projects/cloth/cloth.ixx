@@ -2,17 +2,17 @@ export module xayah.projects.cloth;
 import std;
 
 namespace xayah::projects::cloth {
-    export struct ClothVertex {
+    export struct Vertex {
         std::array<float, 3> position{0.0f, 0.0f, 0.0f};
         std::array<float, 3> normal{0.0f, 1.0f, 0.0f};
     };
 
-    export struct ClothSphereCollider {
+    export struct SphereCollider {
         std::array<float, 3> center{0.0f, 0.65f, 0.0f};
         float radius{0.72f};
     };
 
-    export struct ClothConfig {
+    export struct Config {
         std::uint32_t columns{45};
         std::uint32_t rows{37};
         float width{3.4f};
@@ -28,19 +28,19 @@ namespace xayah::projects::cloth {
         float collision_margin{0.018f};
     };
 
-    export class ClothSolver {
+    export class Solver {
     public:
-        explicit ClothSolver(const ClothConfig& config, const ClothSphereCollider& collider);
-        ~ClothSolver() noexcept;
+        explicit Solver(const Config& config, const SphereCollider& collider);
+        ~Solver() noexcept;
 
-        ClothSolver(const ClothSolver& other)                = delete;
-        ClothSolver(ClothSolver&& other) noexcept            = delete;
-        ClothSolver& operator=(const ClothSolver& other)     = delete;
-        ClothSolver& operator=(ClothSolver&& other) noexcept = delete;
+        Solver(const Solver& other)                = delete;
+        Solver(Solver&& other) noexcept            = delete;
+        Solver& operator=(const Solver& other)     = delete;
+        Solver& operator=(Solver&& other) noexcept = delete;
 
         void reset();
         void step(float delta_seconds);
-        [[nodiscard]] const std::vector<ClothVertex>& mesh_vertices() const;
+        [[nodiscard]] const std::vector<Vertex>& mesh_vertices() const;
         [[nodiscard]] const std::vector<std::uint32_t>& mesh_indices() const;
 
     private:
@@ -66,7 +66,7 @@ namespace xayah::projects::cloth {
             std::vector<float> normal_x{};
             std::vector<float> normal_y{};
             std::vector<float> normal_z{};
-            std::vector<ClothVertex> vertices{};
+            std::vector<Vertex> vertices{};
             std::vector<std::uint32_t> indices{};
         };
 
@@ -95,8 +95,8 @@ namespace xayah::projects::cloth {
             int* error_flag{nullptr};
         };
 
-        ClothConfig config{};
-        ClothSphereCollider collider{};
+        Config config{};
+        SphereCollider collider{};
         mutable HostState host{};
         DeviceState device{};
 
@@ -105,6 +105,6 @@ namespace xayah::projects::cloth {
         void clear_constraint_lambdas(float* lambda, std::uint32_t count);
         void solve_constraint_batch(std::uint32_t kind, std::uint32_t color, float* lambda, std::uint32_t count, float compliance, float rest_length, float substep_seconds);
         void compute_normals();
-        [[nodiscard]] const std::vector<ClothVertex>& download_vertices() const;
+        [[nodiscard]] const std::vector<Vertex>& download_vertices() const;
     };
 } // namespace xayah::projects::cloth
