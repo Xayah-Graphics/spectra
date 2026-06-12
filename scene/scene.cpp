@@ -172,14 +172,6 @@ namespace spectra::scene {
             bool valid{false};
         };
 
-        [[nodiscard]] Scene::SourceLocation to_scene_source(const Scene::SourceLocation& source) {
-            return Scene::SourceLocation{
-                .filename = source.filename,
-                .line     = source.line,
-                .column   = source.column,
-            };
-        }
-
         [[nodiscard]] float matrix_value(const std::array<float, 16>& matrix, const std::size_t row, const std::size_t column) {
             return matrix.at(row * 4u + column);
         }
@@ -284,8 +276,8 @@ namespace spectra::scene {
             return std::format("pbrt://{}", scene.source);
         }
 
-        [[nodiscard]] std::string make_shape_object_name(const PbrtScene::Snapshot& scene, const std::size_t shape_index) {
-            return std::format("{}#shape:{}", object_source_prefix(scene), shape_index);
+        [[nodiscard]] std::string make_shape_object_name(const std::string_view scene_source_prefix, const std::size_t shape_index) {
+            return std::format("{}#shape:{}", scene_source_prefix, shape_index);
         }
 
         [[nodiscard]] std::set<std::string> referenced_shape_material_names(const PbrtScene::Snapshot& scene) {
@@ -335,14 +327,14 @@ namespace spectra::scene {
             material.emission_strength = 1.0f;
         }
 
-        [[nodiscard]] Scene::Mesh make_mesh(const PbrtScene::Snapshot& scene, const PbrtScene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
+        [[nodiscard]] Scene::Mesh make_mesh(const std::string_view scene_source_prefix, const PbrtScene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             const std::string context = std::format("PBRT preview shape #{}", shape_index);
             if (shape.entity.type != "trianglemesh") throw std::runtime_error(std::format("PBRT preview scene loader only supports trianglemesh shapes, got \"{}\"", shape.entity.type));
             require_static_transform(shape.transform, context);
             if (shape.reverse_orientation) throw std::runtime_error(std::format("{} uses ReverseOrientation, which is not supported by the PBRT preview scene loader", context));
             if (!shape.medium_interface.inside.empty() || !shape.medium_interface.outside.empty()) throw std::runtime_error(std::format("{} uses MediumInterface, which is not supported by the PBRT preview scene loader", context));
             if (!material_indices.contains(shape.material_name)) throw std::runtime_error(std::format("{} references unknown material \"{}\"", context, shape.material_name));
-            const std::string object_name = make_shape_object_name(scene, shape_index);
+            const std::string object_name = make_shape_object_name(scene_source_prefix, shape_index);
             const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
             const std::vector<float>& normals = required_float_values(shape.entity, "normal", "N", context);
             const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
@@ -354,7 +346,7 @@ namespace spectra::scene {
                 .name         = object_name,
                 .material_name = shape.material_name,
                 .dynamic      = false,
-                .source       = to_scene_source(shape.entity.source),
+                .source       = shape.entity.source,
             };
             const std::size_t vertex_count = positions.size() / 3u;
             mesh.positions.reserve(vertex_count);
@@ -377,7 +369,7 @@ namespace spectra::scene {
             return mesh;
         }
 
-        void append_meshes(const PbrtScene::Snapshot& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
+        void append_meshes(const std::string_view scene_source_prefix, const PbrtScene::Snapshot& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             std::map<std::string, bool> material_used_by_area_light{};
             for (std::size_t shape_index = 0; shape_index < scene.shapes.size(); ++shape_index) {
                 const PbrtScene::Shape& shape = scene.shapes.at(shape_index);
@@ -385,7 +377,7 @@ namespace spectra::scene {
                 const std::pair<std::map<std::string, bool>::iterator, bool> material_usage = material_used_by_area_light.emplace(shape.material_name, is_area_light);
                 if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(std::format("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
                 apply_area_light_material(shape, shape_index, document, material_indices);
-                Scene::Mesh mesh = make_mesh(scene, shape, shape_index, material_indices, bounds);
+                Scene::Mesh mesh = make_mesh(scene_source_prefix, shape, shape_index, material_indices, bounds);
                 document.meshes.push_back(std::move(mesh));
             }
             if (document.meshes.empty()) throw std::runtime_error("PBRT preview scene loader did not find any trianglemesh shapes");
@@ -409,7 +401,7 @@ namespace spectra::scene {
                 .vertical_fov_degrees = required_one_float_value(scene.render_settings.camera, "fov", "PBRT preview camera"),
                 .near_plane          = 0.01f,
                 .far_plane           = far_plane,
-                .source             = to_scene_source(scene.render_settings.camera.source),
+                .source             = scene.render_settings.camera.source,
             };
         }
 
@@ -427,18 +419,19 @@ namespace spectra::scene {
         if (scene.name.empty()) throw std::runtime_error("PBRT preview scene name must not be empty");
         if (scene.title.empty()) throw std::runtime_error("PBRT preview scene title must not be empty");
         if (scene.source.empty()) throw std::runtime_error("PBRT preview scene source must not be empty");
+        const std::string scene_source_prefix = object_source_prefix(scene);
         Scene::Document document{
             .revision        = Scene::Revision{scene.revision.value},
             .name            = scene.name,
             .title           = scene.title,
-            .source          = object_source_prefix(scene),
+            .source          = scene_source_prefix,
             .frames_per_second = 24.0,
             .timeline_enabled = false,
         };
         Bounds bounds{};
         const std::set<std::string> referenced_material_names = referenced_shape_material_names(scene);
         const std::map<std::string, std::size_t> material_indices = append_materials(scene, referenced_material_names, document);
-        append_meshes(scene, document, material_indices, bounds);
+        append_meshes(scene_source_prefix, scene, document, material_indices, bounds);
         document.camera = make_camera(scene, bounds);
         document.lights.push_back(Scene::Light{
             .name      = "preview.key",
@@ -1758,61 +1751,63 @@ namespace spectra::scene {
         }
     } // namespace
 
-    PbrtScene::Info describe_scene(const PbrtScene::Snapshot& scene) {
-        const auto one_float_parameter = [](const std::vector<PbrtScene::Parameter>& parameters, const std::string& name, const float default_value) {
-            for (const PbrtScene::Parameter& parameter : parameters) {
-                if (parameter.type != "float" && parameter.type != "integer") continue;
-                if (parameter.name != name) continue;
-                if (parameter.type == "float") {
-                    const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
-                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
-                    return values->front();
+    namespace {
+        PbrtScene::Info describe_scene(const PbrtScene::Snapshot& scene) {
+            const auto one_float_parameter = [](const std::vector<PbrtScene::Parameter>& parameters, const std::string& name, const float default_value) {
+                for (const PbrtScene::Parameter& parameter : parameters) {
+                    if (parameter.type != "float" && parameter.type != "integer") continue;
+                    if (parameter.name != name) continue;
+                    if (parameter.type == "float") {
+                        const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
+                        if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
+                        return values->front();
+                    }
+                    const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
+                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
+                    return static_cast<float>(values->front());
                 }
-                const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
-                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
-                return static_cast<float>(values->front());
+                return default_value;
+            };
+
+            std::size_t definition_shape_count = 0;
+            std::size_t definition_area_light_count = 0;
+            for (const PbrtScene::ObjectDefinition& definition : scene.object_definitions) {
+                definition_shape_count += definition.shapes.size();
+                for (const PbrtScene::Shape& shape : definition.shapes)
+                    if (shape.area_light.has_value()) ++definition_area_light_count;
             }
-            return default_value;
-        };
 
-        std::size_t definition_shape_count = 0;
-        std::size_t definition_area_light_count = 0;
-        for (const PbrtScene::ObjectDefinition& definition : scene.object_definitions) {
-            definition_shape_count += definition.shapes.size();
-            for (const PbrtScene::Shape& shape : definition.shapes)
-                if (shape.area_light.has_value()) ++definition_area_light_count;
+            std::size_t area_light_count = definition_area_light_count;
+            for (const PbrtScene::Shape& shape : scene.shapes)
+                if (shape.area_light.has_value()) ++area_light_count;
+
+            std::size_t infinite_light_count = 0;
+            for (const PbrtScene::Light& light : scene.lights)
+                if (light.entity.type == "infinite") ++infinite_light_count;
+
+            const float camera_fov = one_float_parameter(scene.render_settings.camera.parameters, "fov", scene.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
+            if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
+
+            return PbrtScene::Info{
+                .name                    = scene.name,
+                .title                   = scene.title,
+                .camera                  = scene.render_settings.camera.type,
+                .sampler                 = scene.render_settings.sampler.type,
+                .integrator              = scene.render_settings.integrator.type,
+                .accelerator             = scene.render_settings.accelerator.type,
+                .shape_count             = scene.shapes.size() + definition_shape_count,
+                .material_count          = scene.materials.size(),
+                .texture_count           = scene.textures.size(),
+                .medium_count            = scene.media.size(),
+                .light_count             = scene.lights.size(),
+                .area_light_count        = area_light_count,
+                .infinite_light_count    = infinite_light_count,
+                .object_definition_count = scene.object_definitions.size(),
+                .object_instance_count   = scene.object_instances.size(),
+                .camera_fov_degrees      = camera_fov,
+            };
         }
-
-        std::size_t area_light_count = definition_area_light_count;
-        for (const PbrtScene::Shape& shape : scene.shapes)
-            if (shape.area_light.has_value()) ++area_light_count;
-
-        std::size_t infinite_light_count = 0;
-        for (const PbrtScene::Light& light : scene.lights)
-            if (light.entity.type == "infinite") ++infinite_light_count;
-
-        const float camera_fov = one_float_parameter(scene.render_settings.camera.parameters, "fov", scene.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
-        if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
-
-        return PbrtScene::Info{
-            .name                    = scene.name,
-            .title                   = scene.title,
-            .camera                  = scene.render_settings.camera.type,
-            .sampler                 = scene.render_settings.sampler.type,
-            .integrator              = scene.render_settings.integrator.type,
-            .accelerator             = scene.render_settings.accelerator.type,
-            .shape_count             = scene.shapes.size() + definition_shape_count,
-            .material_count          = scene.materials.size(),
-            .texture_count           = scene.textures.size(),
-            .medium_count            = scene.media.size(),
-            .light_count             = scene.lights.size(),
-            .area_light_count        = area_light_count,
-            .infinite_light_count    = infinite_light_count,
-            .object_definition_count = scene.object_definitions.size(),
-            .object_instance_count   = scene.object_instances.size(),
-            .camera_fov_degrees      = camera_fov,
-        };
-    }
+    } // namespace
 
     PbrtScene::PbrtScene(PbrtScene::Snapshot snapshot) : scene(std::move(snapshot)) {}
 
