@@ -2790,7 +2790,7 @@ namespace spectra::rasterizer {
         draw_list->AddRect(selection_min, selection_max, this->selection.active_object.has_value() ? IM_COL32(60, 198, 232, 112) : IM_COL32(92, 102, 112, 72), 7.0f);
         draw_list->AddText(ImVec2{selection_min.x + selection_padding.x, selection_min.y + selection_padding.y}, IM_COL32(218, 236, 242, 255), selection_text.c_str());
 
-        const std::size_t primitive_count = scene->meshes.size() + scene->point_clouds.size() + scene->volumes.size() + scene->curve_sets.size() + scene->splat_sets.size() + scene->line_sets.size() + scene->debug_primitives.size() + scene->vector_fields.size();
+        const std::size_t primitive_count = scene->meshes.size() + scene->point_clouds.size() + scene->volumes.size() + scene->curve_sets.size() + scene->splat_sets.size() + scene->line_sets.size() + scene->vector_fields.size();
         std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, this->viewport.camera_distance);
         const ImVec2 chip_padding{10.0f, 7.0f};
         ImVec2 chip_text = ImGui::CalcTextSize(chip.c_str());
@@ -2973,7 +2973,6 @@ namespace spectra::rasterizer {
             draw_status_row("Curves", std::format("{}", scene->curve_sets.size()));
             draw_status_row("Splats", std::format("{}", scene->splat_sets.size()));
             draw_status_row("Line Sets", std::format("{}", scene->line_sets.size()));
-            draw_status_row("Debug Primitives", std::format("{}", scene->debug_primitives.size()));
             draw_status_row("Vector Fields", std::format("{}", scene->vector_fields.size()));
             ImGui::EndTable();
         }

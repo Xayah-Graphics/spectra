@@ -193,23 +193,6 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
-        enum class DebugPrimitiveKind {
-            Point,
-            Sphere,
-            Box,
-            Axis,
-        };
-
-        struct DebugPrimitive {
-            std::string name{};
-            DebugPrimitiveKind kind{DebugPrimitiveKind::Point};
-            Transform transform{};
-            Vector4 color{1.0f, 1.0f, 1.0f, 1.0f};
-            float size{1.0f};
-            bool dynamic{true};
-            SourceLocation source{};
-        };
-
         struct VectorField {
             std::string name{};
             std::vector<Vector3> origins{};
@@ -237,7 +220,6 @@ namespace spectra::scene {
             std::vector<CurveSet> curve_sets{};
             std::vector<SplatSet> splat_sets{};
             std::vector<LineSet> line_sets{};
-            std::vector<DebugPrimitive> debug_primitives{};
             std::vector<VectorField> vector_fields{};
         };
 
@@ -261,7 +243,6 @@ namespace spectra::scene {
             std::vector<CurveSet> curve_sets{};
             std::vector<SplatSet> splat_sets{};
             std::vector<LineSet> line_sets{};
-            std::vector<DebugPrimitive> debug_primitives{};
             std::vector<VectorField> vector_fields{};
         };
 
@@ -289,7 +270,6 @@ namespace spectra::scene {
             std::vector<CurveSet> curve_sets{};
             std::vector<SplatSet> splat_sets{};
             std::vector<LineSet> line_sets{};
-            std::vector<DebugPrimitive> debug_primitives{};
             std::vector<VectorField> vector_fields{};
         };
 

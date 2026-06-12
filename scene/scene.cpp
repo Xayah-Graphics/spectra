@@ -138,7 +138,6 @@ namespace spectra::scene {
             .curve_sets       = resolve_scene_items(this->current_document->curve_sets, frame_value.curve_sets, "curve set"),
             .splat_sets       = resolve_scene_items(this->current_document->splat_sets, frame_value.splat_sets, "splat set"),
             .line_sets        = resolve_scene_items(this->current_document->line_sets, frame_value.line_sets, "line set"),
-            .debug_primitives = resolve_scene_items(this->current_document->debug_primitives, frame_value.debug_primitives, "debug primitive"),
             .vector_fields    = resolve_scene_items(this->current_document->vector_fields, frame_value.vector_fields, "vector field"),
         };
     }
