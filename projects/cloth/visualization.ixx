@@ -90,9 +90,7 @@ namespace xayah::projects::cloth {
 
     export class ClothVisualization final {
     public:
-        ClothVisualization() : solver(this->config, this->collider) {
-            this->reset();
-        }
+        ClothVisualization() : solver(this->config, this->collider) {}
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.cloth";

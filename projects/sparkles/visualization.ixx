@@ -90,9 +90,7 @@ namespace xayah::projects::sparkles {
 
     export class SparklesVisualization final {
     public:
-        SparklesVisualization() {
-            this->reset();
-        }
+        SparklesVisualization() = default;
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.sparkles";

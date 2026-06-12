@@ -317,9 +317,17 @@ namespace spectra::rasterizer {
                 .transform     = make_transform(mesh.transform, std::format("Visualization mesh \"{}\"", name)),
                 .dynamic       = static_cast<bool>(mesh.dynamic),
             };
+            if constexpr (std::ranges::sized_range<std::remove_cvref_t<decltype(mesh.vertices)>>) {
+                const std::size_t vertex_count = std::ranges::size(mesh.vertices);
+                result.positions.reserve(vertex_count);
+                result.normals.reserve(vertex_count);
+            }
+            if constexpr (std::ranges::sized_range<std::remove_cvref_t<decltype(mesh.indices)>>) result.indices.reserve(std::ranges::size(mesh.indices));
+            const std::string vertex_position_context = std::format("Visualization mesh \"{}\" vertex position", name);
+            const std::string vertex_normal_context = std::format("Visualization mesh \"{}\" vertex normal", name);
             for (const auto& vertex : mesh.vertices) {
-                result.positions.push_back(make_vector3(vertex.position, std::format("Visualization mesh \"{}\" vertex position", name)));
-                result.normals.push_back(make_vector3(vertex.normal, std::format("Visualization mesh \"{}\" vertex normal", name)));
+                result.positions.push_back(make_vector3(vertex.position, std::string_view{vertex_position_context}));
+                result.normals.push_back(make_vector3(vertex.normal, std::string_view{vertex_normal_context}));
             }
             for (const auto& index : mesh.indices) result.indices.push_back(static_cast<std::uint32_t>(index));
             if (result.positions.empty()) throw std::runtime_error(std::format("Visualization mesh \"{}\" must contain vertices", name));
@@ -341,11 +349,22 @@ namespace spectra::rasterizer {
                 .transform     = make_transform(point_cloud.transform, std::format("Visualization point cloud \"{}\"", name)),
                 .dynamic       = static_cast<bool>(point_cloud.dynamic),
             };
+            if constexpr (std::ranges::sized_range<std::remove_cvref_t<decltype(point_cloud.points)>>) {
+                const std::size_t point_count = std::ranges::size(point_cloud.points);
+                result.positions.reserve(point_count);
+                result.normals.reserve(point_count);
+                result.colors.reserve(point_count);
+                result.radii.reserve(point_count);
+            }
+            const std::string point_position_context = std::format("Visualization point cloud \"{}\" point position", name);
+            const std::string point_normal_context = std::format("Visualization point cloud \"{}\" point normal", name);
+            const std::string point_color_context = std::format("Visualization point cloud \"{}\" point color", name);
+            const std::string point_radius_context = std::format("Visualization point cloud \"{}\" point radius", name);
             for (const auto& point : point_cloud.points) {
-                result.positions.push_back(make_vector3(point.position, std::format("Visualization point cloud \"{}\" point position", name)));
-                result.normals.push_back(make_vector3(point.normal, std::format("Visualization point cloud \"{}\" point normal", name)));
-                result.colors.push_back(make_vector4(point.color, std::format("Visualization point cloud \"{}\" point color", name)));
-                const float radius = finite_float(static_cast<float>(point.radius), std::format("Visualization point cloud \"{}\" point radius", name));
+                result.positions.push_back(make_vector3(point.position, std::string_view{point_position_context}));
+                result.normals.push_back(make_vector3(point.normal, std::string_view{point_normal_context}));
+                result.colors.push_back(make_vector4(point.color, std::string_view{point_color_context}));
+                const float radius = finite_float(static_cast<float>(point.radius), std::string_view{point_radius_context});
                 if (radius <= 0.0f) throw std::runtime_error(std::format("Visualization point cloud \"{}\" point radius must be positive", name));
                 result.radii.push_back(radius);
             }
@@ -360,7 +379,15 @@ namespace spectra::rasterizer {
                 .name       = std::string{name},
                 .dimensions = channel.dimensions,
             };
-            for (const auto& value : channel.values) result.values.push_back(finite_float(static_cast<float>(value), std::format("Visualization volume channel \"{}\" value", name)));
+            if constexpr (std::ranges::common_range<std::remove_cvref_t<decltype(channel.values)>>) {
+                result.values.assign(std::ranges::begin(channel.values), std::ranges::end(channel.values));
+            } else {
+                if constexpr (std::ranges::sized_range<std::remove_cvref_t<decltype(channel.values)>>) result.values.reserve(std::ranges::size(channel.values));
+                for (const auto& value : channel.values) result.values.push_back(static_cast<float>(value));
+            }
+            for (std::size_t value_index = 0u; value_index < result.values.size(); ++value_index) {
+                if (!std::isfinite(result.values[value_index])) throw std::runtime_error(std::format("Visualization volume channel \"{}\" value #{} must be finite", name, value_index));
+            }
             const std::uint64_t expected_count = static_cast<std::uint64_t>(result.dimensions[0]) * static_cast<std::uint64_t>(result.dimensions[1]) * static_cast<std::uint64_t>(result.dimensions[2]);
             if (expected_count != result.values.size()) throw std::runtime_error(std::format("Visualization volume channel \"{}\" value count does not match dimensions", name));
             return result;
@@ -379,6 +406,7 @@ namespace spectra::rasterizer {
                 .material_name = std::string{std::string_view{volume.material_name}},
                 .dynamic       = static_cast<bool>(volume.dynamic),
             };
+            if constexpr (std::ranges::sized_range<std::remove_cvref_t<decltype(volume.channels)>>) result.channels.reserve(std::ranges::size(volume.channels));
             for (const auto& channel : volume.channels) {
                 scene::Scene::VolumeChannel converted_channel = make_volume_channel(channel);
                 if (converted_channel.dimensions != result.dimensions) throw std::runtime_error(std::format("Visualization volume \"{}\" channel \"{}\" dimensions do not match the volume", name, converted_channel.name));
@@ -388,25 +416,25 @@ namespace spectra::rasterizer {
         }
 
         template <VisualizationMeshRange MeshRange>
-        static void append_meshes(std::vector<scene::Scene::Mesh>& output, const MeshRange& meshes, const bool dynamic_only) {
+        static void append_meshes(std::vector<scene::Scene::Mesh>& output, const MeshRange& meshes, const bool dynamic) {
             for (const auto& mesh : meshes) {
-                if (dynamic_only && !static_cast<bool>(mesh.dynamic)) continue;
+                if (static_cast<bool>(mesh.dynamic) != dynamic) continue;
                 output.push_back(make_mesh(mesh));
             }
         }
 
         template <VisualizationPointCloudRange PointCloudRange>
-        static void append_point_clouds(std::vector<scene::Scene::PointCloud>& output, const PointCloudRange& point_clouds, const bool dynamic_only) {
+        static void append_point_clouds(std::vector<scene::Scene::PointCloud>& output, const PointCloudRange& point_clouds, const bool dynamic) {
             for (const auto& point_cloud : point_clouds) {
-                if (dynamic_only && !static_cast<bool>(point_cloud.dynamic)) continue;
+                if (static_cast<bool>(point_cloud.dynamic) != dynamic) continue;
                 output.push_back(make_point_cloud(point_cloud));
             }
         }
 
         template <VisualizationVolumeRange VolumeRange>
-        static void append_volumes(std::vector<scene::Scene::VolumeGrid>& output, const VolumeRange& volumes, const bool dynamic_only) {
+        static void append_volumes(std::vector<scene::Scene::VolumeGrid>& output, const VolumeRange& volumes, const bool dynamic) {
             for (const auto& volume : volumes) {
-                if (dynamic_only && !static_cast<bool>(volume.dynamic)) continue;
+                if (static_cast<bool>(volume.dynamic) != dynamic) continue;
                 output.push_back(make_volume(volume));
             }
         }

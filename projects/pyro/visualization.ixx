@@ -75,7 +75,7 @@ namespace xayah::projects::pyro {
     export struct PyroVisualVolumeChannel {
         std::string_view name{};
         std::array<std::uint32_t, 3> dimensions{0u, 0u, 0u};
-        std::vector<float> values{};
+        std::span<const float> values{};
     };
 
     export struct PyroVisualVolume {
@@ -90,9 +90,7 @@ namespace xayah::projects::pyro {
 
     export class PyroVisualization final {
     public:
-        PyroVisualization() {
-            this->reset();
-        }
+        PyroVisualization() = default;
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.pyro";
@@ -144,6 +142,7 @@ namespace xayah::projects::pyro {
 
     private:
         PyroSolver solver{};
+        PyroFrame current_frame{};
         std::uint64_t frame_index{};
         std::vector<PyroVisualMaterial> visual_materials{
             PyroVisualMaterial{
@@ -182,24 +181,24 @@ namespace xayah::projects::pyro {
         }
 
         void rebuild_volume(const int solver_frame_index) {
-            const PyroFrame frame = this->solver.read_frame(solver_frame_index);
+            this->current_frame = this->solver.read_frame(solver_frame_index);
             PyroVisualVolume volume{
                 .name          = "pyro.volume",
-                .dimensions    = frame.resolution,
+                .dimensions    = this->current_frame.resolution,
                 .origin        = std::array<float, 3>{0.0f, 0.0f, 0.0f},
-                .voxel_size    = std::array<float, 3>{frame.cell_size, frame.cell_size, frame.cell_size},
+                .voxel_size    = std::array<float, 3>{this->current_frame.cell_size, this->current_frame.cell_size, this->current_frame.cell_size},
                 .material_name = "smoke",
                 .dynamic       = true,
             };
             volume.channels.push_back(PyroVisualVolumeChannel{
                 .name       = "density",
-                .dimensions = frame.resolution,
-                .values     = frame.density,
+                .dimensions = this->current_frame.resolution,
+                .values     = std::span<const float>{this->current_frame.density.data(), this->current_frame.density.size()},
             });
             volume.channels.push_back(PyroVisualVolumeChannel{
                 .name       = "temperature",
-                .dimensions = frame.resolution,
-                .values     = frame.temperature,
+                .dimensions = this->current_frame.resolution,
+                .values     = std::span<const float>{this->current_frame.temperature.data(), this->current_frame.temperature.size()},
             });
             this->visual_volumes.clear();
             this->visual_volumes.push_back(std::move(volume));

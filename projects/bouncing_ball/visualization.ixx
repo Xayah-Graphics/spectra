@@ -90,9 +90,7 @@ namespace xayah::projects::bouncing_ball {
 
     export class BouncingBallVisualization final {
     public:
-        BouncingBallVisualization() {
-            this->reset();
-        }
+        BouncingBallVisualization() = default;
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.bouncing_ball";
