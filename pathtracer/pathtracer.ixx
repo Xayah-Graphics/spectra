@@ -145,15 +145,15 @@ export namespace spectra::pathtracer {
     struct PathtracerSceneSupportReport {
         std::string target{};
         bool supported{true};
-        std::vector<scene::PbrtSceneDiagnostic> diagnostics{};
+        std::vector<scene::PbrtScene::Diagnostic> diagnostics{};
     };
 
-    [[nodiscard]] PathtracerSceneSupportReport AnalyzePathtracerSceneSupport(const scene::PbrtSceneSnapshot& scene);
-    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtSceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource);
+    [[nodiscard]] PathtracerSceneSupportReport AnalyzePathtracerSceneSupport(const scene::PbrtScene::Snapshot& scene);
+    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtScene::Snapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource);
 
     class PathtracerRenderer final {
     public:
-        PathtracerRenderer(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
+        PathtracerRenderer(std::shared_ptr<const scene::PbrtScene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
         ~PathtracerRenderer() noexcept;
 
         PathtracerRenderer(const PathtracerRenderer& other) = delete;

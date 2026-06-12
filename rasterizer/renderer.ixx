@@ -19,7 +19,7 @@ import std;
 namespace spectra::rasterizer {
     export class Renderer final {
     public:
-        Renderer(std::shared_ptr<scene::SceneWorkspace> scene_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
+        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -28,7 +28,7 @@ namespace spectra::rasterizer {
         Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
-        void set_scene_workspace(std::shared_ptr<scene::SceneWorkspace> scene_workspace, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
+        void set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
         void set_control_panel_extension(std::move_only_function<void()> draw);
 
         void attach(HostView host);
@@ -93,7 +93,7 @@ namespace spectra::rasterizer {
             std::uint32_t firstIndex{};
             std::uint32_t indexCount{};
             scene::Transform transform{};
-            scene::SceneMaterial material{};
+            scene::Scene::Material material{};
         };
 
         struct ParticleDrawCommand {
@@ -106,8 +106,8 @@ namespace spectra::rasterizer {
         struct VolumeDrawCommand {
             ObjectKey objectKey{};
             std::uint32_t objectId{};
-            scene::SceneVolumeGrid volume{};
-            scene::SceneMaterial material{};
+            scene::Scene::VolumeGrid volume{};
+            scene::Scene::Material material{};
         };
 
         struct SceneBounds {
@@ -131,13 +131,13 @@ namespace spectra::rasterizer {
         struct FrameSceneResources {
             GpuBuffer vertexBuffer{};
             GpuBuffer indexBuffer{};
-            scene::SceneRevision uploadedRevision{};
+            scene::Scene::Revision uploadedRevision{};
             std::vector<RenderDrawCommand> drawCommands{};
         };
 
         struct FrameParticleResources {
             GpuBuffer instanceBuffer{};
-            scene::SceneRevision uploadedRevision{};
+            scene::Scene::Revision uploadedRevision{};
             std::vector<ParticleDrawCommand> drawCommands{};
         };
 
@@ -146,7 +146,7 @@ namespace spectra::rasterizer {
             GpuBuffer temperatureStagingBuffer{};
             GpuImage3D densityImage{};
             GpuImage3D temperatureImage{};
-            scene::SceneRevision uploadedRevision{};
+            scene::Scene::Revision uploadedRevision{};
             bool uploadPending{};
             bool descriptorValid{};
             VolumeDrawCommand drawCommand{};
@@ -183,9 +183,9 @@ namespace spectra::rasterizer {
         void ensure_volume_resources();
         void ensure_selection_resources();
 
-        [[nodiscard]] scene::SceneMaterial resolve_material(std::string_view material_name) const;
-        [[nodiscard]] const scene::SceneVolumeChannel& require_volume_channel(const scene::SceneVolumeGrid& volume, std::string_view channel_name, scene::SceneVolumeChannelLayout layout) const;
-        [[nodiscard]] const scene::SceneVolumeGrid* select_render_volume_grid(std::span<const scene::SceneVolumeGrid> volumes) const;
+        [[nodiscard]] scene::Scene::Material resolve_material(std::string_view material_name) const;
+        [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name, scene::Scene::VolumeChannelLayout layout) const;
+        [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
         void rebuild_selection_registry_if_needed();
         void register_selectable_object(SelectableObjectKind kind, std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id);
         [[nodiscard]] std::uint32_t object_id_for(const ObjectKey& key) const;
@@ -223,11 +223,11 @@ namespace spectra::rasterizer {
         void consume_completed_screenshot(std::uint32_t frame_index);
 
         [[nodiscard]] std::string active_scene_id() const;
-        [[nodiscard]] scene::SceneCameraState initial_camera_state_from_scene() const;
-        [[nodiscard]] scene::SceneCameraState current_viewport_camera_state() const;
+        [[nodiscard]] scene::Scene::CameraState initial_camera_state_from_scene() const;
+        [[nodiscard]] scene::Scene::CameraState current_viewport_camera_state() const;
         void ensure_viewport_camera_session();
         void synchronize_viewport_camera();
-        void apply_viewport_camera_state(const scene::SceneCameraSnapshot& snapshot);
+        void apply_viewport_camera_state(const scene::Scene::CameraSnapshot& snapshot);
         void commit_viewport_camera();
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
@@ -246,7 +246,7 @@ namespace spectra::rasterizer {
 
         void draw_viewport_window();
         void draw_rasterizer_window();
-        void commit_timeline_from_ui(scene::SceneTimeline timeline);
+        void commit_timeline_from_ui(scene::Scene::Timeline timeline);
         [[nodiscard]] bool timeline_enabled() const;
         [[nodiscard]] bool timeline_playing() const;
         void toggle_timeline_playback();
@@ -266,9 +266,9 @@ namespace spectra::rasterizer {
         } lifecycle;
 
         struct {
-            std::shared_ptr<scene::SceneWorkspace> workspace{};
-            std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
-            scene::SceneRevision observed_camera_revision{};
+            std::shared_ptr<scene::Scene> workspace{};
+            std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
+            scene::Scene::Revision observed_camera_revision{};
         } scene;
 
         struct {
@@ -373,7 +373,7 @@ namespace spectra::rasterizer {
             vk::raii::PipelineLayout outline_pipeline_layout{nullptr};
             vk::raii::Pipeline outline_pipeline{nullptr};
             std::vector<GpuBuffer> readback_buffers{};
-            scene::SceneRevision registry_revision{};
+            scene::Scene::Revision registry_revision{};
             std::map<ObjectKey, std::uint32_t> object_ids{};
             std::map<std::uint32_t, ObjectKey> objects_by_id{};
             std::set<ObjectKey> selected_objects{};

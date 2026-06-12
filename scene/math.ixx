@@ -71,8 +71,8 @@ namespace spectra::scene {
     export struct PbrtSceneTransformSet {
         PbrtSceneTransform start{};
         PbrtSceneTransform end{};
-        float startTime{0.0f};
-        float endTime{1.0f};
+        float start_time{0.0f};
+        float end_time{1.0f};
         bool animated{false};
     };
 

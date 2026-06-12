@@ -434,19 +434,19 @@ namespace spectra {
         else if (name == "subsurface")
             material = SubsurfaceMaterial::Create(parameters, normalMap, loc, alloc);
         else if (name == "mix") {
-            std::vector<std::string> materialNames = parameters.GetStringArray("materials");
-            if (materialNames.size() != 2) throw std::runtime_error(diagnostics::Format("Must provide two values for \"string materials\" for mix material."));
+            std::vector<std::string> material_names = parameters.GetStringArray("materials");
+            if (material_names.size() != 2) throw std::runtime_error(diagnostics::Format("Must provide two values for \"string materials\" for mix material."));
 
             Material materials[2];
             for (int i = 0; i < 2; ++i) {
-                auto iter = namedMaterials.find(materialNames[i]);
-                if (iter == namedMaterials.end()) throw std::runtime_error(diagnostics::Format("%s: named material not found.", materialNames[i]));
+                auto iter = namedMaterials.find(material_names[i]);
+                if (iter == namedMaterials.end()) throw std::runtime_error(diagnostics::Format("%s: named material not found.", material_names[i]));
                 materials[i] = iter->second;
 
                 if (materials[i] == nullptr)
                     throw std::runtime_error(diagnostics::Format("%s: an \"interface\" material cannot be used as an element of "
                                                                  "the \"mix\" material.",
-                        materialNames[i]));
+                        material_names[i]));
             }
             material = MixMaterial::Create(materials, parameters, loc, alloc);
         } else

@@ -68,7 +68,7 @@ namespace spectra::pathtracer {
         const Transform* renderFromObject = nullptr;
         const Transform* objectFromRender = nullptr;
         bool reverseOrientation{false};
-        std::string materialName{};
+        std::string material_name{};
         std::optional<PathtracerSceneEntity> areaLight{};
         std::string insideMedium{};
         std::string outsideMedium{};

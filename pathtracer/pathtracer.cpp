@@ -77,8 +77,8 @@ namespace {
         }
     }
 
-    [[nodiscard]] bool scene_entity_has_integer_parameter(const spectra::scene::PbrtSceneEntity& entity, const std::string_view name) {
-        for (const spectra::scene::PbrtSceneParameter& parameter : entity.parameters) {
+    [[nodiscard]] bool scene_entity_has_integer_parameter(const spectra::scene::PbrtScene::Entity& entity, const std::string_view name) {
+        for (const spectra::scene::PbrtScene::Parameter& parameter : entity.parameters) {
             if (parameter.type == "integer" && parameter.name == name) return true;
         }
         return false;
@@ -121,7 +121,7 @@ namespace {
 } // namespace
 
 namespace spectra::pathtracer {
-    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtSceneSnapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride);
+    [[nodiscard]] std::unique_ptr<CompiledPathtracerScene> CompilePathtracerScene(const scene::PbrtScene::Snapshot& scene, const RenderConfig& config, pstd::pmr::memory_resource* memoryResource, std::optional<Point2i> filmResolutionOverride);
 
     struct RenderPipelineSceneResources {
         std::unique_ptr<CompiledPathtracerScene> compiled_scene{};
@@ -153,7 +153,7 @@ namespace spectra::pathtracer {
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
-        RenderPipeline(const scene::PbrtSceneSnapshot& scene, const RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
+        RenderPipeline(const scene::PbrtScene::Snapshot& scene, const RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count);
         ~RenderPipeline() noexcept;
 
         RenderPipeline(const RenderPipeline& other)                = delete;
@@ -184,7 +184,7 @@ namespace spectra::pathtracer {
         std::unique_ptr<CompiledPathtracerScene> compiled_scene{};
         std::unique_ptr<WavefrontPathtracer> integrator{};
         RenderConfig render_config{};
-        scene::SceneRevision scene_revision{};
+        scene::Scene::Revision scene_revision{};
         spectra::Bounds2i pixel_bounds{};
         spectra::Vector2i resolution{};
         spectra::Transform render_from_camera{};
@@ -433,7 +433,7 @@ namespace {
         return std::make_unique<spectra::pathtracer::PathtracerMemoryScope>(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "pathtracer scene");
     }
 
-    [[nodiscard]] spectra::pathtracer::RenderPipelineSceneResources create_pathtracer_runtime_resources(const spectra::scene::PbrtSceneSnapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, spectra::pathtracer::PathtracerMemoryScope* scene_memory_scope) {
+    [[nodiscard]] spectra::pathtracer::RenderPipelineSceneResources create_pathtracer_runtime_resources(const spectra::scene::PbrtScene::Snapshot& scene, const spectra::pathtracer::RenderConfig& render_config, const std::array<int, 2>& resolution, spectra::pathtracer::PathtracerMemoryScope* scene_memory_scope) {
         if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
         if (scene_memory_scope == nullptr) throw std::runtime_error("Cannot create Spectra pathtracer runtime resources without scene memory");
@@ -489,7 +489,7 @@ namespace {
 } // namespace
 
 namespace spectra::pathtracer {
-    RenderPipeline::RenderPipeline(const scene::PbrtSceneSnapshot& scene, const RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
+    RenderPipeline::RenderPipeline(const scene::PbrtScene::Snapshot& scene, const RenderConfig& render_config, const std::array<int, 2>& resolution, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         try {
             RenderPipeline& pathtracer = *this;
             if (scene.name.empty()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene snapshot");
@@ -830,16 +830,16 @@ namespace spectra::pathtracer {
         return spectra::Vector3f{value.x, value.y, value.z};
     }
 
-    [[nodiscard]] scene::SceneCameraState scene_camera_state_from_interactive_pose(const InteractiveCameraPose& pose, const float fov_degrees) {
-        return scene::SceneCameraState{
+    [[nodiscard]] scene::Scene::CameraState scene_camera_state_from_interactive_pose(const InteractiveCameraPose& pose, const float fov_degrees) {
+        return scene::Scene::CameraState{
             .eye                = to_scene_vector(pose.eye),
             .target             = to_scene_vector(pose.center),
             .up                 = to_scene_vector(pose.up),
-            .verticalFovDegrees = fov_degrees,
+            .vertical_fov_degrees = fov_degrees,
         };
     }
 
-    [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_scene_camera_state(const scene::SceneCameraState& state, const float basis_handedness) {
+    [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_scene_camera_state(const scene::Scene::CameraState& state, const float basis_handedness) {
         return InteractiveCameraPose{
             .eye              = to_pathtracer_point(state.eye),
             .center           = to_pathtracer_point(state.target),
@@ -848,7 +848,7 @@ namespace spectra::pathtracer {
         };
     }
 
-    [[nodiscard]] float interactive_camera_fov_degrees(const scene::PbrtSceneInfo& info) {
+    [[nodiscard]] float interactive_camera_fov_degrees(const scene::PbrtScene::Info& info) {
         if (info.camera != "perspective") throw std::runtime_error(std::format("Interactive Spectra pathtracer camera controls require a perspective camera, not \"{}\"", info.camera));
         if (!(info.camera_fov_degrees > 0.0f && info.camera_fov_degrees < 180.0f)) throw std::runtime_error("Spectra scene camera fov must be inside (0, 180)");
         return info.camera_fov_degrees;
@@ -946,7 +946,7 @@ namespace spectra::pathtracer {
 
 
 namespace spectra::pathtracer {
-    [[nodiscard]] PathtracerSceneSupportReport analyze_pathtracer_scene(const scene::PbrtSceneSnapshot& document) {
+    [[nodiscard]] PathtracerSceneSupportReport analyze_pathtracer_scene(const scene::PbrtScene::Snapshot& document) {
         PathtracerSceneSupportReport report = AnalyzePathtracerSceneSupport(document);
         if (report.target.empty()) report.target = std::string{PathtracerRenderer::name()};
         return report;
@@ -954,7 +954,7 @@ namespace spectra::pathtracer {
 
     class PathtracerRenderer::Impl {
     public:
-        Impl(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace);
+        Impl(std::shared_ptr<const scene::PbrtScene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
         ~Impl() noexcept;
 
         void attach(PathtracerHostView host);
@@ -988,8 +988,8 @@ namespace spectra::pathtracer {
         void detach_noexcept() noexcept;
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         [[nodiscard]] std::string window_detail() const;
-        [[nodiscard]] const scene::PbrtSceneInfo& active_scene_info() const;
-        [[nodiscard]] const scene::PbrtSceneSnapshot& active_scene_snapshot() const;
+        [[nodiscard]] const scene::PbrtScene::Info& active_scene_info() const;
+        [[nodiscard]] const scene::PbrtScene::Snapshot& active_scene_snapshot() const;
         [[nodiscard]] std::string active_scene_id() const;
         void load_source_scene();
 
@@ -1016,7 +1016,7 @@ namespace spectra::pathtracer {
         [[nodiscard]] std::string sample_source_text() const;
         void initialize_camera_state();
         void synchronize_camera_workspace();
-        void apply_camera_snapshot(const scene::SceneCameraSnapshot& snapshot);
+        void apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot);
         void commit_camera_state(const InteractiveCameraPose& pose);
         void set_camera_speed(float speed);
         void reset_camera();
@@ -1031,8 +1031,8 @@ namespace spectra::pathtracer {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool performance_overlay_visible{true};
-        std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene{};
-        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
+        std::shared_ptr<const scene::PbrtScene> source_scene{};
+        std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
 
         struct {
             bool viewport_known{false};
@@ -1043,8 +1043,8 @@ namespace spectra::pathtracer {
             std::array<int, 2> viewport_framebuffer_size{0, 0};
         } ui;
 
-        std::shared_ptr<const scene::PbrtSceneSnapshot> scene_snapshot{};
-        std::optional<scene::PbrtSceneInfo> scene_info{};
+        const scene::PbrtScene::Snapshot* scene_snapshot{};
+        std::optional<scene::PbrtScene::Info> scene_info{};
         RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
         RenderConfig render_config{.rendering_space = RenderingSpace::CameraWorld, .default_pixel_samples = interactive_default_pixel_samples};
         std::array<int, 2> scene_film_resolution{0, 0};
@@ -1077,7 +1077,7 @@ namespace spectra::pathtracer {
             std::array<float, 2> mouse_position{0.0f, 0.0f};
             spectra::Transform moving_from_camera{};
             spectra::Transform camera_from_world{};
-            scene::SceneRevision observed_revision{};
+            scene::Scene::Revision observed_revision{};
         } camera;
 
         struct {
@@ -1093,7 +1093,7 @@ namespace spectra::pathtracer {
         } statistics;
     };
 
-    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_scene), std::move(camera_workspace))) {}
+    PathtracerRenderer::PathtracerRenderer(std::shared_ptr<const scene::PbrtScene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_scene), std::move(camera_workspace))) {}
 
     PathtracerRenderer::~PathtracerRenderer() noexcept = default;
 
@@ -1159,12 +1159,13 @@ namespace spectra::pathtracer {
         return this->sum / static_cast<float>(this->count);
     }
 
-    PathtracerRenderer::Impl::Impl(std::shared_ptr<const scene::PbrtSceneSnapshot> source_scene, std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace) : source_scene(std::move(source_scene)), camera_workspace(std::move(camera_workspace)) {
+    PathtracerRenderer::Impl::Impl(std::shared_ptr<const scene::PbrtScene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) : source_scene(std::move(source_scene)), camera_workspace(std::move(camera_workspace)) {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
-        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*this->source_scene);
+        const scene::PbrtScene::Snapshot& snapshot = this->source_scene->snapshot();
+        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(snapshot);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), this->source_scene->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), snapshot.name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
@@ -1192,38 +1193,39 @@ namespace spectra::pathtracer {
         this->swapchain_extent = swapchain_extent;
     }
 
-    const scene::PbrtSceneInfo& PathtracerRenderer::Impl::active_scene_info() const {
+    const scene::PbrtScene::Info& PathtracerRenderer::Impl::active_scene_info() const {
         if (!this->scene_info.has_value()) throw std::runtime_error("Spectra scene metadata is not loaded");
         return *this->scene_info;
     }
 
-    const scene::PbrtSceneSnapshot& PathtracerRenderer::Impl::active_scene_snapshot() const {
+    const scene::PbrtScene::Snapshot& PathtracerRenderer::Impl::active_scene_snapshot() const {
         if (this->scene_snapshot == nullptr) throw std::runtime_error("Spectra scene snapshot is not loaded");
         return *this->scene_snapshot;
     }
 
     std::string PathtracerRenderer::Impl::active_scene_id() const {
-        const scene::PbrtSceneSnapshot& scene = this->active_scene_snapshot();
+        const scene::PbrtScene::Snapshot& scene = this->active_scene_snapshot();
         if (scene.name.empty()) throw std::runtime_error("Spectra pathtracer scene id must not be empty");
         return scene.name;
     }
 
     void PathtracerRenderer::Impl::load_source_scene() {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
+        const scene::PbrtScene::Snapshot& source_snapshot = this->source_scene->snapshot();
         if (this->scene_snapshot != nullptr) {
-            if (this->scene_snapshot->revision != this->source_scene->revision) throw std::runtime_error("Spectra pathtracer source scene changed after construction");
+            if (this->scene_snapshot->revision != source_snapshot.revision) throw std::runtime_error("Spectra pathtracer source scene changed after construction");
             return;
         }
 
-        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(*this->source_scene);
+        const PathtracerSceneSupportReport report = analyze_pathtracer_scene(source_snapshot);
         if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), this->source_scene->name);
+            std::string message = std::format("{} cannot translate scene \"{}\"", PathtracerRenderer::name(), source_snapshot.name);
             if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
             throw std::runtime_error(message);
         }
 
-        this->scene_snapshot = this->source_scene;
-        this->scene_info     = DescribeScene(*this->source_scene);
+        this->scene_snapshot = &source_snapshot;
+        this->scene_info     = this->source_scene->info();
         this->scene_film_resolution      = {0, 0};
         this->scene_camera_from_world    = spectra::Transform{};
         this->scene_sampler_sample_count = 0;
@@ -1295,13 +1297,13 @@ namespace spectra::pathtracer {
     }
 
     void PathtracerRenderer::Impl::unload_scene_noexcept() noexcept {
-        this->scene_snapshot.reset();
+        this->scene_snapshot = nullptr;
         this->scene_info.reset();
         this->scene_film_resolution      = {0, 0};
         this->scene_camera_from_world    = spectra::Transform{};
         this->scene_sampler_sample_count = 0;
         this->camera.initialized         = false;
-        this->camera.observed_revision   = scene::SceneRevision{};
+        this->camera.observed_revision   = scene::Scene::Revision{};
     }
 
     void PathtracerRenderer::Impl::create_pathtracer_for_resolution(const std::array<int, 2>& resolution) {
@@ -1416,7 +1418,7 @@ namespace spectra::pathtracer {
         this->render_config.default_pixel_samples = sample_count;
         if (this->render_config.pixel_samples.has_value()) return;
         if (this->scene_snapshot == nullptr) throw std::runtime_error("Cannot apply Spectra pathtracer default SPP without an active scene snapshot");
-        if (scene_entity_has_integer_parameter(this->scene_snapshot->renderSettings.sampler, "pixelsamples")) return;
+        if (scene_entity_has_integer_parameter(this->scene_snapshot->render_settings.sampler, "pixelsamples")) return;
         this->request_pathtracer_sample_config_rebuild();
     }
 
@@ -1430,7 +1432,7 @@ namespace spectra::pathtracer {
 
     std::string PathtracerRenderer::Impl::sample_source_text() const {
         if (this->render_config.pixel_samples.has_value()) return "Override";
-        if (this->scene_snapshot != nullptr && scene_entity_has_integer_parameter(this->scene_snapshot->renderSettings.sampler, "pixelsamples")) return "Scene";
+        if (this->scene_snapshot != nullptr && scene_entity_has_integer_parameter(this->scene_snapshot->render_settings.sampler, "pixelsamples")) return "Scene";
         if (this->render_config.default_pixel_samples.has_value()) return "Spectra Default";
         return "PBRT Default";
     }
@@ -1455,20 +1457,20 @@ namespace spectra::pathtracer {
     void PathtracerRenderer::Impl::synchronize_camera_workspace() {
         if (!this->pathtracer_ready()) return;
         if (!this->camera.initialized) this->initialize_camera_state();
-        const scene::SceneCameraSnapshot snapshot = this->camera_workspace->snapshot(this->active_scene_id());
+        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->snapshot(this->active_scene_id());
         if (snapshot.revision == this->camera.observed_revision) return;
         this->apply_camera_snapshot(snapshot);
         this->request_pathtracer_accumulation_reset();
     }
 
-    void PathtracerRenderer::Impl::apply_camera_snapshot(const scene::SceneCameraSnapshot& snapshot) {
+    void PathtracerRenderer::Impl::apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot) {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot apply camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot apply camera state without an active Spectra pathtracer");
         const InteractiveCameraPose pose = interactive_camera_pose_from_scene_camera_state(snapshot.state, this->camera.basis_handedness);
         this->camera.eye = pose.eye;
         this->camera.center = pose.center;
         this->camera.up = pose.up;
-        this->camera.fov_degrees = snapshot.state.verticalFovDegrees;
+        this->camera.fov_degrees = snapshot.state.vertical_fov_degrees;
         this->camera.mouse_position_known = false;
         this->camera.input_enabled = false;
         this->camera.moving_from_camera = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, pose);
@@ -1477,7 +1479,7 @@ namespace spectra::pathtracer {
     }
 
     void PathtracerRenderer::Impl::commit_camera_state(const InteractiveCameraPose& pose) {
-        const scene::SceneCameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
+        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
         this->camera.observed_revision = snapshot.revision;
     }
 
@@ -1491,7 +1493,7 @@ namespace spectra::pathtracer {
         if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
         const InteractiveCameraPose pose = interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
         this->camera.basis_handedness = pose.basis_handedness;
-        const scene::SceneCameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, interactive_camera_fov_degrees(this->active_scene_info())));
+        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, interactive_camera_fov_degrees(this->active_scene_info())));
         this->apply_camera_snapshot(snapshot);
         this->request_pathtracer_accumulation_reset();
     }
@@ -1770,7 +1772,7 @@ namespace spectra::pathtracer {
             return;
         }
 
-        const scene::PbrtSceneInfo& scene = this->active_scene_info();
+        const scene::PbrtScene::Info& scene = this->active_scene_info();
         constexpr ImGuiTableFlags table_flags  = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
 
         ImGui::SeparatorText("Scene");

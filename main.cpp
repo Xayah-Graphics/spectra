@@ -26,19 +26,19 @@ namespace spectra::app {
         return scene::Vector3{value[0], value[1], value[2]};
     }
 
-    [[nodiscard]] scene::SceneDocument MakeDynamicSceneDocument(std::string name, std::string title, std::string source) {
-        return scene::SceneDocument{
-            .revision        = scene::SceneRevision{1},
+    [[nodiscard]] scene::Scene::Document MakeDynamicDocument(std::string name, std::string title, std::string source) {
+        return scene::Scene::Document{
+            .revision        = scene::Scene::Revision{1},
             .name            = std::move(name),
             .title           = std::move(title),
             .source          = std::move(source),
-            .framesPerSecond = 60.0,
+            .frames_per_second = 60.0,
         };
     }
 
-    [[nodiscard]] int ToPyroFrameIndex(const std::uint64_t frameIndex) {
-        if (frameIndex > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Pyro frame index exceeds int range");
-        return static_cast<int>(frameIndex);
+    [[nodiscard]] int ToPyroFrameIndex(const std::uint64_t frame_index) {
+        if (frame_index > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Pyro frame index exceeds int range");
+        return static_cast<int>(frame_index);
     }
 
     class BouncingBallRasterizerProject final {
@@ -51,51 +51,51 @@ namespace spectra::app {
             return "Bouncing Ball";
         }
 
-        [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeDynamicSceneDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
-            document.materials.push_back(scene::SceneMaterial{
+        [[nodiscard]] scene::Scene::Document create_document() const {
+            scene::Scene::Document document = MakeDynamicDocument("project.bouncing_ball", "Bouncing Ball", "project://bouncing_ball");
+            document.materials.push_back(scene::Scene::Material{
                 .name      = "ball",
-                .baseColor = scene::Vector4{0.95f, 0.28f, 0.18f, 1.0f},
+                .base_color = scene::Vector4{0.95f, 0.28f, 0.18f, 1.0f},
                 .roughness = 0.42f,
             });
-            document.materials.push_back(scene::SceneMaterial{
+            document.materials.push_back(scene::Scene::Material{
                 .name      = "floor",
-                .baseColor = scene::Vector4{0.38f, 0.43f, 0.38f, 1.0f},
+                .base_color = scene::Vector4{0.38f, 0.43f, 0.38f, 1.0f},
                 .roughness = 0.74f,
             });
-            document.lights.push_back(scene::SceneLight{
+            document.lights.push_back(scene::Scene::Light{
                 .name      = "key",
-                .kind      = scene::SceneLightKind::Directional,
+                .kind      = scene::Scene::LightKind::Directional,
                 .transform = scene::Transform{.rotation = scene::Quaternion{0.35f, 0.0f, 0.0f, 0.94f}},
                 .color     = scene::Vector3{1.0f, 0.97f, 0.92f},
                 .intensity = 3.0f,
             });
-            document.camera = scene::SceneCamera{
+            document.camera = scene::Scene::Camera{
                 .name      = "camera.main",
                 .transform = scene::Transform{.position = scene::Vector3{4.4f, 2.7f, 5.8f}},
                 .target    = scene::Vector3{0.0f, 1.25f, 0.0f},
-                .verticalFovDegrees = 42.0f,
-                .nearPlane = 0.05f,
-                .farPlane  = 80.0f,
+                .vertical_fov_degrees = 42.0f,
+                .near_plane = 0.05f,
+                .far_plane  = 80.0f,
             };
             document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_mesh());
-            document.rigidBodies.push_back(scene::SceneRigidBody{
+            document.rigid_bodies.push_back(scene::Scene::RigidBody{
                 .name         = "ball.body",
-                .meshName     = "ball.mesh",
-                .materialName = "ball",
+                .mesh_name     = "ball.mesh",
+                .material_name = "ball",
                 .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
                 .mass         = 1.0f,
             });
             return document;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::Scene::FrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::Scene::FrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
+        [[nodiscard]] scene::Scene::FrameSnapshot step(const scene::Scene::FrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -103,8 +103,8 @@ namespace spectra::app {
     private:
         xayah::projects::bouncing_ball::BouncingBallSolver solver{};
 
-        [[nodiscard]] scene::SceneMesh make_floor_mesh() const {
-            return scene::SceneMesh{
+        [[nodiscard]] scene::Scene::Mesh make_floor_mesh() const {
+            return scene::Scene::Mesh{
                 .name         = "floor.mesh",
                 .positions    = {
                     scene::Vector3{-5.5f, 0.0f, -5.5f},
@@ -119,15 +119,15 @@ namespace spectra::app {
                     scene::Vector3{0.0f, 1.0f, 0.0f},
                 },
                 .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
-                .materialName = "floor",
+                .material_name = "floor",
                 .dynamic      = false,
             };
         }
 
-        [[nodiscard]] scene::SceneMesh make_mesh() const {
-            scene::SceneMesh mesh{
+        [[nodiscard]] scene::Scene::Mesh make_mesh() const {
+            scene::Scene::Mesh mesh{
                 .name         = "ball.mesh",
-                .materialName = "ball",
+                .material_name = "ball",
                 .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
                 .dynamic      = true,
             };
@@ -142,15 +142,15 @@ namespace spectra::app {
             return mesh;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) const {
-            scene::SceneFrameSnapshot snapshot{
-                .cursor = scene::MakeFrameCursor(frame),
+        [[nodiscard]] scene::Scene::FrameSnapshot make_frame(const scene::Scene::FrameInfo& frame) const {
+            scene::Scene::FrameSnapshot snapshot{
+                .cursor = scene::Scene::make_frame_cursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
-            snapshot.rigidBodies.push_back(scene::SceneRigidBody{
+            snapshot.rigid_bodies.push_back(scene::Scene::RigidBody{
                 .name         = "ball.body",
-                .meshName     = "ball.mesh",
-                .materialName = "ball",
+                .mesh_name     = "ball.mesh",
+                .material_name = "ball",
                 .transform    = scene::Transform{.position = ToSceneVector3(this->solver.current_position())},
                 .mass         = 1.0f,
             });
@@ -168,39 +168,39 @@ namespace spectra::app {
             return "Sparkles";
         }
 
-        [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeDynamicSceneDocument("project.sparkles", "Sparkles", "project://sparkles");
-            document.materials.push_back(scene::SceneMaterial{
+        [[nodiscard]] scene::Scene::Document create_document() const {
+            scene::Scene::Document document = MakeDynamicDocument("project.sparkles", "Sparkles", "project://sparkles");
+            document.materials.push_back(scene::Scene::Material{
                 .name             = "sparkle",
-                .baseColor        = scene::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
-                .emissionColor    = scene::Vector3{1.0f, 0.54f, 0.12f},
-                .emissionStrength = 2.4f,
+                .base_color        = scene::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
+                .emission_color    = scene::Vector3{1.0f, 0.54f, 0.12f},
+                .emission_strength = 2.4f,
                 .roughness        = 0.2f,
             });
-            document.lights.push_back(scene::SceneLight{
+            document.lights.push_back(scene::Scene::Light{
                 .name      = "environment",
-                .kind      = scene::SceneLightKind::Environment,
+                .kind      = scene::Scene::LightKind::Environment,
                 .color     = scene::Vector3{0.22f, 0.26f, 0.34f},
                 .intensity = 0.8f,
             });
-            document.camera = scene::SceneCamera{
+            document.camera = scene::Scene::Camera{
                 .name      = "camera.main",
                 .transform = scene::Transform{.position = scene::Vector3{4.6f, 3.1f, 6.0f}},
                 .target    = scene::Vector3{0.0f, 1.9f, 0.0f},
-                .verticalFovDegrees = 42.0f,
-                .nearPlane = 0.05f,
-                .farPlane  = 90.0f,
+                .vertical_fov_degrees = 42.0f,
+                .near_plane = 0.05f,
+                .far_plane  = 90.0f,
             };
-            document.particleSets.push_back(this->make_particles());
+            document.particle_sets.push_back(this->make_particles());
             return document;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::Scene::FrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::Scene::FrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
+        [[nodiscard]] scene::Scene::FrameSnapshot step(const scene::Scene::FrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -208,10 +208,10 @@ namespace spectra::app {
     private:
         xayah::projects::sparkles::SparklesSolver solver{};
 
-        [[nodiscard]] scene::SceneParticleSet make_particles() const {
-            scene::SceneParticleSet particles{
+        [[nodiscard]] scene::Scene::ParticleSet make_particles() const {
+            scene::Scene::ParticleSet particles{
                 .name         = "sparkles.particles",
-                .materialName = "sparkle",
+                .material_name = "sparkle",
                 .dynamic      = true,
             };
             const std::span<const xayah::projects::sparkles::SparklesParticle> visibleParticles = this->solver.particles();
@@ -226,11 +226,11 @@ namespace spectra::app {
             return particles;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) const {
-            scene::SceneFrameSnapshot snapshot{
-                .cursor = scene::MakeFrameCursor(frame),
+        [[nodiscard]] scene::Scene::FrameSnapshot make_frame(const scene::Scene::FrameInfo& frame) const {
+            scene::Scene::FrameSnapshot snapshot{
+                .cursor = scene::Scene::make_frame_cursor(frame),
             };
-            snapshot.particleSets.push_back(this->make_particles());
+            snapshot.particle_sets.push_back(this->make_particles());
             return snapshot;
         }
     };
@@ -247,62 +247,62 @@ namespace spectra::app {
             return "Cloth";
         }
 
-        [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeDynamicSceneDocument("project.cloth", "Cloth", "project://cloth");
-            document.materials.push_back(scene::SceneMaterial{
+        [[nodiscard]] scene::Scene::Document create_document() const {
+            scene::Scene::Document document = MakeDynamicDocument("project.cloth", "Cloth", "project://cloth");
+            document.materials.push_back(scene::Scene::Material{
                 .name      = "cloth",
-                .baseColor = scene::Vector4{0.18f, 0.42f, 0.88f, 1.0f},
+                .base_color = scene::Vector4{0.18f, 0.42f, 0.88f, 1.0f},
                 .roughness = 0.64f,
             });
-            document.materials.push_back(scene::SceneMaterial{
+            document.materials.push_back(scene::Scene::Material{
                 .name      = "cloth.floor",
-                .baseColor = scene::Vector4{0.34f, 0.38f, 0.36f, 1.0f},
+                .base_color = scene::Vector4{0.34f, 0.38f, 0.36f, 1.0f},
                 .roughness = 0.78f,
             });
-            document.materials.push_back(scene::SceneMaterial{
+            document.materials.push_back(scene::Scene::Material{
                 .name      = "cloth.collider",
-                .baseColor = scene::Vector4{0.90f, 0.44f, 0.28f, 1.0f},
+                .base_color = scene::Vector4{0.90f, 0.44f, 0.28f, 1.0f},
                 .roughness = 0.46f,
             });
-            document.lights.push_back(scene::SceneLight{
+            document.lights.push_back(scene::Scene::Light{
                 .name      = "key",
-                .kind      = scene::SceneLightKind::Directional,
+                .kind      = scene::Scene::LightKind::Directional,
                 .transform = scene::Transform{.rotation = scene::Quaternion{0.45f, 0.18f, 0.0f, 0.87f}},
                 .color     = scene::Vector3{0.92f, 0.96f, 1.0f},
                 .intensity = 3.6f,
             });
-            document.camera = scene::SceneCamera{
+            document.camera = scene::Scene::Camera{
                 .name      = "camera.main",
                 .transform = scene::Transform{.position = scene::Vector3{3.8f, 2.8f, 5.2f}},
                 .target    = scene::Vector3{0.0f, 1.05f, 0.0f},
-                .verticalFovDegrees = 42.0f,
-                .nearPlane = 0.05f,
-                .farPlane  = 90.0f,
+                .vertical_fov_degrees = 42.0f,
+                .near_plane = 0.05f,
+                .far_plane  = 90.0f,
             };
             document.meshes.push_back(this->make_floor_mesh());
             document.meshes.push_back(this->make_collider_mesh());
             document.meshes.push_back(this->make_mesh());
-            document.cloths.push_back(scene::SceneCloth{
+            document.cloths.push_back(scene::Scene::Cloth{
                 .name         = "cloth.body",
-                .meshName     = "cloth.mesh",
-                .materialName = "cloth",
+                .mesh_name     = "cloth.mesh",
+                .material_name = "cloth",
                 .dynamic      = true,
             });
-            document.colliders.push_back(scene::SceneCollider{
+            document.colliders.push_back(scene::Scene::Collider{
                 .name      = "cloth.collider",
-                .meshName  = "cloth.collider.mesh",
+                .mesh_name  = "cloth.collider.mesh",
                 .transform = scene::Transform{.position = ToSceneVector3(this->collider.center)},
                 .friction  = 0.54f,
             });
             return document;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::Scene::FrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::Scene::FrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
+        [[nodiscard]] scene::Scene::FrameSnapshot step(const scene::Scene::FrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -312,8 +312,8 @@ namespace spectra::app {
         xayah::projects::cloth::ClothSphereCollider collider{};
         xayah::projects::cloth::ClothSolver solver;
 
-        [[nodiscard]] scene::SceneMesh make_floor_mesh() const {
-            return scene::SceneMesh{
+        [[nodiscard]] scene::Scene::Mesh make_floor_mesh() const {
+            return scene::Scene::Mesh{
                 .name         = "cloth.floor.mesh",
                 .positions    = {
                     scene::Vector3{-3.8f, -0.02f, -3.2f},
@@ -328,15 +328,15 @@ namespace spectra::app {
                     scene::Vector3{0.0f, 1.0f, 0.0f},
                 },
                 .indices      = {0u, 1u, 2u, 0u, 2u, 3u},
-                .materialName = "cloth.floor",
+                .material_name = "cloth.floor",
                 .dynamic      = false,
             };
         }
 
-        [[nodiscard]] scene::SceneMesh make_collider_mesh() const {
-            scene::SceneMesh mesh{
+        [[nodiscard]] scene::Scene::Mesh make_collider_mesh() const {
+            scene::Scene::Mesh mesh{
                 .name         = "cloth.collider.mesh",
-                .materialName = "cloth.collider",
+                .material_name = "cloth.collider",
                 .transform    = scene::Transform{.position = ToSceneVector3(this->collider.center)},
                 .dynamic      = false,
             };
@@ -371,10 +371,10 @@ namespace spectra::app {
             return mesh;
         }
 
-        [[nodiscard]] scene::SceneMesh make_mesh() const {
-            scene::SceneMesh mesh{
+        [[nodiscard]] scene::Scene::Mesh make_mesh() const {
+            scene::Scene::Mesh mesh{
                 .name         = "cloth.mesh",
-                .materialName = "cloth",
+                .material_name = "cloth",
                 .dynamic      = true,
             };
             const std::vector<xayah::projects::cloth::ClothVertex>& vertices = this->solver.mesh_vertices();
@@ -388,15 +388,15 @@ namespace spectra::app {
             return mesh;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) const {
-            scene::SceneFrameSnapshot snapshot{
-                .cursor = scene::MakeFrameCursor(frame),
+        [[nodiscard]] scene::Scene::FrameSnapshot make_frame(const scene::Scene::FrameInfo& frame) const {
+            scene::Scene::FrameSnapshot snapshot{
+                .cursor = scene::Scene::make_frame_cursor(frame),
             };
             snapshot.meshes.push_back(this->make_mesh());
-            snapshot.cloths.push_back(scene::SceneCloth{
+            snapshot.cloths.push_back(scene::Scene::Cloth{
                 .name         = "cloth.body",
-                .meshName     = "cloth.mesh",
-                .materialName = "cloth",
+                .mesh_name     = "cloth.mesh",
+                .material_name = "cloth",
                 .dynamic      = true,
             });
             return snapshot;
@@ -413,39 +413,39 @@ namespace spectra::app {
             return "Pyro";
         }
 
-        [[nodiscard]] scene::SceneDocument create_document() const {
-            scene::SceneDocument document = MakeDynamicSceneDocument("project.pyro", "Pyro", "project://pyro");
-            document.materials.push_back(scene::SceneMaterial{
+        [[nodiscard]] scene::Scene::Document create_document() const {
+            scene::Scene::Document document = MakeDynamicDocument("project.pyro", "Pyro", "project://pyro");
+            document.materials.push_back(scene::Scene::Material{
                 .name             = "smoke",
-                .baseColor        = scene::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
-                .emissionColor    = scene::Vector3{0.95f, 0.48f, 0.18f},
-                .emissionStrength = 0.3f,
+                .base_color        = scene::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
+                .emission_color    = scene::Vector3{0.95f, 0.48f, 0.18f},
+                .emission_strength = 0.3f,
                 .roughness        = 0.9f,
             });
-            document.lights.push_back(scene::SceneLight{
+            document.lights.push_back(scene::Scene::Light{
                 .name      = "environment",
-                .kind      = scene::SceneLightKind::Environment,
+                .kind      = scene::Scene::LightKind::Environment,
                 .color     = scene::Vector3{0.24f, 0.26f, 0.30f},
                 .intensity = 0.7f,
             });
-            document.camera = scene::SceneCamera{
+            document.camera = scene::Scene::Camera{
                 .name      = "camera.main",
                 .transform = scene::Transform{.position = scene::Vector3{2.35f, 1.65f, 2.8f}},
                 .target    = scene::Vector3{0.6f, 0.86f, 0.6f},
-                .verticalFovDegrees = 39.0f,
-                .nearPlane = 0.03f,
-                .farPlane  = 80.0f,
+                .vertical_fov_degrees = 39.0f,
+                .near_plane = 0.03f,
+                .far_plane  = 80.0f,
             };
             document.volumes.push_back(this->make_volume_metadata(0u));
             return document;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot reset() {
+        [[nodiscard]] scene::Scene::FrameSnapshot reset() {
             this->solver.reset();
-            return this->make_frame(scene::SceneFrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
+            return this->make_frame(scene::Scene::FrameInfo{.delta_seconds = 0.0, .time_seconds = 0.0, .frame_index = 0u});
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) {
+        [[nodiscard]] scene::Scene::FrameSnapshot step(const scene::Scene::FrameInfo& frame) {
             this->solver.step(static_cast<float>(frame.delta_seconds));
             return this->make_frame(frame);
         }
@@ -455,8 +455,8 @@ namespace spectra::app {
         std::array<std::uint32_t, 3> resolution{64u, 96u, 64u};
         float cell_size{0.01875f};
 
-        [[nodiscard]] scene::SceneVolumeChannel make_volume_channel(std::string name, const scene::SceneVolumeChannelLayout layout, const std::array<std::uint32_t, 3> dimensions, std::vector<float> values) const {
-            return scene::SceneVolumeChannel{
+        [[nodiscard]] scene::Scene::VolumeChannel make_volume_channel(std::string name, const scene::Scene::VolumeChannelLayout layout, const std::array<std::uint32_t, 3> dimensions, std::vector<float> values) const {
+            return scene::Scene::VolumeChannel{
                 .name       = std::move(name),
                 .layout     = layout,
                 .dimensions = dimensions,
@@ -464,36 +464,36 @@ namespace spectra::app {
             };
         }
 
-        [[nodiscard]] scene::SceneVolumeGrid make_volume_metadata(const std::uint64_t) const {
-            return scene::SceneVolumeGrid{
+        [[nodiscard]] scene::Scene::VolumeGrid make_volume_metadata(const std::uint64_t) const {
+            return scene::Scene::VolumeGrid{
                 .name         = "pyro.volume",
-                .kind         = scene::SceneVolumeKind::GasDensity,
+                .kind         = scene::Scene::VolumeKind::GasDensity,
                 .dimensions   = this->resolution,
                 .origin       = scene::Vector3{0.0f, 0.0f, 0.0f},
-                .voxelSize    = scene::Vector3{this->cell_size, this->cell_size, this->cell_size},
-                .materialName = "smoke",
+                .voxel_size    = scene::Vector3{this->cell_size, this->cell_size, this->cell_size},
+                .material_name = "smoke",
                 .dynamic      = true,
             };
         }
 
-        [[nodiscard]] scene::SceneVolumeGrid make_volume(const xayah::projects::pyro::PyroFrame& frame) const {
-            scene::SceneVolumeGrid volume = this->make_volume_metadata(static_cast<std::uint64_t>(frame.frame_index));
+        [[nodiscard]] scene::Scene::VolumeGrid make_volume(const xayah::projects::pyro::PyroFrame& frame) const {
+            scene::Scene::VolumeGrid volume = this->make_volume_metadata(static_cast<std::uint64_t>(frame.frame_index));
             volume.dimensions = frame.resolution;
-            volume.voxelSize = scene::Vector3{frame.cell_size, frame.cell_size, frame.cell_size};
-            volume.channels.push_back(this->make_volume_channel("density", scene::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.density));
-            volume.channels.push_back(this->make_volume_channel("temperature", scene::SceneVolumeChannelLayout::CellCentered, frame.resolution, frame.temperature));
-            volume.channels.push_back(this->make_volume_channel("velocity_x", scene::SceneVolumeChannelLayout::FaceX, std::array<std::uint32_t, 3>{frame.resolution[0] + 1u, frame.resolution[1], frame.resolution[2]}, frame.velocity_x));
-            volume.channels.push_back(this->make_volume_channel("velocity_y", scene::SceneVolumeChannelLayout::FaceY, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1] + 1u, frame.resolution[2]}, frame.velocity_y));
-            volume.channels.push_back(this->make_volume_channel("velocity_z", scene::SceneVolumeChannelLayout::FaceZ, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1], frame.resolution[2] + 1u}, frame.velocity_z));
+            volume.voxel_size = scene::Vector3{frame.cell_size, frame.cell_size, frame.cell_size};
+            volume.channels.push_back(this->make_volume_channel("density", scene::Scene::VolumeChannelLayout::CellCentered, frame.resolution, frame.density));
+            volume.channels.push_back(this->make_volume_channel("temperature", scene::Scene::VolumeChannelLayout::CellCentered, frame.resolution, frame.temperature));
+            volume.channels.push_back(this->make_volume_channel("velocity_x", scene::Scene::VolumeChannelLayout::FaceX, std::array<std::uint32_t, 3>{frame.resolution[0] + 1u, frame.resolution[1], frame.resolution[2]}, frame.velocity_x));
+            volume.channels.push_back(this->make_volume_channel("velocity_y", scene::Scene::VolumeChannelLayout::FaceY, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1] + 1u, frame.resolution[2]}, frame.velocity_y));
+            volume.channels.push_back(this->make_volume_channel("velocity_z", scene::Scene::VolumeChannelLayout::FaceZ, std::array<std::uint32_t, 3>{frame.resolution[0], frame.resolution[1], frame.resolution[2] + 1u}, frame.velocity_z));
             return volume;
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot make_frame(const scene::SceneFrameInfo& frame) {
+        [[nodiscard]] scene::Scene::FrameSnapshot make_frame(const scene::Scene::FrameInfo& frame) {
             const xayah::projects::pyro::PyroFrame pyroFrame = this->solver.read_frame(ToPyroFrameIndex(frame.frame_index));
             this->resolution                                   = pyroFrame.resolution;
             this->cell_size                                    = pyroFrame.cell_size;
-            scene::SceneFrameSnapshot snapshot{
-                .cursor = scene::MakeFrameCursor(frame),
+            scene::Scene::FrameSnapshot snapshot{
+                .cursor = scene::Scene::make_frame_cursor(frame),
             };
             snapshot.volumes.push_back(this->make_volume(pyroFrame));
             return snapshot;
@@ -501,12 +501,12 @@ namespace spectra::app {
     };
 
     template <typename Source>
-    concept SceneFrameSource = std::default_initializable<Source> && requires(Source& source, const Source& const_source, const scene::SceneFrameInfo& frame) {
+    concept SceneFrameSource = std::default_initializable<Source> && requires(Source& source, const Source& const_source, const scene::Scene::FrameInfo& frame) {
         { Source::project_id() } -> std::convertible_to<std::string_view>;
         { Source::project_title() } -> std::convertible_to<std::string_view>;
-        { const_source.create_document() } -> std::same_as<scene::SceneDocument>;
-        { source.reset() } -> std::same_as<scene::SceneFrameSnapshot>;
-        { source.step(frame) } -> std::same_as<scene::SceneFrameSnapshot>;
+        { const_source.create_document() } -> std::same_as<scene::Scene::Document>;
+        { source.reset() } -> std::same_as<scene::Scene::FrameSnapshot>;
+        { source.step(frame) } -> std::same_as<scene::Scene::FrameSnapshot>;
     };
 
     class SceneFrameRuntime {
@@ -519,9 +519,9 @@ namespace spectra::app {
         SceneFrameRuntime& operator=(SceneFrameRuntime&& other) = delete;
         virtual ~SceneFrameRuntime() noexcept = default;
 
-        [[nodiscard]] virtual scene::SceneDocument create_document() const = 0;
-        [[nodiscard]] virtual scene::SceneFrameSnapshot reset() = 0;
-        [[nodiscard]] virtual scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) = 0;
+        [[nodiscard]] virtual scene::Scene::Document create_document() const = 0;
+        [[nodiscard]] virtual scene::Scene::FrameSnapshot reset() = 0;
+        [[nodiscard]] virtual scene::Scene::FrameSnapshot step(const scene::Scene::FrameInfo& frame) = 0;
     };
 
     template <SceneFrameSource Source>
@@ -529,15 +529,15 @@ namespace spectra::app {
     public:
         SceneFrameRuntimeModel() = default;
 
-        [[nodiscard]] scene::SceneDocument create_document() const override {
+        [[nodiscard]] scene::Scene::Document create_document() const override {
             return this->source.create_document();
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot reset() override {
+        [[nodiscard]] scene::Scene::FrameSnapshot reset() override {
             return this->source.reset();
         }
 
-        [[nodiscard]] scene::SceneFrameSnapshot step(const scene::SceneFrameInfo& frame) override {
+        [[nodiscard]] scene::Scene::FrameSnapshot step(const scene::Scene::FrameInfo& frame) override {
             return this->source.step(frame);
         }
 
@@ -554,7 +554,7 @@ namespace spectra::app {
         std::string id{};
         std::string title{};
         AppSceneKind kind{AppSceneKind::Static};
-        std::move_only_function<scene::SceneDocument()> create_static_document{};
+        std::move_only_function<scene::Scene::Document()> create_static_document{};
         std::move_only_function<std::unique_ptr<SceneFrameRuntime>()> create_dynamic_runtime{};
     };
 
@@ -568,7 +568,7 @@ namespace spectra::app {
         AppSceneRegistry& operator=(AppSceneRegistry&& other) noexcept = default;
         ~AppSceneRegistry() noexcept = default;
 
-        void register_static_scene(std::string id, std::string title, std::move_only_function<scene::SceneDocument()> create_document) {
+        void register_static_scene(std::string id, std::string title, std::move_only_function<scene::Scene::Document()> create_document) {
             if (!create_document) throw std::runtime_error("Static scene entry requires a document factory");
             this->ensure_unique_scene_id(id);
             this->entries.push_back(AppSceneEntry{
@@ -600,7 +600,7 @@ namespace spectra::app {
             return entry.create_dynamic_runtime();
         }
 
-        [[nodiscard]] scene::SceneDocument create_static_document(const std::size_t index) {
+        [[nodiscard]] scene::Scene::Document create_static_document(const std::size_t index) {
             if (this->entries.empty()) throw std::runtime_error("App scene registry is empty");
             if (index >= this->entries.size()) throw std::runtime_error("App scene index is out of range");
             AppSceneEntry& entry = this->entries.at(index);
@@ -629,27 +629,27 @@ namespace spectra::app {
         std::vector<AppSceneEntry> entries{};
     };
 
-    void CommitSceneFrame(scene::SceneWorkspace& workspace, scene::SceneFrameSnapshot frame) {
-        scene::SceneEditBuilder edit{};
-        edit.replaceFrame(std::move(frame));
-        const scene::SceneDirtyFlags dirty = workspace.commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+    void CommitSceneFrame(scene::Scene& workspace, scene::Scene::FrameSnapshot frame) {
+        scene::Scene::Edit edit{};
+        edit.replace_frame(std::move(frame));
+        const scene::Scene::DirtyFlags dirty = workspace.commit(std::move(edit));
+        if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
     }
 
-    void CommitSceneTimeline(scene::SceneWorkspace& workspace, scene::SceneTimeline timeline) {
-        scene::SceneEditBuilder edit{};
-        edit.replaceTimeline(std::move(timeline));
-        const scene::SceneDirtyFlags dirty = workspace.commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
+    void CommitSceneTimeline(scene::Scene& workspace, scene::Scene::Timeline timeline) {
+        scene::Scene::Edit edit{};
+        edit.replace_timeline(std::move(timeline));
+        const scene::Scene::DirtyFlags dirty = workspace.commit(std::move(edit));
+        if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
     }
 
-    void CommitSceneTimelineAndFrame(scene::SceneWorkspace& workspace, scene::SceneTimeline timeline, scene::SceneFrameSnapshot frame) {
-        scene::SceneEditBuilder edit{};
-        edit.replaceTimeline(std::move(timeline));
-        edit.replaceFrame(std::move(frame));
-        const scene::SceneDirtyFlags dirty = workspace.commit(std::move(edit));
-        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
-        if (!scene::HasSceneDirtyFlag(dirty, scene::SceneDirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+    void CommitSceneTimelineAndFrame(scene::Scene& workspace, scene::Scene::Timeline timeline, scene::Scene::FrameSnapshot frame) {
+        scene::Scene::Edit edit{};
+        edit.replace_timeline(std::move(timeline));
+        edit.replace_frame(std::move(frame));
+        const scene::Scene::DirtyFlags dirty = workspace.commit(std::move(edit));
+        if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
+        if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
     }
 
     class AppSceneController final {
@@ -666,7 +666,7 @@ namespace spectra::app {
         AppSceneController& operator=(AppSceneController&& other) = delete;
         ~AppSceneController() noexcept = default;
 
-        [[nodiscard]] std::shared_ptr<scene::SceneWorkspace> active_workspace() {
+        [[nodiscard]] std::shared_ptr<scene::Scene> active_workspace() {
             return this->ensure_slot(this->currentActiveIndex).workspace;
         }
 
@@ -711,33 +711,33 @@ namespace spectra::app {
             if (entry.kind == AppSceneKind::Static) return;
             SceneSlot& slot = this->ensure_slot(this->currentActiveIndex);
             if (slot.runtime == nullptr) throw std::runtime_error("Dynamic scene slot has no runtime");
-            const std::shared_ptr<const scene::SceneDocument> document = slot.workspace->document();
-            if (!document->timelineEnabled) throw std::runtime_error("Dynamic scene must enable timeline");
-            if (document->framesPerSecond <= 0.0) throw std::runtime_error("Dynamic scene frame rate must be positive");
-            const double fixed_delta_seconds = 1.0 / document->framesPerSecond;
-            scene::SceneTimeline timeline = slot.workspace->timeline();
-            if (timeline.framesPerSecond <= 0.0) throw std::runtime_error("Scene timeline frame rate must be positive");
-            if (timeline.resetRequestSerial != slot.observed_reset_request_serial) {
+            const std::shared_ptr<const scene::Scene::Document> document = slot.workspace->document();
+            if (!document->timeline_enabled) throw std::runtime_error("Dynamic scene must enable timeline");
+            if (document->frames_per_second <= 0.0) throw std::runtime_error("Dynamic scene frame rate must be positive");
+            const double fixed_delta_seconds = 1.0 / document->frames_per_second;
+            scene::Scene::Timeline timeline = slot.workspace->timeline();
+            if (timeline.frames_per_second <= 0.0) throw std::runtime_error("Scene timeline frame rate must be positive");
+            if (timeline.reset_request_serial != slot.observed_reset_request_serial) {
                 this->reset_dynamic_scene(slot, std::move(timeline));
-                slot.observed_reset_request_serial = slot.workspace->timeline().resetRequestSerial;
+                slot.observed_reset_request_serial = slot.workspace->timeline().reset_request_serial;
                 slot.committed_playback_frame_index.reset();
                 return;
             }
-            if (timeline.clearRecordingRequestSerial != slot.observed_clear_recording_request_serial) {
-                timeline.recordedFrames.clear();
-                timeline.selectedFrameIndex = 0;
+            if (timeline.clear_recording_request_serial != slot.observed_clear_recording_request_serial) {
+                timeline.recorded_frames.clear();
+                timeline.selected_frame_index = 0;
                 CommitSceneTimeline(*slot.workspace, std::move(timeline));
-                slot.observed_clear_recording_request_serial = slot.workspace->timeline().clearRecordingRequestSerial;
+                slot.observed_clear_recording_request_serial = slot.workspace->timeline().clear_recording_request_serial;
                 slot.committed_playback_frame_index.reset();
                 return;
             }
-            if (timeline.mode == scene::SceneTimelineMode::Playback) {
-                if (timeline.recordedFrames.empty()) return;
-                if (timeline.selectedFrameIndex >= timeline.recordedFrames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
-                if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selectedFrameIndex) return;
-                scene::SceneFrameSnapshot selected_frame = timeline.recordedFrames.at(timeline.selectedFrameIndex);
+            if (timeline.mode == scene::Scene::TimelineMode::Playback) {
+                if (timeline.recorded_frames.empty()) return;
+                if (timeline.selected_frame_index >= timeline.recorded_frames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
+                if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selected_frame_index) return;
+                scene::Scene::FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
                 CommitSceneFrame(*slot.workspace, std::move(selected_frame));
-                slot.committed_playback_frame_index = timeline.selectedFrameIndex;
+                slot.committed_playback_frame_index = timeline.selected_frame_index;
                 return;
             }
             slot.committed_playback_frame_index.reset();
@@ -745,12 +745,12 @@ namespace spectra::app {
             if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene frame delta time is invalid");
             slot.frame_accumulator_seconds += delta_seconds;
             bool advanced = false;
-            scene::SceneFrameSnapshot snapshot{};
+            scene::Scene::FrameSnapshot snapshot{};
             while (slot.frame_accumulator_seconds >= fixed_delta_seconds) {
                 slot.frame_accumulator_seconds -= fixed_delta_seconds;
                 ++slot.stream_frame_index;
                 slot.stream_time_seconds += fixed_delta_seconds;
-                snapshot = slot.runtime->step(scene::SceneFrameInfo{
+                snapshot = slot.runtime->step(scene::Scene::FrameInfo{
                     .delta_seconds = fixed_delta_seconds,
                     .time_seconds  = slot.stream_time_seconds,
                     .frame_index   = slot.stream_frame_index,
@@ -758,9 +758,9 @@ namespace spectra::app {
                 advanced = true;
             }
             if (!advanced) return;
-            if (timeline.mode == scene::SceneTimelineMode::Record) {
-                timeline.recordedFrames.push_back(snapshot);
-                timeline.selectedFrameIndex = timeline.recordedFrames.size() - 1u;
+            if (timeline.mode == scene::Scene::TimelineMode::Record) {
+                timeline.recorded_frames.push_back(snapshot);
+                timeline.selected_frame_index = timeline.recorded_frames.size() - 1u;
                 CommitSceneTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
                 return;
             }
@@ -770,7 +770,7 @@ namespace spectra::app {
     private:
         struct SceneSlot {
             std::unique_ptr<SceneFrameRuntime> runtime{};
-            std::shared_ptr<scene::SceneWorkspace> workspace{};
+            std::shared_ptr<scene::Scene> workspace{};
             double frame_accumulator_seconds{};
             double stream_time_seconds{};
             std::uint64_t stream_frame_index{};
@@ -787,38 +787,38 @@ namespace spectra::app {
                 if (entry.kind == AppSceneKind::Dynamic && slot.runtime == nullptr) throw std::runtime_error("Dynamic scene slot has a workspace but no runtime");
                 return slot;
             }
-            scene::SceneDocument document = entry.kind == AppSceneKind::Static ? this->registry.create_static_document(index) : this->create_dynamic_slot(index, &slot);
-            slot.workspace = std::make_shared<scene::SceneWorkspace>(std::move(document));
+            scene::Scene::Document document = entry.kind == AppSceneKind::Static ? this->registry.create_static_document(index) : this->create_dynamic_slot(index, &slot);
+            slot.workspace = std::make_shared<scene::Scene>(std::move(document));
             if (entry.kind == AppSceneKind::Static) return slot;
             if (slot.runtime == nullptr) throw std::runtime_error("Dynamic scene slot was not initialized");
-            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
-            const std::shared_ptr<const scene::SceneDocument> scene_document = slot.workspace->document();
-            if (!scene_document->timelineEnabled) throw std::runtime_error("Dynamic scene must enable timeline");
-            scene::SceneTimeline timeline{
-                .mode               = scene::SceneTimelineMode::Live,
-                .framesPerSecond    = scene_document->framesPerSecond,
+            scene::Scene::FrameSnapshot snapshot = slot.runtime->reset();
+            const std::shared_ptr<const scene::Scene::Document> scene_document = slot.workspace->document();
+            if (!scene_document->timeline_enabled) throw std::runtime_error("Dynamic scene must enable timeline");
+            scene::Scene::Timeline timeline{
+                .mode               = scene::Scene::TimelineMode::Live,
+                .frames_per_second    = scene_document->frames_per_second,
                 .playing            = true,
                 .loop               = true,
-                .selectedFrameIndex = 0,
+                .selected_frame_index = 0,
             };
             CommitSceneTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
             return slot;
         }
 
-        [[nodiscard]] scene::SceneDocument create_dynamic_slot(const std::size_t index, SceneSlot* slot) {
+        [[nodiscard]] scene::Scene::Document create_dynamic_slot(const std::size_t index, SceneSlot* slot) {
             if (slot == nullptr) throw std::runtime_error("Dynamic scene slot pointer must not be null");
             slot->runtime = this->registry.create_dynamic_runtime(index);
-            scene::SceneDocument document = slot->runtime->create_document();
-            if (!document.timelineEnabled) throw std::runtime_error("Dynamic scene document must enable timeline");
+            scene::Scene::Document document = slot->runtime->create_document();
+            if (!document.timeline_enabled) throw std::runtime_error("Dynamic scene document must enable timeline");
             return document;
         }
 
-        void reset_dynamic_scene(SceneSlot& slot, scene::SceneTimeline timeline) {
+        void reset_dynamic_scene(SceneSlot& slot, scene::Scene::Timeline timeline) {
             slot.frame_accumulator_seconds = 0.0;
             slot.stream_time_seconds = 0.0;
             slot.stream_frame_index = 0;
-            scene::SceneFrameSnapshot snapshot = slot.runtime->reset();
-            timeline.selectedFrameIndex = 0;
+            scene::Scene::FrameSnapshot snapshot = slot.runtime->reset();
+            timeline.selected_frame_index = 0;
             CommitSceneTimelineAndFrame(*slot.workspace, std::move(timeline), std::move(snapshot));
         }
 
@@ -835,7 +835,7 @@ namespace spectra::app {
 
     [[nodiscard]] AppSceneRegistry MakeSceneRegistry() {
         AppSceneRegistry registry{};
-        registry.register_static_scene(std::string{CornellBoxSceneId}, "Cornell Box", [] { return scene::LoadPreviewSceneDocumentFromPbrt(CornellBoxSceneId); });
+        registry.register_static_scene(std::string{CornellBoxSceneId}, "Cornell Box", [] { return scene::PbrtScene::load_preview_document(CornellBoxSceneId); });
         registry.register_dynamic_scene<BouncingBallRasterizerProject>();
         registry.register_dynamic_scene<SparklesRasterizerProject>();
         registry.register_dynamic_scene<ClothRasterizerProject>();
@@ -863,10 +863,10 @@ namespace spectra::app {
 
     class PathtracerSpectraRenderer final {
     public:
-        PathtracerSpectraRenderer(std::shared_ptr<const scene::PbrtSceneSnapshot> sceneSnapshot, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_snapshot(std::move(sceneSnapshot)), camera_workspace(std::move(cameraWorkspace)) {
-            if (this->scene_snapshot == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene snapshot");
+        PathtracerSpectraRenderer(std::shared_ptr<const scene::PbrtScene> pbrtScene, std::shared_ptr<scene::Scene::CameraWorkspace> cameraWorkspace) : pbrt_scene(std::move(pbrtScene)), camera_workspace(std::move(cameraWorkspace)) {
+            if (this->pbrt_scene == nullptr) throw std::runtime_error("Pathtracer adapter requires a PBRT scene");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
-            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->scene_snapshot, this->camera_workspace);
+            this->renderer = std::make_unique<pathtracer::PathtracerRenderer>(this->pbrt_scene, this->camera_workspace);
         }
 
         PathtracerSpectraRenderer(const PathtracerSpectraRenderer& other)                = delete;
@@ -913,14 +913,14 @@ namespace spectra::app {
         }
 
     private:
-        std::shared_ptr<const scene::PbrtSceneSnapshot> scene_snapshot{};
-        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
+        std::shared_ptr<const scene::PbrtScene> pbrt_scene{};
+        std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
         std::unique_ptr<pathtracer::PathtracerRenderer> renderer{};
     };
 
     class RasterizerSpectraRenderer final {
     public:
-        RasterizerSpectraRenderer(AppSceneRegistry registry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) : scene_controller(std::make_shared<AppSceneController>(std::move(registry))), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_controller->active_workspace(), this->camera_workspace)) {
+        RasterizerSpectraRenderer(AppSceneRegistry registry, std::shared_ptr<scene::Scene::CameraWorkspace> cameraWorkspace) : scene_controller(std::make_shared<AppSceneController>(std::move(registry))), camera_workspace(std::move(cameraWorkspace)), renderer(std::make_unique<rasterizer::Renderer>(this->scene_controller->active_workspace(), this->camera_workspace)) {
             if (this->scene_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
             this->renderer->set_control_panel_extension([sceneController = this->scene_controller] { DrawRasterizerSceneControlPanel(*sceneController); });
@@ -975,14 +975,14 @@ namespace spectra::app {
 
     private:
         std::shared_ptr<AppSceneController> scene_controller{};
-        std::shared_ptr<scene::SceneCameraWorkspace> camera_workspace{};
+        std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
         std::unique_ptr<rasterizer::Renderer> renderer{};
     };
 
     static_assert(RendererFor<PathtracerSpectraRenderer, Spectra>);
     static_assert(RendererFor<RasterizerSpectraRenderer, Spectra>);
 
-    void RegisterRenderers(Spectra& app, std::shared_ptr<const scene::PbrtSceneSnapshot> pbrtScene, AppSceneRegistry sceneRegistry, std::shared_ptr<scene::SceneCameraWorkspace> cameraWorkspace) {
+    void RegisterRenderers(Spectra& app, std::shared_ptr<const scene::PbrtScene> pbrtScene, AppSceneRegistry sceneRegistry, std::shared_ptr<scene::Scene::CameraWorkspace> cameraWorkspace) {
         if (pbrtScene == nullptr) throw std::runtime_error("Renderer registration requires a PBRT scene snapshot");
         if (cameraWorkspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
         app.register_renderer(RasterizerSpectraRenderer{std::move(sceneRegistry), cameraWorkspace});
@@ -994,9 +994,9 @@ int main(const int argc, char**) {
     try {
         if (argc != 1) throw std::runtime_error("usage: spectra_gui");
 
-        std::shared_ptr<const spectra::scene::PbrtSceneSnapshot> pbrt_scene = std::make_shared<spectra::scene::PbrtSceneSnapshot>(spectra::scene::ParsePbrtScene(spectra::app::CornellBoxSceneId));
+        std::shared_ptr<const spectra::scene::PbrtScene> pbrt_scene = std::make_shared<spectra::scene::PbrtScene>(spectra::scene::PbrtScene::parse(spectra::app::CornellBoxSceneId));
         spectra::app::AppSceneRegistry scene_registry = spectra::app::MakeSceneRegistry();
-        std::shared_ptr<spectra::scene::SceneCameraWorkspace> camera_workspace = std::make_shared<spectra::scene::SceneCameraWorkspace>();
+        std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::Scene::CameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
         spectra::app::RegisterRenderers(app, std::move(pbrt_scene), std::move(scene_registry), std::move(camera_workspace));

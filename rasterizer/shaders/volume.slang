@@ -17,7 +17,7 @@ struct CameraUniform {
 struct VolumePushConstants {
     float4 originDensityScale;
     float4 extentStepScale;
-    float4 baseColor;
+    float4 base_color;
     float4 emission;
 };
 
@@ -131,12 +131,12 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
         float density = max(densityTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0) * densityScale;
         float temperature = max(temperatureTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0);
         float alpha = saturate(1.0 - exp(-density * 0.08));
-        float3 smokeColor = volume.baseColor.rgb + volume.emission.rgb * saturate(temperature * 0.035);
+        float3 smokeColor = volume.base_color.rgb + volume.emission.rgb * saturate(temperature * 0.035);
         float contribution = (1.0 - accumulated.a) * alpha;
         accumulated.rgb += smokeColor * contribution;
         accumulated.a += contribution;
     }
     if (accumulated.a <= 0.001) discard;
-    accumulated.a *= volume.baseColor.a;
+    accumulated.a *= volume.base_color.a;
     return accumulated;
 }

@@ -137,8 +137,8 @@ namespace spectra::optix {
     }
 
     static Material getMaterial(const pathtracer::PathtracerShapeSceneEntity& shape, const std::map<std::string, Material>& materials) {
-        auto iter = materials.find(shape.materialName);
-        if (iter == materials.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: material not defined", shape.materialName));
+        auto iter = materials.find(shape.material_name);
+        if (iter == materials.end()) throw std::runtime_error(diagnostics::Format(&shape.loc, "%s: material not defined", shape.material_name));
         return iter->second;
     }
 

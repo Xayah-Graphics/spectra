@@ -16,7 +16,7 @@ struct CameraUniform {
 
 struct DrawPushConstants {
     row_major float4x4 model;
-    float4 baseColor;
+    float4 base_color;
     float4 emission;
 };
 
@@ -49,6 +49,6 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float3 normal = normalize(input.worldNormal);
     float3 lightDirection = normalize(-camera.lightDirection);
     float diffuse = max(dot(normal, lightDirection), 0.0);
-    float3 color = draw.baseColor.rgb * (0.12 + diffuse * camera.lightIntensity) * camera.lightColor + draw.emission.rgb;
-    return float4(color, draw.baseColor.a);
+    float3 color = draw.base_color.rgb * (0.12 + diffuse * camera.lightIntensity) * camera.lightColor + draw.emission.rgb;
+    return float4(color, draw.base_color.a);
 }
