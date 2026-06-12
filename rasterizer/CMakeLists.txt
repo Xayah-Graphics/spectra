@@ -22,12 +22,12 @@ spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_PICK_VERTEX_HEADER mesh_pick v
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_PICK_FRAGMENT_HEADER mesh_pick fragment fragment_main spectra_rasterizer_mesh_pick_fragment_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_SELECTION_MASK_VERTEX_HEADER mesh_selection_mask vertex vertex_main spectra_rasterizer_mesh_selection_mask_vertex_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_SELECTION_MASK_FRAGMENT_HEADER mesh_selection_mask fragment fragment_main spectra_rasterizer_mesh_selection_mask_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_VERTEX_HEADER particle vertex vertex_main spectra_rasterizer_particle_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_FRAGMENT_HEADER particle fragment fragment_main spectra_rasterizer_particle_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_PICK_VERTEX_HEADER particle_pick vertex vertex_main spectra_rasterizer_particle_pick_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_PICK_FRAGMENT_HEADER particle_pick fragment fragment_main spectra_rasterizer_particle_pick_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_SELECTION_MASK_VERTEX_HEADER particle_selection_mask vertex vertex_main spectra_rasterizer_particle_selection_mask_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_PARTICLE_SELECTION_MASK_FRAGMENT_HEADER particle_selection_mask fragment fragment_main spectra_rasterizer_particle_selection_mask_fragment_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_VERTEX_HEADER point_cloud vertex vertex_main spectra_rasterizer_point_cloud_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_FRAGMENT_HEADER point_cloud fragment fragment_main spectra_rasterizer_point_cloud_fragment_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_PICK_VERTEX_HEADER point_cloud_pick vertex vertex_main spectra_rasterizer_point_cloud_pick_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_PICK_FRAGMENT_HEADER point_cloud_pick fragment fragment_main spectra_rasterizer_point_cloud_pick_fragment_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_VERTEX_HEADER point_cloud_selection_mask vertex vertex_main spectra_rasterizer_point_cloud_selection_mask_vertex_spv)
+spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_FRAGMENT_HEADER point_cloud_selection_mask fragment fragment_main spectra_rasterizer_point_cloud_selection_mask_fragment_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER volume vertex vertex_main spectra_rasterizer_volume_vertex_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER volume fragment fragment_main spectra_rasterizer_volume_fragment_spv)
 spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_PICK_VERTEX_HEADER volume_pick vertex vertex_main spectra_rasterizer_volume_pick_vertex_spv)
@@ -55,12 +55,12 @@ target_sources(
         "${SPECTRA_RASTERIZER_MESH_PICK_FRAGMENT_HEADER}"
         "${SPECTRA_RASTERIZER_MESH_SELECTION_MASK_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_MESH_SELECTION_MASK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_PARTICLE_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_PARTICLE_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_PARTICLE_PICK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_PARTICLE_PICK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_PARTICLE_SELECTION_MASK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_PARTICLE_SELECTION_MASK_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_POINT_CLOUD_VERTEX_HEADER}"
+        "${SPECTRA_RASTERIZER_POINT_CLOUD_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_POINT_CLOUD_PICK_VERTEX_HEADER}"
+        "${SPECTRA_RASTERIZER_POINT_CLOUD_PICK_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_VERTEX_HEADER}"
+        "${SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_FRAGMENT_HEADER}"
         "${SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER}"
         "${SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER}"
         "${SPECTRA_RASTERIZER_VOLUME_PICK_VERTEX_HEADER}"

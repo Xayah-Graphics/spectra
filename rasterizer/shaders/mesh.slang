@@ -46,9 +46,9 @@ VertexOutput vertex_main(VertexInput input) {
     return output;
 }
 
-static const uint MaterialModelUnlitSurface = 1;
-static const uint MaterialModelEmissiveSurface = 2;
-static const uint MaterialAlphaModeMasked = 1;
+static const uint MaterialModelUnlitSurfaceValue = 1;
+static const uint MaterialModelEmissiveSurfaceValue = 2;
+static const uint MaterialAlphaModeMaskedValue = 1;
 static const float Pi = 3.14159265358979323846;
 
 float distribution_ggx(float normalDotHalf, float roughness) {
@@ -74,10 +74,10 @@ float3 fresnel_schlick(float cosine, float3 f0) {
 
 [shader("fragment")]
 float4 fragment_main(VertexOutput input) : SV_Target {
-    if (draw.flags.y == MaterialAlphaModeMasked && draw.base_color.a < draw.material.z) discard;
+    if (draw.flags.y == MaterialAlphaModeMaskedValue && draw.base_color.a < draw.material.z) discard;
     uint materialModel = draw.flags.x;
-    if (materialModel == MaterialModelUnlitSurface) return float4(draw.base_color.rgb + draw.emission.rgb, draw.base_color.a);
-    if (materialModel == MaterialModelEmissiveSurface) return float4(draw.base_color.rgb + draw.emission.rgb, draw.base_color.a);
+    if (materialModel == MaterialModelUnlitSurfaceValue) return float4(draw.base_color.rgb + draw.emission.rgb, draw.base_color.a);
+    if (materialModel == MaterialModelEmissiveSurfaceValue) return float4(draw.base_color.rgb + draw.emission.rgb, draw.base_color.a);
 
     float3 normal = normalize(input.worldNormal);
     float3 lightDirection = normalize(-camera.lightDirection);

@@ -24,18 +24,18 @@ namespace spectra::scene {
             int column{1};
         };
 
-        enum class MaterialModel {
-            LitSurface,
-            UnlitSurface,
-            EmissiveSurface,
-            Volume,
-            PointSprite,
+        enum class MaterialModel : std::uint32_t {
+            LitSurface      = 0u,
+            UnlitSurface    = 1u,
+            EmissiveSurface = 2u,
+            Volume          = 3u,
+            PointSprite     = 4u,
         };
 
-        enum class MaterialAlphaMode {
-            Opaque,
-            Masked,
-            Blend,
+        enum class MaterialAlphaMode : std::uint32_t {
+            Opaque = 0u,
+            Masked = 1u,
+            Blend  = 2u,
         };
 
         struct Material {

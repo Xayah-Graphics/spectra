@@ -14,15 +14,15 @@ struct CameraUniform {
     float4 viewport;
 };
 
-struct ParticleSelectionPushConstants {
+struct PointCloudSelectionPushConstants {
     float4 color;
     uint objectId;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
-[[vk::push_constant]] ConstantBuffer<ParticleSelectionPushConstants> selection;
+[[vk::push_constant]] ConstantBuffer<PointCloudSelectionPushConstants> selection;
 
-struct ParticleInput {
+struct PointCloudInput {
     [[vk::location(0)]] float4 positionRadius : POSITION;
 };
 
@@ -42,7 +42,7 @@ float2 quad_corner(uint vertexIndex) {
 }
 
 [shader("vertex")]
-VertexOutput vertex_main(ParticleInput input, uint vertexIndex : SV_VertexID) {
+VertexOutput vertex_main(PointCloudInput input, uint vertexIndex : SV_VertexID) {
     float2 corner = quad_corner(vertexIndex);
     float radius = input.positionRadius.w;
     float3 world = input.positionRadius.xyz + camera.cameraRight * corner.x * radius + camera.cameraUp * corner.y * radius;
@@ -53,7 +53,7 @@ VertexOutput vertex_main(ParticleInput input, uint vertexIndex : SV_VertexID) {
 }
 
 [shader("fragment")]
-uint fragment_main(VertexOutput input) : SV_Target {
+float4 fragment_main(VertexOutput input) : SV_Target {
     if (dot(input.localPosition, input.localPosition) > 1.0) discard;
-    return selection.objectId;
+    return selection.color;
 }

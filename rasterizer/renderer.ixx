@@ -97,7 +97,7 @@ namespace spectra::rasterizer {
             scene::Scene::Material material{};
         };
 
-        struct ParticleDrawCommand {
+        struct PointCloudDrawCommand {
             ObjectKey objectKey{};
             std::uint32_t objectId{};
             std::uint32_t firstInstance{};
@@ -136,10 +136,10 @@ namespace spectra::rasterizer {
             std::vector<RenderDrawCommand> drawCommands{};
         };
 
-        struct FrameParticleResources {
+        struct FramePointCloudResources {
             GpuBuffer instanceBuffer{};
             scene::Scene::Revision uploadedRevision{};
-            std::vector<ParticleDrawCommand> drawCommands{};
+            std::vector<PointCloudDrawCommand> drawCommands{};
         };
 
         struct FrameVolumeResources {
@@ -174,13 +174,13 @@ namespace spectra::rasterizer {
         void destroy_camera_resources() noexcept;
         void destroy_mesh_resources() noexcept;
         void destroy_viewport_grid_resources() noexcept;
-        void destroy_particle_resources() noexcept;
+        void destroy_point_cloud_resources() noexcept;
         void destroy_volume_resources() noexcept;
         void destroy_selection_resources() noexcept;
         void ensure_camera_resources();
         void ensure_mesh_resources();
         void ensure_viewport_grid_resources();
-        void ensure_particle_resources();
+        void ensure_point_cloud_resources();
         void ensure_volume_resources();
         void ensure_selection_resources();
 
@@ -203,7 +203,7 @@ namespace spectra::rasterizer {
         void apply_pick_result(std::uint32_t object_id, bool select, bool additive);
 
         void upload_scene_resources(std::uint32_t frame_index);
-        void upload_particle_resources(std::uint32_t frame_index);
+        void upload_point_cloud_resources(std::uint32_t frame_index);
         void upload_volume_resources(std::uint32_t frame_index);
         void record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume);
         void update_camera_uniform(std::uint32_t frame_index);
@@ -211,13 +211,13 @@ namespace spectra::rasterizer {
         void record_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_transparent_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
-        void record_particle_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_point_cloud_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
         void request_selection_pick(std::uint32_t x, std::uint32_t y, bool select, bool additive);
         void record_selection_pick_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_selection_visuals(const vk::raii::CommandBuffer& command_buffer);
         void record_mesh_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
-        void record_particle_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
+        void record_point_cloud_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
         void record_volume_selection_pass(const vk::raii::CommandBuffer& command_buffer, bool picking);
         void record_selection_outline_pass(const vk::raii::CommandBuffer& command_buffer);
         void consume_completed_selection_pick(std::uint32_t frame_index);
@@ -339,8 +339,8 @@ namespace spectra::rasterizer {
             std::uint32_t frame_count{};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
-            std::vector<FrameParticleResources> frame_particles{};
-        } particle_pass;
+            std::vector<FramePointCloudResources> frame_point_clouds{};
+        } point_cloud_pass;
 
         struct {
             std::uint32_t frame_count{};
@@ -364,14 +364,14 @@ namespace spectra::rasterizer {
             vk::raii::DescriptorSets outline_descriptor_sets{nullptr};
             vk::raii::PipelineLayout mesh_picking_pipeline_layout{nullptr};
             vk::raii::Pipeline mesh_picking_pipeline{nullptr};
-            vk::raii::PipelineLayout particle_picking_pipeline_layout{nullptr};
-            vk::raii::Pipeline particle_picking_pipeline{nullptr};
+            vk::raii::PipelineLayout point_cloud_picking_pipeline_layout{nullptr};
+            vk::raii::Pipeline point_cloud_picking_pipeline{nullptr};
             vk::raii::PipelineLayout volume_picking_pipeline_layout{nullptr};
             vk::raii::Pipeline volume_picking_pipeline{nullptr};
             vk::raii::PipelineLayout mesh_mask_pipeline_layout{nullptr};
             vk::raii::Pipeline mesh_mask_pipeline{nullptr};
-            vk::raii::PipelineLayout particle_mask_pipeline_layout{nullptr};
-            vk::raii::Pipeline particle_mask_pipeline{nullptr};
+            vk::raii::PipelineLayout point_cloud_mask_pipeline_layout{nullptr};
+            vk::raii::Pipeline point_cloud_mask_pipeline{nullptr};
             vk::raii::PipelineLayout volume_mask_pipeline_layout{nullptr};
             vk::raii::Pipeline volume_mask_pipeline{nullptr};
             vk::raii::PipelineLayout outline_pipeline_layout{nullptr};

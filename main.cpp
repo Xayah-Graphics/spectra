@@ -159,6 +159,7 @@ namespace spectra::app {
             document.materials.push_back(scene::Scene::Material{
                 .name             = "sparkle",
                 .model            = scene::Scene::MaterialModel::PointSprite,
+                .alpha_mode       = scene::Scene::MaterialAlphaMode::Blend,
                 .base_color        = scene::Vector4{1.0f, 0.78f, 0.24f, 1.0f},
                 .emission_color    = scene::Vector3{1.0f, 0.54f, 0.12f},
                 .emission_strength = 2.4f,
@@ -388,6 +389,7 @@ namespace spectra::app {
             document.materials.push_back(scene::Scene::Material{
                 .name             = "smoke",
                 .model            = scene::Scene::MaterialModel::Volume,
+                .alpha_mode       = scene::Scene::MaterialAlphaMode::Blend,
                 .base_color        = scene::Vector4{0.58f, 0.62f, 0.68f, 0.72f},
                 .emission_color    = scene::Vector3{0.95f, 0.48f, 0.18f},
                 .emission_strength = 0.3f,
