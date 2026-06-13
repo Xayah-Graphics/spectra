@@ -84,6 +84,7 @@ namespace spectra::rasterizer {
             std::array<float, 4> cameraPosition{};
             std::array<float, 4> environmentColorIntensity{};
             std::array<std::array<float, 4>, MaxViewportDirectLights> lightDirections{};
+            std::array<std::array<float, 4>, MaxViewportDirectLights> lightPositions{};
             std::array<std::array<float, 4>, MaxViewportDirectLights> lightColorIntensities{};
             std::array<std::uint32_t, 4> lightCounts{};
             std::array<float, 4> cameraRight{};
@@ -277,7 +278,6 @@ namespace spectra::rasterizer {
             std::shared_ptr<scene::Scene> workspace{};
             std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
             scene::Scene::Revision observed_camera_revision{};
-            mutable std::vector<std::string> light_diagnostics{};
         } scene;
 
         struct {

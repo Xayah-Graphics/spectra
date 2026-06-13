@@ -8,6 +8,7 @@ struct CameraUniform {
     float3 environmentColor;
     float environmentIntensity;
     float4 lightDirections[MaxViewportDirectLights];
+    float4 lightPositions[MaxViewportDirectLights];
     float4 lightColorIntensities[MaxViewportDirectLights];
     uint4 lightCounts;
     float3 cameraRight;
@@ -52,6 +53,9 @@ VertexOutput vertex_main(VertexInput input) {
 static const uint PreviewSurfaceKindUnlitSurfaceValue = 1;
 static const uint PreviewSurfaceKindEmissiveSurfaceValue = 2;
 static const uint PreviewAlphaModeMaskedValue = 1;
+static const float PreviewLightKindDirectionalValue = 0.0;
+static const float PreviewLightKindSpotValue = 2.0;
+static const float PreviewLightKindAreaValue = 3.0;
 static const float Pi = 3.14159265358979323846;
 
 float distribution_ggx(float normalDotHalf, float roughness) {
@@ -91,7 +95,26 @@ float4 fragment_main(VertexOutput input) : SV_Target {
     float3 color = draw.base_color.rgb * camera.environmentColor * camera.environmentIntensity * (1.0 - metallic);
     uint lightCount = min(camera.lightCounts.x, MaxViewportDirectLights);
     for (uint lightIndex = 0; lightIndex < lightCount; ++lightIndex) {
-        float3 surfaceToLight = normalize(-camera.lightDirections[lightIndex].xyz);
+        float lightKind = camera.lightDirections[lightIndex].w;
+        float3 surfaceToLight;
+        float3 radiance = camera.lightColorIntensities[lightIndex].rgb * camera.lightColorIntensities[lightIndex].a;
+        if (lightKind == PreviewLightKindDirectionalValue) {
+            surfaceToLight = normalize(-camera.lightDirections[lightIndex].xyz);
+        } else {
+            float3 lightOffset = camera.lightPositions[lightIndex].xyz - input.worldPosition;
+            float distanceSquared = max(dot(lightOffset, lightOffset), 0.0001);
+            surfaceToLight = lightOffset * rsqrt(distanceSquared);
+            if (lightKind == PreviewLightKindSpotValue) {
+                float spotCosine = dot(-surfaceToLight, normalize(camera.lightDirections[lightIndex].xyz));
+                if (spotCosine <= camera.lightPositions[lightIndex].w) continue;
+            }
+            if (lightKind == PreviewLightKindAreaValue) {
+                float facing = max(dot(-surfaceToLight, normalize(camera.lightDirections[lightIndex].xyz)), 0.0);
+                if (facing <= 0.0) continue;
+                radiance *= facing;
+            }
+            radiance /= distanceSquared;
+        }
         float3 halfDirection = normalize(viewDirection + surfaceToLight);
         float normalDotLight = max(dot(normal, surfaceToLight), 0.0);
         float normalDotHalf = max(dot(normal, halfDirection), 0.0);
@@ -103,7 +126,6 @@ float4 fragment_main(VertexOutput input) : SV_Target {
         float denominator = max(4.0 * normalDotView * normalDotLight, 0.0001);
         float3 specular = numerator / denominator;
         float3 diffuseWeight = (float3(1.0, 1.0, 1.0) - fresnel) * (1.0 - metallic);
-        float3 radiance = camera.lightColorIntensities[lightIndex].rgb * camera.lightColorIntensities[lightIndex].a;
         color += (diffuseWeight * draw.base_color.rgb / Pi + specular) * radiance * normalDotLight;
     }
     color += draw.emission.rgb;

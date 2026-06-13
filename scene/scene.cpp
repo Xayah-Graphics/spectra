@@ -402,6 +402,72 @@ namespace spectra::scene {
             });
         }
 
+        void append_sphere_shape(Scene::ResolvedScene& scene, const Scene::Sphere& sphere) {
+            if (sphere.name.empty()) throw std::runtime_error("Preview sphere name must not be empty when building canonical scene");
+            if (sphere.material_name.empty()) throw std::runtime_error(std::format("Preview sphere \"{}\" material name must not be empty when building canonical scene", sphere.name));
+            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(std::format("Preview sphere \"{}\" radius must be finite and positive when building canonical scene", sphere.name));
+            const SceneTransform transform = make_preview_scene_transform(sphere.transform, std::format("Preview sphere \"{}\"", sphere.name));
+            scene.shapes.push_back(Scene::Shape{
+                .name = sphere.name,
+                .entity = Scene::Entity{
+                    .type = "sphere",
+                    .parameters = {float_parameter("radius", {sphere.radius}, sphere.source)},
+                    .source = sphere.source,
+                },
+                .transform = SceneTransformSet{.start = transform, .end = transform},
+                .material_name = sphere.material_name,
+            });
+        }
+
+        [[nodiscard]] Scene::Mesh make_sphere_preview_mesh(const Scene::Sphere& sphere) {
+            if (sphere.name.empty()) throw std::runtime_error("Preview sphere name must not be empty when building rasterizer mesh");
+            if (sphere.material_name.empty()) throw std::runtime_error(std::format("Preview sphere \"{}\" material name must not be empty when building rasterizer mesh", sphere.name));
+            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(std::format("Preview sphere \"{}\" radius must be finite and positive when building rasterizer mesh", sphere.name));
+            static_cast<void>(make_preview_scene_transform(sphere.transform, std::format("Preview sphere \"{}\"", sphere.name)));
+            constexpr std::uint32_t latitude_segments = 32u;
+            constexpr std::uint32_t longitude_segments = 64u;
+            const std::uint32_t latitude_count = latitude_segments + 1u;
+            const std::uint32_t longitude_count = longitude_segments + 1u;
+            Scene::Mesh mesh{
+                .name = sphere.name,
+                .material_name = sphere.material_name,
+                .transform = sphere.transform,
+                .dynamic = sphere.dynamic,
+                .source = sphere.source,
+            };
+            mesh.positions.reserve(static_cast<std::size_t>(latitude_count) * static_cast<std::size_t>(longitude_count));
+            mesh.normals.reserve(mesh.positions.capacity());
+            for (std::uint32_t latitude = 0u; latitude <= latitude_segments; ++latitude) {
+                const float phi = std::numbers::pi_v<float> * static_cast<float>(latitude) / static_cast<float>(latitude_segments);
+                const float y = std::cos(phi);
+                const float ring = std::sin(phi);
+                for (std::uint32_t longitude = 0u; longitude <= longitude_segments; ++longitude) {
+                    const float theta = 2.0f * std::numbers::pi_v<float> * static_cast<float>(longitude) / static_cast<float>(longitude_segments);
+                    const Vector3 normal{ring * std::cos(theta), y, ring * std::sin(theta)};
+                    mesh.positions.push_back(Vector3{normal.x * sphere.radius, normal.y * sphere.radius, normal.z * sphere.radius});
+                    mesh.normals.push_back(normal);
+                }
+            }
+            mesh.indices.reserve(static_cast<std::size_t>(latitude_segments) * static_cast<std::size_t>(longitude_segments) * 6u);
+            for (std::uint32_t latitude = 0u; latitude < latitude_segments; ++latitude) {
+                for (std::uint32_t longitude = 0u; longitude < longitude_segments; ++longitude) {
+                    const std::uint32_t current = latitude * longitude_count + longitude;
+                    const std::uint32_t next = current + longitude_count;
+                    if (latitude != 0u) {
+                        mesh.indices.push_back(current);
+                        mesh.indices.push_back(next);
+                        mesh.indices.push_back(current + 1u);
+                    }
+                    if (latitude + 1u != latitude_segments) {
+                        mesh.indices.push_back(current + 1u);
+                        mesh.indices.push_back(next);
+                        mesh.indices.push_back(next + 1u);
+                    }
+                }
+            }
+            return mesh;
+        }
+
         void append_point_cloud_shapes(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::PointCloud& point_cloud) {
             if (point_cloud.name.empty()) throw std::runtime_error("Preview point cloud name must not be empty when building canonical scene");
             if (point_cloud.positions.size() != point_cloud.radii.size()) throw std::runtime_error(std::format("Preview point cloud \"{}\" radius count does not match point count when building canonical scene", point_cloud.name));
@@ -589,10 +655,35 @@ namespace spectra::scene {
             append_canonical_materials(scene, document, !frame.volumes.empty());
             append_preview_lights(scene, document);
             for (const Scene::Mesh& mesh : frame.meshes) append_mesh_shape(scene, mesh);
+            for (const Scene::Sphere& sphere : frame.spheres) append_sphere_shape(scene, sphere);
             for (const Scene::PointCloud& point_cloud : frame.point_clouds) append_point_cloud_shapes(scene, document, point_cloud);
             for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume);
             if (scene.shapes.empty()) throw std::runtime_error(std::format("Preview document \"{}\" produced no canonical pathtracer shapes", document.name));
             return scene;
+        }
+
+        [[nodiscard]] Scene::ResolvedFrame resolve_document_frame(const Scene::Document& document, const Scene::FrameSnapshot& frame) {
+            return Scene::ResolvedFrame{
+                .meshes = resolve_scene_items(document.meshes, frame.meshes, "mesh"),
+                .spheres = resolve_scene_items(document.spheres, frame.spheres, "sphere"),
+                .point_clouds = resolve_scene_items(document.point_clouds, frame.point_clouds, "point cloud"),
+                .volumes = resolve_scene_items(document.volumes, frame.volumes, "volume"),
+            };
+        }
+
+        [[nodiscard]] Scene::ResolvedFrame make_rasterizer_preview_frame(Scene::ResolvedFrame frame) {
+            std::set<std::string> mesh_names{};
+            for (const Scene::Mesh& mesh : frame.meshes) {
+                if (mesh.name.empty()) throw std::runtime_error("Rasterizer preview mesh name must not be empty");
+                if (!mesh_names.insert(mesh.name).second) throw std::runtime_error(std::format("Rasterizer preview mesh \"{}\" is duplicated", mesh.name));
+            }
+            frame.meshes.reserve(frame.meshes.size() + frame.spheres.size());
+            for (const Scene::Sphere& sphere : frame.spheres) {
+                if (!mesh_names.insert(sphere.name).second) throw std::runtime_error(std::format("Rasterizer preview sphere \"{}\" conflicts with a mesh name", sphere.name));
+                frame.meshes.push_back(make_sphere_preview_mesh(sphere));
+            }
+            frame.spheres.clear();
+            return frame;
         }
     } // namespace
 
@@ -754,11 +845,7 @@ namespace spectra::scene {
         const Scene::Document& document = this->preview_document();
         const Scene::FrameSnapshot empty_frame{};
         const Scene::FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
-        return Scene::ResolvedFrame{
-            .meshes          = resolve_scene_items(document.meshes, frame_value.meshes, "mesh"),
-            .point_clouds     = resolve_scene_items(document.point_clouds, frame_value.point_clouds, "point cloud"),
-            .volumes         = resolve_scene_items(document.volumes, frame_value.volumes, "volume"),
-        };
+        return make_rasterizer_preview_frame(resolve_document_frame(document, frame_value));
     }
 
     Scene::ResolvedScene Scene::resolved_scene() const {
@@ -770,7 +857,9 @@ namespace spectra::scene {
             return scene;
         }
         const Scene::Document& document = this->preview_document();
-        Scene::ResolvedScene scene = make_resolved_scene_from_preview(document, this->resolved_frame(), this->current_revision);
+        const Scene::FrameSnapshot empty_frame{};
+        const Scene::FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
+        Scene::ResolvedScene scene = make_resolved_scene_from_preview(document, resolve_document_frame(document, frame_value), this->current_revision);
         validate_canonical_scene(scene);
         return scene;
     }
@@ -959,14 +1048,14 @@ namespace spectra::scene {
             return Vector3{matrix_value(matrix, 0u, 3u), matrix_value(matrix, 1u, 3u), matrix_value(matrix, 2u, 3u)};
         }
 
-        [[nodiscard]] Quaternion quaternion_from_light_forward(const Vector3 light_forward) {
+        [[nodiscard]] Quaternion quaternion_from_light_forward(const Vector3 light_forward, const std::string_view context) {
             const Vector3 source{0.0f, 0.0f, -1.0f};
-            const Vector3 target = normalize(light_forward, "PBRT preview distant light direction");
+            const Vector3 target = normalize(light_forward, context);
             const float cosine = dot(source, target);
             if (cosine > 0.999999f) return Quaternion{};
             if (cosine < -0.999999f) return Quaternion{0.0f, 1.0f, 0.0f, 0.0f};
             const Vector3 axis = cross(source, target);
-            return normalized_quaternion(Quaternion{axis.x, axis.y, axis.z, 1.0f + cosine}, "PBRT preview distant light rotation");
+            return normalized_quaternion(Quaternion{axis.x, axis.y, axis.z, 1.0f + cosine}, context);
         }
 
         void require_static_transform(const SceneTransformSet& transform, const std::string_view context) {
@@ -1026,10 +1115,13 @@ namespace spectra::scene {
             if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
             Scene::PreviewMaterial& material = material_for_name(document, material_indices, shape.material_name);
             const Vector3 radiance = required_rgb_value(shape.area_light->entity, "L", context);
-            if (material.emission_strength != 0.0f && (material.emission_color.x != radiance.x || material.emission_color.y != radiance.y || material.emission_color.z != radiance.z)) throw std::runtime_error(std::format("PBRT preview material \"{}\" is reused by area lights with different radiance", material.name));
+            const float scale = optional_one_float_value(shape.area_light->entity, "scale", 1.0f);
+            if (scale < 0.0f) throw std::runtime_error(std::format("{} area light scale must be non-negative", context));
+            const bool already_emissive = material.surface_kind == Scene::PreviewSurfaceKind::EmissiveSurface;
+            if (already_emissive && (material.emission_color.x != radiance.x || material.emission_color.y != radiance.y || material.emission_color.z != radiance.z || material.emission_strength != scale)) throw std::runtime_error(std::format("PBRT preview material \"{}\" is reused by area lights with different emission", material.name));
             material.surface_kind      = Scene::PreviewSurfaceKind::EmissiveSurface;
             material.emission_color    = radiance;
-            material.emission_strength = 1.0f;
+            material.emission_strength = scale;
         }
 
         [[nodiscard]] Scene::Mesh make_mesh(const std::string_view object_source_prefix_value, const Scene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
@@ -1074,6 +1166,44 @@ namespace spectra::scene {
             return mesh;
         }
 
+        [[nodiscard]] Scene::PreviewLight make_area_light_preview(const Scene::Shape& shape, const Scene::Mesh& mesh, const std::size_t shape_index) {
+            if (!shape.area_light.has_value()) throw std::runtime_error("PBRT preview area light requires an area light shape");
+            const std::string context = std::format("PBRT preview shape #{}", shape_index);
+            if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
+            if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("{} area light mesh has invalid triangle index data", context));
+
+            float total_area = 0.0f;
+            Vector3 weighted_center{};
+            Vector3 weighted_normal{};
+            for (std::size_t index = 0u; index < mesh.indices.size(); index += 3u) {
+                const Vector3& p0 = mesh.positions.at(mesh.indices.at(index));
+                const Vector3& p1 = mesh.positions.at(mesh.indices.at(index + 1u));
+                const Vector3& p2 = mesh.positions.at(mesh.indices.at(index + 2u));
+                const Vector3 cross_value = cross(p1 - p0, p2 - p0);
+                const float double_area = length(cross_value);
+                if (!std::isfinite(double_area)) throw std::runtime_error(std::format("{} area light has non-finite triangle area", context));
+                if (double_area <= 0.0f) continue;
+                const float triangle_area = double_area * 0.5f;
+                total_area += triangle_area;
+                weighted_center += ((p0 + p1 + p2) / 3.0f) * triangle_area;
+                weighted_normal += cross_value;
+            }
+            if (!std::isfinite(total_area) || total_area <= 0.0f) throw std::runtime_error(std::format("{} area light has zero surface area", context));
+            const Vector3 center_value = weighted_center / total_area;
+            const Vector3 normal_value = normalize(weighted_normal, std::format("{} area light normal", context));
+            const Vector3 radiance = required_rgb_value(shape.area_light->entity, "L", context);
+            const float scale = optional_one_float_value(shape.area_light->entity, "scale", 1.0f);
+            if (scale < 0.0f) throw std::runtime_error(std::format("{} area light scale must be non-negative", context));
+            return Scene::PreviewLight{
+                .name      = std::format("{}#area-light", mesh.name),
+                .kind      = Scene::PreviewLightKind::Area,
+                .transform = Transform{.position = center_value, .rotation = quaternion_from_light_forward(normal_value, std::format("{} area light rotation", context))},
+                .color     = radiance,
+                .intensity = total_area * scale,
+                .source    = shape.area_light->entity.source,
+            };
+        }
+
         void append_meshes(const std::string_view object_source_prefix_value, const Scene::ResolvedScene& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             std::map<std::string, bool> material_used_by_area_light{};
             for (std::size_t shape_index = 0; shape_index < scene.shapes.size(); ++shape_index) {
@@ -1083,6 +1213,7 @@ namespace spectra::scene {
                 if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(std::format("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
                 apply_area_light_material(shape, shape_index, document, material_indices);
                 Scene::Mesh mesh = make_mesh(object_source_prefix_value, shape, shape_index, material_indices, bounds);
+                if (shape.area_light.has_value()) document.lights.push_back(make_area_light_preview(shape, mesh, shape_index));
                 document.meshes.push_back(std::move(mesh));
             }
             if (document.meshes.empty()) throw std::runtime_error("PBRT preview scene loader did not find any trianglemesh shapes");
@@ -1139,7 +1270,7 @@ namespace spectra::scene {
                     document.lights.push_back(Scene::PreviewLight{
                         .name      = light.name,
                         .kind      = Scene::PreviewLightKind::Directional,
-                        .transform = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward)},
+                        .transform = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward, std::format("{} direction rotation", context))},
                         .color     = optional_rgb_value(light.entity, "L", Vector3{1.0f, 1.0f, 1.0f}),
                         .intensity = optional_one_float_value(light.entity, "scale", 1.0f),
                         .source    = light.entity.source,
@@ -1165,7 +1296,7 @@ namespace spectra::scene {
                     document.lights.push_back(Scene::PreviewLight{
                         .name               = light.name,
                         .kind               = Scene::PreviewLightKind::Spot,
-                        .transform          = Transform{.position = transform_point(light.transform.start, from), .rotation = quaternion_from_light_forward(world_light_forward)},
+                        .transform          = Transform{.position = transform_point(light.transform.start, from), .rotation = quaternion_from_light_forward(world_light_forward, std::format("{} spot rotation", context))},
                         .color              = optional_rgb_value(light.entity, "I", Vector3{1.0f, 1.0f, 1.0f}),
                         .intensity          = optional_one_float_value(light.entity, "scale", 1.0f),
                         .cone_angle_degrees = optional_one_float_value(light.entity, "coneangle", 30.0f),

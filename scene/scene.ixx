@@ -255,6 +255,15 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
+        struct Sphere {
+            std::string name{};
+            float radius{1.0f};
+            std::string material_name{};
+            Transform transform{};
+            bool dynamic{false};
+            SourceLocation source{};
+        };
+
         struct PointCloud {
             std::string name{};
             std::vector<Vector3> positions{};
@@ -295,6 +304,7 @@ namespace spectra::scene {
             std::vector<PreviewMaterial> materials{};
             std::vector<PreviewLight> lights{};
             std::vector<Mesh> meshes{};
+            std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
         };
@@ -313,6 +323,7 @@ namespace spectra::scene {
         struct FrameSnapshot {
             FrameCursor cursor{};
             std::vector<Mesh> meshes{};
+            std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
         };
@@ -331,6 +342,7 @@ namespace spectra::scene {
 
         struct ResolvedFrame {
             std::vector<Mesh> meshes{};
+            std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
         };

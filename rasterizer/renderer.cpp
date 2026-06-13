@@ -227,18 +227,18 @@ namespace {
     struct ViewportLightingData {
         std::array<float, 4> environmentColorIntensity{};
         std::array<std::array<float, 4>, spectra::rasterizer::Renderer::MaxViewportDirectLights> lightDirections{};
+        std::array<std::array<float, 4>, spectra::rasterizer::Renderer::MaxViewportDirectLights> lightPositions{};
         std::array<std::array<float, 4>, spectra::rasterizer::Renderer::MaxViewportDirectLights> lightColorIntensities{};
         std::array<std::uint32_t, 4> lightCounts{};
-        std::vector<std::string> diagnostics{};
     };
 
-    [[nodiscard]] const char* preview_light_kind_name(const spectra::scene::Scene::PreviewLightKind kind) {
+    [[nodiscard]] float preview_light_kind_code(const spectra::scene::Scene::PreviewLightKind kind) {
         switch (kind) {
-        case spectra::scene::Scene::PreviewLightKind::Directional: return "Directional";
-        case spectra::scene::Scene::PreviewLightKind::Point: return "Point";
-        case spectra::scene::Scene::PreviewLightKind::Spot: return "Spot";
-        case spectra::scene::Scene::PreviewLightKind::Area: return "Area";
-        case spectra::scene::Scene::PreviewLightKind::Environment: return "Environment";
+        case spectra::scene::Scene::PreviewLightKind::Directional: return 0.0f;
+        case spectra::scene::Scene::PreviewLightKind::Point: return 1.0f;
+        case spectra::scene::Scene::PreviewLightKind::Spot: return 2.0f;
+        case spectra::scene::Scene::PreviewLightKind::Area: return 3.0f;
+        case spectra::scene::Scene::PreviewLightKind::Environment: return 4.0f;
         }
         throw std::runtime_error("Unknown Spectra rasterizer preview light kind");
     }
@@ -271,15 +271,6 @@ namespace {
             validate_preview_light_values(light);
             const bool inserted = names.insert(std::string_view{light.name}).second;
             if (!inserted) throw std::runtime_error(std::format("Rasterizer preview light \"{}\" is duplicated", light.name));
-            if (light.kind == spectra::scene::Scene::PreviewLightKind::Directional) {
-                if (data.lightCounts.at(0) >= spectra::rasterizer::Renderer::MaxViewportDirectLights) throw std::runtime_error(std::format("Rasterizer viewport supports at most {} explicit directional lights", spectra::rasterizer::Renderer::MaxViewportDirectLights));
-                const spectra::rasterizer::math::Vector3 direction = preview_light_forward_direction(light);
-                const std::size_t index = data.lightCounts.at(0);
-                data.lightDirections.at(index) = {direction.x, direction.y, direction.z, 0.0f};
-                data.lightColorIntensities.at(index) = {light.color.x, light.color.y, light.color.z, light.intensity};
-                ++data.lightCounts.at(0);
-                continue;
-            }
             if (light.kind == spectra::scene::Scene::PreviewLightKind::Environment) {
                 data.environmentColorIntensity.at(0) += light.color.x * light.intensity;
                 data.environmentColorIntensity.at(1) += light.color.y * light.intensity;
@@ -287,7 +278,13 @@ namespace {
                 data.environmentColorIntensity.at(3) = 1.0f;
                 continue;
             }
-            data.diagnostics.push_back(std::format("Explicit {} light \"{}\" is not supported by the rasterizer preview", preview_light_kind_name(light.kind), light.name));
+            if (data.lightCounts.at(0) >= spectra::rasterizer::Renderer::MaxViewportDirectLights) throw std::runtime_error(std::format("Rasterizer viewport supports at most {} explicit direct lights", spectra::rasterizer::Renderer::MaxViewportDirectLights));
+            const spectra::rasterizer::math::Vector3 direction = preview_light_forward_direction(light);
+            const std::size_t index = data.lightCounts.at(0);
+            data.lightDirections.at(index) = {direction.x, direction.y, direction.z, preview_light_kind_code(light.kind)};
+            data.lightPositions.at(index) = {light.transform.position.x, light.transform.position.y, light.transform.position.z, light.kind == spectra::scene::Scene::PreviewLightKind::Spot ? std::cos(light.cone_angle_degrees * std::numbers::pi_v<float> / 180.0f) : 0.0f};
+            data.lightColorIntensities.at(index) = {light.color.x, light.color.y, light.color.z, light.intensity};
+            ++data.lightCounts.at(0);
         }
         return data;
     }
@@ -2119,13 +2116,13 @@ namespace spectra::rasterizer {
         const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::look_at_matrix(basis) * projection;
         const spectra::rasterizer::math::Matrix4 inverse_view_projection = inverse_projection * spectra::rasterizer::math::inverse_look_at_matrix(basis);
         const ViewportLightingData lighting = explicit_scene_lighting_uniform(*scene);
-        this->scene.light_diagnostics = lighting.diagnostics;
         return CameraUniformData{
             .viewProjection            = view_projection.values,
             .inverseViewProjection     = inverse_view_projection.values,
             .cameraPosition            = {basis.eye.x, basis.eye.y, basis.eye.z, 0.0f},
             .environmentColorIntensity = lighting.environmentColorIntensity,
             .lightDirections           = lighting.lightDirections,
+            .lightPositions            = lighting.lightPositions,
             .lightColorIntensities     = lighting.lightColorIntensities,
             .lightCounts               = lighting.lightCounts,
             .cameraRight               = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
@@ -3019,7 +3016,6 @@ namespace spectra::rasterizer {
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             draw_status_row("Materials", std::format("{}", scene->materials.size()));
             draw_status_row("Lights", std::format("{}", scene->lights.size()));
-            if (!this->scene.light_diagnostics.empty()) draw_status_row("Light Preview", this->scene.light_diagnostics.front());
             draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
             draw_status_row("Point Clouds", std::format("{}", scene->point_clouds.size()));
             draw_status_row("Volumes", std::format("{}", scene->volumes.size()));

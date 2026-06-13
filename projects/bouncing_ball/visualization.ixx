@@ -57,9 +57,17 @@ namespace xayah::projects::bouncing_ball {
         bool dynamic{true};
     };
 
+    export struct VisualSphere {
+        std::string_view name{};
+        float radius{1.0f};
+        std::string_view material_name{};
+        VisualTransform transform{};
+        bool dynamic{true};
+    };
+
     export class Visualization final {
     public:
-        Visualization() = default;
+        Visualization() : solver(this->config) {}
 
         [[nodiscard]] static std::string_view visualization_id() {
             return "project.bouncing_ball";
@@ -75,12 +83,12 @@ namespace xayah::projects::bouncing_ball {
 
         void reset() {
             this->solver.reset();
-            this->rebuild_meshes();
+            this->rebuild_primitives();
         }
 
         void step(const float delta_seconds) {
             this->solver.step(delta_seconds);
-            this->rebuild_meshes();
+            this->rebuild_primitives();
         }
 
         [[nodiscard]] const std::vector<VisualMaterial>& materials() const {
@@ -99,8 +107,13 @@ namespace xayah::projects::bouncing_ball {
             return this->visual_meshes;
         }
 
+        [[nodiscard]] const std::vector<VisualSphere>& spheres() const {
+            return this->visual_spheres;
+        }
+
     private:
-        Solver solver{};
+        Config config{};
+        Solver solver;
         std::vector<VisualMaterial> visual_materials{
             VisualMaterial{.name = "ball", .base_color = std::array<float, 4>{0.95f, 0.28f, 0.18f, 1.0f}, .roughness = 0.42f},
             VisualMaterial{.name = "floor", .base_color = std::array<float, 4>{0.38f, 0.43f, 0.38f, 1.0f}, .roughness = 0.74f},
@@ -123,6 +136,7 @@ namespace xayah::projects::bouncing_ball {
             .far_plane            = 80.0f,
         };
         std::vector<VisualMesh> visual_meshes{};
+        std::vector<VisualSphere> visual_spheres{};
 
         [[nodiscard]] VisualMesh make_floor_mesh() const {
             return VisualMesh{
@@ -139,29 +153,21 @@ namespace xayah::projects::bouncing_ball {
             };
         }
 
-        [[nodiscard]] VisualMesh make_ball_mesh() const {
-            VisualMesh mesh{
-                .name          = "ball.mesh",
+        [[nodiscard]] VisualSphere make_ball_sphere() const {
+            return VisualSphere{
+                .name          = "ball.sphere",
+                .radius        = this->config.radius,
                 .material_name = "ball",
                 .transform     = VisualTransform{.position = this->solver.current_position()},
                 .dynamic       = true,
             };
-            const std::vector<Vertex>& vertices = this->solver.mesh_vertices();
-            mesh.vertices.reserve(vertices.size());
-            for (const Vertex& vertex : vertices) {
-                mesh.vertices.push_back(VisualMeshVertex{
-                    .position = vertex.position,
-                    .normal   = vertex.normal,
-                });
-            }
-            mesh.indices = this->solver.mesh_indices();
-            return mesh;
         }
 
-        void rebuild_meshes() {
+        void rebuild_primitives() {
             this->visual_meshes.clear();
             this->visual_meshes.push_back(this->make_floor_mesh());
-            this->visual_meshes.push_back(this->make_ball_mesh());
+            this->visual_spheres.clear();
+            this->visual_spheres.push_back(this->make_ball_sphere());
         }
     };
 } // namespace xayah::projects::bouncing_ball

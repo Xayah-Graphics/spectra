@@ -93,6 +93,15 @@ namespace spectra::rasterizer {
     };
 
     export template <typename Value>
+    concept VisualizationSphere = requires(const Value& value) {
+        { value.name } -> VisualizationString;
+        { value.radius } -> std::convertible_to<float>;
+        { value.material_name } -> VisualizationString;
+        { value.transform } -> VisualizationTransform;
+        { value.dynamic } -> std::convertible_to<bool>;
+    };
+
+    export template <typename Value>
     concept VisualizationPoint = requires(const Value& value) {
         { value.position } -> VisualizationVector3;
         { value.normal } -> VisualizationVector3;
@@ -138,6 +147,9 @@ namespace spectra::rasterizer {
     concept VisualizationMeshRange = std::ranges::input_range<std::remove_cvref_t<Range>> && VisualizationMesh<std::ranges::range_reference_t<std::remove_cvref_t<Range>>>;
 
     export template <typename Range>
+    concept VisualizationSphereRange = std::ranges::input_range<std::remove_cvref_t<Range>> && VisualizationSphere<std::ranges::range_reference_t<std::remove_cvref_t<Range>>>;
+
+    export template <typename Range>
     concept VisualizationPointCloudRange = std::ranges::input_range<std::remove_cvref_t<Range>> && VisualizationPointCloud<std::ranges::range_reference_t<std::remove_cvref_t<Range>>>;
 
     export template <typename Range>
@@ -146,6 +158,11 @@ namespace spectra::rasterizer {
     export template <typename Source>
     concept VisualizationMeshProvider = requires(const Source& source) {
         { source.meshes() } -> VisualizationMeshRange;
+    };
+
+    export template <typename Source>
+    concept VisualizationSphereProvider = requires(const Source& source) {
+        { source.spheres() } -> VisualizationSphereRange;
     };
 
     export template <typename Source>
@@ -159,7 +176,7 @@ namespace spectra::rasterizer {
     };
 
     export template <typename Source>
-    concept VisualizationPrimitiveProvider = VisualizationMeshProvider<Source> || VisualizationPointCloudProvider<Source> || VisualizationVolumeProvider<Source>;
+    concept VisualizationPrimitiveProvider = VisualizationMeshProvider<Source> || VisualizationSphereProvider<Source> || VisualizationPointCloudProvider<Source> || VisualizationVolumeProvider<Source>;
 
     export template <typename Source>
     concept VisualizationSource = std::default_initializable<Source> && VisualizationPrimitiveProvider<Source> && requires(Source& source, const Source& const_source, const float delta_seconds) {
@@ -211,6 +228,7 @@ namespace spectra::rasterizer {
                 .cursor = scene::Scene::make_frame_cursor(frame),
             };
             if constexpr (VisualizationMeshProvider<Source>) append_meshes(snapshot.meshes, this->source.meshes(), true);
+            if constexpr (VisualizationSphereProvider<Source>) append_spheres(snapshot.spheres, this->source.spheres(), true);
             if constexpr (VisualizationPointCloudProvider<Source>) append_point_clouds(snapshot.point_clouds, this->source.point_clouds(), true);
             if constexpr (VisualizationVolumeProvider<Source>) append_volumes(snapshot.volumes, this->source.volumes(), true);
             return snapshot;
@@ -353,6 +371,22 @@ namespace spectra::rasterizer {
             return result;
         }
 
+        template <VisualizationSphere Sphere>
+        [[nodiscard]] static scene::Scene::Sphere make_sphere(const Sphere& sphere) {
+            const std::string_view name{sphere.name};
+            if (name.empty()) throw std::runtime_error("Visualization sphere name must not be empty");
+            if (std::string_view{sphere.material_name}.empty()) throw std::runtime_error(std::format("Visualization sphere \"{}\" material name must not be empty", name));
+            const float radius = finite_float(static_cast<float>(sphere.radius), std::format("Visualization sphere \"{}\" radius", name));
+            if (radius <= 0.0f) throw std::runtime_error(std::format("Visualization sphere \"{}\" radius must be positive", name));
+            return scene::Scene::Sphere{
+                .name          = std::string{name},
+                .radius        = radius,
+                .material_name = std::string{std::string_view{sphere.material_name}},
+                .transform     = make_transform(sphere.transform, std::format("Visualization sphere \"{}\"", name)),
+                .dynamic       = static_cast<bool>(sphere.dynamic),
+            };
+        }
+
         template <VisualizationPointCloud PointCloud>
         [[nodiscard]] static scene::Scene::PointCloud make_point_cloud(const PointCloud& point_cloud) {
             const std::string_view name{point_cloud.name};
@@ -438,6 +472,14 @@ namespace spectra::rasterizer {
             }
         }
 
+        template <VisualizationSphereRange SphereRange>
+        static void append_spheres(std::vector<scene::Scene::Sphere>& output, const SphereRange& spheres, const bool dynamic) {
+            for (const auto& sphere : spheres) {
+                if (static_cast<bool>(sphere.dynamic) != dynamic) continue;
+                output.push_back(make_sphere(sphere));
+            }
+        }
+
         template <VisualizationPointCloudRange PointCloudRange>
         static void append_point_clouds(std::vector<scene::Scene::PointCloud>& output, const PointCloudRange& point_clouds, const bool dynamic) {
             for (const auto& point_cloud : point_clouds) {
@@ -473,6 +515,7 @@ namespace spectra::rasterizer {
             for (const auto& material : source.materials()) document.materials.push_back(make_material(material));
             for (const auto& light : source.lights()) document.lights.push_back(make_light(light));
             if constexpr (VisualizationMeshProvider<Source>) append_meshes(document.meshes, source.meshes(), false);
+            if constexpr (VisualizationSphereProvider<Source>) append_spheres(document.spheres, source.spheres(), false);
             if constexpr (VisualizationPointCloudProvider<Source>) append_point_clouds(document.point_clouds, source.point_clouds(), false);
             if constexpr (VisualizationVolumeProvider<Source>) append_volumes(document.volumes, source.volumes(), false);
             return document;
