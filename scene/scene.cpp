@@ -5,6 +5,7 @@ module;
 #endif
 
 #include <zlib.h>
+#include <lodepng/lodepng.h>
 
 module spectra.scene;
 
@@ -28,6 +29,35 @@ namespace spectra::scene {
             if (!(length_squared(state.up) > 1.0e-12f)) throw std::runtime_error("Scene camera up vector must not be zero");
             if (!(length_squared(cross(view, state.up)) > 1.0e-12f)) throw std::runtime_error("Scene camera up vector must not be parallel to the view direction");
             if (!std::isfinite(state.vertical_fov_degrees) || !(state.vertical_fov_degrees > 0.0f) || !(state.vertical_fov_degrees < 180.0f)) throw std::runtime_error("Scene camera vertical FOV must be inside (0, 180)");
+        }
+
+        struct ViewportCameraFrame {
+            Vector3 forward{};
+            Vector3 right{};
+            Vector3 up{};
+        };
+
+        void validate_viewport_camera_delta(const Scene::ViewportCameraDelta delta) {
+            if (!std::isfinite(delta.x_pixels) || !std::isfinite(delta.y_pixels)) throw std::runtime_error("Scene viewport camera delta must be finite");
+        }
+
+        void validate_viewport_camera_size(const Scene::ViewportCameraSize viewport) {
+            if (!std::isfinite(viewport.width) || !std::isfinite(viewport.height) || !(viewport.width > 0.0f) || !(viewport.height > 0.0f)) throw std::runtime_error("Scene viewport camera size must be finite and positive");
+        }
+
+        [[nodiscard]] float clamp_viewport_camera_pitch(const float pitch) {
+            constexpr float limit = std::numbers::pi_v<float> * 0.49f;
+            return std::clamp(pitch, -limit, limit);
+        }
+
+        [[nodiscard]] ViewportCameraFrame viewport_camera_frame(const Scene::CameraState& state) {
+            validate_camera_state(state);
+            ViewportCameraFrame frame{};
+            frame.forward = normalize(state.target - state.eye, "Scene viewport camera forward");
+            const Vector3 normalized_up = normalize(state.up, "Scene viewport camera up");
+            frame.right = normalize(cross(normalized_up, frame.forward), "Scene viewport camera right");
+            frame.up = cross(frame.forward, frame.right);
+            return frame;
         }
 
         template <typename Item>
@@ -209,6 +239,10 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::Parameter point3_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
             return Scene::Parameter{.type = "point3", .name = std::move(name), .values = std::move(values), .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter point2_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "point2", .name = std::move(name), .values = std::move(values), .source = source};
         }
 
         [[nodiscard]] Scene::Parameter normal_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
@@ -424,30 +458,36 @@ namespace spectra::scene {
             std::vector<float> positions{};
             std::vector<float> normals{};
             std::vector<int> indices{};
+            std::vector<float> uvs{};
             positions.reserve(mesh.positions.size() * 3u);
             normals.reserve(mesh.normals.size() * 3u);
             indices.reserve(mesh.indices.size());
+            if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" uv count does not match position count when building canonical scene", mesh.name));
+            uvs.reserve(mesh.uvs.size() * 2u);
             const std::string context = std::format("Preview mesh \"{}\"", mesh.name);
             for (std::size_t index = 0u; index < mesh.positions.size(); ++index) {
                 const Vector3 point = transform_point(mesh.transform, mesh.positions.at(index), context);
                 const Vector3 normal = transform_normal(mesh.transform, mesh.normals.at(index), context);
                 positions.insert(positions.end(), {point.x, point.y, point.z});
                 normals.insert(normals.end(), {normal.x, normal.y, normal.z});
+                if (!mesh.uvs.empty()) uvs.insert(uvs.end(), {mesh.uvs.at(index).at(0), mesh.uvs.at(index).at(1)});
             }
             for (const std::uint32_t index : mesh.indices) {
                 if (index >= mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" has an out-of-range triangle index when building canonical scene", mesh.name));
                 if (index > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error(std::format("Preview mesh \"{}\" triangle index exceeds PBRT integer range", mesh.name));
                 indices.push_back(static_cast<int>(index));
             }
+            std::vector<Scene::Parameter> parameters{
+                point3_parameter("P", std::move(positions), mesh.source),
+                normal_parameter("N", std::move(normals), mesh.source),
+                integer_parameter("indices", std::move(indices), mesh.source),
+            };
+            if (!uvs.empty()) parameters.push_back(point2_parameter("uv", std::move(uvs), mesh.source));
             scene.shapes.push_back(Scene::Shape{
                 .name = mesh.name,
                 .entity = Scene::Entity{
                     .type = "trianglemesh",
-                    .parameters = {
-                        point3_parameter("P", std::move(positions), mesh.source),
-                        normal_parameter("N", std::move(normals), mesh.source),
-                        integer_parameter("indices", std::move(indices), mesh.source),
-                    },
+                    .parameters = std::move(parameters),
                     .source = mesh.source,
                 },
                 .material_name = mesh.material_name,
@@ -1036,6 +1076,68 @@ namespace spectra::scene {
         return found->second;
     }
 
+    float Scene::viewport_drag_zoom_steps(const Scene::ViewportCameraDelta delta) {
+        validate_viewport_camera_delta(delta);
+        return -delta.y_pixels * 0.035f;
+    }
+
+    Scene::CameraState Scene::orbit_viewport_camera(Scene::CameraState state, const Scene::ViewportCameraDelta delta) {
+        validate_camera_state(state);
+        validate_viewport_camera_delta(delta);
+        if (delta.x_pixels == 0.0f && delta.y_pixels == 0.0f) return state;
+        constexpr float orbit_radians_per_pixel = 0.006f;
+        const Vector3 offset = state.eye - state.target;
+        const float distance = length(offset);
+        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Scene viewport camera orbit distance must be positive");
+        const float yaw = std::atan2(offset.x, offset.z) + delta.x_pixels * orbit_radians_per_pixel;
+        const float pitch = clamp_viewport_camera_pitch(std::asin(std::clamp(offset.y / distance, -1.0f, 1.0f)) + delta.y_pixels * orbit_radians_per_pixel);
+        const float cos_pitch = std::cos(pitch);
+        const Vector3 direction{
+            std::sin(yaw) * cos_pitch,
+            std::sin(pitch),
+            std::cos(yaw) * cos_pitch,
+        };
+        state.eye = state.target + direction * distance;
+        validate_camera_state(state);
+        return state;
+    }
+
+    Scene::CameraState Scene::pan_viewport_camera(Scene::CameraState state, const Scene::ViewportCameraDelta delta, const Scene::ViewportCameraSize viewport) {
+        validate_camera_state(state);
+        validate_viewport_camera_delta(delta);
+        validate_viewport_camera_size(viewport);
+        if (delta.x_pixels == 0.0f && delta.y_pixels == 0.0f) return state;
+        const ViewportCameraFrame frame = viewport_camera_frame(state);
+        const float distance = length(state.eye - state.target);
+        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Scene viewport camera pan distance must be positive");
+        const float pan_scale = 2.0f * distance * std::tan(state.vertical_fov_degrees * std::numbers::pi_v<float> / 360.0f) / viewport.height;
+        if (!std::isfinite(pan_scale) || !(pan_scale > 0.0f)) throw std::runtime_error("Scene viewport camera pan scale must be positive");
+        const float horizontal_offset = -delta.x_pixels * pan_scale;
+        const float vertical_offset = delta.y_pixels * pan_scale;
+        const Vector3 offset = frame.right * horizontal_offset + frame.up * vertical_offset;
+        state.eye += offset;
+        state.target += offset;
+        validate_camera_state(state);
+        return state;
+    }
+
+    Scene::CameraState Scene::zoom_viewport_camera(Scene::CameraState state, const float steps) {
+        validate_camera_state(state);
+        if (!std::isfinite(steps)) throw std::runtime_error("Scene viewport camera zoom steps must be finite");
+        if (steps == 0.0f) return state;
+        constexpr float minimum_distance = 0.02f;
+        constexpr float maximum_distance = 1000000.0f;
+        const Vector3 target_to_eye = state.eye - state.target;
+        const float distance = length(target_to_eye);
+        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Scene viewport camera zoom distance must be positive");
+        const float zoom_factor = std::pow(0.88f, steps);
+        if (!std::isfinite(zoom_factor) || !(zoom_factor > 0.0f)) throw std::runtime_error("Scene viewport camera zoom factor must be positive");
+        const float new_distance = std::clamp(distance * zoom_factor, minimum_distance, maximum_distance);
+        state.eye = state.target + target_to_eye / distance * new_distance;
+        validate_camera_state(state);
+        return state;
+    }
+
     void Scene::Edit::replace_timeline(Scene::Timeline timeline) {
         this->timeline_replacement = std::move(timeline);
         this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Timeline);
@@ -1234,6 +1336,40 @@ namespace spectra::scene {
             return matrix.at(row * 4u + column);
         }
 
+        [[nodiscard]] std::array<float, 16> multiply_matrix(const std::array<float, 16>& left, const std::array<float, 16>& right) {
+            std::array<float, 16> result{};
+            for (std::size_t row = 0u; row < 4u; ++row)
+                for (std::size_t column = 0u; column < 4u; ++column)
+                    result.at(row * 4u + column) =
+                        matrix_value(left, row, 0u) * matrix_value(right, 0u, column) +
+                        matrix_value(left, row, 1u) * matrix_value(right, 1u, column) +
+                        matrix_value(left, row, 2u) * matrix_value(right, 2u, column) +
+                        matrix_value(left, row, 3u) * matrix_value(right, 3u, column);
+            return result;
+        }
+
+        [[nodiscard]] SceneTransform multiply_transform(const SceneTransform& left, const SceneTransform& right) {
+            return SceneTransform{
+                .matrix  = multiply_matrix(left.matrix, right.matrix),
+                .inverse = multiply_matrix(right.inverse, left.inverse),
+            };
+        }
+
+        [[nodiscard]] bool transform_differs(const SceneTransform& left, const SceneTransform& right) {
+            return left.matrix != right.matrix || left.inverse != right.inverse;
+        }
+
+        [[nodiscard]] SceneTransformSet multiply_transform_set(const SceneTransformSet& left, const SceneTransformSet& right) {
+            SceneTransformSet result{
+                .start      = multiply_transform(left.start, right.start),
+                .end        = multiply_transform(left.end, right.end),
+                .start_time = left.start_time,
+                .end_time   = left.end_time,
+            };
+            result.animated = transform_differs(result.start, result.end);
+            return result;
+        }
+
         void include_point(Bounds& bounds, const Vector3 point) {
             if (!is_finite(point)) throw std::runtime_error("PBRT preview mesh contains a non-finite point");
             if (!bounds.valid) {
@@ -1299,6 +1435,28 @@ namespace spectra::scene {
             return {};
         }
 
+        [[nodiscard]] std::string required_string_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != "string" || parameter.name != name) continue;
+                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one string", context, name));
+                if (values->front().empty()) throw std::runtime_error(std::format("{} parameter \"{}\" must not be empty", context, name));
+                return values->front();
+            }
+            throw std::runtime_error(std::format("{} requires \"string {}\"", context, name));
+        }
+
+        [[nodiscard]] std::string optional_string_value(const Scene::Entity& entity, const std::string_view name, const std::string_view default_value, const std::string_view context) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != "string" || parameter.name != name) continue;
+                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one string", context, name));
+                if (values->front().empty()) throw std::runtime_error(std::format("{} parameter \"{}\" must not be empty", context, name));
+                return values->front();
+            }
+            return std::string{default_value};
+        }
+
         [[nodiscard]] const std::vector<int>& required_int_values(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "integer" || parameter.name != name) continue;
@@ -1307,6 +1465,23 @@ namespace spectra::scene {
                 return *values;
             }
             throw std::runtime_error(std::format("{} requires \"integer {}\"", context, name));
+        }
+
+        [[nodiscard]] const std::vector<int>* optional_int_values(const Scene::Entity& entity, const std::string_view name) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != "integer" || parameter.name != name) continue;
+                const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
+                if (values == nullptr) throw std::runtime_error(std::format("PBRT preview parameter \"{}\" must contain integer values", name));
+                return values;
+            }
+            return nullptr;
+        }
+
+        [[nodiscard]] int optional_one_int_value(const Scene::Entity& entity, const std::string_view name, const int default_value, const std::string_view context) {
+            const std::vector<int>* values = optional_int_values(entity, name);
+            if (values == nullptr) return default_value;
+            if (values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one integer", context, name));
+            return values->front();
         }
 
         [[nodiscard]] Vector3 required_rgb_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
@@ -1343,6 +1518,13 @@ namespace spectra::scene {
             const std::vector<float>* values = optional_float_values(entity, "point3", name);
             if (values == nullptr) return default_value;
             if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly three point values", name));
+            return Vector3{values->at(0), values->at(1), values->at(2)};
+        }
+
+        [[nodiscard]] Vector3 optional_vector3_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value) {
+            const std::vector<float>* values = optional_float_values(entity, "vector3", name);
+            if (values == nullptr) return default_value;
+            if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview parameter \"{}\" must contain exactly three vector values", name));
             return Vector3{values->at(0), values->at(1), values->at(2)};
         }
 
@@ -1404,16 +1586,511 @@ namespace spectra::scene {
             return std::format("{}#shape:{}", object_source_prefix_value, shape_index);
         }
 
+        [[nodiscard]] std::vector<std::string> split_ascii_words(const std::string& line) {
+            std::istringstream stream{line};
+            std::vector<std::string> words{};
+            std::string word{};
+            while (stream >> word) words.push_back(std::move(word));
+            return words;
+        }
+
+        [[nodiscard]] std::size_t parse_ascii_size(const std::string& text, const std::string_view context) {
+            std::size_t value{};
+            const char* begin = text.data();
+            const char* end = begin + text.size();
+            const std::from_chars_result result = std::from_chars(begin, end, value);
+            if (result.ec != std::errc{} || result.ptr != end) throw std::runtime_error(std::format("{} must be an unsigned integer", context));
+            return value;
+        }
+
+        [[nodiscard]] std::uint32_t parse_ascii_u32(const std::string& text, const std::string_view context) {
+            const std::size_t value = parse_ascii_size(text, context);
+            if (value > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("{} exceeds uint32 range", context));
+            return static_cast<std::uint32_t>(value);
+        }
+
+        [[nodiscard]] float parse_ascii_float(const std::string& text, const std::string_view context) {
+            float value{};
+            const char* begin = text.data();
+            const char* end = begin + text.size();
+            const std::from_chars_result result = std::from_chars(begin, end, value);
+            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(value)) throw std::runtime_error(std::format("{} must be a finite float", context));
+            return value;
+        }
+
+        [[nodiscard]] std::optional<std::size_t> property_index(const std::vector<std::string>& properties, const std::string_view name) {
+            for (std::size_t index = 0u; index < properties.size(); ++index) if (properties.at(index) == name) return index;
+            return std::nullopt;
+        }
+
+        void generate_mesh_normals(Scene::Mesh& mesh, const std::string_view context) {
+            mesh.normals.assign(mesh.positions.size(), Vector3{});
+            for (std::size_t index = 0u; index < mesh.indices.size(); index += 3u) {
+                const std::uint32_t i0 = mesh.indices.at(index);
+                const std::uint32_t i1 = mesh.indices.at(index + 1u);
+                const std::uint32_t i2 = mesh.indices.at(index + 2u);
+                if (i0 >= mesh.positions.size() || i1 >= mesh.positions.size() || i2 >= mesh.positions.size()) throw std::runtime_error(std::format("{} face references an out-of-range vertex", context));
+                const Vector3& p0 = mesh.positions.at(i0);
+                const Vector3& p1 = mesh.positions.at(i1);
+                const Vector3& p2 = mesh.positions.at(i2);
+                const Vector3 normal = cross(p1 - p0, p2 - p0);
+                mesh.normals.at(i0) += normal;
+                mesh.normals.at(i1) += normal;
+                mesh.normals.at(i2) += normal;
+            }
+            for (Vector3& normal : mesh.normals) normal = normalize(normal, std::format("{} generated normal", context));
+        }
+
+        [[nodiscard]] Scene::Mesh read_ascii_ply_mesh(const std::filesystem::path& path, const std::string& object_name, const std::string& material_name, const Scene::SourceLocation& source) {
+            std::ifstream input(path);
+            if (!input) throw std::runtime_error(std::format("{}: unable to open PLY mesh", path.string()));
+            std::string line{};
+            if (!std::getline(input, line) || line != "ply") throw std::runtime_error(std::format("{}: expected PLY header", path.string()));
+
+            bool ascii_format = false;
+            bool header_complete = false;
+            std::string active_element{};
+            std::size_t vertex_count = 0u;
+            std::size_t face_count = 0u;
+            std::vector<std::string> vertex_properties{};
+            std::string face_index_property{};
+            while (std::getline(input, line)) {
+                const std::vector<std::string> words = split_ascii_words(line);
+                if (words.empty()) continue;
+                if (words.at(0) == "comment" || words.at(0) == "obj_info") continue;
+                if (words.at(0) == "format") {
+                    if (words.size() != 3u) throw std::runtime_error(std::format("{}: invalid PLY format line", path.string()));
+                    if (words.at(1) != "ascii" || words.at(2) != "1.0") throw std::runtime_error(std::format("{}: PBRT preview supports only ASCII PLY format 1.0", path.string()));
+                    ascii_format = true;
+                    continue;
+                }
+                if (words.at(0) == "element") {
+                    if (words.size() != 3u) throw std::runtime_error(std::format("{}: invalid PLY element line", path.string()));
+                    active_element = words.at(1);
+                    const std::size_t count = parse_ascii_size(words.at(2), std::format("{} element count", path.string()));
+                    if (active_element == "vertex") vertex_count = count;
+                    if (active_element == "face") face_count = count;
+                    continue;
+                }
+                if (words.at(0) == "property") {
+                    if (active_element == "vertex") {
+                        if (words.size() != 3u) throw std::runtime_error(std::format("{}: vertex properties must be scalar", path.string()));
+                        vertex_properties.push_back(words.at(2));
+                        continue;
+                    }
+                    if (active_element == "face") {
+                        if (words.size() == 5u && words.at(1) == "list") {
+                            if (face_index_property.empty()) face_index_property = words.at(4);
+                            continue;
+                        }
+                        continue;
+                    }
+                    continue;
+                }
+                if (words.at(0) == "end_header") {
+                    header_complete = true;
+                    break;
+                }
+                throw std::runtime_error(std::format("{}: unsupported PLY header directive \"{}\"", path.string(), words.at(0)));
+            }
+            if (!header_complete || !ascii_format) throw std::runtime_error(std::format("{}: incomplete ASCII PLY header", path.string()));
+            if (vertex_count == 0u || face_count == 0u) throw std::runtime_error(std::format("{}: PLY mesh requires vertex and face elements", path.string()));
+            const std::optional<std::size_t> x_index = property_index(vertex_properties, "x");
+            const std::optional<std::size_t> y_index = property_index(vertex_properties, "y");
+            const std::optional<std::size_t> z_index = property_index(vertex_properties, "z");
+            if (!x_index.has_value() || !y_index.has_value() || !z_index.has_value()) throw std::runtime_error(std::format("{}: PLY vertex coordinates x/y/z are required", path.string()));
+            const std::optional<std::size_t> nx_index = property_index(vertex_properties, "nx");
+            const std::optional<std::size_t> ny_index = property_index(vertex_properties, "ny");
+            const std::optional<std::size_t> nz_index = property_index(vertex_properties, "nz");
+            const bool has_normals = nx_index.has_value() && ny_index.has_value() && nz_index.has_value();
+            if ((nx_index.has_value() || ny_index.has_value() || nz_index.has_value()) && !has_normals) throw std::runtime_error(std::format("{}: PLY normals require nx/ny/nz together", path.string()));
+            std::optional<std::size_t> u_index = property_index(vertex_properties, "u");
+            std::optional<std::size_t> v_index = property_index(vertex_properties, "v");
+            if (!u_index.has_value()) u_index = property_index(vertex_properties, "s");
+            if (!v_index.has_value()) v_index = property_index(vertex_properties, "t");
+            const bool has_uvs = u_index.has_value() && v_index.has_value();
+            if ((u_index.has_value() || v_index.has_value()) && !has_uvs) throw std::runtime_error(std::format("{}: PLY UVs require u/v or s/t together", path.string()));
+            if (face_index_property != "vertex_indices" && face_index_property != "vertex_index") throw std::runtime_error(std::format("{}: PLY face list property vertex_indices is required", path.string()));
+
+            Scene::Mesh mesh{
+                .name          = object_name,
+                .material_name = material_name,
+                .dynamic       = false,
+                .source        = source,
+            };
+            mesh.positions.reserve(vertex_count);
+            if (has_normals) mesh.normals.reserve(vertex_count);
+            if (has_uvs) mesh.uvs.reserve(vertex_count);
+            for (std::size_t vertex = 0u; vertex < vertex_count; ++vertex) {
+                if (!std::getline(input, line)) throw std::runtime_error(std::format("{}: missing PLY vertex row {}", path.string(), vertex));
+                const std::vector<std::string> words = split_ascii_words(line);
+                if (words.size() < vertex_properties.size()) throw std::runtime_error(std::format("{}: PLY vertex row {} has too few values", path.string(), vertex));
+                const std::string vertex_context = std::format("{} vertex {}", path.string(), vertex);
+                mesh.positions.push_back(Vector3{
+                    parse_ascii_float(words.at(*x_index), std::format("{} x", vertex_context)),
+                    parse_ascii_float(words.at(*y_index), std::format("{} y", vertex_context)),
+                    parse_ascii_float(words.at(*z_index), std::format("{} z", vertex_context)),
+                });
+                if (has_normals)
+                    mesh.normals.push_back(normalize(Vector3{
+                        parse_ascii_float(words.at(*nx_index), std::format("{} nx", vertex_context)),
+                        parse_ascii_float(words.at(*ny_index), std::format("{} ny", vertex_context)),
+                        parse_ascii_float(words.at(*nz_index), std::format("{} nz", vertex_context)),
+                    }, std::format("{} normal", vertex_context)));
+                if (has_uvs)
+                    mesh.uvs.push_back(std::array<float, 2>{
+                        parse_ascii_float(words.at(*u_index), std::format("{} u", vertex_context)),
+                        parse_ascii_float(words.at(*v_index), std::format("{} v", vertex_context)),
+                    });
+            }
+            mesh.indices.reserve(face_count * 6u);
+            for (std::size_t face = 0u; face < face_count; ++face) {
+                if (!std::getline(input, line)) throw std::runtime_error(std::format("{}: missing PLY face row {}", path.string(), face));
+                const std::vector<std::string> words = split_ascii_words(line);
+                if (words.empty()) throw std::runtime_error(std::format("{}: empty PLY face row {}", path.string(), face));
+                const std::size_t vertex_per_face = parse_ascii_size(words.at(0), std::format("{} face {} vertex count", path.string(), face));
+                if (vertex_per_face != 3u && vertex_per_face != 4u) throw std::runtime_error(std::format("{}: PLY face {} has {} vertices; only triangles and quads are supported", path.string(), face, vertex_per_face));
+                if (words.size() < vertex_per_face + 1u) throw std::runtime_error(std::format("{}: PLY face row {} has too few indices", path.string(), face));
+                const std::uint32_t i0 = parse_ascii_u32(words.at(1), std::format("{} face {} index 0", path.string(), face));
+                const std::uint32_t i1 = parse_ascii_u32(words.at(2), std::format("{} face {} index 1", path.string(), face));
+                const std::uint32_t i2 = parse_ascii_u32(words.at(3), std::format("{} face {} index 2", path.string(), face));
+                if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) throw std::runtime_error(std::format("{}: PLY face {} has an out-of-range vertex index", path.string(), face));
+                mesh.indices.insert(mesh.indices.end(), {i0, i1, i2});
+                if (vertex_per_face == 4u) {
+                    const std::uint32_t i3 = parse_ascii_u32(words.at(4), std::format("{} face {} index 3", path.string(), face));
+                    if (i3 >= vertex_count) throw std::runtime_error(std::format("{}: PLY face {} has an out-of-range vertex index", path.string(), face));
+                    mesh.indices.insert(mesh.indices.end(), {i0, i2, i3});
+                }
+            }
+            if (input.bad()) throw std::runtime_error(std::format("{}: PLY read failed", path.string()));
+            if (!has_normals) generate_mesh_normals(mesh, path.string());
+            return mesh;
+        }
+
+        [[nodiscard]] std::filesystem::path resolve_shape_asset_path(const Scene::Shape& shape, const std::string& value) {
+            std::filesystem::path path{value};
+            if (path.is_absolute()) return path;
+            if (shape.entity.source.filename.empty()) throw std::runtime_error(std::format("PBRT preview shape \"{}\" references relative asset \"{}\" without a source filename", shape.name, value));
+            return std::filesystem::path{shape.entity.source.filename}.parent_path() / path;
+        }
+
+        void validate_positive_float(const float value, const std::string_view context) {
+            if (!std::isfinite(value) || value <= 0.0f) throw std::runtime_error(std::format("{} must be finite and positive", context));
+        }
+
+        void validate_finite_float(const float value, const std::string_view context) {
+            if (!std::isfinite(value)) throw std::runtime_error(std::format("{} must be finite", context));
+        }
+
         [[nodiscard]] std::set<std::string> referenced_shape_material_names(const Scene::ResolvedScene& scene) {
             std::set<std::string> names{};
             for (const Scene::Shape& shape : scene.shapes) {
                 if (shape.material_name.empty()) throw std::runtime_error("PBRT preview shape references an empty material name");
                 names.insert(shape.material_name);
             }
+            for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
+                for (const Scene::Shape& shape : definition.shapes) {
+                    if (shape.material_name.empty()) throw std::runtime_error(std::format("PBRT preview object definition \"{}\" shape references an empty material name", definition.name));
+                    names.insert(shape.material_name);
+                }
+            }
             return names;
         }
 
+        [[nodiscard]] const Scene::Material& material_by_name(const Scene::ResolvedScene& scene, const std::string& name, const std::string_view context) {
+            for (const Scene::Material& material : scene.materials)
+                if (material.name == name) return material;
+            throw std::runtime_error(std::format("{} references unknown material \"{}\"", context, name));
+        }
+
+        [[nodiscard]] std::vector<std::string> optional_string_array_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != "string" || parameter.name != name) continue;
+                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+                if (values == nullptr) throw std::runtime_error(std::format("{} parameter \"{}\" must contain string values", context, name));
+                for (const std::string& value : *values)
+                    if (value.empty()) throw std::runtime_error(std::format("{} parameter \"{}\" contains an empty string", context, name));
+                return *values;
+            }
+            return {};
+        }
+
+        struct TextureLookup {
+            std::map<std::string, const Scene::Texture*> float_textures{};
+            std::map<std::string, const Scene::Texture*> spectrum_textures{};
+        };
+
+        [[nodiscard]] TextureLookup make_texture_lookup(const Scene::ResolvedScene& scene) {
+            TextureLookup lookup{};
+            for (const Scene::Texture& texture : scene.textures) {
+                if (texture.name.empty()) throw std::runtime_error("PBRT preview texture name must not be empty");
+                if (texture.kind == "float") {
+                    if (!lookup.float_textures.emplace(texture.name, &texture).second) throw std::runtime_error(std::format("PBRT preview float texture \"{}\" is duplicated", texture.name));
+                } else if (texture.kind == "spectrum") {
+                    if (!lookup.spectrum_textures.emplace(texture.name, &texture).second) throw std::runtime_error(std::format("PBRT preview spectrum texture \"{}\" is duplicated", texture.name));
+                } else {
+                    throw std::runtime_error(std::format("PBRT preview texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
+                }
+            }
+            return lookup;
+        }
+
+        [[nodiscard]] const Scene::Texture& find_texture(const std::map<std::string, const Scene::Texture*>& textures, const std::string& name, const std::string_view kind, const std::string_view context) {
+            const std::map<std::string, const Scene::Texture*>::const_iterator iter = textures.find(name);
+            if (iter == textures.end()) throw std::runtime_error(std::format("{} references unknown {} texture \"{}\"", context, kind, name));
+            return *iter->second;
+        }
+
+        [[nodiscard]] Vector3 clamp_color(const Vector3 color) {
+            return Vector3{
+                std::clamp(color.x, 0.0f, 1.0f),
+                std::clamp(color.y, 0.0f, 1.0f),
+                std::clamp(color.z, 0.0f, 1.0f),
+            };
+        }
+
+        [[nodiscard]] Vector3 multiply_color(const Vector3 left, const Vector3 right) {
+            return Vector3{left.x * right.x, left.y * right.y, left.z * right.z};
+        }
+
+        [[nodiscard]] float preview_scalar(const Vector3 color) {
+            return std::clamp((color.x + color.y + color.z) / 3.0f, 0.0f, 1.0f);
+        }
+
+        [[nodiscard]] Vector3 optional_spectrum_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value, const std::string_view context) {
+            const std::vector<float>* values = optional_float_values(entity, "rgb", name);
+            if (values == nullptr) values = optional_float_values(entity, "spectrum", name);
+            if (values == nullptr) return default_value;
+            if (values->size() == 1u) return Vector3{values->front(), values->front(), values->front()};
+            if (values->size() != 3u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain one or three spectrum values", context, name));
+            return Vector3{values->at(0), values->at(1), values->at(2)};
+        }
+
+        [[nodiscard]] std::filesystem::path resolve_texture_asset_path(const Scene::Texture& texture, const std::string& value) {
+            std::filesystem::path path{value};
+            if (path.is_absolute()) return path;
+            if (texture.entity.source.filename.empty()) throw std::runtime_error(std::format("PBRT preview texture \"{}\" references relative asset \"{}\" without a source filename", texture.name, value));
+            return std::filesystem::path{texture.entity.source.filename}.parent_path() / path;
+        }
+
+        [[nodiscard]] std::filesystem::path resolve_entity_asset_path(const Scene::Entity& entity, const std::string& value, const std::string_view context) {
+            std::filesystem::path path{value};
+            if (path.is_absolute()) return path;
+            if (entity.source.filename.empty()) throw std::runtime_error(std::format("{} references relative asset \"{}\" without a source filename", context, value));
+            return std::filesystem::path{entity.source.filename}.parent_path() / path;
+        }
+
+        [[nodiscard]] std::string lowercase_preview_string(std::string value) {
+            for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+            return value;
+        }
+
+        [[nodiscard]] std::string next_ppm_token(std::istream& input, const std::filesystem::path& path) {
+            std::string token{};
+            while (input >> token) {
+                if (!token.empty() && token.front() == '#') {
+                    std::string ignored{};
+                    std::getline(input, ignored);
+                    continue;
+                }
+                return token;
+            }
+            throw std::runtime_error(std::format("{}: unexpected end of PPM preview image", path.string()));
+        }
+
+        [[nodiscard]] float parse_ppm_float_token(const std::string& token, const std::filesystem::path& path) {
+            float value{};
+            const char* begin = token.data();
+            const char* end = begin + token.size();
+            const std::from_chars_result result = std::from_chars(begin, end, value);
+            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(value)) throw std::runtime_error(std::format("{}: invalid PPM numeric token \"{}\"", path.string(), token));
+            return value;
+        }
+
+        [[nodiscard]] Vector3 read_ppm_average_color(const std::filesystem::path& path, const std::string_view context) {
+            std::ifstream input{path};
+            if (!input) throw std::runtime_error(std::format("{} references unreadable P3 PPM preview image \"{}\"", context, path.string()));
+            if (next_ppm_token(input, path) != "P3") throw std::runtime_error(std::format("{} image \"{}\" must be an ASCII P3 PPM for rasterizer preview sampling", context, path.string()));
+            const float width_float = parse_ppm_float_token(next_ppm_token(input, path), path);
+            const float height_float = parse_ppm_float_token(next_ppm_token(input, path), path);
+            const float max_value = parse_ppm_float_token(next_ppm_token(input, path), path);
+            if (width_float <= 0.0f || height_float <= 0.0f || max_value <= 0.0f) throw std::runtime_error(std::format("{} image \"{}\" has invalid PPM dimensions or max value", context, path.string()));
+            const std::size_t width = static_cast<std::size_t>(width_float);
+            const std::size_t height = static_cast<std::size_t>(height_float);
+            if (static_cast<float>(width) != width_float || static_cast<float>(height) != height_float) throw std::runtime_error(std::format("{} image \"{}\" has non-integer PPM dimensions", context, path.string()));
+            Vector3 sum{};
+            const std::size_t pixel_count = width * height;
+            for (std::size_t index = 0u; index < pixel_count; ++index) {
+                const float r = parse_ppm_float_token(next_ppm_token(input, path), path) / max_value;
+                const float g = parse_ppm_float_token(next_ppm_token(input, path), path) / max_value;
+                const float b = parse_ppm_float_token(next_ppm_token(input, path), path) / max_value;
+                sum += Vector3{r, g, b};
+            }
+            return clamp_color(sum / static_cast<float>(pixel_count));
+        }
+
+        [[nodiscard]] Vector3 read_png_average_color(const std::filesystem::path& path, const std::string_view context) {
+            std::vector<unsigned char> pixels{};
+            unsigned width{};
+            unsigned height{};
+            const unsigned error = lodepng::decode(pixels, width, height, path.string());
+            if (error != 0u) throw std::runtime_error(std::format("{} image \"{}\" PNG decode failed: {}", context, path.string(), lodepng_error_text(error)));
+            if (width == 0u || height == 0u) throw std::runtime_error(std::format("{} image \"{}\" has zero PNG dimensions", context, path.string()));
+            const std::size_t pixel_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+            if (pixels.size() != pixel_count * 4u) throw std::runtime_error(std::format("{} image \"{}\" decoded to an unexpected PNG byte count", context, path.string()));
+            Vector3 sum{};
+            for (std::size_t index = 0u; index < pixel_count; ++index) {
+                sum += Vector3{
+                    static_cast<float>(pixels.at(index * 4u)) / 255.0f,
+                    static_cast<float>(pixels.at(index * 4u + 1u)) / 255.0f,
+                    static_cast<float>(pixels.at(index * 4u + 2u)) / 255.0f,
+                };
+            }
+            return clamp_color(sum / static_cast<float>(pixel_count));
+        }
+
+        [[nodiscard]] Vector3 read_preview_image_average_color(const std::filesystem::path& path, const std::string_view context) {
+            const std::string extension = lowercase_preview_string(path.extension().string());
+            if (extension == ".ppm") return read_ppm_average_color(path, context);
+            if (extension == ".png") return read_png_average_color(path, context);
+            throw std::runtime_error(std::format("{} image \"{}\" has unsupported rasterizer preview image format \"{}\"", context, path.string(), extension));
+        }
+
+        void require_texture_acyclic(const std::vector<std::string>& stack, const std::string& name, const std::string_view kind, const std::string_view context) {
+            for (const std::string& active : stack) {
+                if (active == name) throw std::runtime_error(std::format("{} has a recursive {} texture reference through \"{}\"", context, kind, name));
+            }
+        }
+
+        [[nodiscard]] float preview_float_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack);
+        [[nodiscard]] Vector3 preview_spectrum_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack);
+
+        [[nodiscard]] float preview_float_parameter(const TextureLookup& textures, const Scene::Entity& entity, const std::string_view name, const float default_value, const std::string_view context, std::vector<std::string>& stack) {
+            const std::string texture_name = optional_texture_reference_value(entity, name);
+            if (!texture_name.empty()) return preview_float_texture_value(textures, texture_name, stack);
+            return optional_one_float_value(entity, name, default_value);
+        }
+
+        [[nodiscard]] Vector3 preview_spectrum_parameter(const TextureLookup& textures, const Scene::Entity& entity, const std::string_view name, const Vector3 default_value, const std::string_view context, std::vector<std::string>& stack) {
+            const std::string texture_name = optional_texture_reference_value(entity, name);
+            if (!texture_name.empty()) return preview_spectrum_texture_value(textures, texture_name, stack);
+            return optional_spectrum_value(entity, name, default_value, context);
+        }
+
+        [[nodiscard]] float preview_float_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack) {
+            require_texture_acyclic(stack, name, "float", "PBRT preview texture graph");
+            const Scene::Texture& texture = find_texture(textures.float_textures, name, "float", "PBRT preview texture graph");
+            const std::string context = std::format("PBRT preview float texture \"{}\"", name);
+            stack.push_back(name);
+            float value = 1.0f;
+            if (texture.entity.type == "constant") {
+                value = optional_one_float_value(texture.entity, "value", 1.0f);
+            } else if (texture.entity.type == "scale") {
+                value = preview_float_parameter(textures, texture.entity, "tex", 1.0f, context, stack) * preview_float_parameter(textures, texture.entity, "scale", 1.0f, context, stack);
+            } else if (texture.entity.type == "mix") {
+                const float amount = std::clamp(preview_float_parameter(textures, texture.entity, "amount", 0.5f, context, stack), 0.0f, 1.0f);
+                value = preview_float_parameter(textures, texture.entity, "tex1", 0.0f, context, stack) * (1.0f - amount) + preview_float_parameter(textures, texture.entity, "tex2", 1.0f, context, stack) * amount;
+            } else if (texture.entity.type == "directionmix") {
+                const Vector3 dir = optional_vector3_value(texture.entity, "dir", Vector3{0.0f, 1.0f, 0.0f});
+                const float amount = std::clamp(0.5f + 0.5f * normalize(dir, context).y, 0.0f, 1.0f);
+                value = preview_float_parameter(textures, texture.entity, "tex1", 0.0f, context, stack) * (1.0f - amount) + preview_float_parameter(textures, texture.entity, "tex2", 1.0f, context, stack) * amount;
+            } else if (texture.entity.type == "bilerp") {
+                const float s = 0.37f;
+                const float t = 0.61f;
+                const float v00 = optional_one_float_value(texture.entity, "v00", 0.0f);
+                const float v01 = optional_one_float_value(texture.entity, "v01", 1.0f);
+                const float v10 = optional_one_float_value(texture.entity, "v10", 0.0f);
+                const float v11 = optional_one_float_value(texture.entity, "v11", 1.0f);
+                value = v00 * (1.0f - s) * (1.0f - t) + v10 * s * (1.0f - t) + v01 * (1.0f - s) * t + v11 * s * t;
+            } else if (texture.entity.type == "imagemap") {
+                const std::filesystem::path path = resolve_texture_asset_path(texture, required_string_value(texture.entity, "filename", context));
+                value = preview_scalar(read_preview_image_average_color(path, context)) * optional_one_float_value(texture.entity, "scale", 1.0f);
+                if (optional_one_int_value(texture.entity, "invert", 0, context) != 0) value = 1.0f - value;
+            } else if (texture.entity.type == "checkerboard") {
+                const int dimension = optional_one_int_value(texture.entity, "dimension", 2, context);
+                if (dimension != 2 && dimension != 3) throw std::runtime_error(std::format("{} checkerboard dimension must be 2 or 3", context));
+                const float selector = dimension == 2 ? 0.0f : 1.0f;
+                value = selector < 0.5f ? preview_float_parameter(textures, texture.entity, "tex1", 1.0f, context, stack) : preview_float_parameter(textures, texture.entity, "tex2", 0.0f, context, stack);
+            } else if (texture.entity.type == "dots") {
+                value = preview_float_parameter(textures, texture.entity, "inside", 1.0f, context, stack);
+            } else if (texture.entity.type == "fbm") {
+                value = std::clamp(0.38f + 0.045f * static_cast<float>(optional_one_int_value(texture.entity, "octaves", 8, context)) + 0.18f * optional_one_float_value(texture.entity, "roughness", 0.5f), 0.0f, 1.0f);
+            } else if (texture.entity.type == "wrinkled") {
+                value = std::clamp(0.62f + 0.025f * static_cast<float>(optional_one_int_value(texture.entity, "octaves", 8, context)) + 0.16f * optional_one_float_value(texture.entity, "roughness", 0.5f), 0.0f, 1.0f);
+            } else if (texture.entity.type == "windy") {
+                value = 0.54f;
+            } else {
+                throw std::runtime_error(std::format("{} uses unsupported float texture type \"{}\"", context, texture.entity.type));
+            }
+            stack.pop_back();
+            return std::clamp(value, 0.0f, 1.0f);
+        }
+
+        [[nodiscard]] Vector3 preview_spectrum_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack) {
+            require_texture_acyclic(stack, name, "spectrum", "PBRT preview texture graph");
+            const Scene::Texture& texture = find_texture(textures.spectrum_textures, name, "spectrum", "PBRT preview texture graph");
+            const std::string context = std::format("PBRT preview spectrum texture \"{}\"", name);
+            stack.push_back(name);
+            Vector3 value{1.0f, 1.0f, 1.0f};
+            if (texture.entity.type == "constant") {
+                value = optional_spectrum_value(texture.entity, "value", Vector3{1.0f, 1.0f, 1.0f}, context);
+            } else if (texture.entity.type == "scale") {
+                value = preview_spectrum_parameter(textures, texture.entity, "tex", Vector3{1.0f, 1.0f, 1.0f}, context, stack) * preview_float_parameter(textures, texture.entity, "scale", 1.0f, context, stack);
+            } else if (texture.entity.type == "mix") {
+                const float amount = std::clamp(preview_float_parameter(textures, texture.entity, "amount", 0.5f, context, stack), 0.0f, 1.0f);
+                value = preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{}, context, stack) * (1.0f - amount) + preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{1.0f, 1.0f, 1.0f}, context, stack) * amount;
+            } else if (texture.entity.type == "directionmix") {
+                const Vector3 dir = optional_vector3_value(texture.entity, "dir", Vector3{0.0f, 1.0f, 0.0f});
+                const float amount = std::clamp(0.5f + 0.5f * normalize(dir, context).y, 0.0f, 1.0f);
+                value = preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{}, context, stack) * (1.0f - amount) + preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{1.0f, 1.0f, 1.0f}, context, stack) * amount;
+            } else if (texture.entity.type == "bilerp") {
+                const float s = 0.37f;
+                const float t = 0.61f;
+                const Vector3 v00 = optional_spectrum_value(texture.entity, "v00", Vector3{}, context);
+                const Vector3 v01 = optional_spectrum_value(texture.entity, "v01", Vector3{1.0f, 1.0f, 1.0f}, context);
+                const Vector3 v10 = optional_spectrum_value(texture.entity, "v10", Vector3{}, context);
+                const Vector3 v11 = optional_spectrum_value(texture.entity, "v11", Vector3{1.0f, 1.0f, 1.0f}, context);
+                value = v00 * ((1.0f - s) * (1.0f - t)) + v10 * (s * (1.0f - t)) + v01 * ((1.0f - s) * t) + v11 * (s * t);
+            } else if (texture.entity.type == "imagemap") {
+                const std::filesystem::path path = resolve_texture_asset_path(texture, required_string_value(texture.entity, "filename", context));
+                value = read_preview_image_average_color(path, context) * optional_one_float_value(texture.entity, "scale", 1.0f);
+                if (optional_one_int_value(texture.entity, "invert", 0, context) != 0) value = Vector3{1.0f - value.x, 1.0f - value.y, 1.0f - value.z};
+            } else if (texture.entity.type == "checkerboard") {
+                const int dimension = optional_one_int_value(texture.entity, "dimension", 2, context);
+                if (dimension != 2 && dimension != 3) throw std::runtime_error(std::format("{} checkerboard dimension must be 2 or 3", context));
+                value = dimension == 2 ? preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{1.0f, 1.0f, 1.0f}, context, stack) : preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{}, context, stack);
+            } else if (texture.entity.type == "dots") {
+                value = preview_spectrum_parameter(textures, texture.entity, "inside", Vector3{1.0f, 1.0f, 1.0f}, context, stack);
+            } else if (texture.entity.type == "marble") {
+                const float variation = optional_one_float_value(texture.entity, "variation", 0.2f);
+                const float scale = optional_one_float_value(texture.entity, "scale", 1.0f);
+                const float amount = std::clamp(0.5f + 0.5f * std::sin(0.61f * scale + variation), 0.0f, 1.0f);
+                value = Vector3{0.30f, 0.30f, 0.45f} * (1.0f - amount) + Vector3{0.82f, 0.80f, 0.78f} * amount;
+            } else {
+                throw std::runtime_error(std::format("{} uses unsupported spectrum texture type \"{}\"", context, texture.entity.type));
+            }
+            stack.pop_back();
+            return clamp_color(value);
+        }
+
+        [[nodiscard]] Vector3 preview_material_color(const TextureLookup& textures, const Scene::Entity& entity) {
+            std::vector<std::string> texture_stack{};
+            if (entity.type == "diffuse" || entity.type == "coateddiffuse") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, "PBRT preview material", texture_stack);
+            if (entity.type == "conductor" || entity.type == "coatedconductor") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.9f, 0.72f, 0.38f}, "PBRT preview material", texture_stack);
+            if (entity.type == "diffusetransmission") {
+                const Vector3 reflectance = preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.35f, 0.45f, 0.65f}, "PBRT preview material", texture_stack);
+                const Vector3 transmittance = preview_spectrum_parameter(textures, entity, "transmittance", Vector3{0.35f, 0.55f, 0.80f}, "PBRT preview material", texture_stack);
+                return (reflectance + transmittance) * 0.5f;
+            }
+            if (entity.type == "subsurface") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.86f, 0.48f, 0.38f}, "PBRT preview material", texture_stack);
+            if (entity.type == "measured") return Vector3{0.78f, 0.76f, 0.70f};
+            if (entity.type == "dielectric" || entity.type == "thindielectric") return Vector3{0.82f, 0.9f, 1.0f};
+            if (entity.type == "hair") return preview_spectrum_parameter(textures, entity, "reflectance", Vector3{0.46f, 0.24f, 0.12f}, "PBRT preview material", texture_stack);
+            return Vector3{0.8f, 0.8f, 0.8f};
+        }
+
         [[nodiscard]] std::map<std::string, std::size_t> append_materials(const Scene::ResolvedScene& scene, const std::set<std::string>& referenced_material_names, Scene::Document& document) {
+            const TextureLookup texture_lookup = make_texture_lookup(scene);
             std::map<std::string, std::size_t> material_indices{};
             for (const Scene::Material& material : scene.materials) {
                 if (!referenced_material_names.contains(material.name)) continue;
@@ -1426,26 +2103,73 @@ namespace spectra::scene {
                     .pathtracer_material = material.entity,
                 };
                 if (material.entity.type == "diffuse") {
-                    const Vector3 reflectance = optional_rgb_value(material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f});
+                    std::vector<std::string> texture_stack{};
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
                 } else if (material.entity.type == "coateddiffuse") {
-                    const Vector3 reflectance = optional_rgb_value(material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f});
+                    std::vector<std::string> texture_stack{};
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "roughness", 0.35f), 0.02f, 1.0f);
+                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.35f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
                     preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
+                } else if (material.entity.type == "diffusetransmission") {
+                    const Vector3 color = preview_material_color(texture_lookup, material.entity);
+                    preview_material.base_color = Vector4{color.x, color.y, color.z, 0.62f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
+                    preview_material.roughness = 0.58f;
                 } else if (material.entity.type == "conductor") {
-                    const Vector3 reflectance = optional_rgb_value(material.entity, "reflectance", Vector3{0.9f, 0.82f, 0.65f});
+                    std::vector<std::string> texture_stack{};
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.9f, 0.82f, 0.65f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "roughness", 0.28f), 0.02f, 1.0f);
+                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.28f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
                     preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
+                    preview_material.metallic = 1.0f;
+                } else if (material.entity.type == "coatedconductor") {
+                    std::vector<std::string> texture_stack{};
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.92f, 0.70f, 0.34f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "conductor.roughness", 0.16f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
+                    preview_material.roughness_texture = optional_texture_reference_value(material.entity, "conductor.roughness");
                     preview_material.metallic = 1.0f;
                 } else if (material.entity.type == "dielectric") {
                     preview_material.base_color = Vector4{0.82f, 0.9f, 1.0f, 0.42f};
                     preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
                     preview_material.roughness = 0.05f;
+                } else if (material.entity.type == "thindielectric") {
+                    preview_material.base_color = Vector4{0.88f, 0.94f, 1.0f, 0.28f};
+                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
+                    preview_material.roughness = 0.02f;
+                } else if (material.entity.type == "hair") {
+                    std::vector<std::string> texture_stack{};
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.46f, 0.24f, 0.12f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "beta_m", 0.35f), 0.08f, 1.0f);
+                } else if (material.entity.type == "subsurface") {
+                    const Vector3 color = preview_material_color(texture_lookup, material.entity);
+                    preview_material.base_color = Vector4{color.x, color.y, color.z, 0.82f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
+                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "roughness", 0.42f), 0.08f, 1.0f);
+                } else if (material.entity.type == "measured") {
+                    const Vector3 color = preview_material_color(texture_lookup, material.entity);
+                    preview_material.base_color = Vector4{color.x, color.y, color.z, 1.0f};
+                    preview_material.roughness = 0.46f;
+                } else if (material.entity.type == "mix") {
+                    const std::vector<std::string> material_names = optional_string_array_value(material.entity, "materials", std::format("PBRT preview material \"{}\"", material.name));
+                    if (material_names.size() != 2u) throw std::runtime_error(std::format("PBRT preview material \"{}\" mix requires exactly two material names", material.name));
+                    const Vector3 first = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(0), std::format("PBRT preview material \"{}\"", material.name)).entity);
+                    const Vector3 second = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(1), std::format("PBRT preview material \"{}\"", material.name)).entity);
+                    std::vector<std::string> texture_stack{};
+                    const float amount = std::clamp(preview_float_parameter(texture_lookup, material.entity, "amount", 0.5f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.0f, 1.0f);
+                    const Vector3 color = first * (1.0f - amount) + second * amount;
+                    preview_material.base_color = Vector4{color.x, color.y, color.z, 1.0f};
+                    preview_material.roughness = 0.42f;
                 } else if (material.entity.type == "interface" || material.entity.type == "none") {
                     preview_material.surface_kind = Scene::PreviewSurfaceKind::UnlitSurface;
                     preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
@@ -1470,6 +2194,34 @@ namespace spectra::scene {
             return document.materials.at(iter->second);
         }
 
+        [[nodiscard]] const Scene::Medium& medium_by_name(const Scene::ResolvedScene& scene, const std::string& name, const std::string_view context) {
+            for (const Scene::Medium& medium : scene.media)
+                if (medium.name == name) return medium;
+            throw std::runtime_error(std::format("{} references unknown medium \"{}\"", context, name));
+        }
+
+        [[nodiscard]] Vector3 medium_preview_color(const Scene::Medium& medium) {
+            if (medium.entity.type == "homogeneous") return optional_rgb_value(medium.entity, "sigma_s", Vector3{0.62f, 0.74f, 0.95f});
+            if (medium.entity.type == "uniformgrid") return Vector3{0.52f, 0.72f, 0.46f};
+            if (medium.entity.type == "rgbgrid") return Vector3{0.84f, 0.56f, 0.34f};
+            if (medium.entity.type == "cloud") return Vector3{0.68f, 0.70f, 0.74f};
+            if (medium.entity.type == "nanovdb") return Vector3{0.58f, 0.50f, 0.86f};
+            throw std::runtime_error(std::format("PBRT preview medium \"{}\" uses unsupported type \"{}\"", medium.name, medium.entity.type));
+        }
+
+        void apply_medium_boundary_material(const Scene::ResolvedScene& scene, const Scene::Shape& shape, const std::size_t shape_index, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices) {
+            if (shape.medium_interface.inside.empty() && shape.medium_interface.outside.empty()) return;
+            const std::string context = std::format("PBRT preview shape #{}", shape_index);
+            const std::string& medium_name = shape.medium_interface.inside.empty() ? shape.medium_interface.outside : shape.medium_interface.inside;
+            const Scene::Medium& medium = medium_by_name(scene, medium_name, context);
+            Scene::PreviewMaterial& material = material_for_name(document, material_indices, shape.material_name);
+            if (material.surface_kind != Scene::PreviewSurfaceKind::UnlitSurface) return;
+            const Vector3 color = clamp_color(medium_preview_color(medium));
+            material.alpha_mode = Scene::PreviewAlphaMode::Blend;
+            material.base_color = Vector4{color.x, color.y, color.z, 0.24f};
+            material.roughness = 1.0f;
+        }
+
         void apply_area_light_material(const Scene::Shape& shape, const std::size_t shape_index, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices) {
             if (!shape.area_light.has_value()) return;
             const std::string context = std::format("PBRT preview shape #{}", shape_index);
@@ -1487,34 +2239,317 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::Mesh make_mesh(const std::string_view object_source_prefix_value, const Scene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             const std::string context = std::format("PBRT preview shape #{}", shape_index);
-            if (shape.entity.type != "trianglemesh") throw std::runtime_error(std::format("PBRT preview scene loader only supports trianglemesh shapes, got \"{}\"", shape.entity.type));
             require_static_transform(shape.transform, context);
             if (shape.reverse_orientation) throw std::runtime_error(std::format("{} uses ReverseOrientation, which is not supported by the PBRT preview scene loader", context));
-            if (!shape.medium_interface.inside.empty() || !shape.medium_interface.outside.empty()) throw std::runtime_error(std::format("{} uses MediumInterface, which is not supported by the PBRT preview scene loader", context));
             if (!material_indices.contains(shape.material_name)) throw std::runtime_error(std::format("{} references unknown material \"{}\"", context, shape.material_name));
             const std::string object_name = make_shape_object_name(object_source_prefix_value, shape_index);
-            const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
-            const std::vector<float>& normals = required_float_values(shape.entity, "normal", "N", context);
-            const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
-            if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" has invalid point3 P data", object_name));
-            if (normals.size() != positions.size()) throw std::runtime_error(std::format("PBRT preview shape \"{}\" normal count does not match position count", object_name));
-            if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" has invalid triangle index data", object_name));
-
             Scene::Mesh mesh{
                 .name         = object_name,
                 .material_name = shape.material_name,
                 .dynamic      = false,
                 .source       = shape.entity.source,
             };
+            const auto append_vertex = [&mesh, &shape, &bounds](const Vector3 point, const Vector3 normal) {
+                const Vector3 transformed_point = transform_point(shape.transform.start, point);
+                mesh.positions.push_back(transformed_point);
+                mesh.normals.push_back(transform_normal(shape.transform.start, normal));
+                include_point(bounds, transformed_point);
+            };
+            const auto append_quad = [&mesh](const std::uint32_t a, const std::uint32_t b, const std::uint32_t c, const std::uint32_t d) {
+                mesh.indices.insert(mesh.indices.end(), {a, b, c, a, c, d});
+            };
+            if (shape.entity.type == "plymesh") {
+                const std::string filename = required_string_value(shape.entity, "filename", context);
+                const std::filesystem::path path = resolve_shape_asset_path(shape, filename);
+                Scene::Mesh ply_mesh = read_ascii_ply_mesh(path, object_name, shape.material_name, shape.entity.source);
+                if (ply_mesh.positions.size() != ply_mesh.normals.size()) throw std::runtime_error(std::format("{} PLY normal count does not match position count", context));
+                mesh.positions.reserve(ply_mesh.positions.size());
+                mesh.normals.reserve(ply_mesh.normals.size());
+                mesh.uvs.reserve(ply_mesh.uvs.size());
+                for (std::size_t vertex_index = 0u; vertex_index < ply_mesh.positions.size(); ++vertex_index) {
+                    append_vertex(ply_mesh.positions.at(vertex_index), ply_mesh.normals.at(vertex_index));
+                    if (!ply_mesh.uvs.empty()) mesh.uvs.push_back(ply_mesh.uvs.at(vertex_index));
+                }
+                mesh.indices = std::move(ply_mesh.indices);
+                return mesh;
+            }
+            if (shape.entity.type == "bilinearmesh") {
+                const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
+                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("{} has invalid point3 P data", context));
+                const std::size_t vertex_count = positions.size() / 3u;
+                const std::vector<float>* normals = optional_float_values(shape.entity, "normal", "N");
+                const std::vector<float>* uvs = optional_float_values(shape.entity, "point2", "uv");
+                if (normals != nullptr && normals->size() != positions.size()) throw std::runtime_error(std::format("{} normal count does not match position count", context));
+                if (uvs != nullptr && uvs->size() != vertex_count * 2u) throw std::runtime_error(std::format("{} uv count does not match position count", context));
+
+                std::vector<int> default_patch_indices{};
+                const std::vector<int>* patch_indices = optional_int_values(shape.entity, "indices");
+                if (patch_indices == nullptr) {
+                    if (vertex_count != 4u) throw std::runtime_error(std::format("{} requires \"integer indices\" unless exactly four control points are provided", context));
+                    default_patch_indices = {0, 1, 2, 3};
+                    patch_indices = &default_patch_indices;
+                }
+                if (patch_indices->empty() || patch_indices->size() % 4u != 0u) throw std::runtime_error(std::format("{} bilinearmesh indices must contain a non-empty multiple of four entries", context));
+
+                mesh.positions.reserve(vertex_count);
+                if (normals != nullptr) mesh.normals.reserve(vertex_count);
+                if (uvs != nullptr) mesh.uvs.reserve(vertex_count);
+                for (std::size_t vertex_index = 0u; vertex_index < vertex_count; ++vertex_index) {
+                    const Vector3 point{positions.at(vertex_index * 3u), positions.at(vertex_index * 3u + 1u), positions.at(vertex_index * 3u + 2u)};
+                    const Vector3 transformed_point = transform_point(shape.transform.start, point);
+                    mesh.positions.push_back(transformed_point);
+                    include_point(bounds, transformed_point);
+                    if (normals != nullptr) {
+                        const Vector3 normal{normals->at(vertex_index * 3u), normals->at(vertex_index * 3u + 1u), normals->at(vertex_index * 3u + 2u)};
+                        mesh.normals.push_back(transform_normal(shape.transform.start, normal));
+                    }
+                    if (uvs != nullptr) mesh.uvs.push_back(std::array<float, 2>{uvs->at(vertex_index * 2u), uvs->at(vertex_index * 2u + 1u)});
+                }
+                mesh.indices.reserve(patch_indices->size() / 4u * 6u);
+                const auto checked_patch_index = [vertex_count, &context](const int index) {
+                    if (index < 0) throw std::runtime_error(std::format("{} contains a negative bilinearmesh vertex index", context));
+                    const std::uint32_t converted_index = static_cast<std::uint32_t>(index);
+                    if (converted_index >= vertex_count) throw std::runtime_error(std::format("{} contains an out-of-range bilinearmesh vertex index", context));
+                    return converted_index;
+                };
+                for (std::size_t index = 0u; index < patch_indices->size(); index += 4u) {
+                    const std::uint32_t p00 = checked_patch_index(patch_indices->at(index));
+                    const std::uint32_t p10 = checked_patch_index(patch_indices->at(index + 1u));
+                    const std::uint32_t p01 = checked_patch_index(patch_indices->at(index + 2u));
+                    const std::uint32_t p11 = checked_patch_index(patch_indices->at(index + 3u));
+                    mesh.indices.insert(mesh.indices.end(), {p00, p10, p11, p00, p11, p01});
+                }
+                if (normals == nullptr) generate_mesh_normals(mesh, context);
+                return mesh;
+            }
+            if (shape.entity.type == "loopsubdiv") {
+                const int levels = optional_one_int_value(shape.entity, "levels", 3, context);
+                if (levels < 0) throw std::runtime_error(std::format("{} loopsubdiv levels must be non-negative", context));
+                const std::string scheme = optional_string_value(shape.entity, "scheme", "loop", context);
+                if (scheme != "loop") throw std::runtime_error(std::format("{} only supports loopsubdiv scheme \"loop\", got \"{}\"", context, scheme));
+                const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
+                const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
+                const std::vector<float>* normals = optional_float_values(shape.entity, "normal", "N");
+                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("{} has invalid point3 P data", context));
+                if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(std::format("{} loopsubdiv preview indices must contain triangles", context));
+                const std::size_t vertex_count = positions.size() / 3u;
+                if (normals != nullptr && normals->size() != positions.size()) throw std::runtime_error(std::format("{} normal count does not match position count", context));
+
+                mesh.positions.reserve(vertex_count);
+                if (normals != nullptr) mesh.normals.reserve(vertex_count);
+                for (std::size_t vertex_index = 0u; vertex_index < vertex_count; ++vertex_index) {
+                    const Vector3 point{positions.at(vertex_index * 3u), positions.at(vertex_index * 3u + 1u), positions.at(vertex_index * 3u + 2u)};
+                    const Vector3 transformed_point = transform_point(shape.transform.start, point);
+                    mesh.positions.push_back(transformed_point);
+                    include_point(bounds, transformed_point);
+                    if (normals != nullptr) {
+                        const Vector3 normal{normals->at(vertex_index * 3u), normals->at(vertex_index * 3u + 1u), normals->at(vertex_index * 3u + 2u)};
+                        mesh.normals.push_back(transform_normal(shape.transform.start, normal));
+                    }
+                }
+                mesh.indices.reserve(indices.size());
+                for (const int index : indices) {
+                    if (index < 0) throw std::runtime_error(std::format("{} contains a negative loopsubdiv vertex index", context));
+                    const std::uint32_t converted_index = static_cast<std::uint32_t>(index);
+                    if (converted_index >= vertex_count) throw std::runtime_error(std::format("{} contains an out-of-range loopsubdiv vertex index", context));
+                    mesh.indices.push_back(converted_index);
+                }
+                if (normals == nullptr) generate_mesh_normals(mesh, context);
+                return mesh;
+            }
+            if (shape.entity.type == "curve") {
+                const int degree = optional_one_int_value(shape.entity, "degree", 3, context);
+                if (degree != 3) throw std::runtime_error(std::format("{} preview supports only cubic curve degree 3", context));
+                const std::string basis = optional_string_value(shape.entity, "basis", "bezier", context);
+                if (basis != "bezier") throw std::runtime_error(std::format("{} preview supports only bezier curve basis", context));
+                const std::string curve_type = optional_string_value(shape.entity, "type", "flat", context);
+                if (curve_type != "cylinder") throw std::runtime_error(std::format("{} preview supports only cylinder curve type", context));
+                const float width = optional_one_float_value(shape.entity, "width", 0.02f);
+                const float width0 = optional_one_float_value(shape.entity, "width0", width);
+                const float width1 = optional_one_float_value(shape.entity, "width1", width);
+                validate_positive_float(width0, std::format("{} curve width0", context));
+                validate_positive_float(width1, std::format("{} curve width1", context));
+                const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
+                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("{} has invalid point3 P data", context));
+                const std::size_t control_point_count = positions.size() / 3u;
+                if (control_point_count < 4u || (control_point_count - 4u) % 3u != 0u) throw std::runtime_error(std::format("{} cubic bezier curve requires 4 + 3n control points", context));
+                std::vector<Vector3> control_points{};
+                control_points.reserve(control_point_count);
+                for (std::size_t point_index = 0u; point_index < control_point_count; ++point_index)
+                    control_points.push_back(Vector3{positions.at(point_index * 3u), positions.at(point_index * 3u + 1u), positions.at(point_index * 3u + 2u)});
+
+                constexpr std::uint32_t samples_per_segment = 16u;
+                constexpr std::uint32_t radial_segments = 8u;
+                const std::uint32_t segment_count = static_cast<std::uint32_t>((control_point_count - 1u) / 3u);
+                const std::uint32_t ring_count = segment_count * samples_per_segment + 1u;
+                mesh.positions.reserve(static_cast<std::size_t>(ring_count) * radial_segments);
+                mesh.normals.reserve(mesh.positions.capacity());
+                const auto bezier_point = [](const Vector3 p0, const Vector3 p1, const Vector3 p2, const Vector3 p3, const float t) {
+                    const float omt = 1.0f - t;
+                    return p0 * (omt * omt * omt) + p1 * (3.0f * omt * omt * t) + p2 * (3.0f * omt * t * t) + p3 * (t * t * t);
+                };
+                const auto bezier_tangent = [](const Vector3 p0, const Vector3 p1, const Vector3 p2, const Vector3 p3, const float t) {
+                    const float omt = 1.0f - t;
+                    return (p1 - p0) * (3.0f * omt * omt) + (p2 - p1) * (6.0f * omt * t) + (p3 - p2) * (3.0f * t * t);
+                };
+                const auto append_ring = [&](const Vector3 center_value, const Vector3 tangent_value, const float radius_value) {
+                    const Vector3 tangent = normalize(tangent_value, std::format("{} curve tangent", context));
+                    const Vector3 reference = std::abs(tangent.y) < 0.92f ? Vector3{0.0f, 1.0f, 0.0f} : Vector3{1.0f, 0.0f, 0.0f};
+                    const Vector3 side = normalize(cross(reference, tangent), std::format("{} curve side", context));
+                    const Vector3 up = normalize(cross(tangent, side), std::format("{} curve up", context));
+                    for (std::uint32_t radial = 0u; radial < radial_segments; ++radial) {
+                        const float angle = 2.0f * std::numbers::pi_v<float> * static_cast<float>(radial) / static_cast<float>(radial_segments);
+                        const Vector3 normal = normalize(side * std::cos(angle) + up * std::sin(angle), std::format("{} curve radial normal", context));
+                        const Vector3 point = center_value + normal * radius_value;
+                        const Vector3 transformed_point = transform_point(shape.transform.start, point);
+                        mesh.positions.push_back(transformed_point);
+                        mesh.normals.push_back(transform_normal(shape.transform.start, normal));
+                        include_point(bounds, transformed_point);
+                    }
+                };
+                for (std::uint32_t segment = 0u; segment < segment_count; ++segment) {
+                    const std::size_t control_offset = static_cast<std::size_t>(segment) * 3u;
+                    const Vector3 p0 = control_points.at(control_offset);
+                    const Vector3 p1 = control_points.at(control_offset + 1u);
+                    const Vector3 p2 = control_points.at(control_offset + 2u);
+                    const Vector3 p3 = control_points.at(control_offset + 3u);
+                    for (std::uint32_t sample = 0u; sample < samples_per_segment; ++sample) {
+                        const float local_t = static_cast<float>(sample) / static_cast<float>(samples_per_segment);
+                        const float global_t = (static_cast<float>(segment) + local_t) / static_cast<float>(segment_count);
+                        append_ring(bezier_point(p0, p1, p2, p3, local_t), bezier_tangent(p0, p1, p2, p3, local_t), std::lerp(width0, width1, global_t) * 0.5f);
+                    }
+                }
+                {
+                    const std::size_t control_offset = static_cast<std::size_t>(segment_count - 1u) * 3u;
+                    const Vector3 p0 = control_points.at(control_offset);
+                    const Vector3 p1 = control_points.at(control_offset + 1u);
+                    const Vector3 p2 = control_points.at(control_offset + 2u);
+                    const Vector3 p3 = control_points.at(control_offset + 3u);
+                    append_ring(p3, bezier_tangent(p0, p1, p2, p3, 1.0f), width1 * 0.5f);
+                }
+                mesh.indices.reserve(static_cast<std::size_t>(ring_count - 1u) * radial_segments * 6u);
+                for (std::uint32_t ring = 0u; ring + 1u < ring_count; ++ring) {
+                    for (std::uint32_t radial = 0u; radial < radial_segments; ++radial) {
+                        const std::uint32_t next_radial = (radial + 1u) % radial_segments;
+                        const std::uint32_t current = ring * radial_segments + radial;
+                        const std::uint32_t current_next = ring * radial_segments + next_radial;
+                        const std::uint32_t next = (ring + 1u) * radial_segments + radial;
+                        const std::uint32_t next_next = (ring + 1u) * radial_segments + next_radial;
+                        mesh.indices.insert(mesh.indices.end(), {current, next, next_next, current, next_next, current_next});
+                    }
+                }
+                return mesh;
+            }
+            if (shape.entity.type == "sphere") {
+                const float radius_value = optional_one_float_value(shape.entity, "radius", 1.0f);
+                validate_positive_float(radius_value, std::format("{} sphere radius", context));
+                const float z_min = std::clamp(optional_one_float_value(shape.entity, "zmin", -radius_value), -radius_value, radius_value);
+                const float z_max = std::clamp(optional_one_float_value(shape.entity, "zmax", radius_value), -radius_value, radius_value);
+                if (z_min >= z_max) throw std::runtime_error(std::format("{} sphere zmin must be smaller than zmax", context));
+                const float phi_max_degrees = std::clamp(optional_one_float_value(shape.entity, "phimax", 360.0f), 0.0f, 360.0f);
+                if (phi_max_degrees <= 0.0f) throw std::runtime_error(std::format("{} sphere phimax must be positive", context));
+                constexpr std::uint32_t latitude_segments = 32u;
+                constexpr std::uint32_t longitude_segments = 64u;
+                const std::uint32_t longitude_count = longitude_segments + 1u;
+                const float theta_min = std::acos(std::clamp(z_max / radius_value, -1.0f, 1.0f));
+                const float theta_max = std::acos(std::clamp(z_min / radius_value, -1.0f, 1.0f));
+                const float phi_max = phi_max_degrees * std::numbers::pi_v<float> / 180.0f;
+                mesh.positions.reserve(static_cast<std::size_t>(latitude_segments + 1u) * static_cast<std::size_t>(longitude_count));
+                mesh.normals.reserve(mesh.positions.capacity());
+                for (std::uint32_t latitude = 0u; latitude <= latitude_segments; ++latitude) {
+                    const float theta = theta_min + (theta_max - theta_min) * static_cast<float>(latitude) / static_cast<float>(latitude_segments);
+                    const float sin_theta = std::sin(theta);
+                    const float cos_theta = std::cos(theta);
+                    for (std::uint32_t longitude = 0u; longitude <= longitude_segments; ++longitude) {
+                        const float phi = phi_max * static_cast<float>(longitude) / static_cast<float>(longitude_segments);
+                        const Vector3 normal{sin_theta * std::cos(phi), sin_theta * std::sin(phi), cos_theta};
+                        append_vertex(normal * radius_value, normal);
+                    }
+                }
+                mesh.indices.reserve(static_cast<std::size_t>(latitude_segments) * static_cast<std::size_t>(longitude_segments) * 6u);
+                for (std::uint32_t latitude = 0u; latitude < latitude_segments; ++latitude) {
+                    for (std::uint32_t longitude = 0u; longitude < longitude_segments; ++longitude) {
+                        const std::uint32_t current = latitude * longitude_count + longitude;
+                        append_quad(current, current + longitude_count, current + longitude_count + 1u, current + 1u);
+                    }
+                }
+                return mesh;
+            }
+            if (shape.entity.type == "disk") {
+                const float height = optional_one_float_value(shape.entity, "height", 0.0f);
+                const float radius_value = optional_one_float_value(shape.entity, "radius", 1.0f);
+                const float inner_radius = optional_one_float_value(shape.entity, "innerradius", 0.0f);
+                const float phi_max_degrees = std::clamp(optional_one_float_value(shape.entity, "phimax", 360.0f), 0.0f, 360.0f);
+                validate_finite_float(height, std::format("{} disk height", context));
+                validate_positive_float(radius_value, std::format("{} disk radius", context));
+                if (!std::isfinite(inner_radius) || inner_radius < 0.0f || inner_radius >= radius_value) throw std::runtime_error(std::format("{} disk innerradius must be finite and inside [0, radius)", context));
+                if (phi_max_degrees <= 0.0f) throw std::runtime_error(std::format("{} disk phimax must be positive", context));
+                constexpr std::uint32_t segments = 96u;
+                const float phi_max = phi_max_degrees * std::numbers::pi_v<float> / 180.0f;
+                mesh.positions.reserve((segments + 1u) * 2u);
+                mesh.normals.reserve(mesh.positions.capacity());
+                for (std::uint32_t segment = 0u; segment <= segments; ++segment) {
+                    const float phi = phi_max * static_cast<float>(segment) / static_cast<float>(segments);
+                    const float cosine = std::cos(phi);
+                    const float sine = std::sin(phi);
+                    append_vertex(Vector3{inner_radius * cosine, inner_radius * sine, height}, Vector3{0.0f, 0.0f, 1.0f});
+                    append_vertex(Vector3{radius_value * cosine, radius_value * sine, height}, Vector3{0.0f, 0.0f, 1.0f});
+                }
+                mesh.indices.reserve(static_cast<std::size_t>(segments) * 6u);
+                for (std::uint32_t segment = 0u; segment < segments; ++segment) {
+                    const std::uint32_t current = segment * 2u;
+                    append_quad(current, current + 1u, current + 3u, current + 2u);
+                }
+                return mesh;
+            }
+            if (shape.entity.type == "cylinder") {
+                const float radius_value = optional_one_float_value(shape.entity, "radius", 1.0f);
+                const float z_min = optional_one_float_value(shape.entity, "zmin", -1.0f);
+                const float z_max = optional_one_float_value(shape.entity, "zmax", 1.0f);
+                const float phi_max_degrees = std::clamp(optional_one_float_value(shape.entity, "phimax", 360.0f), 0.0f, 360.0f);
+                validate_positive_float(radius_value, std::format("{} cylinder radius", context));
+                validate_finite_float(z_min, std::format("{} cylinder zmin", context));
+                validate_finite_float(z_max, std::format("{} cylinder zmax", context));
+                if (z_min >= z_max) throw std::runtime_error(std::format("{} cylinder zmin must be smaller than zmax", context));
+                if (phi_max_degrees <= 0.0f) throw std::runtime_error(std::format("{} cylinder phimax must be positive", context));
+                constexpr std::uint32_t segments = 96u;
+                const float phi_max = phi_max_degrees * std::numbers::pi_v<float> / 180.0f;
+                mesh.positions.reserve((segments + 1u) * 2u);
+                mesh.normals.reserve(mesh.positions.capacity());
+                for (std::uint32_t segment = 0u; segment <= segments; ++segment) {
+                    const float phi = phi_max * static_cast<float>(segment) / static_cast<float>(segments);
+                    const Vector3 normal{std::cos(phi), std::sin(phi), 0.0f};
+                    append_vertex(Vector3{radius_value * normal.x, radius_value * normal.y, z_min}, normal);
+                    append_vertex(Vector3{radius_value * normal.x, radius_value * normal.y, z_max}, normal);
+                }
+                mesh.indices.reserve(static_cast<std::size_t>(segments) * 6u);
+                for (std::uint32_t segment = 0u; segment < segments; ++segment) {
+                    const std::uint32_t current = segment * 2u;
+                    append_quad(current, current + 1u, current + 3u, current + 2u);
+                }
+                return mesh;
+            }
+            if (shape.entity.type != "trianglemesh") throw std::runtime_error(std::format("PBRT preview scene loader only supports trianglemesh, plymesh, sphere, disk, cylinder, bilinearmesh, loopsubdiv, and cylinder bezier curve shapes, got \"{}\"", shape.entity.type));
+            const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
+            const std::vector<float>& normals = required_float_values(shape.entity, "normal", "N", context);
+            const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
+            const std::vector<float>* uvs = optional_float_values(shape.entity, "point2", "uv");
+            if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" has invalid point3 P data", object_name));
+            if (normals.size() != positions.size()) throw std::runtime_error(std::format("PBRT preview shape \"{}\" normal count does not match position count", object_name));
+            if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" has invalid triangle index data", object_name));
+            if (uvs != nullptr && uvs->size() != positions.size() / 3u * 2u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" uv count does not match position count", object_name));
+
             const std::size_t vertex_count = positions.size() / 3u;
             mesh.positions.reserve(vertex_count);
             mesh.normals.reserve(vertex_count);
+            if (uvs != nullptr) mesh.uvs.reserve(vertex_count);
             for (std::size_t vertex_index = 0; vertex_index < vertex_count; ++vertex_index) {
                 const Vector3 point{positions.at(vertex_index * 3u), positions.at(vertex_index * 3u + 1u), positions.at(vertex_index * 3u + 2u)};
                 const Vector3 normal{normals.at(vertex_index * 3u), normals.at(vertex_index * 3u + 1u), normals.at(vertex_index * 3u + 2u)};
                 const Vector3 transformed_point = transform_point(shape.transform.start, point);
                 mesh.positions.push_back(transformed_point);
                 mesh.normals.push_back(transform_normal(shape.transform.start, normal));
+                if (uvs != nullptr) mesh.uvs.push_back(std::array<float, 2>{uvs->at(vertex_index * 2u), uvs->at(vertex_index * 2u + 1u)});
                 include_point(bounds, transformed_point);
             }
             mesh.indices.reserve(indices.size());
@@ -1565,17 +2600,43 @@ namespace spectra::scene {
             };
         }
 
+        [[nodiscard]] std::map<std::string, const Scene::ObjectDefinition*> object_definition_map(const Scene::ResolvedScene& scene) {
+            std::map<std::string, const Scene::ObjectDefinition*> definitions{};
+            for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
+                if (definition.name.empty()) throw std::runtime_error("PBRT preview object definition name must not be empty");
+                if (!definitions.emplace(definition.name, &definition).second) throw std::runtime_error(std::format("PBRT preview object definition \"{}\" is duplicated", definition.name));
+            }
+            return definitions;
+        }
+
         void append_meshes(const std::string_view object_source_prefix_value, const Scene::ResolvedScene& scene, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
             std::map<std::string, bool> material_used_by_area_light{};
-            for (std::size_t shape_index = 0; shape_index < scene.shapes.size(); ++shape_index) {
-                const Scene::Shape& shape = scene.shapes.at(shape_index);
+            std::size_t preview_shape_index = 0u;
+            const auto append_shape = [&](const Scene::Shape& shape) {
                 const bool is_area_light = shape.area_light.has_value();
                 const std::pair<std::map<std::string, bool>::iterator, bool> material_usage = material_used_by_area_light.emplace(shape.material_name, is_area_light);
                 if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(std::format("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
-                apply_area_light_material(shape, shape_index, document, material_indices);
-                Scene::Mesh mesh = make_mesh(object_source_prefix_value, shape, shape_index, material_indices, bounds);
-                if (shape.area_light.has_value()) document.lights.push_back(make_area_light_preview(shape, mesh, shape_index));
+                apply_area_light_material(shape, preview_shape_index, document, material_indices);
+                apply_medium_boundary_material(scene, shape, preview_shape_index, document, material_indices);
+                Scene::Mesh mesh = make_mesh(object_source_prefix_value, shape, preview_shape_index, material_indices, bounds);
+                if (shape.area_light.has_value()) document.lights.push_back(make_area_light_preview(shape, mesh, preview_shape_index));
                 document.meshes.push_back(std::move(mesh));
+                ++preview_shape_index;
+            };
+            for (const Scene::Shape& shape : scene.shapes) append_shape(shape);
+            const std::map<std::string, const Scene::ObjectDefinition*> definitions = object_definition_map(scene);
+            for (const Scene::ObjectInstance& instance : scene.object_instances) {
+                const std::map<std::string, const Scene::ObjectDefinition*>::const_iterator definition_iter = definitions.find(instance.definition_name);
+                if (definition_iter == definitions.end()) throw std::runtime_error(std::format("PBRT preview object instance \"{}\" references unknown definition \"{}\"", instance.name, instance.definition_name));
+                require_static_transform(instance.transform, std::format("PBRT preview object instance \"{}\"", instance.name));
+                const Scene::ObjectDefinition& definition = *definition_iter->second;
+                for (const Scene::Shape& shape : definition.shapes) {
+                    if (shape.area_light.has_value()) throw std::runtime_error(std::format("PBRT preview object definition \"{}\" contains an instanced area light, which is not supported", definition.name));
+                    Scene::Shape instanced_shape = shape;
+                    instanced_shape.name         = std::format("{}:{}", instance.name, shape.name);
+                    instanced_shape.transform    = multiply_transform_set(instance.transform, shape.transform);
+                    append_shape(instanced_shape);
+                }
             }
             if (document.meshes.empty()) throw std::runtime_error("PBRT preview scene loader did not find any trianglemesh shapes");
         }
@@ -1600,11 +2661,6 @@ namespace spectra::scene {
                 .far_plane           = far_plane,
                 .source             = scene.render_settings.camera.source,
             };
-        }
-
-        void reject_unsupported_scene_content(const Scene::ResolvedScene& scene) {
-            if (!scene.media.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT media");
-            if (!scene.object_definitions.empty() || !scene.object_instances.empty()) throw std::runtime_error("PBRT preview scene loader only supports top-level trianglemesh shapes");
         }
 
         void append_pbrt_preview_lights(const Scene::ResolvedScene& scene, Scene::Document& document) {
@@ -1662,13 +2718,45 @@ namespace spectra::scene {
                         .cone_angle_degrees = optional_one_float_value(light.entity, "coneangle", 30.0f),
                         .source             = light.entity.source,
                     });
+                    continue;
                 }
+                if (light.entity.type == "projection") {
+                    const std::string filename = required_string_value(light.entity, "filename", context);
+                    const Vector3 image_color = read_preview_image_average_color(resolve_entity_asset_path(light.entity, filename, context), context);
+                    const Vector3 world_light_forward = normalize(transform_vector(light.transform.start, Vector3{0.0f, 0.0f, 1.0f}), context);
+                    document.lights.push_back(Scene::PreviewLight{
+                        .name               = light.name,
+                        .kind               = Scene::PreviewLightKind::Spot,
+                        .transform          = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward, std::format("{} projection rotation", context))},
+                        .color              = image_color,
+                        .intensity          = optional_one_float_value(light.entity, "scale", 1.0f),
+                        .cone_angle_degrees = optional_one_float_value(light.entity, "fov", 90.0f),
+                        .source             = light.entity.source,
+                    });
+                    continue;
+                }
+                if (light.entity.type == "goniometric") {
+                    Vector3 image_color{1.0f, 1.0f, 1.0f};
+                    const std::string filename = optional_string_value(light.entity, "filename", "", context);
+                    if (!filename.empty()) image_color = read_preview_image_average_color(resolve_entity_asset_path(light.entity, filename, context), context);
+                    const Vector3 intensity_color = optional_rgb_value(light.entity, "I", Vector3{1.0f, 1.0f, 1.0f});
+                    const Vector3 color = multiply_color(intensity_color, image_color);
+                    document.lights.push_back(Scene::PreviewLight{
+                        .name      = light.name,
+                        .kind      = Scene::PreviewLightKind::Point,
+                        .transform = Transform{.position = transform_position(light.transform.start)},
+                        .color     = color,
+                        .intensity = optional_one_float_value(light.entity, "scale", 1.0f),
+                        .source    = light.entity.source,
+                    });
+                    continue;
+                }
+                throw std::runtime_error(std::format("{} uses unsupported light type \"{}\"", context, light.entity.type));
             }
         }
     } // namespace
 
     Scene::Document make_preview_document_from_pbrt(const Scene::ResolvedScene& scene) {
-        reject_unsupported_scene_content(scene);
         if (scene.revision.value == 0u) throw std::runtime_error("PBRT preview scene revision must not be zero");
         if (scene.name.empty()) throw std::runtime_error("PBRT preview scene name must not be empty");
         if (scene.title.empty()) throw std::runtime_error("PBRT preview scene title must not be empty");

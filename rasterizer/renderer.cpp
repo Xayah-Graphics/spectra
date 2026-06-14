@@ -2388,6 +2388,11 @@ namespace spectra::rasterizer {
         this->scene.observed_camera_revision = snapshot.revision;
     }
 
+    void Renderer::commit_viewport_camera_state(scene::Scene::CameraState state) {
+        const scene::Scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), std::move(state));
+        this->apply_viewport_camera_state(snapshot);
+    }
+
     void Renderer::reset_viewport_camera_from_scene() {
         const scene::Scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), this->initial_camera_state_from_scene());
         this->apply_viewport_camera_state(snapshot);
@@ -2535,30 +2540,16 @@ namespace spectra::rasterizer {
         this->commit_viewport_camera();
     }
 
-    void Renderer::orbit_viewport_camera(const ViewportDragDelta delta) {
-        constexpr float orbit_radians_per_pixel = 0.006f;
-        this->viewport.camera_yaw -= delta.x * orbit_radians_per_pixel;
-        this->viewport.camera_pitch = clamp_viewport_pitch(this->viewport.camera_pitch + delta.y * orbit_radians_per_pixel);
-        this->commit_viewport_camera();
+    void Renderer::orbit_viewport_camera(const scene::Scene::ViewportCameraDelta delta) {
+        this->commit_viewport_camera_state(scene::Scene::orbit_viewport_camera(this->current_viewport_camera_state(), delta));
     }
 
-    void Renderer::pan_viewport_camera(const ViewportDragDelta delta, const float viewport_height) {
-        if (!std::isfinite(viewport_height) || viewport_height <= 0.0f) throw std::runtime_error("Rasterizer viewport pan requires a positive viewport height");
-        const spectra::rasterizer::math::CameraBasis orbit_basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(orbit_basis.eye, orbit_basis.target, to_render_vector(this->viewport.camera_up));
-        const float pan_scale = spectra::rasterizer::math::perspective_pan_scale(this->viewport.camera_distance, this->viewport.camera_vertical_fov_degrees, viewport_height);
-        spectra::rasterizer::math::Vector3 target = to_render_vector(this->viewport.camera_target);
-        target += basis.side * (-delta.x * pan_scale);
-        target += basis.up * (delta.y * pan_scale);
-        this->viewport.camera_target = to_scene_vector(target);
-        this->commit_viewport_camera();
+    void Renderer::pan_viewport_camera(const scene::Scene::ViewportCameraDelta delta, const scene::Scene::ViewportCameraSize viewport) {
+        this->commit_viewport_camera_state(scene::Scene::pan_viewport_camera(this->current_viewport_camera_state(), delta, viewport));
     }
 
     void Renderer::zoom_viewport_camera(const float steps) {
-        if (!std::isfinite(steps)) throw std::runtime_error("Rasterizer viewport zoom input must be finite");
-        const float zoom_factor = std::pow(0.88f, steps);
-        this->viewport.camera_distance = std::clamp(this->viewport.camera_distance * zoom_factor, 0.02f, 1000000.0f);
-        this->commit_viewport_camera();
+        this->commit_viewport_camera_state(scene::Scene::zoom_viewport_camera(this->current_viewport_camera_state(), steps));
     }
 
     Renderer::CameraUniformData Renderer::make_viewport_camera_uniform() const {
@@ -3059,9 +3050,9 @@ namespace spectra::rasterizer {
         ImGuiIO& io = ImGui::GetIO();
         if (io.MouseWheel != 0.0f) this->zoom_viewport_camera(io.MouseWheel);
 
-        const ViewportDragDelta delta{
-            .x = io.MouseDelta.x,
-            .y = io.MouseDelta.y,
+        const scene::Scene::ViewportCameraDelta delta{
+            .x_pixels = io.MouseDelta.x,
+            .y_pixels = io.MouseDelta.y,
         };
         const ImVec2 mouse_position = io.MousePos;
         bool over_viewport_control = false;
@@ -3078,14 +3069,17 @@ namespace spectra::rasterizer {
             const ImVec2 gizmo_max{gizmo_origin.x + 78.0f, gizmo_origin.y + 78.0f};
             over_viewport_control = mouse_position.x >= gizmo_origin.x && mouse_position.x <= gizmo_max.x && mouse_position.y >= gizmo_origin.y && mouse_position.y <= gizmo_max.y;
         }
-        const float viewport_height = std::max(1.0f, image_size.y);
+        const scene::Scene::ViewportCameraSize viewport_size{
+            .width = std::max(1.0f, image_size.x),
+            .height = std::max(1.0f, image_size.y),
+        };
         if (io.KeyAlt) {
             if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) this->orbit_viewport_camera(delta);
-            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) this->pan_viewport_camera(delta, viewport_height);
-            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) this->zoom_viewport_camera(-delta.y * 0.035f);
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) this->pan_viewport_camera(delta, viewport_size);
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) this->zoom_viewport_camera(scene::Scene::viewport_drag_zoom_steps(delta));
         } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-            if (io.KeyShift) this->pan_viewport_camera(delta, viewport_height);
-            else if (io.KeyCtrl) this->zoom_viewport_camera(-delta.y * 0.035f);
+            if (io.KeyShift) this->pan_viewport_camera(delta, viewport_size);
+            else if (io.KeyCtrl) this->zoom_viewport_camera(scene::Scene::viewport_drag_zoom_steps(delta));
             else this->orbit_viewport_camera(delta);
         }
 

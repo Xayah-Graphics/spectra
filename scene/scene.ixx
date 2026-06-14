@@ -225,6 +225,16 @@ namespace spectra::scene {
             float vertical_fov_degrees{45.0f};
         };
 
+        struct ViewportCameraDelta {
+            float x_pixels{};
+            float y_pixels{};
+        };
+
+        struct ViewportCameraSize {
+            float width{};
+            float height{};
+        };
+
         struct CameraSnapshot {
             Revision revision{};
             CameraState state{};
@@ -254,6 +264,7 @@ namespace spectra::scene {
             std::vector<Vector3> positions{};
             std::vector<Vector3> normals{};
             std::vector<std::uint32_t> indices{};
+            std::vector<std::array<float, 2>> uvs{};
             std::string material_name{};
             Transform transform{};
             bool dynamic{false};
@@ -423,6 +434,10 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
+        [[nodiscard]] static float viewport_drag_zoom_steps(ViewportCameraDelta delta);
+        [[nodiscard]] static CameraState orbit_viewport_camera(CameraState state, ViewportCameraDelta delta);
+        [[nodiscard]] static CameraState pan_viewport_camera(CameraState state, ViewportCameraDelta delta, ViewportCameraSize viewport);
+        [[nodiscard]] static CameraState zoom_viewport_camera(CameraState state, float steps);
 
     private:
         [[nodiscard]] const Document& preview_document() const;

@@ -15,6 +15,25 @@ import xayah.projects.sparkles.visualization;
 
 namespace {
     inline constexpr std::string_view CornellBoxSceneId = "cornell-box/cornell-box.pbrt";
+    inline constexpr std::array<std::string_view, 13> ImplementedExampleSceneIds{
+        "example-00-baseline-cornell.pbrt",
+        "example-01-analytic-shapes.pbrt",
+        "example-02-plymesh.pbrt",
+        "example-03-object-instances.pbrt",
+        "example-04-patches-subdivision.pbrt",
+        "example-05-curves-hair.pbrt",
+        "example-06-material-basic-bsdfs.pbrt",
+        "example-07-material-advanced-bsdfs.pbrt",
+        "example-08-texture-basic.pbrt",
+        "example-09-texture-procedural.pbrt",
+        "example-10-lights.pbrt",
+        "example-11-medium-basic.pbrt",
+        "example-12-medium-cloud-nanovdb.pbrt",
+    };
+
+    struct CliOptions {
+        std::string scene_id{CornellBoxSceneId};
+    };
 
     static_assert(spectra::pathtracer::PathtracerHost<spectra::Spectra>);
     static_assert(spectra::rasterizer::Host<spectra::Spectra>);
@@ -196,10 +215,56 @@ namespace {
         registry.register_source<xayah::projects::pyro::Visualization>();
     }
 
-    [[nodiscard]] spectra::rasterizer::VisualizationRegistry make_visualization_registry(std::shared_ptr<spectra::scene::Scene> scene) {
+    [[nodiscard]] std::filesystem::path scene_id_stem(std::string_view scene_id) {
+        std::filesystem::path filename = std::filesystem::path{std::string{scene_id}}.filename();
+        if (filename.extension() == ".pbrt") filename = filename.stem();
+        return filename;
+    }
+
+    [[nodiscard]] std::string static_scene_title(std::string_view scene_id) {
+        std::filesystem::path stem = scene_id_stem(scene_id);
+        if (stem.empty()) throw std::runtime_error("Static visualization scene id has an empty filename stem");
+        return stem.string();
+    }
+
+    [[nodiscard]] bool same_static_scene(std::string_view left, std::string_view right) {
+        if (left == right) return true;
+        return scene_id_stem(left) == scene_id_stem(right);
+    }
+
+    void register_example_visualizations(spectra::rasterizer::VisualizationRegistry& registry, const std::string& selected_scene_id) {
+        for (const std::string_view example_scene_id : ImplementedExampleSceneIds) {
+            if (same_static_scene(selected_scene_id, example_scene_id)) continue;
+            const std::string id{example_scene_id};
+            registry.register_static_visualization(id, static_scene_title(id), [id] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(id)); });
+        }
+    }
+
+    [[nodiscard]] CliOptions parse_cli(const int argc, char** argv) {
+        CliOptions options{};
+        for (int index = 1; index < argc; ++index) {
+            const std::string_view argument{argv[index]};
+            if (argument == "--scene") {
+                ++index;
+                if (index >= argc) throw std::runtime_error("usage: spectra_gui [--scene <scene-id>]");
+                options.scene_id = argv[index];
+                if (options.scene_id.empty()) throw std::runtime_error("spectra_gui --scene requires a non-empty scene id");
+            } else if (argument == "--help" || argument == "-h") {
+                throw std::runtime_error("usage: spectra_gui [--scene <scene-id>]");
+            } else {
+                throw std::runtime_error("usage: spectra_gui [--scene <scene-id>]");
+            }
+        }
+        return options;
+    }
+
+    [[nodiscard]] spectra::rasterizer::VisualizationRegistry make_visualization_registry(std::shared_ptr<spectra::scene::Scene> scene, std::string scene_id) {
         if (scene == nullptr) throw std::runtime_error("Visualization registry requires a preview source scene");
         spectra::rasterizer::VisualizationRegistry registry{};
-        registry.register_static_visualization(std::string{CornellBoxSceneId}, "Cornell Box", [scene = std::move(scene)] { return scene; });
+        const std::string title = scene->info().title;
+        registry.register_static_visualization(std::move(scene_id), title, [scene = std::move(scene)] { return scene; });
+        const std::string selected_scene_id = registry.entry(0u).id;
+        register_example_visualizations(registry, selected_scene_id);
         register_project_visualizations(registry);
         return registry;
     }
@@ -212,12 +277,11 @@ namespace {
     }
 } // namespace
 
-int main(const int argc, char**) {
+int main(const int argc, char** argv) {
     try {
-        if (argc != 1) throw std::runtime_error("usage: spectra_gui");
-
-        std::shared_ptr<spectra::scene::Scene> scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(CornellBoxSceneId));
-        spectra::rasterizer::VisualizationRegistry visualizations = make_visualization_registry(scene);
+        const CliOptions options = parse_cli(argc, argv);
+        std::shared_ptr<spectra::scene::Scene> scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(options.scene_id));
+        spectra::rasterizer::VisualizationRegistry visualizations = make_visualization_registry(scene, options.scene_id);
         std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::Scene::CameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};

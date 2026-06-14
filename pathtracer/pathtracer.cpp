@@ -165,7 +165,6 @@ namespace spectra::pathtracer {
         [[nodiscard]] int sampler_sample_count() const;
         [[nodiscard]] int target_sample_count() const;
         [[nodiscard]] float current_exposure() const;
-        [[nodiscard]] float camera_initial_move_scale() const;
         [[nodiscard]] spectra::Bounds3f camera_initial_focus_bounds() const;
         [[nodiscard]] std::array<int, 2> film_resolution() const;
         [[nodiscard]] spectra::Transform camera_from_world_transform() const;
@@ -192,7 +191,6 @@ namespace spectra::pathtracer {
         spectra::Transform camera_from_world{};
         vk::Format display_format{vk::Format::eR32G32B32A32Sfloat};
         float exposure{1.0f};
-        float initial_move_scale{1.0f};
         spectra::Bounds3f initial_focus_bounds{};
         int sample_index{0};
         int max_samples{0};
@@ -416,7 +414,6 @@ namespace {
         pathtracer.render_from_camera   = spectra::Transform{};
         pathtracer.camera_from_render   = spectra::Transform{};
         pathtracer.camera_from_world    = spectra::Transform{};
-        pathtracer.initial_move_scale   = 1.0f;
         pathtracer.initial_focus_bounds = spectra::Bounds3f{};
         pathtracer.sample_index         = 0;
         pathtracer.max_samples          = 0;
@@ -465,8 +462,6 @@ namespace {
         spectra::GPUWait();
 
         const spectra::Bounds3f scene_bounds = pathtracer.integrator->Bounds();
-        pathtracer.initial_move_scale        = spectra::Length(scene_bounds.Diagonal()) / 1000.0f;
-        if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra pathtracer scene bounds must define a positive interactive move scale");
         const spectra::Transform world_from_render = spectra::Inverse(pathtracer.render_from_camera * pathtracer.camera_from_world);
         spectra::Bounds3f world_bounds{};
         bool has_world_bounds = false;
@@ -537,12 +532,6 @@ namespace spectra::pathtracer {
 
     [[nodiscard]] float RenderPipeline::current_exposure() const {
         return this->exposure;
-    }
-
-    [[nodiscard]] float RenderPipeline::camera_initial_move_scale() const {
-        const RenderPipeline& pathtracer = *this;
-        if (!(pathtracer.initial_move_scale > 0.0f)) throw std::runtime_error("Spectra pathtracer camera initial move scale must be positive");
-        return pathtracer.initial_move_scale;
     }
 
     [[nodiscard]] spectra::Bounds3f RenderPipeline::camera_initial_focus_bounds() const {
@@ -792,17 +781,6 @@ namespace {
         return eye + forward * focus_distance;
     }
 
-    [[nodiscard]] std::array<float, 2> interactive_camera_view_dimensions(const spectra::Point3f& eye, const spectra::Point3f& center, const float fov_degrees, const std::array<float, 2>& viewport_size) {
-        if (!std::isfinite(fov_degrees) || !(fov_degrees > 0.0f) || !(fov_degrees < 180.0f)) throw std::runtime_error("Camera fov must be finite and inside (0, 180)");
-        if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
-        constexpr float radians_per_degree = 0.017453292519943295769f;
-        const float distance               = finite_length(eye - center, "Camera view distance is invalid");
-        const float half_height            = distance * std::tan(fov_degrees * radians_per_degree * 0.5f);
-        const float height                 = half_height * 2.0f;
-        const float width                  = height * std::max(viewport_size[0] / viewport_size[1], 0.001f);
-        if (!std::isfinite(width) || !std::isfinite(height) || !(width > 0.0f) || !(height > 0.0f)) throw std::runtime_error("Camera view dimensions are invalid");
-        return {width, height};
-    }
 } // namespace
 
 namespace spectra::pathtracer {
@@ -866,74 +844,6 @@ namespace spectra::pathtracer {
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
 
-    bool interactive_camera_pan(InteractiveCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
-        if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
-        const InteractiveCameraFrame frame   = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up);
-        const std::array<float, 2> view_size = interactive_camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
-        const spectra::Vector3f offset       = frame.right * (-displacement[0] * view_size[0]) + frame.up * (displacement[1] * view_size[1]);
-        pose.eye += offset;
-        pose.center += offset;
-        return true;
-    }
-
-    bool interactive_camera_dolly(InteractiveCameraPose& pose, const std::array<float, 2>& displacement) {
-        const float larger_displacement = std::abs(displacement[0]) > std::abs(displacement[1]) ? displacement[0] : -displacement[1];
-        if (larger_displacement == 0.0f) return false;
-        if (larger_displacement >= 0.99f) return false;
-        const spectra::Vector3f direction = pose.center - pose.eye;
-        if (!(finite_length(direction, "Camera dolly direction is invalid") > 1.0e-6f)) return false;
-        pose.eye += direction * larger_displacement;
-        return true;
-    }
-
-    bool interactive_camera_orbit(InteractiveCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
-        if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
-        constexpr float two_pi   = 6.2831853071795864769f;
-        constexpr float pole_pad = 1.0e-3f;
-        displacement[0] *= two_pi;
-        displacement[1] *= two_pi;
-
-        const spectra::Point3f origin   = invert ? pose.eye : pose.center;
-        const spectra::Point3f position = invert ? pose.center : pose.eye;
-        spectra::Vector3f center_to_eye = position - origin;
-        const float radius              = finite_length(center_to_eye, "Camera orbit radius is invalid");
-        if (!(radius > 1.0e-6f)) return false;
-        center_to_eye /= radius;
-
-        const spectra::Vector3f normalized_up = normalized_vector(pose.up, "Camera up vector is invalid");
-        const float cos_elevation             = spectra::Dot(center_to_eye, normalized_up);
-        spectra::Vector3f horizontal          = center_to_eye - normalized_up * cos_elevation;
-        const float sin_elevation             = finite_length(horizontal, "Camera orbit horizontal vector is invalid");
-        const float elevation                 = std::atan2(sin_elevation, cos_elevation);
-        if (sin_elevation < 1.0e-6f) {
-            const spectra::Vector3f reference = std::abs(normalized_up.x) < 0.9f ? spectra::Vector3f{1.0f, 0.0f, 0.0f} : spectra::Vector3f{0.0f, 0.0f, 1.0f};
-            horizontal                        = normalized_vector(reference - normalized_up * spectra::Dot(reference, normalized_up), "Camera orbit horizontal vector is invalid");
-        } else {
-            horizontal /= sin_elevation;
-        }
-
-        const float yaw_cos                 = std::cos(-displacement[0]);
-        const float yaw_sin                 = std::sin(-displacement[0]);
-        horizontal                          = horizontal * yaw_cos + spectra::Cross(normalized_up, horizontal) * yaw_sin;
-        const float new_elevation           = std::clamp(elevation - displacement[1], pole_pad, 3.14159265358979323846f - pole_pad);
-        const spectra::Vector3f new_offset  = (normalized_up * std::cos(new_elevation) + horizontal * std::sin(new_elevation)) * radius;
-        const spectra::Point3f new_position = origin + new_offset;
-        if (invert)
-            pose.center = new_position;
-        else
-            pose.eye = new_position;
-        return true;
-    }
-
-    bool interactive_camera_key_motion(InteractiveCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
-        if (delta[0] == 0.0f && delta[1] == 0.0f) return false;
-        if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
-        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up);
-        const spectra::Vector3f movement   = dolly ? frame.forward * (delta[0] * speed) : frame.right * (delta[0] * speed) + frame.up * (delta[1] * speed);
-        pose.eye += movement;
-        pose.center += movement;
-        return true;
-    }
 } // namespace spectra::pathtracer
 
 
@@ -1010,8 +920,7 @@ namespace spectra::pathtracer {
         void initialize_camera_state();
         void synchronize_camera_workspace();
         void apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot);
-        void commit_camera_state(const InteractiveCameraPose& pose);
-        void set_camera_speed(float speed);
+        void commit_camera_state(scene::Scene::CameraState state);
         void reset_camera();
         void clear_pathtracer_throughput_statistics();
         void update_frame_statistics(std::uint32_t frame_index, std::uint32_t image_index, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
@@ -1060,13 +969,10 @@ namespace spectra::pathtracer {
         struct {
             bool initialized{false};
             bool input_enabled{false};
-            float speed{1.0f};
             float fov_degrees{60.0f};
-            bool mouse_position_known{false};
             spectra::Point3f eye{0.0f, 0.0f, 0.0f};
             spectra::Point3f center{0.0f, 0.0f, 1.0f};
             spectra::Vector3f up{0.0f, 1.0f, 0.0f};
-            std::array<float, 2> mouse_position{0.0f, 0.0f};
             spectra::Transform moving_from_camera{};
             spectra::Transform camera_from_world{};
             scene::Scene::Revision observed_revision{};
@@ -1342,7 +1248,6 @@ namespace spectra::pathtracer {
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot rebuild Spectra pathtracer with a non-positive resolution");
         if (!force && this->render_resolution_sync.pathtracer_created && this->render_resolution_sync.active_resolution == resolution) return;
 
-        const std::optional<float> preserved_speed = this->camera.initialized ? std::optional<float>{this->camera.speed} : std::nullopt;
         const int preserved_samples             = preserve_target_samples && this->render_pipeline != nullptr ? this->render_pipeline->target_sample_count() : 0;
         const float preserved_exposure          = this->render_pipeline == nullptr ? 1.0f : this->render_pipeline->current_exposure();
         this->render_resolution_sync.rebuilding = true;
@@ -1356,7 +1261,6 @@ namespace spectra::pathtracer {
             if (preserved_samples > 0) this->render_pipeline->set_target_sample_count(preserved_samples);
             this->render_pipeline->set_exposure(preserved_exposure);
             this->initialize_camera_state();
-            if (preserved_speed.has_value()) this->camera.speed = *preserved_speed;
             this->clear_pathtracer_throughput_statistics();
             this->statistics.last_frame_rendered_sample = false;
             this->render_resolution_sync.rebuilding     = false;
@@ -1447,15 +1351,10 @@ namespace spectra::pathtracer {
     void PathtracerRenderer::Impl::initialize_camera_state() {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
-        const float initial_move_scale = this->render_pipeline->camera_initial_move_scale();
-        if (!std::isfinite(initial_move_scale) || !(initial_move_scale > 0.0f)) throw std::runtime_error("Initial camera move scale must be finite and positive");
         this->camera.camera_from_world = this->scene_camera_from_world;
         const InteractiveCameraPose pose = interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
         this->camera.input_enabled = false;
-        this->camera.speed = initial_move_scale * 60.0f;
         this->camera.fov_degrees = interactive_camera_fov_degrees(this->active_scene_info());
-        this->camera.mouse_position = {0.0f, 0.0f};
-        this->camera.mouse_position_known = false;
         this->camera_workspace->ensure_camera(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
         this->apply_camera_snapshot(this->camera_workspace->snapshot(this->active_scene_id()));
     }
@@ -1477,21 +1376,15 @@ namespace spectra::pathtracer {
         this->camera.center = pose.center;
         this->camera.up = pose.up;
         this->camera.fov_degrees = snapshot.state.vertical_fov_degrees;
-        this->camera.mouse_position_known = false;
         this->camera.input_enabled = false;
         this->camera.moving_from_camera = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, pose);
         this->camera.initialized = true;
         this->camera.observed_revision = snapshot.revision;
     }
 
-    void PathtracerRenderer::Impl::commit_camera_state(const InteractiveCameraPose& pose) {
-        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
+    void PathtracerRenderer::Impl::commit_camera_state(scene::Scene::CameraState state) {
+        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), std::move(state));
         this->camera.observed_revision = snapshot.revision;
-    }
-
-    void PathtracerRenderer::Impl::set_camera_speed(const float speed) {
-        if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
-        this->camera.speed = speed;
     }
 
     void PathtracerRenderer::Impl::reset_camera() {
@@ -1563,89 +1456,78 @@ namespace spectra::pathtracer {
         const ImVec2 mouse_position = io.MousePos;
         const bool in_viewport_rect = this->ui.viewport_known && mouse_position.x >= this->ui.viewport_position[0] && mouse_position.x < this->ui.viewport_position[0] + this->ui.viewport_size[0] && mouse_position.y >= this->ui.viewport_position[1] && mouse_position.y < this->ui.viewport_position[1] + this->ui.viewport_size[1];
         this->camera.input_enabled  = in_viewport_rect && (this->ui.viewport_hovered || this->ui.viewport_focused) && !io.WantTextInput;
-        if (!this->camera.input_enabled) {
-            this->camera.mouse_position_known = false;
-            return close_requested;
-        }
+        if (!this->camera.input_enabled) return close_requested;
         if (!this->camera.initialized) throw std::runtime_error("Cannot process camera input before camera state is initialized");
 
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
             this->reset_camera();
             return close_requested;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) this->set_camera_speed(this->camera.speed * 2.0f);
-        if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) this->set_camera_speed(this->camera.speed * 0.5f);
 
         const bool shift = io.KeyShift;
         const bool ctrl  = io.KeyCtrl;
         const bool alt   = io.KeyAlt;
-        InteractiveCameraPose pose{.eye = this->camera.eye, .center = this->camera.center, .up = this->camera.up};
+        scene::Scene::CameraState state{
+            .eye                = to_scene_vector(this->camera.eye),
+            .target             = to_scene_vector(this->camera.center),
+            .up                 = to_scene_vector(this->camera.up),
+            .vertical_fov_degrees = this->camera.fov_degrees,
+        };
         bool camera_changed = false;
-        if (!alt) {
-            if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid");
-            float key_motion_factor = io.DeltaTime;
-            if (shift) key_motion_factor *= 5.0f;
-            if (ctrl) key_motion_factor *= 0.1f;
-            if (key_motion_factor > 0.0f) {
-                if (ImGui::IsKeyDown(ImGuiKey_W)) camera_changed = interactive_camera_key_motion(pose, {key_motion_factor, 0.0f}, this->camera.speed, true) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_S)) camera_changed = interactive_camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->camera.speed, true) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) camera_changed = interactive_camera_key_motion(pose, {key_motion_factor, 0.0f}, this->camera.speed, false) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) camera_changed = interactive_camera_key_motion(pose, {-key_motion_factor, 0.0f}, this->camera.speed, false) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) camera_changed = interactive_camera_key_motion(pose, {0.0f, key_motion_factor}, this->camera.speed, false) || camera_changed;
-                if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) camera_changed = interactive_camera_key_motion(pose, {0.0f, -key_motion_factor}, this->camera.speed, false) || camera_changed;
-            }
-        }
 
         const std::array<float, 2> viewport_size = this->ui.viewport_size;
         if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
-        const std::array<float, 2> current_mouse_position{mouse_position.x, mouse_position.y};
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right, false)) {
-            this->camera.mouse_position       = current_mouse_position;
-            this->camera.mouse_position_known = true;
-        }
-
-        const bool left_dragging   = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f);
-        const bool middle_dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f);
-        const bool right_dragging  = ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f);
+        const scene::Scene::ViewportCameraSize scene_viewport_size{
+            .width = viewport_size[0],
+            .height = viewport_size[1],
+        };
+        const bool left_dragging   = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        const bool middle_dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
+        const bool right_dragging  = ImGui::IsMouseDragging(ImGuiMouseButton_Right);
         if (left_dragging || middle_dragging || right_dragging) {
-            if (!this->camera.mouse_position_known) {
-                this->camera.mouse_position       = current_mouse_position;
-                this->camera.mouse_position_known = true;
-            }
-            const std::array<float, 2> mouse_displacement{
-                (current_mouse_position[0] - this->camera.mouse_position[0]) / viewport_size[0],
-                (current_mouse_position[1] - this->camera.mouse_position[1]) / viewport_size[1],
+            const scene::Scene::ViewportCameraDelta delta{
+                .x_pixels = io.MouseDelta.x,
+                .y_pixels = io.MouseDelta.y,
             };
-            if (left_dragging) {
-                if ((ctrl && shift) || alt)
-                    camera_changed = interactive_camera_orbit(pose, {mouse_displacement[0], -mouse_displacement[1]}, true) || camera_changed;
-                else if (shift)
-                    camera_changed = interactive_camera_dolly(pose, mouse_displacement) || camera_changed;
-                else if (ctrl)
-                    camera_changed = interactive_camera_pan(pose, mouse_displacement, this->camera.fov_degrees, viewport_size) || camera_changed;
-                else
-                    camera_changed = interactive_camera_orbit(pose, mouse_displacement, false) || camera_changed;
-            } else if (middle_dragging) {
-                camera_changed = interactive_camera_pan(pose, mouse_displacement, this->camera.fov_degrees, viewport_size) || camera_changed;
-            } else if (right_dragging) {
-                camera_changed = interactive_camera_dolly(pose, mouse_displacement) || camera_changed;
+            if (delta.x_pixels != 0.0f || delta.y_pixels != 0.0f) {
+                if (alt) {
+                    if (left_dragging) {
+                        state = scene::Scene::orbit_viewport_camera(state, delta);
+                        camera_changed = true;
+                    } else if (middle_dragging) {
+                        state = scene::Scene::pan_viewport_camera(state, delta, scene_viewport_size);
+                        camera_changed = true;
+                    } else if (right_dragging) {
+                        state = scene::Scene::zoom_viewport_camera(state, scene::Scene::viewport_drag_zoom_steps(delta));
+                        camera_changed = true;
+                    }
+                } else if (middle_dragging) {
+                    if (shift) {
+                        state = scene::Scene::pan_viewport_camera(state, delta, scene_viewport_size);
+                        camera_changed = true;
+                    } else if (ctrl) {
+                        state = scene::Scene::zoom_viewport_camera(state, scene::Scene::viewport_drag_zoom_steps(delta));
+                        camera_changed = true;
+                    } else {
+                        state = scene::Scene::orbit_viewport_camera(state, delta);
+                        camera_changed = true;
+                    }
+                }
             }
-            this->camera.mouse_position = current_mouse_position;
         }
 
-        if (io.MouseWheel != 0.0f && !shift) {
-            constexpr float wheel_speed = 10.0f;
-            const float wheel_value     = io.MouseWheel * wheel_speed;
-            const float dolly_delta     = wheel_value * std::abs(wheel_value) / viewport_size[0];
-            camera_changed              = interactive_camera_dolly(pose, {dolly_delta, 0.0f}) || camera_changed;
+        if (io.MouseWheel != 0.0f) {
+            state = scene::Scene::zoom_viewport_camera(state, io.MouseWheel);
+            camera_changed = true;
         }
 
         if (camera_changed) {
+            const InteractiveCameraPose pose = interactive_camera_pose_from_scene_camera_state(state);
             this->camera.eye                = pose.eye;
             this->camera.center             = pose.center;
             this->camera.up                 = pose.up;
             this->camera.moving_from_camera = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, pose);
-            this->commit_camera_state(pose);
+            this->commit_camera_state(std::move(state));
             this->request_pathtracer_accumulation_reset();
         }
         return close_requested;
@@ -1746,16 +1628,6 @@ namespace spectra::pathtracer {
 
             draw_statistics_row("Path Tracer", pathtracer_status.state);
             draw_statistics_row("External Completion", pathtracer_status.uses_external_completion ? "Yes" : "No");
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Camera Speed");
-            ImGui::TableSetColumnIndex(1);
-            float speed            = this->camera.speed;
-            const float drag_speed = std::max(std::abs(speed) * 0.01f, 0.000001f);
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::DragFloat("##CameraSpeed", &speed, drag_speed, 0.0f, 0.0f, "%.6g")) this->set_camera_speed(speed);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera movement speed in world units per second. Changing this does not reset accumulation.");
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);

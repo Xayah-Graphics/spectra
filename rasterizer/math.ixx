@@ -133,8 +133,8 @@ namespace spectra::rasterizer::math {
         basis.target  = target;
         basis.forward = normalize(basis.target - basis.eye);
         const Vector3 normalized_up = normalize(up);
-        basis.side = normalize(cross(basis.forward, normalized_up));
-        basis.up   = cross(basis.side, basis.forward);
+        basis.side = normalize(cross(normalized_up, basis.forward));
+        basis.up   = cross(basis.forward, basis.side);
         return basis;
     }
 
@@ -243,13 +243,6 @@ namespace spectra::rasterizer::math {
         inverse_projection(3u, 2u) = -1.0f;
         inverse_projection(3u, 3u) = far_plane / (near_plane - far_plane) / depth_scale;
         return inverse_projection;
-    }
-
-    export [[nodiscard]] float perspective_pan_scale(const float distance, const float vertical_fov_degrees, const float viewport_height) {
-        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Rasterizer viewport camera distance must be positive");
-        if (!std::isfinite(viewport_height) || viewport_height <= 0.0f) throw std::runtime_error("Rasterizer viewport height must be positive");
-        if (!std::isfinite(vertical_fov_degrees) || vertical_fov_degrees <= 0.0f || vertical_fov_degrees >= 179.0f) throw std::runtime_error("Rasterizer camera vertical FOV must be in (0, 179)");
-        return 2.0f * distance * std::tan(vertical_fov_degrees * std::numbers::pi_v<float> / 360.0f) / viewport_height;
     }
 
     export [[nodiscard]] Vector3 transform_point(const Matrix4& matrix, const Vector3 point) {

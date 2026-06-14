@@ -184,11 +184,6 @@ namespace spectra::rasterizer {
             float height{};
         };
 
-        struct ViewportDragDelta {
-            float x{};
-            float y{};
-        };
-
         struct FrameSceneResources {
             GpuBuffer vertexBuffer{};
             GpuBuffer indexBuffer{};
@@ -306,12 +301,13 @@ namespace spectra::rasterizer {
         void synchronize_viewport_camera();
         void apply_viewport_camera_state(const scene::Scene::CameraSnapshot& snapshot);
         void commit_viewport_camera();
+        void commit_viewport_camera_state(scene::Scene::CameraState state);
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
         void frame_selected_objects();
         void set_viewport_axis_view(scene::Vector3 direction);
-        void orbit_viewport_camera(ViewportDragDelta delta);
-        void pan_viewport_camera(ViewportDragDelta delta, float viewport_height);
+        void orbit_viewport_camera(scene::Scene::ViewportCameraDelta delta);
+        void pan_viewport_camera(scene::Scene::ViewportCameraDelta delta, scene::Scene::ViewportCameraSize viewport);
         void zoom_viewport_camera(float steps);
         void handle_viewport_input(ViewportImageRect image_rect);
         void draw_viewport_overlays(ViewportImageRect image_rect);
