@@ -327,12 +327,162 @@ namespace {
         throw std::runtime_error("No matching Vulkan memory type for Spectra rasterizer");
     }
 
-    void draw_status_row(const char* label, const std::string_view value) {
+    bool draw_property_row(const char* label, const std::string_view value) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::TextDisabled("%s", label);
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(value.data(), value.data() + value.size());
+        return ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+    }
+
+    [[nodiscard]] std::string normalize_display_path(std::string value) {
+        for (char& character : value) {
+            if (character == '\\') character = '/';
+        }
+        return value;
+    }
+
+    [[nodiscard]] bool path_escapes_root(const std::filesystem::path& path) {
+        for (const std::filesystem::path& component : path) {
+            if (component == std::filesystem::path{".."}) return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::optional<std::filesystem::path> path_suffix_from_component(const std::filesystem::path& path, const std::string_view component_name) {
+        std::filesystem::path suffix{};
+        bool found = false;
+        for (const std::filesystem::path& component : path) {
+            if (!found && component.generic_string() == std::string{component_name}) found = true;
+            if (found) suffix /= component;
+        }
+        if (!found) return std::nullopt;
+        return suffix;
+    }
+
+    [[nodiscard]] std::string compact_filesystem_path(const std::string_view value) {
+        if (value.empty()) return {};
+        const std::filesystem::path path{std::string{value}};
+        if (!path.is_absolute()) return normalize_display_path(path.generic_string());
+        const std::filesystem::path relative = path.lexically_relative(std::filesystem::current_path());
+        if (!relative.empty() && !path_escapes_root(relative)) return normalize_display_path(relative.generic_string());
+        const std::optional<std::filesystem::path> scene_suffix = path_suffix_from_component(path, "scenes");
+        if (scene_suffix.has_value()) return normalize_display_path(scene_suffix->generic_string());
+        const std::filesystem::path filename = path.filename();
+        if (!filename.empty()) return normalize_display_path(filename.generic_string());
+        return normalize_display_path(path.generic_string());
+    }
+
+    [[nodiscard]] std::optional<std::string_view> pbrt_shape_token(const std::string_view value) {
+        constexpr std::string_view scheme = "pbrt://";
+        constexpr std::string_view marker = "#shape:";
+        if (!value.starts_with(scheme)) return std::nullopt;
+        const std::size_t marker_position = value.find(marker);
+        if (marker_position == std::string_view::npos) return std::nullopt;
+        const std::size_t shape_index_begin = marker_position + marker.size();
+        if (shape_index_begin >= value.size() || value[shape_index_begin] == '#') return std::nullopt;
+        const std::size_t token_begin = marker_position + 1u;
+        const std::size_t token_end = value.find('#', token_begin);
+        if (token_end == std::string_view::npos) return value.substr(token_begin);
+        return value.substr(token_begin, token_end - token_begin);
+    }
+
+    [[nodiscard]] std::string compact_object_identifier(const std::string_view value) {
+        constexpr std::string_view scheme = "pbrt://";
+        std::string text{value};
+        if (std::string_view{text.data(), text.size()}.starts_with(scheme)) text.erase(0u, scheme.size());
+        std::string fragment{};
+        const std::size_t fragment_position = text.find('#');
+        if (fragment_position != std::string::npos) {
+            fragment = text.substr(fragment_position);
+            text.erase(fragment_position);
+        }
+        const std::filesystem::path path{text};
+        if (path.is_absolute()) return compact_filesystem_path(text) + fragment;
+        return normalize_display_path(text + fragment);
+    }
+
+    [[nodiscard]] std::string format_float(const float value) {
+        return std::format("{:.6g}", value);
+    }
+
+    [[nodiscard]] std::string format_vector3(const spectra::scene::Vector3& value) {
+        return std::format("{:.6g}, {:.6g}, {:.6g}", value.x, value.y, value.z);
+    }
+
+    [[nodiscard]] std::string format_vector4(const spectra::scene::Vector4& value) {
+        return std::format("{:.6g}, {:.6g}, {:.6g}, {:.6g}", value.x, value.y, value.z, value.w);
+    }
+
+    [[nodiscard]] std::string format_quaternion(const spectra::scene::Quaternion& value) {
+        return std::format("{:.6g}, {:.6g}, {:.6g}, {:.6g}", value.x, value.y, value.z, value.w);
+    }
+
+    [[nodiscard]] std::string format_dimensions3(const std::array<std::uint32_t, 3>& value) {
+        return std::format("{} x {} x {}", value[0], value[1], value[2]);
+    }
+
+    [[nodiscard]] std::string format_source_location(const spectra::scene::Scene::SourceLocation& source) {
+        if (source.filename.empty()) return "<generated>";
+        return std::format("{}:{}:{}", source.filename, source.line, source.column);
+    }
+
+    [[nodiscard]] const char* preview_alpha_mode_name(const spectra::scene::Scene::PreviewAlphaMode alpha_mode) {
+        switch (alpha_mode) {
+        case spectra::scene::Scene::PreviewAlphaMode::Opaque: return "Opaque";
+        case spectra::scene::Scene::PreviewAlphaMode::Masked: return "Masked";
+        case spectra::scene::Scene::PreviewAlphaMode::Blend: return "Blend";
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer material alpha mode");
+    }
+
+    [[nodiscard]] const char* preview_light_kind_name(const spectra::scene::Scene::PreviewLightKind kind) {
+        switch (kind) {
+        case spectra::scene::Scene::PreviewLightKind::Directional: return "Directional";
+        case spectra::scene::Scene::PreviewLightKind::Point: return "Point";
+        case spectra::scene::Scene::PreviewLightKind::Spot: return "Spot";
+        case spectra::scene::Scene::PreviewLightKind::Area: return "Area";
+        case spectra::scene::Scene::PreviewLightKind::Environment: return "Environment";
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer preview light kind");
+    }
+
+    [[nodiscard]] const char* compact_preview_light_kind_name(const spectra::scene::Scene::PreviewLightKind kind) {
+        switch (kind) {
+        case spectra::scene::Scene::PreviewLightKind::Directional: return "directional-light";
+        case spectra::scene::Scene::PreviewLightKind::Point: return "point-light";
+        case spectra::scene::Scene::PreviewLightKind::Spot: return "spot-light";
+        case spectra::scene::Scene::PreviewLightKind::Area: return "area-light";
+        case spectra::scene::Scene::PreviewLightKind::Environment: return "environment-light";
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer preview light kind");
+    }
+
+    void draw_color_row(const char* label, const spectra::scene::Vector3& color) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("%s", label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::PushID(label);
+        ImGui::ColorButton("##color", ImVec4{color.x, color.y, color.z, 1.0f}, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2{18.0f, 18.0f});
+        ImGui::PopID();
+        ImGui::SameLine();
+        const std::string value = std::format("{:.6g}, {:.6g}, {:.6g}", color.x, color.y, color.z);
+        ImGui::TextUnformatted(value.c_str());
+    }
+
+    void draw_color_row(const char* label, const spectra::scene::Vector4& color) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("%s", label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::PushID(label);
+        ImGui::ColorButton("##color", ImVec4{color.x, color.y, color.z, color.w}, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop | ImGuiColorEditFlags_AlphaPreview, ImVec2{18.0f, 18.0f});
+        ImGui::PopID();
+        ImGui::SameLine();
+        const std::string value = format_vector4(color);
+        ImGui::TextUnformatted(value.c_str());
     }
 
     [[nodiscard]] const char* timeline_mode_text(const spectra::scene::Scene::TimelineMode mode) {
@@ -526,6 +676,7 @@ namespace spectra::rasterizer {
         this->selection.object_ids.clear();
         this->selection.objects_by_id.clear();
         this->selection.registry_valid = false;
+        this->ui.scene_ui_cache = SceneUiCache{};
         this->destroy_selection_resources();
         this->destroy_mesh_resources();
         this->destroy_point_cloud_resources();
@@ -1507,6 +1658,307 @@ namespace spectra::rasterizer {
         return &volumes.front();
     }
 
+    void Renderer::rebuild_scene_ui_cache_if_needed() {
+        const scene::Scene::Revision scene_revision = this->scene.workspace->revision();
+        if (this->ui.scene_ui_cache.valid && this->ui.scene_ui_cache.revision == scene_revision) return;
+
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
+        const scene::Scene::Timeline timeline = this->scene.workspace->timeline();
+        std::vector<SceneObjectRecord> objects{};
+        objects.reserve((document->camera.has_value() ? 1u : 0u) + document->lights.size() + document->meshes.size() + document->spheres.size() + document->point_clouds.size() + document->volumes.size());
+
+        if (document->camera.has_value()) {
+            if (document->camera->name.empty()) throw std::runtime_error("Rasterizer scene collection camera name must not be empty");
+            objects.push_back(SceneObjectRecord{
+                .key                         = SceneObjectKey{SceneObjectKind::Camera, document->camera->name},
+                .transform                   = document->camera->transform,
+                .source                      = document->camera->source,
+                .camera_target               = document->camera->target,
+                .camera_up                   = document->camera->up,
+                .camera_vertical_fov_degrees = document->camera->vertical_fov_degrees,
+                .camera_near_plane           = document->camera->near_plane,
+                .camera_far_plane            = document->camera->far_plane,
+            });
+        }
+
+        std::set<std::string_view> light_names{};
+        for (const scene::Scene::PreviewLight& light : document->lights) {
+            if (light.name.empty()) throw std::runtime_error("Rasterizer scene collection light name must not be empty");
+            if (!light_names.insert(std::string_view{light.name}).second) throw std::runtime_error(std::format("Rasterizer scene collection light \"{}\" is duplicated", light.name));
+            objects.push_back(SceneObjectRecord{
+                .key                      = SceneObjectKey{SceneObjectKind::Light, light.name},
+                .transform                = light.transform,
+                .source                   = light.source,
+                .light_kind               = light.kind,
+                .light_color              = light.color,
+                .light_intensity          = light.intensity,
+                .light_cone_angle_degrees = light.cone_angle_degrees,
+            });
+        }
+
+        const auto append_resolved_records = []<typename Item, typename MakeRecord>(const std::span<const Item> document_items, const std::span<const Item> frame_items, const std::string_view kind, MakeRecord make_record, std::vector<SceneObjectRecord>& records) {
+            const auto validate_unique_names = []<typename NamedItem>(const std::span<const NamedItem> items, const std::string_view layer, const std::string_view item_kind) {
+                std::set<std::string_view> names{};
+                for (const NamedItem& item : items) {
+                    if (item.name.empty()) throw std::runtime_error(std::format("Rasterizer scene collection {} {} name must not be empty", layer, item_kind));
+                    if (!names.insert(std::string_view{item.name}).second) throw std::runtime_error(std::format("Rasterizer scene collection {} {} \"{}\" is duplicated", layer, item_kind, item.name));
+                }
+            };
+
+            validate_unique_names(document_items, "document", kind);
+            validate_unique_names(frame_items, "frame", kind);
+
+            std::map<std::string_view, std::size_t> frame_indices{};
+            for (std::size_t index = 0; index < frame_items.size(); ++index) frame_indices.emplace(std::string_view{frame_items[index].name}, index);
+
+            std::set<std::string_view> document_names{};
+            for (const Item& document_item : document_items) {
+                document_names.insert(std::string_view{document_item.name});
+                const std::map<std::string_view, std::size_t>::const_iterator frame_iter = frame_indices.find(std::string_view{document_item.name});
+                if (frame_iter != frame_indices.end()) records.push_back(make_record(frame_items[frame_iter->second]));
+                else records.push_back(make_record(document_item));
+            }
+
+            for (const Item& frame_item : frame_items) {
+                if (document_names.contains(std::string_view{frame_item.name})) continue;
+                records.push_back(make_record(frame_item));
+            }
+        };
+
+        std::span<const scene::Scene::Mesh> frame_meshes{};
+        std::span<const scene::Scene::Sphere> frame_spheres{};
+        std::span<const scene::Scene::PointCloud> frame_point_clouds{};
+        std::span<const scene::Scene::VolumeGrid> frame_volumes{};
+        if (timeline.current_frame.has_value()) {
+            frame_meshes = std::span<const scene::Scene::Mesh>{timeline.current_frame->meshes};
+            frame_spheres = std::span<const scene::Scene::Sphere>{timeline.current_frame->spheres};
+            frame_point_clouds = std::span<const scene::Scene::PointCloud>{timeline.current_frame->point_clouds};
+            frame_volumes = std::span<const scene::Scene::VolumeGrid>{timeline.current_frame->volumes};
+        }
+
+        const auto make_mesh_record = [](const scene::Scene::Mesh& mesh) {
+            return SceneObjectRecord{
+                .key           = SceneObjectKey{SceneObjectKind::Mesh, mesh.name},
+                .material_name = mesh.material_name,
+                .transform     = mesh.transform,
+                .source        = mesh.source,
+                .dynamic       = mesh.dynamic,
+                .vertex_count  = mesh.positions.size(),
+                .index_count   = mesh.indices.size(),
+            };
+        };
+        const auto make_sphere_record = [](const scene::Scene::Sphere& sphere) {
+            return SceneObjectRecord{
+                .key           = SceneObjectKey{SceneObjectKind::Sphere, sphere.name},
+                .material_name = sphere.material_name,
+                .transform     = sphere.transform,
+                .source        = sphere.source,
+                .dynamic       = sphere.dynamic,
+                .sphere_radius = sphere.radius,
+            };
+        };
+        const auto make_point_cloud_record = [](const scene::Scene::PointCloud& point_cloud) {
+            if (point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer scene collection point cloud \"{}\" radius count does not match point count", point_cloud.name));
+            float minimum_radius{};
+            float maximum_radius{};
+            if (!point_cloud.radii.empty()) {
+                const auto radius_range = std::ranges::minmax_element(point_cloud.radii);
+                minimum_radius = *radius_range.min;
+                maximum_radius = *radius_range.max;
+            }
+            return SceneObjectRecord{
+                .key            = SceneObjectKey{SceneObjectKind::PointCloud, point_cloud.name},
+                .material_name  = point_cloud.material_name,
+                .transform      = point_cloud.transform,
+                .source         = point_cloud.source,
+                .dynamic        = point_cloud.dynamic,
+                .point_count    = point_cloud.positions.size(),
+                .minimum_radius = minimum_radius,
+                .maximum_radius = maximum_radius,
+            };
+        };
+        const auto make_volume_record = [](const scene::Scene::VolumeGrid& volume) {
+            SceneObjectRecord record{
+                .key           = SceneObjectKey{SceneObjectKind::VolumeGrid, volume.name},
+                .material_name = volume.material_name,
+                .source        = volume.source,
+                .dynamic       = volume.dynamic,
+                .dimensions    = volume.dimensions,
+                .origin        = volume.origin,
+                .voxel_size    = volume.voxel_size,
+            };
+            record.volume_channels.reserve(volume.channels.size());
+            for (const scene::Scene::VolumeChannel& channel : volume.channels) {
+                if (channel.name.empty()) throw std::runtime_error(std::format("Rasterizer scene collection volume \"{}\" channel name must not be empty", volume.name));
+                record.volume_channels.push_back(SceneVolumeChannelSummary{
+                    .name        = channel.name,
+                    .dimensions  = channel.dimensions,
+                    .value_count = channel.values.size(),
+                });
+            }
+            return record;
+        };
+
+        append_resolved_records(std::span<const scene::Scene::Mesh>{document->meshes}, frame_meshes, "mesh", make_mesh_record, objects);
+        append_resolved_records(std::span<const scene::Scene::Sphere>{document->spheres}, frame_spheres, "sphere", make_sphere_record, objects);
+        append_resolved_records(std::span<const scene::Scene::PointCloud>{document->point_clouds}, frame_point_clouds, "point cloud", make_point_cloud_record, objects);
+        append_resolved_records(std::span<const scene::Scene::VolumeGrid>{document->volumes}, frame_volumes, "volume", make_volume_record, objects);
+
+        this->ui.scene_ui_cache.revision = scene_revision;
+        this->ui.scene_ui_cache.objects = std::move(objects);
+        this->ui.scene_ui_cache.valid = true;
+        this->prune_scene_selection_to_cache();
+    }
+
+    void Renderer::prune_scene_selection_to_cache() {
+        for (std::set<SceneObjectKey>::iterator iter = this->selection.selected_scene_objects.begin(); iter != this->selection.selected_scene_objects.end();) {
+            if (this->scene_object_record(*iter) != nullptr) {
+                ++iter;
+                continue;
+            }
+            iter = this->selection.selected_scene_objects.erase(iter);
+        }
+        if (this->selection.active_scene_object.has_value() && this->scene_object_record(*this->selection.active_scene_object) == nullptr) this->selection.active_scene_object.reset();
+        if (this->selection.active_scene_object.has_value() && !this->selection.selected_scene_objects.contains(*this->selection.active_scene_object)) this->selection.active_scene_object.reset();
+        if (!this->selection.active_scene_object.has_value() && !this->selection.selected_scene_objects.empty()) this->selection.active_scene_object = *this->selection.selected_scene_objects.begin();
+        this->sync_renderable_selection_from_scene_selection();
+    }
+
+    const Renderer::SceneObjectRecord* Renderer::scene_object_record(const SceneObjectKey& key) const {
+        for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
+            if (object.key == key) return &object;
+        }
+        return nullptr;
+    }
+
+    std::optional<Renderer::ObjectKey> Renderer::renderable_key_for_scene_object(const SceneObjectKey& key) const {
+        switch (key.kind) {
+        case SceneObjectKind::Mesh:
+        case SceneObjectKind::Sphere: return ObjectKey{SelectableObjectKind::Mesh, key.name};
+        case SceneObjectKind::PointCloud: return ObjectKey{SelectableObjectKind::PointCloud, key.name};
+        case SceneObjectKind::VolumeGrid: return ObjectKey{SelectableObjectKind::VolumeGrid, key.name};
+        case SceneObjectKind::Camera:
+        case SceneObjectKind::Light: return std::nullopt;
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer scene object kind");
+    }
+
+    Renderer::SceneObjectKey Renderer::scene_object_key_for_renderable(const ObjectKey& key) const {
+        switch (key.kind) {
+        case SelectableObjectKind::Mesh:
+            for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
+                if (object.key.kind == SceneObjectKind::Sphere && object.key.name == key.name) return object.key;
+            }
+            return SceneObjectKey{SceneObjectKind::Mesh, key.name};
+        case SelectableObjectKind::PointCloud: return SceneObjectKey{SceneObjectKind::PointCloud, key.name};
+        case SelectableObjectKind::VolumeGrid: return SceneObjectKey{SceneObjectKind::VolumeGrid, key.name};
+        }
+        throw std::runtime_error("Unknown Spectra rasterizer selectable object kind");
+    }
+
+    void Renderer::sync_renderable_selection_from_scene_selection() {
+        this->selection.selected_objects.clear();
+        this->selection.active_object.reset();
+        for (const SceneObjectKey& key : this->selection.selected_scene_objects) {
+            const std::optional<ObjectKey> renderable_key = this->renderable_key_for_scene_object(key);
+            if (!renderable_key.has_value() || !this->selection.object_ids.contains(*renderable_key)) continue;
+            this->selection.selected_objects.insert(*renderable_key);
+        }
+        if (this->selection.active_scene_object.has_value()) {
+            const std::optional<ObjectKey> renderable_key = this->renderable_key_for_scene_object(*this->selection.active_scene_object);
+            if (renderable_key.has_value() && this->selection.object_ids.contains(*renderable_key)) this->selection.active_object = *renderable_key;
+        }
+        if (!this->selection.active_object.has_value() && !this->selection.selected_objects.empty()) this->selection.active_object = *this->selection.selected_objects.begin();
+    }
+
+    void Renderer::select_scene_object(const SceneObjectKey& key, const bool additive) {
+        if (this->scene_object_record(key) == nullptr) throw std::runtime_error(std::format("Spectra rasterizer scene object \"{}\" is not available for selection", key.name));
+        if (additive) {
+            if (this->selection.selected_scene_objects.contains(key)) {
+                this->selection.selected_scene_objects.erase(key);
+                if (this->selection.active_scene_object.has_value() && *this->selection.active_scene_object == key) this->selection.active_scene_object.reset();
+            } else {
+                this->selection.selected_scene_objects.insert(key);
+                this->selection.active_scene_object = key;
+            }
+        } else {
+            this->selection.selected_scene_objects.clear();
+            this->selection.selected_scene_objects.insert(key);
+            this->selection.active_scene_object = key;
+        }
+        if (!this->selection.active_scene_object.has_value() && !this->selection.selected_scene_objects.empty()) this->selection.active_scene_object = *this->selection.selected_scene_objects.begin();
+        this->sync_renderable_selection_from_scene_selection();
+    }
+
+    bool Renderer::scene_object_selected(const SceneObjectKey& key) const {
+        return this->selection.selected_scene_objects.contains(key);
+    }
+
+    bool Renderer::scene_object_active(const SceneObjectKey& key) const {
+        return this->selection.active_scene_object.has_value() && *this->selection.active_scene_object == key;
+    }
+
+    std::string Renderer::raw_scene_object_name(const SceneObjectRecord& object) const {
+        return object.key.name;
+    }
+
+    std::string Renderer::compact_scene_object_name(const SceneObjectRecord& object) const {
+        const std::optional<std::string_view> shape_token = pbrt_shape_token(object.key.name);
+        if (shape_token.has_value()) {
+            switch (object.key.kind) {
+            case SceneObjectKind::Camera: return std::format("camera · {}", *shape_token);
+            case SceneObjectKind::Light: return std::format("{} · {}", compact_preview_light_kind_name(object.light_kind), *shape_token);
+            case SceneObjectKind::Mesh:
+            case SceneObjectKind::Sphere:
+            case SceneObjectKind::PointCloud:
+            case SceneObjectKind::VolumeGrid:
+                if (!object.material_name.empty()) return std::format("{} · {}", object.material_name, *shape_token);
+                break;
+            }
+            const char* kind_text = "object";
+            switch (object.key.kind) {
+            case SceneObjectKind::Camera: kind_text = "camera"; break;
+            case SceneObjectKind::Light: kind_text = "light"; break;
+            case SceneObjectKind::Mesh: kind_text = "mesh"; break;
+            case SceneObjectKind::Sphere: kind_text = "sphere"; break;
+            case SceneObjectKind::PointCloud: kind_text = "point-cloud"; break;
+            case SceneObjectKind::VolumeGrid: kind_text = "volume"; break;
+            }
+            return std::format("{} · {}", kind_text, *shape_token);
+        }
+        return compact_object_identifier(object.key.name);
+    }
+
+    std::string Renderer::compact_scene_object_name(const SceneObjectKey& key) const {
+        const SceneObjectRecord* object = this->scene_object_record(key);
+        if (object != nullptr) return this->compact_scene_object_name(*object);
+        return compact_object_identifier(key.name);
+    }
+
+    std::string Renderer::compact_source_location(const scene::Scene::SourceLocation& source) const {
+        if (source.filename.empty()) return "<generated>";
+        return std::format("{}:{}:{}", compact_filesystem_path(source.filename), source.line, source.column);
+    }
+
+    std::string Renderer::scene_object_label(const SceneObjectKey& key) const {
+        const char* kind_text = "Object";
+        switch (key.kind) {
+        case SceneObjectKind::Camera: kind_text = "Camera"; break;
+        case SceneObjectKind::Light: kind_text = "Light"; break;
+        case SceneObjectKind::Mesh: kind_text = "Mesh"; break;
+        case SceneObjectKind::Sphere: kind_text = "Sphere"; break;
+        case SceneObjectKind::PointCloud: kind_text = "Point Cloud"; break;
+        case SceneObjectKind::VolumeGrid: kind_text = "Volume"; break;
+        }
+        return std::format("{} | {}", kind_text, this->compact_scene_object_name(key));
+    }
+
+    std::string Renderer::scene_selection_summary() const {
+        if (this->selection.active_scene_object.has_value()) return std::format("{} selected | active {}", this->selection.selected_scene_objects.size(), this->scene_object_label(*this->selection.active_scene_object));
+        if (this->selection.hovered_object.has_value()) return std::format("hover {}", this->object_label(*this->selection.hovered_object));
+        return "No selection";
+    }
+
     void Renderer::rebuild_selection_registry_if_needed() {
         const scene::Scene::Revision scene_revision = this->scene.workspace->revision();
         if (this->selection.registry_valid && this->selection.registry_revision == scene_revision) return;
@@ -1528,6 +1980,7 @@ namespace spectra::rasterizer {
         this->selection.registry_revision = scene_revision;
         this->selection.registry_valid = true;
         this->prune_selection_to_registry();
+        this->sync_renderable_selection_from_scene_selection();
     }
 
     void Renderer::register_selectable_object(const SelectableObjectKind kind, const std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id) {
@@ -1565,6 +2018,7 @@ namespace spectra::rasterizer {
         if (this->selection.active_object.has_value() && !this->selection.object_ids.contains(*this->selection.active_object)) this->selection.active_object.reset();
         if (this->selection.hovered_object.has_value() && !this->selection.object_ids.contains(*this->selection.hovered_object)) this->selection.hovered_object.reset();
         if (!this->selection.active_object.has_value() && !this->selection.selected_objects.empty()) this->selection.active_object = *this->selection.selected_objects.begin();
+        this->sync_renderable_selection_from_scene_selection();
     }
 
     bool Renderer::object_selected(const ObjectKey& key) const {
@@ -1593,16 +2047,15 @@ namespace spectra::rasterizer {
         case SelectableObjectKind::PointCloud: kind_text = "Point Cloud"; break;
         case SelectableObjectKind::VolumeGrid: kind_text = "Volume"; break;
         }
-        return std::format("{} | {}", kind_text, key.name);
-    }
-
-    std::string Renderer::selection_summary() const {
-        if (this->selection.active_object.has_value()) return std::format("{} selected | active {}", this->selection.selected_objects.size(), this->object_label(*this->selection.active_object));
-        if (this->selection.hovered_object.has_value()) return std::format("hover {}", this->object_label(*this->selection.hovered_object));
-        return "No selection";
+        const SceneObjectKey scene_key = this->scene_object_key_for_renderable(key);
+        const SceneObjectRecord* object = this->scene_object_record(scene_key);
+        const std::string name = object != nullptr ? this->compact_scene_object_name(*object) : compact_object_identifier(key.name);
+        return std::format("{} | {}", kind_text, name);
     }
 
     void Renderer::clear_selection() {
+        this->selection.selected_scene_objects.clear();
+        this->selection.active_scene_object.reset();
         this->selection.selected_objects.clear();
         this->selection.active_object.reset();
         this->selection.hovered_object.reset();
@@ -1615,6 +2068,8 @@ namespace spectra::rasterizer {
         if (key == nullptr) {
             this->selection.hovered_object.reset();
             if (select && !additive) {
+                this->selection.selected_scene_objects.clear();
+                this->selection.active_scene_object.reset();
                 this->selection.selected_objects.clear();
                 this->selection.active_object.reset();
             }
@@ -1622,20 +2077,8 @@ namespace spectra::rasterizer {
         }
         this->selection.hovered_object = *key;
         if (!select) return;
-        if (additive) {
-            if (this->selection.selected_objects.contains(*key)) {
-                this->selection.selected_objects.erase(*key);
-                if (this->selection.active_object.has_value() && *this->selection.active_object == *key) this->selection.active_object.reset();
-            } else {
-                this->selection.selected_objects.insert(*key);
-                this->selection.active_object = *key;
-            }
-        } else {
-            this->selection.selected_objects.clear();
-            this->selection.selected_objects.insert(*key);
-            this->selection.active_object = *key;
-        }
-        if (!this->selection.active_object.has_value() && !this->selection.selected_objects.empty()) this->selection.active_object = *this->selection.selected_objects.begin();
+        this->rebuild_scene_ui_cache_if_needed();
+        this->select_scene_object(this->scene_object_key_for_renderable(*key), additive);
     }
 
     void Renderer::upload_scene_resources(const std::uint32_t frame_index) {
@@ -2808,13 +3251,15 @@ namespace spectra::rasterizer {
         ImGui::PushClipRect(image_min, image_max, true);
         const scene::Scene::Timeline timeline = this->scene.workspace->timeline();
         const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
+        this->rebuild_scene_ui_cache_if_needed();
         constexpr const char* projection_text = "Perspective";
         const char* scene_mode = scene->timeline_enabled ? timeline_mode_text(timeline.mode) : "Static";
-        std::string hud = scene->timeline_enabled ? std::format("{} | frame {} | {:.2f}s | {}x{} | {}", scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {}x{} | {}", scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
+        const std::string scene_title = scene->title.empty() ? scene->name : scene->title;
+        std::string hud = scene->timeline_enabled ? std::format("{} | {} | frame {} | {:.2f}s | recorded {} | {}x{} | {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, timeline.recorded_frames.size(), this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {} | {}x{} | {}", scene_title, scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
         const ImVec2 hud_padding{10.0f, 7.0f};
         ImVec2 hud_text = ImGui::CalcTextSize(hud.c_str());
         if (hud_text.x + hud_padding.x * 2.0f > image_size.x - 24.0f) {
-            hud = scene->timeline_enabled ? std::format("{} | f{} | {}", scene_mode, timeline.cursor.frame_index, projection_text) : std::format("{} | {}", scene_mode, projection_text);
+            hud = scene->timeline_enabled ? std::format("{} | {} | f{} | rec {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.recorded_frames.size()) : std::format("{} | {}", scene_title, scene_mode);
             hud_text = ImGui::CalcTextSize(hud.c_str());
         }
         const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
@@ -2822,21 +3267,24 @@ namespace spectra::rasterizer {
         draw_list->AddRectFilled(hud_min, hud_max, IM_COL32(15, 18, 22, 184), 7.0f);
         draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
 
-        std::string selection_text = this->selection_summary();
+        std::string selection_text = this->scene_selection_summary();
         const ImVec2 selection_padding{10.0f, 7.0f};
         ImVec2 selection_size = ImGui::CalcTextSize(selection_text.c_str());
         if (selection_size.x + selection_padding.x * 2.0f > image_size.x - 24.0f) {
-            selection_text = this->selection.active_object.has_value() ? std::format("{} selected", this->selection.selected_objects.size()) : "No selection";
+            selection_text = this->selection.active_scene_object.has_value() ? std::format("{} selected", this->selection.selected_scene_objects.size()) : "No selection";
             selection_size = ImGui::CalcTextSize(selection_text.c_str());
         }
         const ImVec2 selection_min{image_min.x + 12.0f, hud_max.y + 8.0f};
         const ImVec2 selection_max{selection_min.x + selection_size.x + selection_padding.x * 2.0f, selection_min.y + selection_size.y + selection_padding.y * 2.0f};
-        const ImU32 selection_background = this->selection.active_object.has_value() ? IM_COL32(12, 38, 48, 190) : IM_COL32(15, 18, 22, 150);
+        const ImU32 selection_background = this->selection.active_scene_object.has_value() ? IM_COL32(12, 38, 48, 190) : IM_COL32(15, 18, 22, 150);
         draw_list->AddRectFilled(selection_min, selection_max, selection_background, 7.0f);
-        draw_list->AddRect(selection_min, selection_max, this->selection.active_object.has_value() ? IM_COL32(60, 198, 232, 112) : IM_COL32(92, 102, 112, 72), 7.0f);
+        draw_list->AddRect(selection_min, selection_max, this->selection.active_scene_object.has_value() ? IM_COL32(60, 198, 232, 112) : IM_COL32(92, 102, 112, 72), 7.0f);
         draw_list->AddText(ImVec2{selection_min.x + selection_padding.x, selection_min.y + selection_padding.y}, IM_COL32(218, 236, 242, 255), selection_text.c_str());
 
-        const std::size_t primitive_count = scene->meshes.size() + scene->point_clouds.size() + scene->volumes.size();
+        std::size_t primitive_count{};
+        for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
+            if (object.key.kind == SceneObjectKind::Mesh || object.key.kind == SceneObjectKind::Sphere || object.key.kind == SceneObjectKind::PointCloud || object.key.kind == SceneObjectKind::VolumeGrid) ++primitive_count;
+        }
         std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, this->viewport.camera_distance);
         const ImVec2 chip_padding{10.0f, 7.0f};
         ImVec2 chip_text = ImGui::CalcTextSize(chip.c_str());
@@ -2913,113 +3361,270 @@ namespace spectra::rasterizer {
         this->commit_timeline_from_ui(std::move(timeline));
     }
 
-    void Renderer::draw_rasterizer_window() {
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
+    void Renderer::draw_scene_collection_panel() {
+        this->rebuild_scene_ui_cache_if_needed();
         if (this->ui.control_panel_extension) {
             this->ui.control_panel_extension();
             ImGui::Separator();
         }
-        const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
-        scene::Scene::Timeline timeline = this->scene.workspace->timeline();
-        bool timeline_changed = false;
+        ImGui::SeparatorText("Scene Collection");
 
-        ImGui::TextUnformatted("Rasterizer");
-        ImGui::SameLine();
-        ImGui::TextDisabled(scene->timeline_enabled ? "Dynamic Scene" : "Static Scene");
-        if (scene->timeline_enabled) {
-            ImGui::SeparatorText("Timeline");
-            const bool streaming_controls_enabled = timeline.mode != scene::Scene::TimelineMode::Playback;
-            ImGui::BeginDisabled(!streaming_controls_enabled);
-            if (ImGui::Button(timeline.playing ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW)) {
-                timeline.playing = !timeline.playing;
-                timeline_changed = true;
+        const std::array camera_kinds{SceneObjectKind::Camera};
+        const std::array light_kinds{SceneObjectKind::Light};
+        const std::array geometry_kinds{SceneObjectKind::Mesh, SceneObjectKind::Sphere, SceneObjectKind::PointCloud, SceneObjectKind::VolumeGrid};
+        this->draw_scene_object_group("Camera", ICON_MS_PHOTO_CAMERA, std::span<const SceneObjectKind>{camera_kinds});
+        this->draw_scene_object_group("Lights", ICON_MS_LIGHTBULB, std::span<const SceneObjectKind>{light_kinds});
+        this->draw_scene_object_group("Geometry", ICON_MS_DEPLOYED_CODE, std::span<const SceneObjectKind>{geometry_kinds});
+    }
+
+    void Renderer::draw_scene_object_group(const std::string_view label, const char* icon, const std::span<const SceneObjectKind> kinds) {
+        const auto matches_kind = [kinds](const SceneObjectKind kind) {
+            for (const SceneObjectKind candidate : kinds) {
+                if (candidate == kind) return true;
             }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            if (ImGui::Button(ICON_MS_RESTART_ALT)) {
-                ++timeline.reset_request_serial;
-                timeline_changed = true;
-            }
-            ImGui::SameLine();
-            const bool live_selected = timeline.mode == scene::Scene::TimelineMode::Live;
-            const bool record_selected = timeline.mode == scene::Scene::TimelineMode::Record;
-            const bool playback_selected = timeline.mode == scene::Scene::TimelineMode::Playback;
-            if (ImGui::RadioButton("Live", live_selected)) {
-                timeline.mode = scene::Scene::TimelineMode::Live;
-                timeline_changed = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Record", record_selected)) {
-                timeline.mode = scene::Scene::TimelineMode::Record;
-                timeline_changed = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Playback", playback_selected)) {
-                timeline.mode = scene::Scene::TimelineMode::Playback;
-                timeline_changed = true;
-            }
-            if (timeline.recorded_frames.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Rasterizer recorded frame count exceeds ImGui slider range");
-            int selected_frame = static_cast<int>(timeline.selected_frame_index);
-            const int max_frame = timeline.recorded_frames.empty() ? 0 : static_cast<int>(timeline.recorded_frames.size() - 1u);
-            if (selected_frame > max_frame) selected_frame = max_frame;
-            ImGui::BeginDisabled(timeline.recorded_frames.empty());
-            if (ImGui::SliderInt("Playback Frame", &selected_frame, 0, max_frame)) {
-                timeline.selected_frame_index = static_cast<std::uint64_t>(selected_frame);
-                timeline.mode = scene::Scene::TimelineMode::Playback;
-                timeline_changed = true;
-            }
-            ImGui::EndDisabled();
-            ImGui::BeginDisabled(timeline.recorded_frames.empty());
-            if (ImGui::Button("Clear Recording")) {
-                ++timeline.clear_recording_request_serial;
-                timeline_changed = true;
-            }
-            ImGui::EndDisabled();
-            if (timeline_changed) this->commit_timeline_from_ui(std::move(timeline));
+            return false;
+        };
+
+        std::size_t count{};
+        for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
+            if (matches_kind(object.key.kind)) ++count;
+        }
+        if (count == 0u) return;
+
+        const std::string header = std::format("{} {} ({})###{}", icon, label, count, label);
+        constexpr ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (!ImGui::TreeNodeEx(header.c_str(), flags)) return;
+        for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
+            if (!matches_kind(object.key.kind)) continue;
+            this->draw_scene_object_row(object);
+        }
+        ImGui::TreePop();
+    }
+
+    void Renderer::draw_scene_object_row(const SceneObjectRecord& object) {
+        const char* icon = ICON_MS_CATEGORY;
+        switch (object.key.kind) {
+        case SceneObjectKind::Camera: icon = ICON_MS_PHOTO_CAMERA; break;
+        case SceneObjectKind::Light: icon = ICON_MS_LIGHTBULB; break;
+        case SceneObjectKind::Mesh: icon = ICON_MS_POLYLINE; break;
+        case SceneObjectKind::Sphere: icon = ICON_MS_CIRCLE; break;
+        case SceneObjectKind::PointCloud: icon = ICON_MS_GRAIN; break;
+        case SceneObjectKind::VolumeGrid: icon = ICON_MS_WATER_DROP; break;
         }
 
-        const scene::Scene::Timeline current_timeline = this->scene.workspace->timeline();
-        ImGui::SeparatorText("Status");
-        if (ImGui::BeginTable("SpectraRasterizerStatus", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+        const bool selected = this->scene_object_selected(object.key);
+        const std::string label = std::format("{} {}", icon, this->compact_scene_object_name(object));
+        ImGui::PushID(static_cast<int>(object.key.kind));
+        ImGui::PushID(object.key.name.c_str());
+        if (ImGui::Selectable(label.c_str(), selected)) this->select_scene_object(object.key, ImGui::GetIO().KeyShift);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            const std::string raw_name = this->raw_scene_object_name(object);
+            const std::string raw_source = format_source_location(object.source);
+            ImGui::BeginTooltip();
+            if (this->scene_object_active(object.key)) ImGui::TextDisabled("%s", "Active object");
+            ImGui::TextDisabled("%s", "Internal ID");
+            ImGui::TextWrapped("%s", raw_name.c_str());
+            ImGui::TextDisabled("%s", "Source");
+            ImGui::TextWrapped("%s", raw_source.c_str());
+            ImGui::EndTooltip();
+        }
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+
+    void Renderer::draw_inspector_transform(const scene::Transform& transform) {
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
+        ImGui::SeparatorText("Transform");
+        if (ImGui::BeginTable("SpectraRasterizerInspectorTransform", 2, table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_status_row("Renderer", "Mesh / Volume / Point Cloud");
-            draw_status_row("Scene", scene->title.empty() ? scene->name : scene->title);
-            if (scene->timeline_enabled) {
-                draw_status_row("Timeline", timeline_mode_text(current_timeline.mode));
-                draw_status_row("Frame", std::format("{} / {:.3f}s", current_timeline.cursor.frame_index, current_timeline.cursor.time_seconds));
-                draw_status_row("Recorded", std::format("{}", current_timeline.recorded_frames.size()));
-            } else {
-                draw_status_row("Scene Type", "Static");
+            draw_property_row("Position", format_vector3(transform.position));
+            draw_property_row("Rotation", format_quaternion(transform.rotation));
+            draw_property_row("Scale", format_vector3(transform.scale));
+            ImGui::EndTable();
+        }
+    }
+
+    void Renderer::draw_inspector_material_block(const std::string_view material_name) {
+        const scene::Scene::PreviewMaterial material = this->resolve_material(material_name);
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
+        ImGui::SeparatorText("Material");
+        if (ImGui::BeginTable("SpectraRasterizerInspectorMaterial", 2, table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            draw_property_row("Name", material.name);
+            draw_property_row("Surface", preview_surface_kind_name(material.surface_kind));
+            draw_property_row("Alpha", preview_alpha_mode_name(material.alpha_mode));
+            draw_color_row("Base Color", material.base_color);
+            draw_color_row("Emission", material.emission_color);
+            draw_property_row("Emission Str", format_float(material.emission_strength));
+            draw_property_row("Roughness", format_float(material.roughness));
+            draw_property_row("Metallic", format_float(material.metallic));
+            draw_property_row("Alpha Cutoff", format_float(material.alpha_cutoff));
+            if (material.surface_kind == scene::Scene::PreviewSurfaceKind::Volume) {
+                draw_property_row("Density Scale", format_float(material.volume_density_scale));
+                draw_property_row("Temp Scale", format_float(material.volume_temperature_scale));
             }
-            draw_status_row("Viewport", std::format("{} x {}", this->viewport.extent.width, this->viewport.extent.height));
-            draw_status_row("Swapchain", std::format("{} x {}", this->host.swapchain_extent.width, this->host.swapchain_extent.height));
+            ImGui::EndTable();
+        }
+    }
+
+    void Renderer::draw_inspector_panel() {
+        this->rebuild_scene_ui_cache_if_needed();
+        ImGui::SeparatorText("Inspector");
+        if (!this->selection.active_scene_object.has_value()) {
+            ImGui::TextDisabled("%s", "No object selected");
+            return;
+        }
+
+        const SceneObjectRecord* object = this->scene_object_record(*this->selection.active_scene_object);
+        if (object == nullptr) throw std::runtime_error("Spectra rasterizer inspector active object is missing from the scene collection");
+
+        const auto scene_object_kind_text = [](const SceneObjectKind kind) {
+            switch (kind) {
+            case SceneObjectKind::Camera: return "Camera";
+            case SceneObjectKind::Light: return "Light";
+            case SceneObjectKind::Mesh: return "Mesh";
+            case SceneObjectKind::Sphere: return "Sphere";
+            case SceneObjectKind::PointCloud: return "Point Cloud";
+            case SceneObjectKind::VolumeGrid: return "Volume";
+            }
+            throw std::runtime_error("Unknown Spectra rasterizer scene object kind");
+        };
+
+        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
+        if (ImGui::BeginTable("SpectraRasterizerInspectorIdentity", 2, table_flags)) {
+            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            const std::string compact_name = this->compact_scene_object_name(*object);
+            const std::string raw_name = this->raw_scene_object_name(*object);
+            const std::string compact_source = this->compact_source_location(object->source);
+            const std::string raw_source = format_source_location(object->source);
+            draw_property_row("Type", scene_object_kind_text(object->key.kind));
+            draw_property_row("Name", compact_name);
+            if (compact_name != raw_name && draw_property_row("Internal ID", raw_name)) ImGui::SetTooltip("%s", raw_name.c_str());
+            if (draw_property_row("Source", compact_source) && compact_source != raw_source) ImGui::SetTooltip("%s", raw_source.c_str());
             ImGui::EndTable();
         }
 
-        ImGui::SeparatorText("Selection");
-        if (ImGui::BeginTable("SpectraRasterizerSelection", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_status_row("Selected", std::format("{}", this->selection.selected_objects.size()));
-            draw_status_row("Active", this->selection.active_object.has_value() ? this->object_label(*this->selection.active_object) : std::string{"None"});
-            draw_status_row("Hover", this->selection.hovered_object.has_value() ? this->object_label(*this->selection.hovered_object) : std::string{"None"});
-            ImGui::EndTable();
+        switch (object->key.kind) {
+        case SceneObjectKind::Camera:
+            this->draw_inspector_transform(object->transform);
+            ImGui::SeparatorText("Camera");
+            if (ImGui::BeginTable("SpectraRasterizerInspectorCamera", 2, table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_property_row("Target", format_vector3(object->camera_target));
+                draw_property_row("Up", format_vector3(object->camera_up));
+                draw_property_row("FOV", format_float(object->camera_vertical_fov_degrees));
+                draw_property_row("Near", format_float(object->camera_near_plane));
+                draw_property_row("Far", format_float(object->camera_far_plane));
+                ImGui::EndTable();
+            }
+            break;
+        case SceneObjectKind::Light:
+            this->draw_inspector_transform(object->transform);
+            ImGui::SeparatorText("Light");
+            if (ImGui::BeginTable("SpectraRasterizerInspectorLight", 2, table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_property_row("Kind", preview_light_kind_name(object->light_kind));
+                draw_color_row("Color", object->light_color);
+                draw_property_row("Intensity", format_float(object->light_intensity));
+                if (object->light_kind == scene::Scene::PreviewLightKind::Spot) draw_property_row("Cone Angle", format_float(object->light_cone_angle_degrees));
+                ImGui::EndTable();
+            }
+            break;
+        case SceneObjectKind::Mesh:
+            this->draw_inspector_transform(object->transform);
+            ImGui::SeparatorText("Mesh");
+            if (ImGui::BeginTable("SpectraRasterizerInspectorMesh", 2, table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_property_row("Material", object->material_name);
+                draw_property_row("Vertices", std::format("{}", object->vertex_count));
+                draw_property_row("Indices", std::format("{}", object->index_count));
+                draw_property_row("Triangles", std::format("{}", object->index_count / 3u));
+                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
+                ImGui::EndTable();
+            }
+            this->draw_inspector_material_block(object->material_name);
+            break;
+        case SceneObjectKind::Sphere:
+            this->draw_inspector_transform(object->transform);
+            ImGui::SeparatorText("Sphere");
+            if (ImGui::BeginTable("SpectraRasterizerInspectorSphere", 2, table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_property_row("Material", object->material_name);
+                draw_property_row("Radius", format_float(object->sphere_radius));
+                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
+                ImGui::EndTable();
+            }
+            this->draw_inspector_material_block(object->material_name);
+            break;
+        case SceneObjectKind::PointCloud:
+            this->draw_inspector_transform(object->transform);
+            ImGui::SeparatorText("Point Cloud");
+            if (ImGui::BeginTable("SpectraRasterizerInspectorPointCloud", 2, table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_property_row("Material", object->material_name);
+                draw_property_row("Points", std::format("{}", object->point_count));
+                draw_property_row("Radius Range", std::format("{} - {}", format_float(object->minimum_radius), format_float(object->maximum_radius)));
+                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
+                ImGui::EndTable();
+            }
+            this->draw_inspector_material_block(object->material_name);
+            break;
+        case SceneObjectKind::VolumeGrid:
+            ImGui::SeparatorText("Volume");
+            if (ImGui::BeginTable("SpectraRasterizerInspectorVolume", 2, table_flags)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                draw_property_row("Material", object->material_name);
+                draw_property_row("Dimensions", format_dimensions3(object->dimensions));
+                draw_property_row("Origin", format_vector3(object->origin));
+                draw_property_row("Voxel Size", format_vector3(object->voxel_size));
+                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
+                for (std::size_t channel_index = 0; channel_index < object->volume_channels.size(); ++channel_index) {
+                    const SceneVolumeChannelSummary& channel = object->volume_channels.at(channel_index);
+                    const std::string channel_label = std::format("Channel {}", channel_index);
+                    const std::string channel_value = std::format("{} | {} | {} values", channel.name, format_dimensions3(channel.dimensions), channel.value_count);
+                    draw_property_row(channel_label.c_str(), channel_value);
+                }
+                ImGui::EndTable();
+            }
+            this->draw_inspector_material_block(object->material_name);
+            break;
         }
-        ImGui::BeginDisabled(this->selection.selected_objects.empty() && !this->selection.hovered_object.has_value());
-        if (ImGui::Button("Clear Selection")) this->clear_selection();
-        ImGui::EndDisabled();
+    }
 
-        ImGui::SeparatorText("Scene");
-        if (ImGui::BeginTable("SpectraRasterizerScene", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_status_row("Materials", std::format("{}", scene->materials.size()));
-            draw_status_row("Lights", std::format("{}", scene->lights.size()));
-            draw_status_row("Meshes", std::format("{}", scene->meshes.size()));
-            draw_status_row("Point Clouds", std::format("{}", scene->point_clouds.size()));
-            draw_status_row("Volumes", std::format("{}", scene->volumes.size()));
-            ImGui::EndTable();
+    void Renderer::draw_rasterizer_window() {
+        this->rebuild_scene_ui_cache_if_needed();
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        if (available.y <= 1.0f) return;
+
+        constexpr float splitter_height = 6.0f;
+        constexpr float minimum_panel_height = 120.0f;
+        const float usable_height = std::max(1.0f, available.y - splitter_height);
+        float collection_height = usable_height * this->ui.sidebar_split_ratio;
+        if (usable_height > minimum_panel_height * 2.0f) collection_height = std::clamp(collection_height, minimum_panel_height, usable_height - minimum_panel_height);
+        else collection_height = std::max(1.0f, collection_height);
+
+        ImGui::BeginChild("SpectraRasterizerSceneCollectionPanel", ImVec2{0.0f, collection_height}, true);
+        this->draw_scene_collection_panel();
+        ImGui::EndChild();
+
+        const float splitter_width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+        ImGui::InvisibleButton("SpectraRasterizerSidebarSplitter", ImVec2{splitter_width, splitter_height});
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (ImGui::IsItemActive() && usable_height > 1.0f) {
+            this->ui.sidebar_split_ratio = std::clamp(this->ui.sidebar_split_ratio + ImGui::GetIO().MouseDelta.y / usable_height, 0.25f, 0.75f);
         }
+
+        ImGui::BeginChild("SpectraRasterizerInspectorPanel", ImVec2{0.0f, 0.0f}, true);
+        this->draw_inspector_panel();
+        ImGui::EndChild();
     }
 } // namespace spectra::rasterizer

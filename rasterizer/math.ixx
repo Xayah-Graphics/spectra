@@ -138,10 +138,6 @@ namespace spectra::rasterizer::math {
         return basis;
     }
 
-    export [[nodiscard]] CameraBasis camera_basis(const Vector3 eye, const Vector3 target) {
-        return camera_basis(eye, target, Vector3{0.0f, 1.0f, 0.0f});
-    }
-
     export [[nodiscard]] CameraBasis orbit_camera_basis(const Vector3 target, const float yaw_radians, const float pitch_radians, const float distance) {
         if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Rasterizer viewport camera distance must be positive");
         const float cos_pitch = std::cos(pitch_radians);
@@ -150,7 +146,7 @@ namespace spectra::rasterizer::math {
             std::sin(pitch_radians),
             std::cos(yaw_radians) * cos_pitch,
         };
-        return camera_basis(target + direction * distance, target);
+        return camera_basis(target + direction * distance, target, Vector3{0.0f, 1.0f, 0.0f});
     }
 
     export [[nodiscard]] Matrix4 transform_matrix(const Transform& transform) {
@@ -201,10 +197,6 @@ namespace spectra::rasterizer::math {
         view(3u, 1u)            = -dot(basis.up, basis.eye);
         view(3u, 2u)            = dot(basis.forward, basis.eye);
         return view;
-    }
-
-    export [[nodiscard]] Matrix4 look_at_matrix(const Vector3 eye, const Vector3 target) {
-        return look_at_matrix(camera_basis(eye, target));
     }
 
     export [[nodiscard]] Matrix4 inverse_look_at_matrix(const CameraBasis& basis) {

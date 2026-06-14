@@ -78,6 +78,61 @@ namespace spectra::rasterizer {
             friend auto operator<=>(const ObjectKey&, const ObjectKey&) = default;
         };
 
+        enum class SceneObjectKind {
+            Camera,
+            Light,
+            Mesh,
+            Sphere,
+            PointCloud,
+            VolumeGrid,
+        };
+
+        struct SceneObjectKey {
+            SceneObjectKind kind{SceneObjectKind::Camera};
+            std::string name{};
+
+            friend auto operator<=>(const SceneObjectKey&, const SceneObjectKey&) = default;
+        };
+
+        struct SceneVolumeChannelSummary {
+            std::string name{};
+            std::array<std::uint32_t, 3> dimensions{};
+            std::size_t value_count{};
+        };
+
+        struct SceneObjectRecord {
+            SceneObjectKey key{};
+            std::string material_name{};
+            scene::Transform transform{};
+            scene::Scene::SourceLocation source{};
+            bool dynamic{};
+            std::size_t vertex_count{};
+            std::size_t index_count{};
+            std::size_t point_count{};
+            float minimum_radius{};
+            float maximum_radius{};
+            float sphere_radius{};
+            std::array<std::uint32_t, 3> dimensions{};
+            scene::Vector3 origin{};
+            scene::Vector3 voxel_size{};
+            std::vector<SceneVolumeChannelSummary> volume_channels{};
+            scene::Vector3 camera_target{};
+            scene::Vector3 camera_up{};
+            float camera_vertical_fov_degrees{};
+            float camera_near_plane{};
+            float camera_far_plane{};
+            scene::Scene::PreviewLightKind light_kind{scene::Scene::PreviewLightKind::Directional};
+            scene::Vector3 light_color{};
+            float light_intensity{};
+            float light_cone_angle_degrees{};
+        };
+
+        struct SceneUiCache {
+            scene::Scene::Revision revision{};
+            bool valid{false};
+            std::vector<SceneObjectRecord> objects{};
+        };
+
         struct CameraUniformData {
             std::array<float, 16> viewProjection{};
             std::array<float, 16> inverseViewProjection{};
@@ -193,6 +248,21 @@ namespace spectra::rasterizer {
         [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
+        void rebuild_scene_ui_cache_if_needed();
+        void prune_scene_selection_to_cache();
+        [[nodiscard]] const SceneObjectRecord* scene_object_record(const SceneObjectKey& key) const;
+        [[nodiscard]] std::optional<ObjectKey> renderable_key_for_scene_object(const SceneObjectKey& key) const;
+        [[nodiscard]] SceneObjectKey scene_object_key_for_renderable(const ObjectKey& key) const;
+        void sync_renderable_selection_from_scene_selection();
+        void select_scene_object(const SceneObjectKey& key, bool additive);
+        [[nodiscard]] bool scene_object_selected(const SceneObjectKey& key) const;
+        [[nodiscard]] bool scene_object_active(const SceneObjectKey& key) const;
+        [[nodiscard]] std::string raw_scene_object_name(const SceneObjectRecord& object) const;
+        [[nodiscard]] std::string compact_scene_object_name(const SceneObjectRecord& object) const;
+        [[nodiscard]] std::string compact_scene_object_name(const SceneObjectKey& key) const;
+        [[nodiscard]] std::string compact_source_location(const scene::Scene::SourceLocation& source) const;
+        [[nodiscard]] std::string scene_object_label(const SceneObjectKey& key) const;
+        [[nodiscard]] std::string scene_selection_summary() const;
         void rebuild_selection_registry_if_needed();
         void register_selectable_object(SelectableObjectKind kind, std::string_view name, std::set<ObjectKey>& unique_keys, std::uint32_t& next_id);
         [[nodiscard]] std::uint32_t object_id_for(const ObjectKey& key) const;
@@ -203,7 +273,6 @@ namespace spectra::rasterizer {
         [[nodiscard]] bool object_active(const ObjectKey& key) const;
         [[nodiscard]] std::array<float, 4> selection_mask_color(const ObjectKey& key) const;
         [[nodiscard]] std::string object_label(const ObjectKey& key) const;
-        [[nodiscard]] std::string selection_summary() const;
         void clear_selection();
         void apply_pick_result(std::uint32_t object_id, bool select, bool additive);
 
@@ -254,6 +323,12 @@ namespace spectra::rasterizer {
 
         void draw_viewport_window();
         void draw_rasterizer_window();
+        void draw_scene_collection_panel();
+        void draw_scene_object_group(std::string_view label, const char* icon, std::span<const SceneObjectKind> kinds);
+        void draw_scene_object_row(const SceneObjectRecord& object);
+        void draw_inspector_panel();
+        void draw_inspector_material_block(std::string_view material_name);
+        void draw_inspector_transform(const scene::Transform& transform);
         void commit_timeline_from_ui(scene::Scene::Timeline timeline);
         [[nodiscard]] bool timeline_enabled() const;
         [[nodiscard]] bool timeline_streaming_enabled() const;
@@ -283,6 +358,8 @@ namespace spectra::rasterizer {
         struct {
             vk::Extent2D requested_extent{};
             std::move_only_function<void()> control_panel_extension{};
+            float sidebar_split_ratio{0.55f};
+            SceneUiCache scene_ui_cache{};
         } ui;
 
         struct {
@@ -386,6 +463,8 @@ namespace spectra::rasterizer {
             scene::Scene::Revision registry_revision{};
             std::map<ObjectKey, std::uint32_t> object_ids{};
             std::map<std::uint32_t, ObjectKey> objects_by_id{};
+            std::set<SceneObjectKey> selected_scene_objects{};
+            std::optional<SceneObjectKey> active_scene_object{};
             std::set<ObjectKey> selected_objects{};
             std::optional<ObjectKey> active_object{};
             std::optional<ObjectKey> hovered_object{};
