@@ -215,8 +215,8 @@ namespace spectra::scene {
             return Scene::Parameter{.type = "normal", .name = std::move(name), .values = std::move(values), .source = source};
         }
 
-        [[nodiscard]] Scene::Parameter string_parameter(std::string name, std::vector<std::string> values, const Scene::SourceLocation& source) {
-            return Scene::Parameter{.type = "string", .name = std::move(name), .values = std::move(values), .source = source};
+        [[nodiscard]] Scene::Parameter texture_parameter(std::string name, std::vector<std::string> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "texture", .name = std::move(name), .values = std::move(values), .source = source};
         }
 
         [[nodiscard]] Quaternion normalized_quaternion(const Quaternion value, const std::string_view context) {
@@ -338,18 +338,50 @@ namespace spectra::scene {
             return nullptr;
         }
 
-        void append_canonical_materials(Scene::ResolvedScene& scene, const Scene::Document& document, const bool needs_volume_interface_material) {
+        [[nodiscard]] std::set<std::string> append_canonical_textures(Scene::ResolvedScene& scene, const Scene::Document& document) {
+            std::set<std::string> names{};
+            for (const Scene::Texture& texture : document.textures) {
+                if (texture.name.empty()) throw std::runtime_error("Preview texture name must not be empty when building canonical scene");
+                if (!names.insert(texture.name).second) throw std::runtime_error(std::format("Preview texture \"{}\" is duplicated when building canonical scene", texture.name));
+                require_static_scene_transform(texture.transform, texture.entity.source, std::format("Preview texture \"{}\"", texture.name));
+                scene.textures.push_back(texture);
+            }
+            return names;
+        }
+
+        void require_preview_texture_reference(const std::set<std::string>& texture_names, const std::string& texture_name, const std::string_view material_name, const std::string_view parameter_name) {
+            if (texture_name.empty()) return;
+            if (!texture_names.contains(texture_name)) throw std::runtime_error(std::format("Preview material \"{}\" references unknown {} texture \"{}\"", material_name, parameter_name, texture_name));
+        }
+
+        void append_canonical_materials(Scene::ResolvedScene& scene, const Scene::Document& document, const std::set<std::string>& texture_names, const bool needs_volume_interface_material) {
             std::set<std::string> names{};
             for (const Scene::PreviewMaterial& material : document.materials) {
                 if (material.name.empty()) throw std::runtime_error("Preview material name must not be empty when building canonical scene");
                 if (!names.insert(material.name).second) throw std::runtime_error(std::format("Preview material \"{}\" is duplicated when building canonical scene", material.name));
                 if (material.surface_kind == Scene::PreviewSurfaceKind::Volume) continue;
+                require_preview_texture_reference(texture_names, material.base_color_texture, material.name, "base color");
+                require_preview_texture_reference(texture_names, material.emission_texture, material.name, "emission");
+                require_preview_texture_reference(texture_names, material.roughness_texture, material.name, "roughness");
+                require_preview_texture_reference(texture_names, material.normal_texture, material.name, "normal");
+                if (!material.pathtracer_material.type.empty()) {
+                    scene.materials.push_back(Scene::Material{
+                        .name   = material.name,
+                        .entity = material.pathtracer_material,
+                    });
+                    continue;
+                }
                 const Vector3 reflectance{std::max(0.0f, material.base_color.x), std::max(0.0f, material.base_color.y), std::max(0.0f, material.base_color.z)};
+                std::vector<Scene::Parameter> parameters{};
+                if (material.base_color_texture.empty())
+                    parameters.push_back(rgb_parameter("reflectance", reflectance, {}));
+                else
+                    parameters.push_back(texture_parameter("reflectance", {material.base_color_texture}, {}));
                 scene.materials.push_back(Scene::Material{
                     .name = material.name,
                     .entity = Scene::Entity{
                         .type = "diffuse",
-                        .parameters = {rgb_parameter("reflectance", reflectance, {})},
+                        .parameters = std::move(parameters),
                     },
                 });
             }
@@ -363,7 +395,27 @@ namespace spectra::scene {
             }
         }
 
-        void append_mesh_shape(Scene::ResolvedScene& scene, const Scene::Mesh& mesh) {
+        [[nodiscard]] std::optional<Scene::AreaLight> make_preview_area_light(const Scene::Document& document, const std::string& material_name, const Scene::SourceLocation& source) {
+            const Scene::PreviewMaterial* material = find_preview_material(document, material_name);
+            if (material == nullptr) throw std::runtime_error(std::format("Preview shape references unknown material \"{}\"", material_name));
+            if (material->surface_kind != Scene::PreviewSurfaceKind::EmissiveSurface) return {};
+            if (!is_finite(material->emission_color)) throw std::runtime_error(std::format("Preview emissive material \"{}\" emission color must be finite when building canonical scene", material_name));
+            if (material->emission_color.x < 0.0f || material->emission_color.y < 0.0f || material->emission_color.z < 0.0f) throw std::runtime_error(std::format("Preview emissive material \"{}\" emission color must be non-negative when building canonical scene", material_name));
+            if (!std::isfinite(material->emission_strength) || material->emission_strength < 0.0f) throw std::runtime_error(std::format("Preview emissive material \"{}\" emission strength must be finite and non-negative when building canonical scene", material_name));
+            if (!material->emission_texture.empty()) throw std::runtime_error(std::format("Preview emissive material \"{}\" uses an emission texture, which cannot be converted to a canonical diffuse area light", material_name));
+            return Scene::AreaLight{
+                .entity = Scene::Entity{
+                    .type = "diffuse",
+                    .parameters = {
+                        rgb_parameter("L", material->emission_color, source),
+                        float_parameter("scale", {material->emission_strength}, source),
+                    },
+                    .source = source,
+                },
+            };
+        }
+
+        void append_mesh_shape(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::Mesh& mesh) {
             if (mesh.name.empty()) throw std::runtime_error("Preview mesh name must not be empty when building canonical scene");
             if (mesh.material_name.empty()) throw std::runtime_error(std::format("Preview mesh \"{}\" material name must not be empty when building canonical scene", mesh.name));
             if (mesh.positions.empty()) throw std::runtime_error(std::format("Preview mesh \"{}\" has no positions when building canonical scene", mesh.name));
@@ -399,10 +451,11 @@ namespace spectra::scene {
                     .source = mesh.source,
                 },
                 .material_name = mesh.material_name,
+                .area_light    = make_preview_area_light(document, mesh.material_name, mesh.source),
             });
         }
 
-        void append_sphere_shape(Scene::ResolvedScene& scene, const Scene::Sphere& sphere) {
+        void append_sphere_shape(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::Sphere& sphere) {
             if (sphere.name.empty()) throw std::runtime_error("Preview sphere name must not be empty when building canonical scene");
             if (sphere.material_name.empty()) throw std::runtime_error(std::format("Preview sphere \"{}\" material name must not be empty when building canonical scene", sphere.name));
             if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(std::format("Preview sphere \"{}\" radius must be finite and positive when building canonical scene", sphere.name));
@@ -416,6 +469,7 @@ namespace spectra::scene {
                 },
                 .transform = SceneTransformSet{.start = transform, .end = transform},
                 .material_name = sphere.material_name,
+                .area_light    = make_preview_area_light(document, sphere.material_name, sphere.source),
             });
         }
 
@@ -652,10 +706,11 @@ namespace spectra::scene {
                 .source = document.camera->source,
             };
             scene.render_settings.camera_transform = SceneTransformSet{.start = make_look_at_transform(document.camera->transform.position, document.camera->target, document.camera->up), .end = make_look_at_transform(document.camera->transform.position, document.camera->target, document.camera->up)};
-            append_canonical_materials(scene, document, !frame.volumes.empty());
+            const std::set<std::string> texture_names = append_canonical_textures(scene, document);
+            append_canonical_materials(scene, document, texture_names, !frame.volumes.empty());
             append_preview_lights(scene, document);
-            for (const Scene::Mesh& mesh : frame.meshes) append_mesh_shape(scene, mesh);
-            for (const Scene::Sphere& sphere : frame.spheres) append_sphere_shape(scene, sphere);
+            for (const Scene::Mesh& mesh : frame.meshes) append_mesh_shape(scene, document, mesh);
+            for (const Scene::Sphere& sphere : frame.spheres) append_sphere_shape(scene, document, sphere);
             for (const Scene::PointCloud& point_cloud : frame.point_clouds) append_point_cloud_shapes(scene, document, point_cloud);
             for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume);
             if (scene.shapes.empty()) throw std::runtime_error(std::format("Preview document \"{}\" produced no canonical pathtracer shapes", document.name));
@@ -684,6 +739,268 @@ namespace spectra::scene {
             }
             frame.spheres.clear();
             return frame;
+        }
+
+        void require_pbrt_export_color_space(const Scene::ColorSpace color_space, const std::string_view context) {
+            if (color_space != Scene::ColorSpace::sRGB) throw std::runtime_error(std::format("{} uses a non-sRGB color space; PBRT export currently requires standard sRGB scene data", context));
+        }
+
+        [[nodiscard]] std::string pbrt_export_float(const float value, const std::string_view context) {
+            if (!std::isfinite(value)) throw std::runtime_error(std::format("{} contains a non-finite float value", context));
+            return std::format("{:.9g}", value);
+        }
+
+        [[nodiscard]] std::string pbrt_export_quoted(const std::string_view value, const std::string_view context) {
+            std::string result{"\""};
+            for (const char character : value) {
+                if (character == '"' || character == '\\') {
+                    result.push_back('\\');
+                    result.push_back(character);
+                    continue;
+                }
+                if (std::iscntrl(static_cast<unsigned char>(character))) throw std::runtime_error(std::format("{} contains a control character that cannot be written to a PBRT quoted string", context));
+                result.push_back(character);
+            }
+            result.push_back('"');
+            return result;
+        }
+
+        void write_pbrt_indent(std::ostream& output, const std::size_t indent) {
+            for (std::size_t index = 0u; index < indent; ++index) output << ' ';
+        }
+
+        void require_pbrt_export_matching_type_parameter(const Scene::Entity& entity, const Scene::Parameter& parameter, const std::string_view kind) {
+            const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+            if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("PBRT export {} \"{}\" has an invalid string type parameter", kind, entity.type));
+            if (values->front() != entity.type) throw std::runtime_error(std::format("PBRT export {} type parameter \"{}\" does not match entity type \"{}\"", kind, values->front(), entity.type));
+        }
+
+        void require_pbrt_export_entity_type(const Scene::Entity& entity, const std::set<std::string_view>& supported, const std::string_view kind) {
+            if (!supported.contains(std::string_view{entity.type.data(), entity.type.size()})) throw std::runtime_error(std::format("PBRT export does not support {} type \"{}\"", kind, entity.type));
+        }
+
+        void write_pbrt_parameter_values(std::ostream& output, const Scene::Parameter& parameter, const std::string_view context) {
+            std::visit(
+                [&output, &parameter, context](const auto& values) {
+                    if (values.empty()) throw std::runtime_error(std::format("{} parameter \"{} {}\" must not be empty when exporting PBRT", context, parameter.type, parameter.name));
+                    for (std::size_t index = 0u; index < values.size(); ++index) {
+                        if (index != 0u) output << ' ';
+                        if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, float>) {
+                            output << pbrt_export_float(values.at(index), context);
+                        } else if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, int>) {
+                            if (parameter.type != "integer") throw std::runtime_error(std::format("{} parameter \"{} {}\" stores integers but is not an integer parameter", context, parameter.type, parameter.name));
+                            output << values.at(index);
+                        } else if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, std::string>) {
+                            if (parameter.type != "string" && parameter.type != "texture" && parameter.type != "spectrum") throw std::runtime_error(std::format("{} parameter \"{} {}\" stores strings but is not a string-like PBRT parameter", context, parameter.type, parameter.name));
+                            output << pbrt_export_quoted(values.at(index), context);
+                        } else if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, std::uint8_t>) {
+                            if (parameter.type != "bool") throw std::runtime_error(std::format("{} parameter \"{} {}\" stores bool values but is not a bool parameter", context, parameter.type, parameter.name));
+                            output << (values.at(index) == 0u ? "false" : "true");
+                        }
+                    }
+                },
+                parameter.values);
+        }
+
+        void write_pbrt_parameter(std::ostream& output, const Scene::Parameter& parameter, const std::size_t indent, const std::string_view context) {
+            if (parameter.type.empty() || parameter.name.empty()) throw std::runtime_error(std::format("{} contains a PBRT parameter with an empty declaration", context));
+            require_pbrt_export_color_space(parameter.color_space, context);
+            write_pbrt_indent(output, indent);
+            output << pbrt_export_quoted(std::format("{} {}", parameter.type, parameter.name), context) << " [";
+            write_pbrt_parameter_values(output, parameter, context);
+            output << "]\n";
+        }
+
+        void write_pbrt_entity_parameters(std::ostream& output, const Scene::Entity& entity, const std::size_t indent, const bool skip_type_parameter, const std::string_view kind) {
+            require_pbrt_export_color_space(entity.color_space, kind);
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (skip_type_parameter && parameter.type == "string" && parameter.name == "type") {
+                    require_pbrt_export_matching_type_parameter(entity, parameter, kind);
+                    continue;
+                }
+                write_pbrt_parameter(output, parameter, indent, kind);
+            }
+        }
+
+        void write_pbrt_transform_matrix(std::ostream& output, const std::array<float, 16>& matrix, const std::size_t indent) {
+            write_pbrt_indent(output, indent);
+            output << "Transform [";
+            for (std::size_t row = 0u; row < 4u; ++row) {
+                for (std::size_t column = 0u; column < 4u; ++column) {
+                    output << ' ' << pbrt_export_float(matrix.at(column * 4u + row), "PBRT export transform");
+                }
+            }
+            output << " ]\n";
+        }
+
+        void write_pbrt_transform(std::ostream& output, const SceneTransformSet& transform, const Scene::SourceLocation& source, const std::string_view owner, const std::size_t indent) {
+            require_static_scene_transform(transform, source, owner);
+            write_pbrt_transform_matrix(output, transform.start.matrix, indent);
+        }
+
+        void write_pbrt_option_entity(std::ostream& output, const char* directive, const Scene::Entity& entity) {
+            output << directive << ' ' << pbrt_export_quoted(entity.type, directive) << '\n';
+            write_pbrt_entity_parameters(output, entity, 4u, false, directive);
+        }
+
+        void write_pbrt_named_material(std::ostream& output, const Scene::Material& material) {
+            static const std::set<std::string_view> supported_materials{"diffuse", "conductor", "dielectric", "coateddiffuse", "interface", "none"};
+            require_pbrt_export_entity_type(material.entity, supported_materials, "material");
+            output << "MakeNamedMaterial " << pbrt_export_quoted(material.name, "PBRT export material name") << '\n';
+            write_pbrt_indent(output, 4u);
+            output << "\"string type\" [" << pbrt_export_quoted(material.entity.type, "PBRT export material type") << "]\n";
+            write_pbrt_entity_parameters(output, material.entity, 4u, true, std::format("PBRT export material \"{}\"", material.name));
+        }
+
+        void write_pbrt_texture(std::ostream& output, const Scene::Texture& texture) {
+            static const std::set<std::string_view> supported_textures{"constant", "imagemap", "scale", "mix"};
+            require_pbrt_export_entity_type(texture.entity, supported_textures, "texture");
+            if (texture.kind != "float" && texture.kind != "spectrum") throw std::runtime_error(std::format("PBRT export texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
+            output << "AttributeBegin\n";
+            write_pbrt_transform(output, texture.transform, texture.entity.source, std::format("PBRT export texture \"{}\"", texture.name), 4u);
+            write_pbrt_indent(output, 4u);
+            output << "Texture " << pbrt_export_quoted(texture.name, "PBRT export texture name") << ' ' << pbrt_export_quoted(texture.kind, "PBRT export texture kind") << ' ' << pbrt_export_quoted(texture.entity.type, "PBRT export texture type") << '\n';
+            write_pbrt_entity_parameters(output, texture.entity, 8u, false, std::format("PBRT export texture \"{}\"", texture.name));
+            output << "AttributeEnd\n\n";
+        }
+
+        void write_pbrt_named_medium(std::ostream& output, const Scene::Medium& medium) {
+            static const std::set<std::string_view> supported_media{"homogeneous", "uniformgrid"};
+            require_pbrt_export_entity_type(medium.entity, supported_media, "medium");
+            output << "AttributeBegin\n";
+            write_pbrt_transform(output, medium.transform, medium.entity.source, std::format("PBRT export medium \"{}\"", medium.name), 4u);
+            write_pbrt_indent(output, 4u);
+            output << "MakeNamedMedium " << pbrt_export_quoted(medium.name, "PBRT export medium name") << '\n';
+            write_pbrt_indent(output, 8u);
+            output << "\"string type\" [" << pbrt_export_quoted(medium.entity.type, "PBRT export medium type") << "]\n";
+            write_pbrt_entity_parameters(output, medium.entity, 8u, true, std::format("PBRT export medium \"{}\"", medium.name));
+            output << "AttributeEnd\n\n";
+        }
+
+        void write_pbrt_medium_interface(std::ostream& output, const Scene::MediumInterface& medium_interface, const std::size_t indent) {
+            if (medium_interface.inside.empty() && medium_interface.outside.empty()) return;
+            write_pbrt_indent(output, indent);
+            output << "MediumInterface " << pbrt_export_quoted(medium_interface.inside, "PBRT export medium interface") << ' ' << pbrt_export_quoted(medium_interface.outside, "PBRT export medium interface") << '\n';
+        }
+
+        void write_pbrt_light(std::ostream& output, const Scene::Light& light) {
+            static const std::set<std::string_view> supported_lights{"point", "spot", "distant", "infinite"};
+            require_pbrt_export_entity_type(light.entity, supported_lights, "light");
+            output << "AttributeBegin\n";
+            write_pbrt_transform(output, light.transform, light.entity.source, std::format("PBRT export light \"{}\"", light.name), 4u);
+            if (!light.medium.empty()) {
+                write_pbrt_indent(output, 4u);
+                output << "MediumInterface " << pbrt_export_quoted("", "PBRT export light medium") << ' ' << pbrt_export_quoted(light.medium, "PBRT export light medium") << '\n';
+            }
+            write_pbrt_indent(output, 4u);
+            output << "LightSource " << pbrt_export_quoted(light.entity.type, "PBRT export light type") << '\n';
+            write_pbrt_entity_parameters(output, light.entity, 8u, false, std::format("PBRT export light \"{}\"", light.name));
+            output << "AttributeEnd\n\n";
+        }
+
+        void write_pbrt_shape(std::ostream& output, const Scene::Shape& shape, const std::size_t indent) {
+            static const std::set<std::string_view> supported_shapes{"trianglemesh", "plymesh", "sphere", "disk", "cylinder"};
+            require_pbrt_export_entity_type(shape.entity, supported_shapes, "shape");
+            write_pbrt_indent(output, indent);
+            output << "AttributeBegin\n";
+            write_pbrt_transform(output, shape.transform, shape.entity.source, std::format("PBRT export shape \"{}\"", shape.name), indent + 4u);
+            if (shape.reverse_orientation) {
+                write_pbrt_indent(output, indent + 4u);
+                output << "ReverseOrientation\n";
+            }
+            write_pbrt_medium_interface(output, shape.medium_interface, indent + 4u);
+            write_pbrt_indent(output, indent + 4u);
+            output << "NamedMaterial " << pbrt_export_quoted(shape.material_name, "PBRT export shape material") << '\n';
+            if (shape.area_light.has_value()) {
+                if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("PBRT export shape \"{}\" uses unsupported area light type \"{}\"", shape.name, shape.area_light->entity.type));
+                write_pbrt_indent(output, indent + 4u);
+                output << "AreaLightSource " << pbrt_export_quoted(shape.area_light->entity.type, "PBRT export area light type") << '\n';
+                write_pbrt_entity_parameters(output, shape.area_light->entity, indent + 8u, false, std::format("PBRT export shape \"{}\" area light", shape.name));
+            }
+            write_pbrt_indent(output, indent + 4u);
+            output << "Shape " << pbrt_export_quoted(shape.entity.type, "PBRT export shape type") << '\n';
+            write_pbrt_entity_parameters(output, shape.entity, indent + 8u, false, std::format("PBRT export shape \"{}\"", shape.name));
+            write_pbrt_indent(output, indent);
+            output << "AttributeEnd\n\n";
+        }
+
+        void write_pbrt_object_definition(std::ostream& output, const Scene::ObjectDefinition& definition) {
+            output << "ObjectBegin " << pbrt_export_quoted(definition.name, "PBRT export object definition name") << '\n';
+            for (const Scene::Shape& shape : definition.shapes) write_pbrt_shape(output, shape, 4u);
+            output << "ObjectEnd\n\n";
+        }
+
+        void write_pbrt_object_instance(std::ostream& output, const Scene::ObjectInstance& instance) {
+            output << "AttributeBegin\n";
+            write_pbrt_transform(output, instance.transform, instance.source, std::format("PBRT export object instance \"{}\"", instance.name), 4u);
+            write_pbrt_indent(output, 4u);
+            output << "ObjectInstance " << pbrt_export_quoted(instance.definition_name, "PBRT export object instance definition") << '\n';
+            output << "AttributeEnd\n\n";
+        }
+
+        void require_pbrt_export_texture_references(const Scene::Entity& entity, const std::set<std::string>& texture_names, const std::string_view owner) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != "texture") continue;
+                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT export {} parameter \"texture {}\" must contain texture names", owner, parameter.name));
+                for (const std::string& texture_name : *values) {
+                    if (texture_name.empty()) throw std::runtime_error(std::format("PBRT export {} parameter \"texture {}\" references an empty texture name", owner, parameter.name));
+                    if (!texture_names.contains(texture_name)) throw std::runtime_error(std::format("PBRT export {} parameter \"texture {}\" references unknown texture \"{}\"", owner, parameter.name, texture_name));
+                }
+            }
+        }
+
+        void require_pbrt_export_texture_references(const Scene::ResolvedScene& scene) {
+            std::set<std::string> texture_names{};
+            for (const Scene::Texture& texture : scene.textures) texture_names.insert(texture.name);
+            for (const Scene::Texture& texture : scene.textures) require_pbrt_export_texture_references(texture.entity, texture_names, std::format("texture \"{}\"", texture.name));
+            for (const Scene::Material& material : scene.materials) require_pbrt_export_texture_references(material.entity, texture_names, std::format("material \"{}\"", material.name));
+            for (const Scene::Medium& medium : scene.media) require_pbrt_export_texture_references(medium.entity, texture_names, std::format("medium \"{}\"", medium.name));
+            for (const Scene::Light& light : scene.lights) require_pbrt_export_texture_references(light.entity, texture_names, std::format("light \"{}\"", light.name));
+            for (const Scene::Shape& shape : scene.shapes) {
+                require_pbrt_export_texture_references(shape.entity, texture_names, std::format("shape \"{}\"", shape.name));
+                if (shape.area_light.has_value()) require_pbrt_export_texture_references(shape.area_light->entity, texture_names, std::format("shape \"{}\" area light", shape.name));
+            }
+            for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
+                for (const Scene::Shape& shape : definition.shapes) {
+                    require_pbrt_export_texture_references(shape.entity, texture_names, std::format("object definition \"{}\" shape \"{}\"", definition.name, shape.name));
+                    if (shape.area_light.has_value()) require_pbrt_export_texture_references(shape.area_light->entity, texture_names, std::format("object definition \"{}\" shape \"{}\" area light", definition.name, shape.name));
+                }
+            }
+        }
+
+        void write_pbrt_scene_file(const Scene::ResolvedScene& scene, const std::filesystem::path& path) {
+            validate_canonical_scene(scene);
+            require_pbrt_export_texture_references(scene);
+            if (!path.has_filename()) throw std::runtime_error("PBRT export path must include a filename");
+            const std::filesystem::path parent = path.parent_path();
+            if (!parent.empty() && !std::filesystem::exists(parent)) throw std::runtime_error(std::format("PBRT export directory does not exist: {}", parent.string()));
+
+            std::ofstream output(path, std::ios::binary);
+            if (!output) throw std::runtime_error(std::format("Failed to open PBRT export file: {}", path.string()));
+
+            output << "# Generated by Spectra from canonical Y-up scene " << pbrt_export_quoted(scene.name, "PBRT export scene name") << "\n\n";
+            write_pbrt_option_entity(output, "PixelFilter", scene.render_settings.filter);
+            write_pbrt_option_entity(output, "Film", scene.render_settings.film);
+            write_pbrt_option_entity(output, "Sampler", scene.render_settings.sampler);
+            write_pbrt_option_entity(output, "Integrator", scene.render_settings.integrator);
+            write_pbrt_option_entity(output, "Accelerator", scene.render_settings.accelerator);
+            if (!scene.render_settings.camera_medium.empty()) output << "MediumInterface \"\" " << pbrt_export_quoted(scene.render_settings.camera_medium, "PBRT export camera medium") << '\n';
+            require_static_scene_transform(scene.render_settings.camera_transform, scene.render_settings.camera.source, "PBRT export camera");
+            write_pbrt_transform_matrix(output, scene.render_settings.camera_transform.start.inverse, 0u);
+            write_pbrt_option_entity(output, "Camera", scene.render_settings.camera);
+            output << "\nWorldBegin\n\n";
+
+            for (const Scene::Texture& texture : scene.textures) write_pbrt_texture(output, texture);
+            for (const Scene::Material& material : scene.materials) write_pbrt_named_material(output, material);
+            if (!scene.materials.empty()) output << '\n';
+            for (const Scene::Medium& medium : scene.media) write_pbrt_named_medium(output, medium);
+            for (const Scene::Light& light : scene.lights) write_pbrt_light(output, light);
+            for (const Scene::Shape& shape : scene.shapes) write_pbrt_shape(output, shape, 0u);
+            for (const Scene::ObjectDefinition& definition : scene.object_definitions) write_pbrt_object_definition(output, definition);
+            for (const Scene::ObjectInstance& instance : scene.object_instances) write_pbrt_object_instance(output, instance);
+
+            if (!output) throw std::runtime_error(std::format("Failed while writing PBRT export file: {}", path.string()));
         }
     } // namespace
 
@@ -902,6 +1219,10 @@ namespace spectra::scene {
         };
     }
 
+    void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path) {
+        write_pbrt_scene_file(scene, path);
+    }
+
     namespace {
         struct Bounds {
             Vector3 minimum{};
@@ -965,6 +1286,17 @@ namespace spectra::scene {
                 return values;
             }
             return nullptr;
+        }
+
+        [[nodiscard]] std::string optional_texture_reference_value(const Scene::Entity& entity, const std::string_view name) {
+            for (const Scene::Parameter& parameter : entity.parameters) {
+                if (parameter.type != "texture" || parameter.name != name) continue;
+                const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("PBRT preview material parameter \"{}\" must contain exactly one texture name", name));
+                if (values->front().empty()) throw std::runtime_error(std::format("PBRT preview material parameter \"{}\" references an empty texture name", name));
+                return values->front();
+            }
+            return {};
         }
 
         [[nodiscard]] const std::vector<int>& required_int_values(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
@@ -1086,16 +1418,45 @@ namespace spectra::scene {
             for (const Scene::Material& material : scene.materials) {
                 if (!referenced_material_names.contains(material.name)) continue;
                 if (material.name.empty()) throw std::runtime_error("PBRT preview material name must not be empty");
-                if (material.entity.type != "diffuse") throw std::runtime_error(std::format("PBRT preview material \"{}\" uses unsupported type \"{}\"", material.name, material.entity.type));
-                const Vector3 reflectance = required_rgb_value(material.entity, "reflectance", std::format("PBRT preview material \"{}\"", material.name));
+                Scene::PreviewMaterial preview_material{
+                    .name                = material.name,
+                    .surface_kind        = Scene::PreviewSurfaceKind::LitSurface,
+                    .base_color          = Vector4{0.8f, 0.8f, 0.8f, 1.0f},
+                    .roughness           = 0.72f,
+                    .pathtracer_material = material.entity,
+                };
+                if (material.entity.type == "diffuse") {
+                    const Vector3 reflectance = optional_rgb_value(material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f});
+                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                } else if (material.entity.type == "coateddiffuse") {
+                    const Vector3 reflectance = optional_rgb_value(material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f});
+                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "roughness", 0.35f), 0.02f, 1.0f);
+                    preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
+                } else if (material.entity.type == "conductor") {
+                    const Vector3 reflectance = optional_rgb_value(material.entity, "reflectance", Vector3{0.9f, 0.82f, 0.65f});
+                    preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
+                    preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
+                    preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "roughness", 0.28f), 0.02f, 1.0f);
+                    preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
+                    preview_material.metallic = 1.0f;
+                } else if (material.entity.type == "dielectric") {
+                    preview_material.base_color = Vector4{0.82f, 0.9f, 1.0f, 0.42f};
+                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
+                    preview_material.roughness = 0.05f;
+                } else if (material.entity.type == "interface" || material.entity.type == "none") {
+                    preview_material.surface_kind = Scene::PreviewSurfaceKind::UnlitSurface;
+                    preview_material.alpha_mode = Scene::PreviewAlphaMode::Blend;
+                    preview_material.base_color = Vector4{0.62f, 0.7f, 0.78f, 0.18f};
+                    preview_material.roughness = 1.0f;
+                } else {
+                    throw std::runtime_error(std::format("PBRT preview material \"{}\" uses unsupported type \"{}\"", material.name, material.entity.type));
+                }
                 const bool inserted = material_indices.emplace(material.name, document.materials.size()).second;
                 if (!inserted) throw std::runtime_error(std::format("PBRT preview material \"{}\" is duplicated", material.name));
-                document.materials.push_back(Scene::PreviewMaterial{
-                    .name       = material.name,
-                    .surface_kind = Scene::PreviewSurfaceKind::LitSurface,
-                    .base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f},
-                    .roughness  = 0.72f,
-                });
+                document.materials.push_back(std::move(preview_material));
             }
             for (const std::string& material_name : referenced_material_names) {
                 if (!material_indices.contains(material_name)) throw std::runtime_error(std::format("PBRT preview shape references unknown material \"{}\"", material_name));
@@ -1242,7 +1603,6 @@ namespace spectra::scene {
         }
 
         void reject_unsupported_scene_content(const Scene::ResolvedScene& scene) {
-            if (!scene.textures.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT textures");
             if (!scene.media.empty()) throw std::runtime_error("PBRT preview scene loader does not support PBRT media");
             if (!scene.object_definitions.empty() || !scene.object_instances.empty()) throw std::runtime_error("PBRT preview scene loader only supports top-level trianglemesh shapes");
         }
@@ -1322,6 +1682,7 @@ namespace spectra::scene {
             .frames_per_second = 24.0,
             .timeline_enabled = false,
         };
+        document.textures = scene.textures;
         Bounds bounds{};
         const std::set<std::string> referenced_material_names = referenced_shape_material_names(scene);
         const std::map<std::string, std::size_t> material_indices = append_materials(scene, referenced_material_names, document);

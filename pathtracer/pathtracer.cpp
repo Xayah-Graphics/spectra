@@ -724,19 +724,18 @@ namespace {
         spectra::Vector3f up{};
     };
 
-    [[nodiscard]] InteractiveCameraFrame interactive_camera_frame_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
-        if (basis_handedness != -1.0f && basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
+    [[nodiscard]] InteractiveCameraFrame interactive_camera_frame_from_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
         InteractiveCameraFrame frame{};
         frame.forward                          = normalized_vector(center - eye, "Camera eye and center must not overlap");
         const spectra::Vector3f effective_up   = interactive_camera_effective_up(eye, center, up);
         const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(effective_up, frame.forward), "Camera right vector is invalid");
-        frame.right                            = positive_right * basis_handedness;
+        frame.right                            = positive_right;
         frame.up                               = spectra::Cross(frame.forward, positive_right);
         return frame;
     }
 
-    [[nodiscard]] spectra::Transform camera_from_world_transform_from_interactive_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up, const float basis_handedness) {
-        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(eye, center, up, basis_handedness);
+    [[nodiscard]] spectra::Transform camera_from_world_transform_from_interactive_pose(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
+        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(eye, center, up);
         const spectra::Vector3f eye_vector{eye.x, eye.y, eye.z};
         spectra::Transform transform{spectra::SquareMatrix<4>{
             frame.right.x,
@@ -811,7 +810,6 @@ namespace spectra::pathtracer {
         spectra::Point3f eye{};
         spectra::Point3f center{};
         spectra::Vector3f up{};
-        float basis_handedness{1.0f};
     };
 
     [[nodiscard]] scene::Vector3 to_scene_vector(const spectra::Point3f& value) {
@@ -839,12 +837,11 @@ namespace spectra::pathtracer {
         };
     }
 
-    [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_scene_camera_state(const scene::Scene::CameraState& state, const float basis_handedness) {
+    [[nodiscard]] InteractiveCameraPose interactive_camera_pose_from_scene_camera_state(const scene::Scene::CameraState& state) {
         return InteractiveCameraPose{
-            .eye              = to_pathtracer_point(state.eye),
-            .center           = to_pathtracer_point(state.target),
-            .up               = to_pathtracer_vector(state.up),
-            .basis_handedness = basis_handedness,
+            .eye    = to_pathtracer_point(state.eye),
+            .center = to_pathtracer_point(state.target),
+            .up     = to_pathtracer_vector(state.up),
         };
     }
 
@@ -858,23 +855,20 @@ namespace spectra::pathtracer {
         const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
         InteractiveCameraPose pose{};
         pose.eye                               = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
-        const spectra::Vector3f right          = normalized_vector(world_from_camera(spectra::Vector3f{1.0f, 0.0f, 0.0f}), "Base camera right vector is invalid");
         const spectra::Vector3f forward        = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
         pose.up                                = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 1.0f, 0.0f}), "Base camera up vector is invalid");
-        const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(interactive_camera_effective_up(pose.eye, pose.eye + forward, pose.up), forward), "Base camera positive right vector is invalid");
-        pose.basis_handedness                  = spectra::Dot(right, positive_right) < 0.0f ? -1.0f : 1.0f;
         pose.center                            = interactive_camera_focus_center_from_bounds(pose.eye, forward, focus_bounds);
         return pose;
     }
 
     [[nodiscard]] spectra::Transform moving_from_camera_from_interactive_pose(const spectra::Transform& base_camera_from_world, const InteractiveCameraPose& pose) {
-        const spectra::Transform current_camera_from_world = camera_from_world_transform_from_interactive_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const spectra::Transform current_camera_from_world = camera_from_world_transform_from_interactive_pose(pose.eye, pose.center, pose.up);
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
 
     bool interactive_camera_pan(InteractiveCameraPose& pose, const std::array<float, 2>& displacement, const float fov_degrees, const std::array<float, 2>& viewport_size) {
         if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
-        const InteractiveCameraFrame frame   = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const InteractiveCameraFrame frame   = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up);
         const std::array<float, 2> view_size = interactive_camera_view_dimensions(pose.eye, pose.center, fov_degrees, viewport_size);
         const spectra::Vector3f offset       = frame.right * (-displacement[0] * view_size[0]) + frame.up * (displacement[1] * view_size[1]);
         pose.eye += offset;
@@ -894,10 +888,8 @@ namespace spectra::pathtracer {
 
     bool interactive_camera_orbit(InteractiveCameraPose& pose, std::array<float, 2> displacement, const bool invert) {
         if (displacement[0] == 0.0f && displacement[1] == 0.0f) return false;
-        if (pose.basis_handedness != -1.0f && pose.basis_handedness != 1.0f) throw std::runtime_error("Camera basis handedness must be either -1 or 1");
         constexpr float two_pi   = 6.2831853071795864769f;
         constexpr float pole_pad = 1.0e-3f;
-        displacement[0] *= -pose.basis_handedness;
         displacement[0] *= two_pi;
         displacement[1] *= two_pi;
 
@@ -936,7 +928,7 @@ namespace spectra::pathtracer {
     bool interactive_camera_key_motion(InteractiveCameraPose& pose, const std::array<float, 2>& delta, const float speed, const bool dolly) {
         if (delta[0] == 0.0f && delta[1] == 0.0f) return false;
         if (!std::isfinite(speed) || !(speed > 0.0f)) throw std::runtime_error("Camera speed must be finite and positive");
-        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up, pose.basis_handedness);
+        const InteractiveCameraFrame frame = interactive_camera_frame_from_pose(pose.eye, pose.center, pose.up);
         const spectra::Vector3f movement   = dolly ? frame.forward * (delta[0] * speed) : frame.right * (delta[0] * speed) + frame.up * (delta[1] * speed);
         pose.eye += movement;
         pose.center += movement;
@@ -1070,7 +1062,6 @@ namespace spectra::pathtracer {
             bool input_enabled{false};
             float speed{1.0f};
             float fov_degrees{60.0f};
-            float basis_handedness{1.0f};
             bool mouse_position_known{false};
             spectra::Point3f eye{0.0f, 0.0f, 0.0f};
             spectra::Point3f center{0.0f, 0.0f, 1.0f};
@@ -1463,7 +1454,6 @@ namespace spectra::pathtracer {
         this->camera.input_enabled = false;
         this->camera.speed = initial_move_scale * 60.0f;
         this->camera.fov_degrees = interactive_camera_fov_degrees(this->active_scene_info());
-        this->camera.basis_handedness = pose.basis_handedness;
         this->camera.mouse_position = {0.0f, 0.0f};
         this->camera.mouse_position_known = false;
         this->camera_workspace->ensure_camera(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, this->camera.fov_degrees));
@@ -1482,7 +1472,7 @@ namespace spectra::pathtracer {
     void PathtracerRenderer::Impl::apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot) {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot apply camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot apply camera state without an active Spectra pathtracer");
-        const InteractiveCameraPose pose = interactive_camera_pose_from_scene_camera_state(snapshot.state, this->camera.basis_handedness);
+        const InteractiveCameraPose pose = interactive_camera_pose_from_scene_camera_state(snapshot.state);
         this->camera.eye = pose.eye;
         this->camera.center = pose.center;
         this->camera.up = pose.up;
@@ -1508,7 +1498,6 @@ namespace spectra::pathtracer {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pathtracer_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
         const InteractiveCameraPose pose = interactive_camera_pose_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds());
-        this->camera.basis_handedness = pose.basis_handedness;
         const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), scene_camera_state_from_interactive_pose(pose, interactive_camera_fov_degrees(this->active_scene_info())));
         this->apply_camera_snapshot(snapshot);
         this->request_pathtracer_accumulation_reset();
@@ -1590,7 +1579,7 @@ namespace spectra::pathtracer {
         const bool shift = io.KeyShift;
         const bool ctrl  = io.KeyCtrl;
         const bool alt   = io.KeyAlt;
-        InteractiveCameraPose pose{this->camera.eye, this->camera.center, this->camera.up, this->camera.basis_handedness};
+        InteractiveCameraPose pose{.eye = this->camera.eye, .center = this->camera.center, .up = this->camera.up};
         bool camera_changed = false;
         if (!alt) {
             if (!std::isfinite(io.DeltaTime) || io.DeltaTime < 0.0f) throw std::runtime_error("ImGui delta time is invalid");
@@ -1655,7 +1644,6 @@ namespace spectra::pathtracer {
             this->camera.eye                = pose.eye;
             this->camera.center             = pose.center;
             this->camera.up                 = pose.up;
-            this->camera.basis_handedness   = pose.basis_handedness;
             this->camera.moving_from_camera = moving_from_camera_from_interactive_pose(this->camera.camera_from_world, pose);
             this->commit_camera_state(pose);
             this->request_pathtracer_accumulation_reset();

@@ -178,10 +178,25 @@ namespace {
         if ((material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::PointGlyph || material.surface_kind == spectra::scene::Scene::PreviewSurfaceKind::Volume) && material.alpha_mode != spectra::scene::Scene::PreviewAlphaMode::Blend) throw std::runtime_error(std::format("Rasterizer {} material \"{}\" must use Blend alpha mode", preview_surface_kind_name(material.surface_kind), material.name));
     }
 
+    void validate_material_texture_reference(const std::set<std::string_view>& texture_names, const std::string& texture_name, const std::string_view material_name, const std::string_view field_name) {
+        if (texture_name.empty()) return;
+        if (!texture_names.contains(std::string_view{texture_name})) throw std::runtime_error(std::format("Rasterizer material \"{}\" references unknown {} texture \"{}\"", material_name, field_name, texture_name));
+    }
+
     void validate_material_library(const spectra::scene::Scene::Document& scene) {
+        std::set<std::string_view> texture_names{};
+        for (const spectra::scene::Scene::Texture& texture : scene.textures) {
+            if (texture.name.empty()) throw std::runtime_error("Rasterizer texture names must not be empty");
+            const bool inserted = texture_names.insert(std::string_view{texture.name}).second;
+            if (!inserted) throw std::runtime_error(std::format("Rasterizer texture \"{}\" is duplicated", texture.name));
+        }
         std::set<std::string_view> names{};
         for (const spectra::scene::Scene::PreviewMaterial& material : scene.materials) {
             validate_material_values(material);
+            validate_material_texture_reference(texture_names, material.base_color_texture, material.name, "base color");
+            validate_material_texture_reference(texture_names, material.emission_texture, material.name, "emission");
+            validate_material_texture_reference(texture_names, material.roughness_texture, material.name, "roughness");
+            validate_material_texture_reference(texture_names, material.normal_texture, material.name, "normal");
             const bool inserted = names.insert(std::string_view{material.name}).second;
             if (!inserted) throw std::runtime_error(std::format("Rasterizer material \"{}\" is duplicated", material.name));
         }
@@ -3456,11 +3471,15 @@ namespace spectra::rasterizer {
             draw_property_row("Surface", preview_surface_kind_name(material.surface_kind));
             draw_property_row("Alpha", preview_alpha_mode_name(material.alpha_mode));
             draw_color_row("Base Color", material.base_color);
+            if (!material.base_color_texture.empty()) draw_property_row("Base Texture", material.base_color_texture);
             draw_color_row("Emission", material.emission_color);
+            if (!material.emission_texture.empty()) draw_property_row("Emission Texture", material.emission_texture);
             draw_property_row("Emission Str", format_float(material.emission_strength));
             draw_property_row("Roughness", format_float(material.roughness));
+            if (!material.roughness_texture.empty()) draw_property_row("Roughness Texture", material.roughness_texture);
             draw_property_row("Metallic", format_float(material.metallic));
             draw_property_row("Alpha Cutoff", format_float(material.alpha_cutoff));
+            if (!material.normal_texture.empty()) draw_property_row("Normal Texture", material.normal_texture);
             if (material.surface_kind == scene::Scene::PreviewSurfaceKind::Volume) {
                 draw_property_row("Density Scale", format_float(material.volume_density_scale));
                 draw_property_row("Temp Scale", format_float(material.volume_temperature_scale));

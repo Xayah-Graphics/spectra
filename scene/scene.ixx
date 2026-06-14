@@ -175,13 +175,18 @@ namespace spectra::scene {
             PreviewSurfaceKind surface_kind{PreviewSurfaceKind::LitSurface};
             PreviewAlphaMode alpha_mode{PreviewAlphaMode::Opaque};
             Vector4 base_color{0.8f, 0.8f, 0.8f, 1.0f};
+            std::string base_color_texture{};
             Vector3 emission_color{};
+            std::string emission_texture{};
             float emission_strength{};
             float roughness{0.5f};
+            std::string roughness_texture{};
             float metallic{};
             float alpha_cutoff{0.5f};
+            std::string normal_texture{};
             float volume_density_scale{0.08f};
             float volume_temperature_scale{0.035f};
+            Entity pathtracer_material{};
         };
 
         enum class PreviewLightKind {
@@ -302,6 +307,7 @@ namespace spectra::scene {
             bool timeline_enabled{true};
             std::optional<Camera> camera{};
             std::vector<PreviewMaterial> materials{};
+            std::vector<Texture> textures{};
             std::vector<PreviewLight> lights{};
             std::vector<Mesh> meshes{};
             std::vector<Sphere> spheres{};
@@ -426,4 +432,6 @@ namespace spectra::scene {
         Timeline current_timeline{};
         std::optional<ResolvedScene> canonical_scene{};
     };
+
+    export void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path);
 } // namespace spectra::scene
