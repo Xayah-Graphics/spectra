@@ -1287,10 +1287,6 @@ namespace spectra::scene {
         return describe_scene(this->resolved_scene());
     }
 
-    Scene::Document Scene::make_preview_document() const {
-        return this->preview_document();
-    }
-
     const Scene::Document& Scene::preview_document() const {
         if (this->current_document != nullptr) return *this->current_document;
         if (!this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");

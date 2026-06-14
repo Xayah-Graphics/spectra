@@ -297,10 +297,10 @@ namespace spectra::rasterizer {
         [[nodiscard]] std::string active_scene_id() const;
         [[nodiscard]] scene::Scene::CameraState initial_camera_state_from_scene() const;
         [[nodiscard]] scene::Scene::CameraState current_viewport_camera_state() const;
+        [[nodiscard]] float current_viewport_camera_distance() const;
         void ensure_viewport_camera_session();
         void synchronize_viewport_camera();
         void apply_viewport_camera_state(const scene::Scene::CameraSnapshot& snapshot);
-        void commit_viewport_camera();
         void commit_viewport_camera_state(scene::Scene::CameraState state);
         void reset_viewport_camera_from_scene();
         void frame_viewport_scene();
@@ -372,12 +372,7 @@ namespace spectra::rasterizer {
             vk::raii::Image depth_image{nullptr};
             vk::raii::DeviceMemory depth_memory{nullptr};
             vk::raii::ImageView depth_view{nullptr};
-            scene::Vector3 camera_target{};
-            scene::Vector3 camera_up{0.0f, 1.0f, 0.0f};
-            float camera_distance{1.0f};
-            float camera_yaw{};
-            float camera_pitch{};
-            float camera_vertical_fov_degrees{45.0f};
+            scene::Scene::CameraState camera_state{};
             float camera_near_plane{0.01f};
             float camera_far_plane{200.0f};
             bool camera_initialized{false};

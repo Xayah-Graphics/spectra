@@ -138,17 +138,6 @@ namespace spectra::rasterizer::math {
         return basis;
     }
 
-    export [[nodiscard]] CameraBasis orbit_camera_basis(const Vector3 target, const float yaw_radians, const float pitch_radians, const float distance) {
-        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Rasterizer viewport camera distance must be positive");
-        const float cos_pitch = std::cos(pitch_radians);
-        const Vector3 direction{
-            std::sin(yaw_radians) * cos_pitch,
-            std::sin(pitch_radians),
-            std::cos(yaw_radians) * cos_pitch,
-        };
-        return camera_basis(target + direction * distance, target, Vector3{0.0f, 1.0f, 0.0f});
-    }
-
     export [[nodiscard]] Matrix4 transform_matrix(const Transform& transform) {
         const Quaternion rotation  = transform.rotation;
         const float length_squared = rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w;

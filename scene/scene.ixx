@@ -420,7 +420,6 @@ namespace spectra::scene {
         [[nodiscard]] ResolvedFrame resolved_frame() const;
         [[nodiscard]] ResolvedScene resolved_scene() const;
         [[nodiscard]] Info info() const;
-        [[nodiscard]] Document make_preview_document() const;
         [[nodiscard]] DirtyFlags commit(Edit edit);
 
         [[nodiscard]] static Scene parse_pbrt(std::string_view scene_id);

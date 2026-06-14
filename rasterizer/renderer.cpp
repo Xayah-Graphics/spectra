@@ -304,11 +304,6 @@ namespace {
         return data;
     }
 
-    [[nodiscard]] float clamp_viewport_pitch(const float pitch) {
-        constexpr float limit = std::numbers::pi_v<float> * 0.49f;
-        return std::clamp(pitch, -limit, limit);
-    }
-
     void draw_tooltip(const char* text) {
         if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) return;
         ImGui::SetTooltip("%s", text);
@@ -2344,13 +2339,15 @@ namespace spectra::rasterizer {
 
     scene::Scene::CameraState Renderer::current_viewport_camera_state() const {
         if (!this->viewport.camera_initialized) throw std::runtime_error("Spectra rasterizer viewport camera is not initialized");
-        const spectra::rasterizer::math::CameraBasis orbit_basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
-        return scene::Scene::CameraState{
-            .eye                = to_scene_vector(orbit_basis.eye),
-            .target             = this->viewport.camera_target,
-            .up                 = this->viewport.camera_up,
-            .vertical_fov_degrees = this->viewport.camera_vertical_fov_degrees,
-        };
+        return this->viewport.camera_state;
+    }
+
+    float Renderer::current_viewport_camera_distance() const {
+        const scene::Scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 offset = to_render_vector(state.eye) - to_render_vector(state.target);
+        const float distance = spectra::rasterizer::math::length(offset);
+        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Spectra rasterizer viewport camera distance must be positive");
+        return distance;
     }
 
     void Renderer::ensure_viewport_camera_session() {
@@ -2366,25 +2363,10 @@ namespace spectra::rasterizer {
     void Renderer::apply_viewport_camera_state(const scene::Scene::CameraSnapshot& snapshot) {
         const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
         if (!scene->camera.has_value()) throw std::runtime_error("Spectra rasterizer viewport requires a scene camera");
-        const spectra::rasterizer::math::Vector3 eye = to_render_vector(snapshot.state.eye);
-        const spectra::rasterizer::math::Vector3 target = to_render_vector(snapshot.state.target);
-        const spectra::rasterizer::math::Vector3 offset = eye - target;
-        const float distance = spectra::rasterizer::math::length(offset);
-        if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Spectra rasterizer scene camera must not be located at its target");
-        this->viewport.camera_target = snapshot.state.target;
-        this->viewport.camera_up = snapshot.state.up;
-        this->viewport.camera_distance = std::max(distance, 0.02f);
-        this->viewport.camera_yaw = std::atan2(offset.x, offset.z);
-        this->viewport.camera_pitch = clamp_viewport_pitch(std::asin(std::clamp(offset.y / distance, -1.0f, 1.0f)));
-        this->viewport.camera_vertical_fov_degrees = snapshot.state.vertical_fov_degrees;
+        this->viewport.camera_state = snapshot.state;
         this->viewport.camera_near_plane = scene->camera->near_plane;
         this->viewport.camera_far_plane = scene->camera->far_plane;
         this->viewport.camera_initialized = true;
-        this->scene.observed_camera_revision = snapshot.revision;
-    }
-
-    void Renderer::commit_viewport_camera() {
-        const scene::Scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), this->current_viewport_camera_state());
         this->scene.observed_camera_revision = snapshot.revision;
     }
 
@@ -2504,11 +2486,14 @@ namespace spectra::rasterizer {
         };
         const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
         const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
-        this->viewport.camera_target = center;
-        this->viewport.camera_distance = std::clamp(radius * 2.6f, 0.02f, 1000000.0f);
-        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, this->viewport.camera_distance + radius * 6.0f);
-        this->viewport.camera_initialized = true;
-        this->commit_viewport_camera();
+        if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
+        scene::Scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.eye) - to_render_vector(state.target));
+        const float distance = std::clamp(radius * 2.6f, 0.02f, 1000000.0f);
+        state.target = center;
+        state.eye = to_scene_vector(to_render_vector(center) + direction * distance);
+        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, distance + radius * 6.0f);
+        this->commit_viewport_camera_state(std::move(state));
     }
 
     void Renderer::frame_selected_objects() {
@@ -2524,20 +2509,23 @@ namespace spectra::rasterizer {
         };
         const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
         const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
-        this->viewport.camera_target = center;
-        this->viewport.camera_distance = std::clamp(radius * 2.3f, 0.02f, 1000000.0f);
-        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, this->viewport.camera_distance + radius * 6.0f);
-        this->viewport.camera_initialized = true;
-        this->commit_viewport_camera();
+        if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
+        scene::Scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.eye) - to_render_vector(state.target));
+        const float distance = std::clamp(radius * 2.3f, 0.02f, 1000000.0f);
+        state.target = center;
+        state.eye = to_scene_vector(to_render_vector(center) + direction * distance);
+        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, distance + radius * 6.0f);
+        this->commit_viewport_camera_state(std::move(state));
     }
 
     void Renderer::set_viewport_axis_view(const scene::Vector3 direction) {
         const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize(to_render_vector(direction));
-        this->viewport.camera_yaw = std::atan2(normalized.x, normalized.z);
-        this->viewport.camera_pitch = clamp_viewport_pitch(std::asin(std::clamp(normalized.y, -1.0f, 1.0f)));
-        this->viewport.camera_up = std::abs(normalized.y) > 0.9f ? scene::Vector3{0.0f, 0.0f, -1.0f} : scene::Vector3{0.0f, 1.0f, 0.0f};
-        this->viewport.camera_initialized = true;
-        this->commit_viewport_camera();
+        if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
+        scene::Scene::CameraState state = this->current_viewport_camera_state();
+        state.eye = to_scene_vector(to_render_vector(state.target) + normalized * this->current_viewport_camera_distance());
+        state.up = std::abs(normalized.y) > 0.9f ? scene::Vector3{0.0f, 0.0f, -1.0f} : scene::Vector3{0.0f, 1.0f, 0.0f};
+        this->commit_viewport_camera_state(std::move(state));
     }
 
     void Renderer::orbit_viewport_camera(const scene::Scene::ViewportCameraDelta delta) {
@@ -2557,11 +2545,12 @@ namespace spectra::rasterizer {
         if (this->viewport.extent.width == 0 || this->viewport.extent.height == 0) throw std::runtime_error("Cannot create Spectra rasterizer camera uniform without a viewport extent");
         const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
         const float aspect = static_cast<float>(this->viewport.extent.width) / static_cast<float>(this->viewport.extent.height);
-        const spectra::rasterizer::math::CameraBasis orbit_basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(orbit_basis.eye, orbit_basis.target, to_render_vector(this->viewport.camera_up));
-        const float far_plane = std::max(this->viewport.camera_far_plane, this->viewport.camera_distance * 4.0f);
-        const spectra::rasterizer::math::Matrix4 projection = spectra::rasterizer::math::perspective_matrix(this->viewport.camera_vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
-        const spectra::rasterizer::math::Matrix4 inverse_projection = spectra::rasterizer::math::inverse_perspective_matrix(this->viewport.camera_vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
+        const scene::Scene::CameraState state = this->current_viewport_camera_state();
+        const float distance = this->current_viewport_camera_distance();
+        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(to_render_vector(state.eye), to_render_vector(state.target), to_render_vector(state.up));
+        const float far_plane = std::max(this->viewport.camera_far_plane, distance * 4.0f);
+        const spectra::rasterizer::math::Matrix4 projection = spectra::rasterizer::math::perspective_matrix(state.vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
+        const spectra::rasterizer::math::Matrix4 inverse_projection = spectra::rasterizer::math::inverse_perspective_matrix(state.vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
         const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::look_at_matrix(basis) * projection;
         const spectra::rasterizer::math::Matrix4 inverse_view_projection = inverse_projection * spectra::rasterizer::math::inverse_look_at_matrix(basis);
         const ViewportLightingData lighting = explicit_scene_lighting_uniform(*scene);
@@ -2576,7 +2565,7 @@ namespace spectra::rasterizer {
             .lightCounts               = lighting.lightCounts,
             .cameraRight               = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
             .cameraUp                  = {basis.up.x, basis.up.y, basis.up.z, 0.0f},
-            .viewport                  = {static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, this->viewport.camera_distance},
+            .viewport                  = {static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, distance},
         };
     }
 
@@ -3168,8 +3157,8 @@ namespace spectra::rasterizer {
         };
 
         constexpr float axis_radius = 22.0f;
-        const spectra::rasterizer::math::CameraBasis orbit_basis = spectra::rasterizer::math::orbit_camera_basis(to_render_vector(this->viewport.camera_target), this->viewport.camera_yaw, this->viewport.camera_pitch, this->viewport.camera_distance);
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(orbit_basis.eye, orbit_basis.target, to_render_vector(this->viewport.camera_up));
+        const scene::Scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(to_render_vector(state.eye), to_render_vector(state.target), to_render_vector(state.up));
 
         const auto project_axis = [&](const spectra::rasterizer::math::Vector3 axis) {
             return spectra::rasterizer::math::Vector3{
@@ -3294,11 +3283,12 @@ namespace spectra::rasterizer {
         for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
             if (object.key.kind == SceneObjectKind::Mesh || object.key.kind == SceneObjectKind::Sphere || object.key.kind == SceneObjectKind::PointCloud || object.key.kind == SceneObjectKind::VolumeGrid) ++primitive_count;
         }
-        std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, this->viewport.camera_distance);
+        const float camera_distance = this->current_viewport_camera_distance();
+        std::string chip = std::format("rev {} | {} prim | dist {:.2f}", this->scene.workspace->revision().value, primitive_count, camera_distance);
         const ImVec2 chip_padding{10.0f, 7.0f};
         ImVec2 chip_text = ImGui::CalcTextSize(chip.c_str());
         if (chip_text.x + chip_padding.x * 2.0f > image_size.x - 24.0f) {
-            chip = std::format("rev {} | dist {:.2f}", this->scene.workspace->revision().value, this->viewport.camera_distance);
+            chip = std::format("rev {} | dist {:.2f}", this->scene.workspace->revision().value, camera_distance);
             chip_text = ImGui::CalcTextSize(chip.c_str());
         }
         const ImVec2 chip_min{image_max.x - chip_text.x - chip_padding.x * 2.0f - 12.0f, image_max.y - chip_text.y - chip_padding.y * 2.0f - 12.0f};
