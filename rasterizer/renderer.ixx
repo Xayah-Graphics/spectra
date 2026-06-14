@@ -377,7 +377,7 @@ namespace spectra::rasterizer {
             float camera_far_plane{200.0f};
             bool camera_initialized{false};
             bool overlays_visible{true};
-            bool grid_visible{true};
+            bool grid_visible{false};
             bool hovered{false};
             bool screenshot_requested{false};
             bool screenshot_pending{false};
