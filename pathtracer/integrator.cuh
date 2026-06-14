@@ -24,8 +24,8 @@ namespace spectra::optix {
 } // namespace spectra::optix
 
 namespace spectra::pathtracer {
-    class CompiledPathtracerScene;
-    class PathtracerRuntimeResources;
+    class CompiledScene;
+    class RuntimeResources;
 
     class GpuRuntime {
     public:
@@ -41,15 +41,15 @@ namespace spectra::pathtracer {
         void WaitGpuNoexcept() const noexcept;
 
     private:
-        std::unique_ptr<PathtracerRuntimeResources> resources{};
+        std::unique_ptr<RuntimeResources> resources{};
         bool initialized{false};
         int cudaDevice{};
     };
 
-    class WavefrontPathtracer {
+    class WavefrontIntegrator {
     public:
-        WavefrontPathtracer(pstd::pmr::memory_resource* memoryResource, CompiledPathtracerScene& compiledScene, const RenderConfig& config);
-        __host__ __device__ ~WavefrontPathtracer();
+        WavefrontIntegrator(pstd::pmr::memory_resource* memoryResource, CompiledScene& compiledScene, const RenderConfig& config);
+        __host__ __device__ ~WavefrontIntegrator();
 
         Float Render();
         void RenderSample(Bounds2i pixelBounds, Transform cameraMotion, int sampleIndex);
@@ -125,9 +125,9 @@ namespace spectra::pathtracer {
 
         RayQueue* rayQueues[2];
 
-        CompiledPathtracerScene* compiledScene    = nullptr;
+        CompiledScene* compiledScene    = nullptr;
         optix::SpectraOptiXAggregate* aggregate   = nullptr;
-        const WavefrontPathtracer* aggregateOwner = this;
+        const WavefrontIntegrator* aggregateOwner = this;
 
         MediumSampleQueue* mediumSampleQueue   = nullptr;
         MediumScatterQueue* mediumScatterQueue = nullptr;

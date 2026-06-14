@@ -4,7 +4,7 @@
 
 import std;
 import spectra;
-import spectra.pathtracer;
+import spectra.pathtracer.renderer;
 import spectra.rasterizer.renderer;
 import spectra.rasterizer.visualization;
 import spectra.scene;
@@ -35,10 +35,10 @@ namespace {
         std::string scene_id{CornellBoxSceneId};
     };
 
-    static_assert(spectra::pathtracer::PathtracerHost<spectra::Spectra>);
+    static_assert(spectra::pathtracer::Host<spectra::Spectra>);
     static_assert(spectra::rasterizer::Host<spectra::Spectra>);
-    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::PathtracerDockSlot::Center) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Center));
-    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::PathtracerDockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
+    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::DockSlot::Center) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Center));
+    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::DockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
     static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::rasterizer::DockSlot::Center) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Center));
     static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::rasterizer::DockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
     static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::bouncing_ball::Visualization>);
@@ -70,7 +70,7 @@ namespace {
             if (this->visualization_controller == nullptr) throw std::runtime_error("Pathtracer adapter requires a visualization controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
             this->active_workspace = this->visualization_controller->active_workspace();
-            this->renderer = std::make_unique<spectra::pathtracer::PathtracerRenderer>(this->active_workspace, this->camera_workspace);
+            this->renderer = std::make_unique<spectra::pathtracer::Renderer>(this->active_workspace, this->camera_workspace);
         }
 
         PathtracerRendererAdapter(const PathtracerRendererAdapter& other) = delete;
@@ -80,11 +80,11 @@ namespace {
         ~PathtracerRendererAdapter() noexcept = default;
 
         [[nodiscard]] static std::string_view name() {
-            return spectra::pathtracer::PathtracerRenderer::name();
+            return spectra::pathtracer::Renderer::name();
         }
 
         void attach(spectra::Spectra& host) {
-            this->renderer->attach(spectra::pathtracer::PathtracerHostView{host});
+            this->renderer->attach(spectra::pathtracer::HostView{host});
         }
 
         void detach() noexcept {
@@ -103,11 +103,11 @@ namespace {
             static_cast<void>(this->visualization_controller->apply_pending_visualization());
             this->sync_scene_workspace();
             this->visualization_controller->update_active_visualization(frame.delta_seconds);
-            const spectra::pathtracer::PathtracerFrameInfo pathtracer_frame{
+            const spectra::pathtracer::FrameContext frame_context{
                 .frame_index = frame.frame_slot_index,
                 .image_index = frame.image_index,
             };
-            spectra::pathtracer::PathtracerFrameResult result = this->renderer->begin_frame(spectra::pathtracer::PathtracerHostView{host}, pathtracer_frame);
+            spectra::pathtracer::FrameResult result = this->renderer->begin_frame(spectra::pathtracer::HostView{host}, frame_context);
             return spectra::FrameResult{
                 .completion_semaphore = std::move(result.completion_semaphore),
                 .close_requested      = result.close_requested,
@@ -130,7 +130,7 @@ namespace {
         std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller{};
         std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace{};
         std::shared_ptr<spectra::scene::Scene> active_workspace{};
-        std::unique_ptr<spectra::pathtracer::PathtracerRenderer> renderer{};
+        std::unique_ptr<spectra::pathtracer::Renderer> renderer{};
     };
 
     class RasterizerRendererAdapter final {

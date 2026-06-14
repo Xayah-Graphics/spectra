@@ -327,7 +327,8 @@ target_sources(
         spectra_pathtracer
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        pathtracer.ixx
+        host.ixx
+        renderer.ixx
         PRIVATE
         ${SPECTRA_PATHTRACER_RGB_TO_SPECTRUM_SOURCES}
         ${SPECTRA_PATHTRACER_SOA_GENERATED}
@@ -336,7 +337,7 @@ target_sources(
         ${SPECTRA_PATHTRACER_DEVICE_SOURCE}
         ${SPECTRA_ROOT_DIR}/vendor/pbrt/lodepng/lodepng.cpp
         ${SPECTRA_ROOT_DIR}/vendor/pbrt/rply/rply.cpp
-        pathtracer.cpp
+        renderer.cpp
         compiled_scene.cpp
         optix/aggregate.cu
         integrator.cu

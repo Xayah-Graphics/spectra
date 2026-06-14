@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-import spectra.pathtracer;
+import spectra.pathtracer.renderer;
 import spectra.scene;
 
 namespace {
@@ -98,16 +98,16 @@ int main(int argc, char* argv[]) {
         spectra::scene::Scene scene = spectra::scene::Scene::parse_pbrt(*scene_name);
         const spectra::scene::Scene::ResolvedScene scene_snapshot = scene.resolved_scene();
         spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_pathtracer_cli scene");
-        std::unique_ptr<spectra::pathtracer::CompiledPathtracerScene> compiled_scene = spectra::pathtracer::CompilePathtracerScene(scene_snapshot, render_config, &scene_memory_scope);
-        spectra::pathtracer::WavefrontPathtracer pathtracer(&scene_memory_scope, *compiled_scene, render_config);
+        std::unique_ptr<spectra::pathtracer::CompiledScene> compiled_scene = spectra::pathtracer::CompileScene(scene_snapshot, render_config, &scene_memory_scope);
+        spectra::pathtracer::WavefrontIntegrator integrator(&scene_memory_scope, *compiled_scene, render_config);
 
-        spectra::Float seconds = pathtracer.Render();
+        spectra::Float seconds = integrator.Render();
 
         spectra::ImageMetadata metadata;
-        pathtracer.camera.InitMetadata(&metadata);
+        integrator.camera.InitMetadata(&metadata);
         metadata.renderTimeSeconds = seconds;
-        metadata.samplesPerPixel   = pathtracer.sampler.SamplesPerPixel();
-        pathtracer.film.WriteImage(metadata);
+        metadata.samplesPerPixel   = integrator.sampler.SamplesPerPixel();
+        integrator.film.WriteImage(metadata);
         return 0;
     } catch (const UsageError& error) {
         print_usage(error.what());

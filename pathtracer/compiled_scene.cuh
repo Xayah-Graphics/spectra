@@ -32,13 +32,13 @@ namespace spectra::pathtracer {
         return memoryResource;
     }
 
-    struct PathtracerSceneEntity {
+    struct Entity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
     };
 
-    struct PathtracerCameraSceneEntity {
+    struct CameraEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
@@ -46,14 +46,14 @@ namespace spectra::pathtracer {
         std::string medium{};
     };
 
-    struct PathtracerTransformedSceneEntity {
+    struct TransformedEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
         Transform renderFromObject{};
     };
 
-    struct PathtracerLightSceneEntity {
+    struct LightEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
@@ -61,7 +61,7 @@ namespace spectra::pathtracer {
         std::string medium{};
     };
 
-    struct PathtracerShapeSceneEntity {
+    struct ShapeEntity {
         std::string name{};
         FileLoc loc{};
         ParameterDictionary parameters{};
@@ -69,38 +69,38 @@ namespace spectra::pathtracer {
         const Transform* objectFromRender = nullptr;
         bool reverseOrientation{false};
         std::string material_name{};
-        std::optional<PathtracerSceneEntity> areaLight{};
+        std::optional<Entity> areaLight{};
         std::string insideMedium{};
         std::string outsideMedium{};
     };
 
-    struct PathtracerInstanceDefinitionSceneEntity {
+    struct InstanceDefinitionEntity {
         std::string name{};
         FileLoc loc{};
-        std::vector<PathtracerShapeSceneEntity> shapes{};
+        std::vector<ShapeEntity> shapes{};
     };
 
-    struct PathtracerInstanceSceneEntity {
+    struct InstanceEntity {
         std::string name{};
         FileLoc loc{};
         Transform renderFromInstance{};
     };
 
-    class CompiledPathtracerScene {
+    class CompiledScene {
     public:
-        explicit CompiledPathtracerScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireCompiledSceneMemoryResource(memoryResource))), lightSpectrumCache(Allocator(RequireCompiledSceneMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireCompiledSceneMemoryResource(memoryResource)); }) {}
+        explicit CompiledScene(pstd::pmr::memory_resource* memoryResource) : allLights(Allocator(RequireCompiledSceneMemoryResource(memoryResource))), lightSpectrumCache(Allocator(RequireCompiledSceneMemoryResource(memoryResource))), threadAllocators([memoryResource]() { return Allocator(RequireCompiledSceneMemoryResource(memoryResource)); }) {}
 
-        CompiledPathtracerScene(const CompiledPathtracerScene&)                = delete;
-        CompiledPathtracerScene(CompiledPathtracerScene&&) noexcept            = delete;
-        CompiledPathtracerScene& operator=(const CompiledPathtracerScene&)     = delete;
-        CompiledPathtracerScene& operator=(CompiledPathtracerScene&&) noexcept = delete;
+        CompiledScene(const CompiledScene&)                = delete;
+        CompiledScene(CompiledScene&&) noexcept            = delete;
+        CompiledScene& operator=(const CompiledScene&)     = delete;
+        CompiledScene& operator=(CompiledScene&&) noexcept = delete;
 
-        PathtracerSceneEntity integrator{};
-        PathtracerSceneEntity accelerator{};
+        Entity integrator{};
+        Entity accelerator{};
         const RGBColorSpace* filmColorSpace{nullptr};
-        std::vector<PathtracerShapeSceneEntity> shapes{};
-        std::vector<PathtracerInstanceSceneEntity> instances{};
-        std::map<std::string, PathtracerInstanceDefinitionSceneEntity> instanceDefinitions{};
+        std::vector<ShapeEntity> shapes{};
+        std::vector<InstanceEntity> instances{};
+        std::map<std::string, InstanceDefinitionEntity> instanceDefinitions{};
         NamedTextures textures{};
         std::map<std::string, Medium> media{};
         std::map<std::string, Material> materials{};
