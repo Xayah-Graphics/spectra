@@ -31,7 +31,6 @@ namespace spectra::rasterizer {
 
         [[nodiscard]] static std::string_view name();
         void set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
-        void set_control_panel_extension(std::move_only_function<void()> draw);
 
         void attach(HostView host);
         void detach() noexcept;
@@ -353,7 +352,6 @@ namespace spectra::rasterizer {
 
         struct {
             vk::Extent2D requested_extent{};
-            std::move_only_function<void()> control_panel_extension{};
             float sidebar_split_ratio{0.55f};
             SceneUiCache scene_ui_cache{};
         } ui;

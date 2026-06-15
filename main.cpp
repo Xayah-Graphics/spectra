@@ -46,11 +46,22 @@ namespace {
     static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::cloth::Visualization>);
     static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::pyro::Visualization>);
 
-    void draw_rasterizer_scene_control_panel(spectra::rasterizer::VisualizationController& controller) {
+    void draw_scene_command_bar_widget(spectra::rasterizer::VisualizationController& controller) {
         const std::size_t selected_index = controller.selected_index();
         const spectra::rasterizer::VisualizationEntry& selected_entry = controller.entry(selected_index);
-        ImGui::SeparatorText("Visualization");
-        if (ImGui::BeginCombo("Visualization", selected_entry.title.c_str())) {
+        const std::string preview = std::format("Scene: {}", selected_entry.title);
+        const float preview_width = ImGui::CalcTextSize(preview.c_str()).x;
+        const float chip_width = std::clamp(preview_width + ImGui::GetFrameHeight() + 26.0f, 184.0f, 320.0f);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{12.0f, ImGui::GetStyle().FramePadding.y});
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{28.0f / 255.0f, 33.0f / 255.0f, 39.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4{39.0f / 255.0f, 49.0f / 255.0f, 57.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4{49.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f});
+        ImGui::SetNextItemWidth(chip_width);
+        const bool combo_open = ImGui::BeginCombo("##SceneCommandBarSelector", preview.c_str());
+        const bool combo_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        if (combo_open) {
             for (std::size_t index = 0; index < controller.size(); ++index) {
                 const spectra::rasterizer::VisualizationEntry& entry = controller.entry(index);
                 const bool selected = index == selected_index;
@@ -59,9 +70,15 @@ namespace {
             }
             ImGui::EndCombo();
         }
-        ImGui::TextDisabled("%s", selected_entry.id.c_str());
-        ImGui::TextDisabled("%s", selected_entry.kind == spectra::rasterizer::VisualizationKind::Static ? "Static" : "Dynamic");
-        if (controller.pending_switch()) ImGui::TextDisabled("Switching on next frame");
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(2);
+        if (combo_hovered) {
+            ImGui::SetTooltip(
+                "%s\n%s%s",
+                selected_entry.id.c_str(),
+                selected_entry.kind == spectra::rasterizer::VisualizationKind::Static ? "Static" : "Dynamic",
+                controller.pending_switch() ? "\nSwitching on next frame" : "");
+        }
     }
 
     class PathtracerRendererAdapter final {
@@ -140,7 +157,6 @@ namespace {
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
             this->active_workspace = this->visualization_controller->active_workspace();
             this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace);
-            this->renderer->set_control_panel_extension([visualization_controller = this->visualization_controller] { draw_rasterizer_scene_control_panel(*visualization_controller); });
         }
 
         RasterizerRendererAdapter(const RasterizerRendererAdapter& other) = delete;
@@ -273,7 +289,12 @@ namespace {
         if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
         std::shared_ptr<spectra::rasterizer::VisualizationController> visualization_controller = std::make_shared<spectra::rasterizer::VisualizationController>(std::move(visualizations));
         application.register_renderer(RasterizerRendererAdapter{visualization_controller, camera_workspace});
-        application.register_renderer(PathtracerRendererAdapter{std::move(visualization_controller), std::move(camera_workspace)});
+        application.register_renderer(PathtracerRendererAdapter{visualization_controller, std::move(camera_workspace)});
+        application.register_command_bar_widget(spectra::CommandBarWidget{
+            .id    = "scene.selector",
+            .title = "Scene",
+            .draw  = [visualization_controller = std::move(visualization_controller)] { draw_scene_command_bar_widget(*visualization_controller); },
+        });
     }
 } // namespace
 

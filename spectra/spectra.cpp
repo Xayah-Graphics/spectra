@@ -767,6 +767,7 @@ namespace spectra {
         this->workspace.panels.clear();
         this->workspace.sidebar_tabs.clear();
         this->workspace.toolbar_actions.clear();
+        this->workspace.command_bar_widgets.clear();
         this->renderer_registry.active_index    = 0;
         this->workspace.dock_layout_initialized = false;
         this->workspace.sidebar_visible         = false;
@@ -847,6 +848,7 @@ namespace spectra {
         const std::size_t panel_count              = this->workspace.panels.size();
         const std::size_t sidebar_tab_count        = this->workspace.sidebar_tabs.size();
         const std::size_t toolbar_action_count     = this->workspace.toolbar_actions.size();
+        const std::size_t command_bar_widget_count = this->workspace.command_bar_widgets.size();
         const bool dock_layout_initialized         = this->workspace.dock_layout_initialized;
         const bool sidebar_visible                 = this->workspace.sidebar_visible;
         const std::string active_sidebar_tab_id    = this->workspace.active_sidebar_tab_id;
@@ -859,6 +861,7 @@ namespace spectra {
             this->workspace.panels.resize(panel_count);
             this->workspace.sidebar_tabs.resize(sidebar_tab_count);
             this->workspace.toolbar_actions.resize(toolbar_action_count);
+            this->workspace.command_bar_widgets.resize(command_bar_widget_count);
             this->workspace.dock_layout_initialized         = dock_layout_initialized;
             this->workspace.sidebar_visible                 = sidebar_visible;
             this->workspace.active_sidebar_tab_id           = active_sidebar_tab_id;
@@ -920,6 +923,18 @@ namespace spectra {
             if (existing_action.title == action.title) throw std::runtime_error(std::string{"Duplicate Spectra toolbar action title: "} + action.title);
         }
         this->workspace.toolbar_actions.push_back(std::move(action));
+    }
+
+    void Spectra::store_command_bar_widget(CommandBarWidget widget) {
+        if (widget.id.empty()) throw std::runtime_error("Spectra command bar widget id must not be empty");
+        if (widget.title.empty()) throw std::runtime_error("Spectra command bar widget title must not be empty");
+        if (!widget.draw) throw std::runtime_error("Spectra command bar widget draw callback must not be empty");
+        for (const CommandBarWidget& existing_widget : this->workspace.command_bar_widgets) {
+            if (!owner_scopes_overlap(existing_widget.owner_renderer, widget.owner_renderer)) continue;
+            if (existing_widget.id == widget.id) throw std::runtime_error(std::string{"Duplicate Spectra command bar widget id: "} + widget.id);
+            if (existing_widget.title == widget.title) throw std::runtime_error(std::string{"Duplicate Spectra command bar widget title: "} + widget.title);
+        }
+        this->workspace.command_bar_widgets.push_back(std::move(widget));
     }
 
     std::string Spectra::resolve_contribution_owner(std::string owner_renderer) const {
@@ -1024,6 +1039,11 @@ namespace spectra {
             if (renderer_index + 1 < this->renderer_registry.slots.size()) ImGui::SameLine(0.0f, 6.0f);
         }
 
+        std::vector<CommandBarWidget*> visible_widgets{};
+        for (CommandBarWidget& widget : this->workspace.command_bar_widgets) {
+            if (this->contribution_belongs_to_active_renderer(widget.owner_renderer)) visible_widgets.push_back(&widget);
+        }
+
         std::vector<SidebarTab*> visible_tabs{};
         for (SidebarTab& tab : this->workspace.sidebar_tabs) {
             if (this->contribution_belongs_to_active_renderer(tab.owner_renderer)) visible_tabs.push_back(&tab);
@@ -1032,6 +1052,26 @@ namespace spectra {
         std::vector<ToolbarAction*> visible_actions{};
         for (ToolbarAction& action : this->workspace.toolbar_actions) {
             if (this->contribution_belongs_to_active_renderer(action.owner_renderer)) visible_actions.push_back(&action);
+        }
+
+        if (visible_widgets.empty() && visible_tabs.empty() && visible_actions.empty()) {
+            ImGui::End();
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(2);
+            return;
+        }
+
+        if (!visible_widgets.empty()) {
+            ImGui::SameLine(0.0f, 10.0f);
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine(0.0f, 10.0f);
+            for (std::size_t widget_index = 0; widget_index < visible_widgets.size(); ++widget_index) {
+                CommandBarWidget* widget = visible_widgets[widget_index];
+                ImGui::PushID(widget->id.c_str());
+                widget->draw();
+                ImGui::PopID();
+                if (widget_index + 1 < visible_widgets.size()) ImGui::SameLine(0.0f, 6.0f);
+            }
         }
 
         if (visible_tabs.empty() && visible_actions.empty()) {

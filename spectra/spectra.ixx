@@ -59,6 +59,13 @@ namespace spectra {
         std::move_only_function<void()> trigger{};
     };
 
+    export struct CommandBarWidget {
+        std::string id{};
+        std::string title{};
+        std::string owner_renderer{};
+        std::move_only_function<void()> draw{};
+    };
+
     export struct FrameContext {
         std::uint32_t frame_slot_index{};
         std::uint32_t image_index{};
@@ -112,6 +119,14 @@ namespace spectra {
         std::move_only_function<void()>{std::move(action.trigger)};
     };
 
+    export template <typename CommandBarWidgetContribution>
+    concept CommandBarWidgetLike = requires(CommandBarWidgetContribution widget) {
+        std::string{std::move(widget.id)};
+        std::string{std::move(widget.title)};
+        std::string{std::move(widget.owner_renderer)};
+        std::move_only_function<void()>{std::move(widget.draw)};
+    };
+
     export template <typename FrameResultContribution>
     concept FrameResultLike = requires(FrameResultContribution result) {
         std::optional<vk::Semaphore>{std::move(result.completion_semaphore)};
@@ -159,6 +174,9 @@ namespace spectra {
         template <typename ToolbarActionContribution>
             requires ToolbarActionLike<ToolbarActionContribution>
         void register_toolbar_action(ToolbarActionContribution action);
+        template <typename CommandBarWidgetContribution>
+            requires CommandBarWidgetLike<CommandBarWidgetContribution>
+        void register_command_bar_widget(CommandBarWidgetContribution widget);
 
     protected:
         struct FrameState;
@@ -228,6 +246,7 @@ namespace spectra {
         void store_panel(Panel panel);
         void store_sidebar_tab(SidebarTab tab);
         void store_toolbar_action(ToolbarAction action);
+        void store_command_bar_widget(CommandBarWidget widget);
 
         [[nodiscard]] std::string resolve_contribution_owner(std::string owner_renderer) const;
         [[nodiscard]] bool contribution_belongs_to_active_renderer(std::string_view owner_renderer) const;
@@ -309,6 +328,7 @@ namespace spectra {
             std::vector<Panel> panels{};
             std::vector<SidebarTab> sidebar_tabs{};
             std::vector<ToolbarAction> toolbar_actions{};
+            std::vector<CommandBarWidget> command_bar_widgets{};
             bool dock_layout_initialized{false};
             bool sidebar_visible{false};
             std::string active_sidebar_tab_id{};
@@ -368,6 +388,17 @@ namespace spectra {
             .enabled        = std::move(action.enabled),
             .active         = std::move(action.active),
             .trigger        = std::move(action.trigger),
+        });
+    }
+
+    template <typename CommandBarWidgetContribution>
+        requires CommandBarWidgetLike<CommandBarWidgetContribution>
+    void Spectra::register_command_bar_widget(CommandBarWidgetContribution widget) {
+        this->store_command_bar_widget(CommandBarWidget{
+            .id             = std::string{std::move(widget.id)},
+            .title          = std::string{std::move(widget.title)},
+            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(widget.owner_renderer)}),
+            .draw           = std::move(widget.draw),
         });
     }
 } // namespace spectra

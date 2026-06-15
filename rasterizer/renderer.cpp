@@ -678,10 +678,6 @@ namespace spectra::rasterizer {
         this->synchronize_viewport_camera();
     }
 
-    void Renderer::set_control_panel_extension(std::move_only_function<void()> draw) {
-        this->ui.control_panel_extension = std::move(draw);
-    }
-
     void Renderer::attach(HostView host) {
         if (this->lifecycle.attached) throw std::runtime_error("Spectra rasterizer plugin is already attached");
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
@@ -3341,10 +3337,6 @@ namespace spectra::rasterizer {
 
     void Renderer::draw_scene_collection_panel() {
         this->rebuild_scene_ui_cache_if_needed();
-        if (this->ui.control_panel_extension) {
-            this->ui.control_panel_extension();
-            ImGui::Separator();
-        }
         ImGui::SeparatorText("Scene Collection");
 
         const std::array camera_kinds{SceneObjectKind::Camera};
