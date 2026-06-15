@@ -9,6 +9,8 @@ permissions:
   contents: read
 
 env:
+  SPECTRA_ARCH_IMAGE: 'archlinux:base-devel-20260419.0.517065'
+  SPECTRA_ARCHIVE_DATE: '2026/04/19'
   SPECTRA_CMAKE_VERSION: '4.3.0'
   SPECTRA_CUDA_VERSION: '13.2.1'
   SPECTRA_CUDA_DRIVER_VERSION: '595.58.03'
@@ -33,6 +35,7 @@ jobs:
           set -euo pipefail
 
           docker run --rm \
+            -e SPECTRA_ARCHIVE_DATE="${SPECTRA_ARCHIVE_DATE}" \
             -e SPECTRA_CMAKE_VERSION="${SPECTRA_CMAKE_VERSION}" \
             -e SPECTRA_CUDA_VERSION="${SPECTRA_CUDA_VERSION}" \
             -e SPECTRA_CUDA_DRIVER_VERSION="${SPECTRA_CUDA_DRIVER_VERSION}" \
@@ -41,12 +44,13 @@ jobs:
             -e SPECTRA_SLANG_VERSION="${SPECTRA_SLANG_VERSION}" \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -w /workspace \
-            archlinux:base-devel \
+            "${SPECTRA_ARCH_IMAGE}" \
             bash -lc '
               set -euo pipefail
 
-              pacman -Sy --noconfirm --needed archlinux-keyring
-              pacman -Syu --noconfirm --needed git curl tar xz unzip ninja python
+              printf "Server = https://archive.archlinux.org/repos/%s/\$repo/os/\$arch\n" "${SPECTRA_ARCHIVE_DATE}" > /etc/pacman.d/mirrorlist
+              pacman -Syyu --noconfirm
+              pacman -S --noconfirm --needed git curl tar xz unzip ninja python ca-certificates
 
               curl -L -o /tmp/cmake.tar.gz "https://github.com/Kitware/CMake/releases/download/v${SPECTRA_CMAKE_VERSION}/cmake-${SPECTRA_CMAKE_VERSION}-linux-x86_64.tar.gz"
               mkdir -p /opt/cmake
@@ -74,6 +78,7 @@ jobs:
               export LD_LIBRARY_PATH="${VULKAN_SDK}/lib:${LD_LIBRARY_PATH}"
 
               cmake --version
+              gcc --version | head -n 1
               nvcc --version | tee /tmp/spectra-nvcc-version.txt
               grep -Eq "release 13\.2" /tmp/spectra-nvcc-version.txt
               command -v ninja >/dev/null
