@@ -1,97 +1,144 @@
 name: Arch Linux
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+  push:
+    paths:
+      - '**'
+  pull_request:
+    paths:
+      - '**'
 
 permissions:
   contents: read
 
-env:
-  SPECTRA_ARCH_IMAGE: 'archlinux:base-devel-20260419.0.517065'
-  SPECTRA_ARCHIVE_DATE: '2026/04/19'
-  SPECTRA_CMAKE_VERSION: '4.3.0'
-  SPECTRA_CUDA_VERSION: '13.2.1'
-  SPECTRA_CUDA_DRIVER_VERSION: '595.58.03'
-  SPECTRA_VULKAN_VERSION: '1.4.350.0'
-  SPECTRA_OPTIX_TAG: 'v9.1.0'
-  SPECTRA_SLANG_VERSION: '2026.11'
+concurrency:
+  group: archlinux-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Arch Linux Release
+    name: Build (Arch Linux, GCC, CMake+Ninja)
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
+    container:
+      image: archlinux:latest
+
+    env:
+      CMAKE_BUILD_TYPE: Release
+      SPECTRA_BUILD_DIR: build
+      SPECTRA_MIN_CMAKE_VERSION: '4.3'
+      SPECTRA_CUDA_VERSION: '13.2'
+      SPECTRA_OPTIX_TAG: v9.1.0
+      SPECTRA_SLANG_URL: https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-linux-x86_64.tar.gz
+      CUDAToolkit_ROOT: /opt/cuda
+
     steps:
+      - name: Prepare Arch keyring + update system
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pacman -S --noconfirm --needed \
+            base-devel git \
+            cmake ninja pkgconf \
+            gcc \
+            ca-certificates curl tar unzip \
+            python \
+            vulkan-headers vulkan-icd-loader vulkan-tools vulkan-validation-layers \
+            shaderc glslang \
+            wayland wayland-protocols libxkbcommon \
+            libx11 libxrandr libxinerama libxcursor libxi \
+            mesa \
+            cuda
+          pacman -Scc --noconfirm || true
+
+          echo "/opt/cuda/bin" >> "${GITHUB_PATH}"
+          echo "CUDAToolkit_ROOT=/opt/cuda" >> "${GITHUB_ENV}"
+
+      - name: Install Slang
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /opt/slang
+          curl -L --fail --retry 5 --retry-delay 2 "${SPECTRA_SLANG_URL}" -o /tmp/slang.tar.gz
+          tar -xzf /tmp/slang.tar.gz -C /opt/slang --strip-components=1
+          rm -f /tmp/slang.tar.gz
+
+          test -x /opt/slang/bin/slangc
+          /opt/slang/bin/slangc -version
+
+          echo "/opt/slang/bin" >> "${GITHUB_PATH}"
+          echo "SLANG_DIR=/opt/slang" >> "${GITHUB_ENV}"
+
+      - name: Install OptiX SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch "${SPECTRA_OPTIX_TAG}" https://github.com/NVIDIA/optix-sdk.git /opt/optix-sdk
+          test -f /opt/optix-sdk/include/optix.h
+          echo "SPECTRA_OPTIX_PATH=/opt/optix-sdk" >> "${GITHUB_ENV}"
+
+      - name: Toolchain sanity
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          g++ --version
+          cmake --version
+          ninja --version
+          command -v nvcc
+          nvcc --version
+          command -v glslc && glslc --version
+          command -v glslangValidator && glslangValidator --version
+          command -v slangc && slangc -version
+          test -f "${SPECTRA_OPTIX_PATH}/include/optix.h"
+
+          cmake_version="$(cmake --version | sed -n '1s/^cmake version //p')"
+          cmake_major="${cmake_version%%.*}"
+          cmake_rest="${cmake_version#*.}"
+          cmake_minor="${cmake_rest%%.*}"
+          if (( cmake_major < 4 || (cmake_major == 4 && cmake_minor < 3) )); then
+            echo "::error::CMake ${SPECTRA_MIN_CMAKE_VERSION} or newer is required; found ${cmake_version}."
+            exit 1
+          fi
+
+          nvcc --version | grep -Eq "release ${SPECTRA_CUDA_VERSION//./\\.}"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
-      - name: Build in Arch Linux
+      - name: Configure
+        shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
+          cmake -S . -B "${SPECTRA_BUILD_DIR}" -G Ninja \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DSPECTRA_OPTIX_PATH="${SPECTRA_OPTIX_PATH}"
 
-          docker run --rm \
-            -e SPECTRA_ARCHIVE_DATE="${SPECTRA_ARCHIVE_DATE}" \
-            -e SPECTRA_CMAKE_VERSION="${SPECTRA_CMAKE_VERSION}" \
-            -e SPECTRA_CUDA_VERSION="${SPECTRA_CUDA_VERSION}" \
-            -e SPECTRA_CUDA_DRIVER_VERSION="${SPECTRA_CUDA_DRIVER_VERSION}" \
-            -e SPECTRA_VULKAN_VERSION="${SPECTRA_VULKAN_VERSION}" \
-            -e SPECTRA_OPTIX_TAG="${SPECTRA_OPTIX_TAG}" \
-            -e SPECTRA_SLANG_VERSION="${SPECTRA_SLANG_VERSION}" \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
-            "${SPECTRA_ARCH_IMAGE}" \
-            bash -lc '
-              set -euo pipefail
+      - name: Build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build "${SPECTRA_BUILD_DIR}" --parallel 30
 
-              printf "Server = https://archive.archlinux.org/repos/%s/\$repo/os/\$arch\n" "${SPECTRA_ARCHIVE_DATE}" > /etc/pacman.d/mirrorlist
-              pacman -Syyu --noconfirm
-              pacman -S --noconfirm --needed git curl tar xz unzip ninja python ca-certificates
-
-              curl -L -o /tmp/cmake.tar.gz "https://github.com/Kitware/CMake/releases/download/v${SPECTRA_CMAKE_VERSION}/cmake-${SPECTRA_CMAKE_VERSION}-linux-x86_64.tar.gz"
-              mkdir -p /opt/cmake
-              tar -xf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1
-
-              curl -L -o /tmp/cuda.run "https://developer.download.nvidia.com/compute/cuda/${SPECTRA_CUDA_VERSION}/local_installers/cuda_${SPECTRA_CUDA_VERSION}_${SPECTRA_CUDA_DRIVER_VERSION}_linux.run"
-              sh /tmp/cuda.run --silent --toolkit --installpath=/opt/cuda-${SPECTRA_CUDA_VERSION}
-
-              curl -L -o /tmp/vulkan.tar.xz "https://sdk.lunarg.com/sdk/download/${SPECTRA_VULKAN_VERSION}/linux/vulkansdk-linux-x86_64-${SPECTRA_VULKAN_VERSION}.tar.xz"
-              mkdir -p /opt/vulkan
-              tar -xf /tmp/vulkan.tar.xz -C /opt/vulkan
-
-              curl -L -o /tmp/slang.tar.gz "https://github.com/shader-slang/slang/releases/download/v${SPECTRA_SLANG_VERSION}/slang-${SPECTRA_SLANG_VERSION}-linux-x86_64.tar.gz"
-              mkdir -p /opt/slang
-              tar -xf /tmp/slang.tar.gz -C /opt/slang --strip-components=1
-
-              git clone --depth 1 --branch "${SPECTRA_OPTIX_TAG}" https://github.com/NVIDIA/optix-sdk.git /opt/optix-sdk
-
-              export PATH="/opt/cmake/bin:/opt/cuda-${SPECTRA_CUDA_VERSION}/bin:/opt/slang/bin:${PATH}"
-              export LD_LIBRARY_PATH="/opt/cuda-${SPECTRA_CUDA_VERSION}/lib64:/opt/slang/lib:${LD_LIBRARY_PATH:-}"
-              export CUDA_PATH="/opt/cuda-${SPECTRA_CUDA_VERSION}"
-              export CUDAToolkit_ROOT="/opt/cuda-${SPECTRA_CUDA_VERSION}"
-              export VULKAN_SDK="/opt/vulkan/${SPECTRA_VULKAN_VERSION}/x86_64"
-              export PATH="${VULKAN_SDK}/bin:${PATH}"
-              export LD_LIBRARY_PATH="${VULKAN_SDK}/lib:${LD_LIBRARY_PATH}"
-
-              cmake --version
-              gcc --version | head -n 1
-              nvcc --version | tee /tmp/spectra-nvcc-version.txt
-              grep -Eq "release 13\.2" /tmp/spectra-nvcc-version.txt
-              command -v ninja >/dev/null
-              command -v slangc >/dev/null
-              test -f "${VULKAN_SDK}/include/vulkan/vulkan.h"
-              test -f /opt/optix-sdk/include/optix.h
-
-              cmake \
-                -S /workspace \
-                -B /workspace/cmake-build-release \
-                -G Ninja \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DSPECTRA_OPTIX_PATH=/opt/optix-sdk
-
-              cmake --build /workspace/cmake-build-release --parallel 30
-            '
+      - name: Test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ -f "${SPECTRA_BUILD_DIR}/CTestTestfile.cmake" ] || [ -d "${SPECTRA_BUILD_DIR}/Testing" ]; then
+            ctest --test-dir "${SPECTRA_BUILD_DIR}" --output-on-failure
+          else
+            echo "No tests detected; skipping."
+          fi

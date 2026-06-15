@@ -1,107 +1,107 @@
 name: Windows
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+  push:
+    paths:
+      - '**'
+  pull_request:
+    paths:
+      - '**'
 
 permissions:
   contents: read
 
-env:
-  SPECTRA_BUILD_DIR: '${{ github.workspace }}\cmake-build-release'
-  SPECTRA_CMAKE_VERSION: '4.3.0'
-  SPECTRA_CUDA_VERSION: '13.2.0'
-  SPECTRA_VULKAN_VERSION: '1.4.350.0'
-  SPECTRA_OPTIX_TAG: 'v9.1.0'
-  SPECTRA_SLANG_VERSION: '2026.11'
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Windows Release
+    name: Build (Windows, MSVC, CMake+Ninja)
     runs-on: windows-2022
     timeout-minutes: 180
-    defaults:
-      run:
-        shell: pwsh
+
+    env:
+      CMAKE_BUILD_TYPE: Release
+      SPECTRA_BUILD_DIR: build
+      SPECTRA_CMAKE_VERSION: '4.3.0'
+      SPECTRA_CUDA_VERSION: '13.2.0'
+      SPECTRA_VULKAN_VERSION: '1.4.350.0'
+      SPECTRA_OPTIX_TAG: v9.1.0
+      SPECTRA_SLANG_URL: https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-windows-x86_64.zip
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
-      - name: Install CUDA
-        uses: Jimver/cuda-toolkit@v0.2.35
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          cuda: ${{ env.SPECTRA_CUDA_VERSION }}
+          arch: x64
 
       - name: Install CMake
-        run: |
-          $ErrorActionPreference = "Stop"
-          $cmakeArchive = Join-Path $env:RUNNER_TEMP "cmake.zip"
-          $cmakeRoot = Join-Path $env:RUNNER_TEMP "cmake"
-          $cmakeUrl = "https://github.com/Kitware/CMake/releases/download/v$env:SPECTRA_CMAKE_VERSION/cmake-$env:SPECTRA_CMAKE_VERSION-windows-x86_64.zip"
-
-          Invoke-WebRequest -Uri $cmakeUrl -OutFile $cmakeArchive
-          Expand-Archive -LiteralPath $cmakeArchive -DestinationPath $cmakeRoot -Force
-
-          $cmakeExe = Get-ChildItem -LiteralPath $cmakeRoot -Recurse -Filter cmake.exe |
-            Where-Object { $_.FullName -like "*\bin\cmake.exe" } |
-            Select-Object -First 1
-          if ($null -eq $cmakeExe) {
-            throw "CMake executable was not found after extracting $cmakeUrl."
-          }
-
-          $cmakeBin = Split-Path -Parent $cmakeExe.FullName
-          $cmakeBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          "SPECTRA_CMAKE=$($cmakeExe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        uses: ssrobins/install-cmake@v1
+        with:
+          version: ${{ env.SPECTRA_CMAKE_VERSION }}
 
       - name: Install Ninja
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           choco install ninja -y --no-progress
 
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.SPECTRA_CUDA_VERSION }}
+
       - name: Install Vulkan SDK
+        id: vulkan-sdk
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: ${{ env.SPECTRA_VULKAN_VERSION }}
+          cache: true
+
+      - name: Export Vulkan SDK
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $vulkanInstaller = Join-Path $env:RUNNER_TEMP "vulkan-sdk.exe"
-          $vulkanUrl = "https://sdk.lunarg.com/sdk/download/$env:SPECTRA_VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:SPECTRA_VULKAN_VERSION.exe"
-          $vulkanRoot = "C:\VulkanSDK\$env:SPECTRA_VULKAN_VERSION"
-
-          Invoke-WebRequest -Uri $vulkanUrl -OutFile $vulkanInstaller
-          $process = Start-Process -FilePath $vulkanInstaller -ArgumentList "install --accept-licenses --default-answer --confirm-command" -Wait -PassThru -NoNewWindow
-          if ($process.ExitCode -ne 0) {
-            throw "Vulkan SDK installer failed with exit code $($process.ExitCode)."
-          }
-          if (-not (Test-Path -LiteralPath (Join-Path $vulkanRoot "Include\vulkan\vulkan.h"))) {
-            throw "Vulkan SDK headers were not found under $vulkanRoot."
+          $vulkanSdk = "${{ steps.vulkan-sdk.outputs.VULKAN_SDK }}"
+          if ([string]::IsNullOrWhiteSpace($vulkanSdk)) {
+            throw "The Vulkan SDK action did not report a VULKAN_SDK output."
           }
 
-          "VULKAN_SDK=$vulkanRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          (Join-Path $vulkanRoot "Bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "VULKAN_SDK=$vulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          (Join-Path $vulkanSdk "Bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install Slang
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $slangArchive = Join-Path $env:RUNNER_TEMP "slang.zip"
           $slangRoot = Join-Path $env:RUNNER_TEMP "slang"
-          $slangUrl = "https://github.com/shader-slang/slang/releases/download/v$env:SPECTRA_SLANG_VERSION/slang-$env:SPECTRA_SLANG_VERSION-windows-x86_64.zip"
 
-          Invoke-WebRequest -Uri $slangUrl -OutFile $slangArchive
+          Invoke-WebRequest -Uri $env:SPECTRA_SLANG_URL -OutFile $slangArchive
           Expand-Archive -LiteralPath $slangArchive -DestinationPath $slangRoot -Force
 
           $slangc = Get-ChildItem -LiteralPath $slangRoot -Recurse -Filter slangc.exe | Select-Object -First 1
           if ($null -eq $slangc) {
-            throw "slangc.exe was not found after extracting $slangUrl."
+            throw "slangc.exe was not found after extracting $env:SPECTRA_SLANG_URL."
           }
 
           (Split-Path -Parent $slangc.FullName) | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "SLANG_DIR=$slangRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install OptiX SDK
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $optixRoot = Join-Path $env:RUNNER_TEMP "optix-sdk"
+
           git clone --depth 1 --branch $env:SPECTRA_OPTIX_TAG https://github.com/NVIDIA/optix-sdk.git $optixRoot
           if (-not (Test-Path -LiteralPath (Join-Path $optixRoot "include\optix.h"))) {
             throw "OptiX headers were not found after cloning $env:SPECTRA_OPTIX_TAG."
@@ -109,12 +109,18 @@ jobs:
 
           "SPECTRA_OPTIX_PATH=$optixRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Validate toolchain
+      - name: Toolchain sanity
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          & $env:SPECTRA_CMAKE --version
-          $cmakeVersionLine = (& $env:SPECTRA_CMAKE --version | Select-Object -First 1)
+          cl.exe
+          cmake --version
+          ninja --version
+          nvcc --version
+          slangc -version
+
+          $cmakeVersionLine = (cmake --version | Select-Object -First 1)
           if ($cmakeVersionLine -notmatch "version ([0-9]+)\.([0-9]+)") {
             throw "Unable to parse CMake version from: $cmakeVersionLine"
           }
@@ -129,9 +135,6 @@ jobs:
             throw "CUDA 13.2 is required; nvcc reported: $nvccVersion"
           }
 
-          Get-Command ninja.exe -ErrorAction Stop | Out-Null
-          Get-Command slangc.exe -ErrorAction Stop | Out-Null
-
           if (-not (Test-Path -LiteralPath (Join-Path $env:VULKAN_SDK "Include\vulkan\vulkan.h"))) {
             throw "Vulkan headers were not found under $env:VULKAN_SDK."
           }
@@ -140,40 +143,15 @@ jobs:
           }
 
       - name: Configure
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -version "[17.0,18.0)" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ([string]::IsNullOrWhiteSpace($vsPath)) {
-            throw "Visual Studio 2022 with x64 C++ tools was not found."
-          }
-
-          $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
-          $ninja = (Get-Command ninja.exe -ErrorAction Stop).Source
-          $configure = 'call "' + $vsDevCmd + '" -arch=x64 -host_arch=x64 && "' +
-            $env:SPECTRA_CMAKE + '" -S "' + $env:GITHUB_WORKSPACE + '" -B "' + $env:SPECTRA_BUILD_DIR +
-            '" -G Ninja -DCMAKE_MAKE_PROGRAM="' + $ninja + '" -DCMAKE_BUILD_TYPE=Release' +
-            ' -DSPECTRA_OPTIX_PATH="' + $env:SPECTRA_OPTIX_PATH + '"'
-          & cmd.exe /d /s /c $configure
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+          cmake -S . -B $env:SPECTRA_BUILD_DIR -G Ninja `
+            -DCMAKE_BUILD_TYPE=$env:CMAKE_BUILD_TYPE `
+            -DSPECTRA_OPTIX_PATH="$env:SPECTRA_OPTIX_PATH"
 
       - name: Build
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -version "[17.0,18.0)" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ([string]::IsNullOrWhiteSpace($vsPath)) {
-            throw "Visual Studio 2022 with x64 C++ tools was not found."
-          }
-
-          $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
-          $build = 'call "' + $vsDevCmd + '" -arch=x64 -host_arch=x64 && "' +
-            $env:SPECTRA_CMAKE + '" --build "' + $env:SPECTRA_BUILD_DIR + '" --parallel 30'
-          & cmd.exe /d /s /c $build
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+          cmake --build $env:SPECTRA_BUILD_DIR --parallel 30
