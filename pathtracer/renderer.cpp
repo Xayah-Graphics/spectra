@@ -66,6 +66,136 @@ namespace {
         throw std::runtime_error("No matching Vulkan memory type");
     }
 
+    [[nodiscard]] std::uint8_t float_to_unorm_byte(const float value) {
+        if (!std::isfinite(value)) return 0u;
+        return static_cast<std::uint8_t>(std::clamp(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f), 0l, 255l));
+    }
+
+    [[nodiscard]] std::uint8_t float_to_alpha_byte(const float value) {
+        if (!std::isfinite(value)) return 255u;
+        return static_cast<std::uint8_t>(std::clamp(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f), 0l, 255l));
+    }
+
+    [[nodiscard]] std::vector<std::uint8_t> rgba32_float_to_rgba8(const void* source, const vk::Extent2D extent) {
+        if (source == nullptr) throw std::runtime_error("Cannot encode Spectra pathtracer screenshot from null pixel data");
+        if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot encode an empty Spectra pathtracer screenshot");
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height) * 4u);
+        const float* source_pixels = static_cast<const float*>(source);
+        for (std::uint32_t y = 0; y < extent.height; ++y) {
+            for (std::uint32_t x = 0; x < extent.width; ++x) {
+                const std::size_t pixel_index      = static_cast<std::size_t>(y) * static_cast<std::size_t>(extent.width) + static_cast<std::size_t>(x);
+                const std::size_t source_base      = pixel_index * 4u;
+                const std::size_t destination_base = pixel_index * 4u;
+                pixels[destination_base]           = float_to_unorm_byte(source_pixels[source_base]);
+                pixels[destination_base + 1u]      = float_to_unorm_byte(source_pixels[source_base + 1u]);
+                pixels[destination_base + 2u]      = float_to_unorm_byte(source_pixels[source_base + 2u]);
+                pixels[destination_base + 3u]      = float_to_alpha_byte(source_pixels[source_base + 3u]);
+            }
+        }
+        return pixels;
+    }
+
+    void append_u32_be(std::vector<std::uint8_t>& data, const std::uint32_t value) {
+        data.push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
+        data.push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
+        data.push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
+        data.push_back(static_cast<std::uint8_t>(value & 0xffu));
+    }
+
+    [[nodiscard]] std::uint32_t png_crc32_update(std::uint32_t crc, const std::uint8_t byte) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc & 1u) != 0u ? (crc >> 1u) ^ 0xedb88320u : crc >> 1u;
+        return crc;
+    }
+
+    [[nodiscard]] std::uint32_t png_crc32(const char* type, const std::vector<std::uint8_t>& data) {
+        std::uint32_t crc = 0xffffffffu;
+        for (std::size_t index = 0; index < 4u; ++index) crc = png_crc32_update(crc, static_cast<std::uint8_t>(type[index]));
+        for (const std::uint8_t byte : data) crc = png_crc32_update(crc, byte);
+        return ~crc;
+    }
+
+    void append_png_chunk(std::vector<std::uint8_t>& png, const char* type, const std::vector<std::uint8_t>& data) {
+        append_u32_be(png, static_cast<std::uint32_t>(data.size()));
+        for (std::size_t index = 0; index < 4u; ++index) png.push_back(static_cast<std::uint8_t>(type[index]));
+        png.insert(png.end(), data.begin(), data.end());
+        append_u32_be(png, png_crc32(type, data));
+    }
+
+    [[nodiscard]] std::uint32_t adler32(const std::vector<std::uint8_t>& data) {
+        constexpr std::uint32_t modulus = 65521u;
+        std::uint32_t a                 = 1u;
+        std::uint32_t b                 = 0u;
+        for (const std::uint8_t byte : data) {
+            a = (a + byte) % modulus;
+            b = (b + a) % modulus;
+        }
+        return (b << 16u) | a;
+    }
+
+    [[nodiscard]] std::vector<std::uint8_t> zlib_store(const std::vector<std::uint8_t>& data) {
+        std::vector<std::uint8_t> compressed{};
+        compressed.reserve(data.size() + data.size() / 65535u * 5u + 16u);
+        compressed.push_back(0x78u);
+        compressed.push_back(0x01u);
+        std::size_t offset = 0;
+        while (offset < data.size()) {
+            const std::size_t block_size = std::min<std::size_t>(65535u, data.size() - offset);
+            const bool final_block       = offset + block_size == data.size();
+            compressed.push_back(final_block ? 0x01u : 0x00u);
+            const std::uint16_t length  = static_cast<std::uint16_t>(block_size);
+            const std::uint16_t nlength = static_cast<std::uint16_t>(~length);
+            compressed.push_back(static_cast<std::uint8_t>(length & 0xffu));
+            compressed.push_back(static_cast<std::uint8_t>((length >> 8u) & 0xffu));
+            compressed.push_back(static_cast<std::uint8_t>(nlength & 0xffu));
+            compressed.push_back(static_cast<std::uint8_t>((nlength >> 8u) & 0xffu));
+            compressed.insert(compressed.end(), data.begin() + static_cast<std::ptrdiff_t>(offset), data.begin() + static_cast<std::ptrdiff_t>(offset + block_size));
+            offset += block_size;
+        }
+        append_u32_be(compressed, adler32(data));
+        return compressed;
+    }
+
+    void write_png_rgba8(const std::filesystem::path& path, const vk::Extent2D extent, const std::vector<std::uint8_t>& pixels) {
+        if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot write an empty Spectra pathtracer screenshot");
+        const std::size_t expected_size = static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height) * 4u;
+        if (pixels.size() != expected_size) throw std::runtime_error("Spectra pathtracer screenshot pixel buffer has an invalid size");
+
+        std::vector<std::uint8_t> raw{};
+        raw.reserve(static_cast<std::size_t>(extent.height) * (static_cast<std::size_t>(extent.width) * 4u + 1u));
+        for (std::uint32_t y = 0; y < extent.height; ++y) {
+            raw.push_back(0u);
+            const std::size_t row_begin = static_cast<std::size_t>(y) * static_cast<std::size_t>(extent.width) * 4u;
+            raw.insert(raw.end(), pixels.begin() + static_cast<std::ptrdiff_t>(row_begin), pixels.begin() + static_cast<std::ptrdiff_t>(row_begin + static_cast<std::size_t>(extent.width) * 4u));
+        }
+
+        std::vector<std::uint8_t> png{0x89u, 0x50u, 0x4eu, 0x47u, 0x0du, 0x0au, 0x1au, 0x0au};
+        std::vector<std::uint8_t> ihdr{};
+        append_u32_be(ihdr, extent.width);
+        append_u32_be(ihdr, extent.height);
+        ihdr.push_back(8u);
+        ihdr.push_back(6u);
+        ihdr.push_back(0u);
+        ihdr.push_back(0u);
+        ihdr.push_back(0u);
+        append_png_chunk(png, "IHDR", ihdr);
+        append_png_chunk(png, "IDAT", zlib_store(raw));
+        const std::vector<std::uint8_t> empty_chunk{};
+        append_png_chunk(png, "IEND", empty_chunk);
+
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream output{path, std::ios::binary};
+        if (!output) throw std::runtime_error(std::format("Failed to open Spectra pathtracer screenshot file: {}", path.string()));
+        output.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        if (!output) throw std::runtime_error(std::format("Failed to write Spectra pathtracer screenshot file: {}", path.string()));
+    }
+
+    [[nodiscard]] std::filesystem::path next_pathtracer_screenshot_path() {
+        const std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+        const std::int64_t milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        return std::filesystem::current_path() / "screenshots" / std::format("spectra-pathtracer-{}.png", milliseconds);
+    }
+
     void validate_finite_point(const spectra::Point3f& point, const char* message) {
         if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) throw std::runtime_error(message);
     }
@@ -179,6 +309,7 @@ namespace spectra::pathtracer {
         void create_viewport_descriptors();
         [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
+        void record_copy(const vk::raii::CommandBuffer& command_buffer, vk::Buffer screenshot_buffer);
 
         std::unique_ptr<PathtracerMemoryScope> scene_memory_scope{};
         std::unique_ptr<CompiledScene> compiled_scene{};
@@ -329,7 +460,7 @@ namespace {
             1,
             vk::SampleCountFlagBits::e1,
             vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled,
             vk::SharingMode::eExclusive,
             0,
             nullptr,
@@ -376,8 +507,8 @@ namespace {
 
     void create_pipeline_frame_resources(spectra::pathtracer::RenderPipeline& pipeline, const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count) {
         const vk::FormatProperties format_properties       = physical_device.getFormatProperties(pipeline.display_format);
-        constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst;
-        if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer destination R32G32B32A32_SFLOAT images");
+        constexpr vk::FormatFeatureFlags required_features = vk::FormatFeatureFlagBits::eSampledImage | vk::FormatFeatureFlagBits::eTransferDst | vk::FormatFeatureFlagBits::eTransferSrc;
+        if ((format_properties.optimalTilingFeatures & required_features) != required_features) throw std::runtime_error("Vulkan device does not support sampled transfer source/destination R32G32B32A32_SFLOAT images");
 
         const vk::DeviceSize rgba_bytes = static_cast<vk::DeviceSize>(sizeof(float)) * 4u * static_cast<vk::DeviceSize>(pipeline.resolution.x) * static_cast<vk::DeviceSize>(pipeline.resolution.y);
         if (rgba_bytes == 0) throw std::runtime_error("Spectra pathtracer interop buffer cannot be zero bytes");
@@ -637,6 +768,10 @@ namespace spectra::pathtracer {
     }
 
     void RenderPipeline::record_copy(const vk::raii::CommandBuffer& command_buffer) {
+        this->record_copy(command_buffer, vk::Buffer{});
+    }
+
+    void RenderPipeline::record_copy(const vk::raii::CommandBuffer& command_buffer, const vk::Buffer screenshot_buffer) {
         RenderPipeline& pipeline                    = *this;
         FrameResource& frame                          = pipeline.frames.at(pipeline.active_frame_index);
         const vk::PipelineStageFlags2 src_image_stage = frame.image_layout == vk::ImageLayout::eUndefined ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader;
@@ -668,7 +803,27 @@ namespace spectra::pathtracer {
         };
         command_buffer.copyBufferToImage(*frame.interop_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
 
-        transition_image_layout(command_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        if (screenshot_buffer != vk::Buffer{}) {
+            transition_image_layout(command_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+            frame.image_layout = vk::ImageLayout::eTransferSrcOptimal;
+            command_buffer.copyImageToBuffer(*frame.image, vk::ImageLayout::eTransferSrcOptimal, screenshot_buffer, copy_region);
+            const vk::BufferMemoryBarrier2 screenshot_buffer_barrier{
+                vk::PipelineStageFlagBits2::eTransfer,
+                vk::AccessFlagBits2::eTransferWrite,
+                vk::PipelineStageFlagBits2::eHost,
+                vk::AccessFlagBits2::eHostRead,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                screenshot_buffer,
+                0,
+                VK_WHOLE_SIZE,
+            };
+            const vk::DependencyInfo screenshot_dependency_info{{}, 0, nullptr, 1, &screenshot_buffer_barrier, 0, nullptr};
+            command_buffer.pipelineBarrier2(screenshot_dependency_info);
+            transition_image_layout(command_buffer, *frame.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        } else {
+            transition_image_layout(command_buffer, *frame.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+        }
         frame.image_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 } // namespace spectra::pathtracer
@@ -868,6 +1023,13 @@ namespace spectra::pathtracer {
             [[nodiscard]] float average() const;
         };
 
+        struct ReadbackBuffer {
+            vk::raii::Buffer buffer{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::DeviceSize capacity{0};
+            void* mapped{nullptr};
+        };
+
         void register_panels(HostView& host);
         void detach_noexcept() noexcept;
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
@@ -899,6 +1061,12 @@ namespace spectra::pathtracer {
         void set_default_pixel_samples(int sample_count);
         void set_override_pixel_samples(std::optional<int> sample_count);
         [[nodiscard]] std::string sample_source_text() const;
+        void destroy_readback_buffer(ReadbackBuffer& buffer) noexcept;
+        void ensure_readback_buffer(ReadbackBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
+        void destroy_screenshot_resources_noexcept() noexcept;
+        void request_viewport_screenshot();
+        void record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer);
+        void consume_completed_screenshot(std::uint32_t frame_index);
         void initialize_camera_state();
         void synchronize_camera_workspace();
         void apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot);
@@ -947,6 +1115,15 @@ namespace spectra::pathtracer {
             std::array<int, 2> candidate_resolution{0, 0};
             std::array<int, 2> active_resolution{0, 0};
         } render_resolution_sync;
+
+        struct {
+            bool requested{false};
+            bool pending{false};
+            std::uint32_t frame_index{0};
+            vk::Extent2D extent{};
+            std::filesystem::path path{};
+            ReadbackBuffer readback{};
+        } screenshot;
 
         struct {
             bool initialized{false};
@@ -1057,7 +1234,9 @@ namespace spectra::pathtracer {
         }
     }
 
-    Renderer::Impl::~Impl() noexcept = default;
+    Renderer::Impl::~Impl() noexcept {
+        this->destroy_screenshot_resources_noexcept();
+    }
 
     void Renderer::Impl::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) {
         if (source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
@@ -1156,6 +1335,7 @@ namespace spectra::pathtracer {
 
     FrameResult Renderer::Impl::begin_frame(HostView host, const FrameContext& frame) {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
+        this->consume_completed_screenshot(frame.frame_index);
         this->load_source_scene();
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
         FrameResult result{};
@@ -1175,7 +1355,11 @@ namespace spectra::pathtracer {
     }
 
     void Renderer::Impl::record_frame(const vk::raii::CommandBuffer& command_buffer) {
-        if (this->pipeline_ready()) this->render_pipeline->record_copy(command_buffer);
+        if (!this->pipeline_ready()) return;
+        if (this->screenshot.requested)
+            this->record_viewport_screenshot_copy(command_buffer);
+        else
+            this->render_pipeline->record_copy(command_buffer);
     }
 
     std::string Renderer::Impl::window_detail() const {
@@ -1266,6 +1450,7 @@ namespace spectra::pathtracer {
     void Renderer::Impl::unload_pipeline_noexcept() noexcept {
         if (this->gpu_runtime != nullptr) this->gpu_runtime->WaitGpuNoexcept();
         this->render_pipeline.reset();
+        this->destroy_screenshot_resources_noexcept();
         this->render_resolution_sync.pipeline_created = false;
         this->render_resolution_sync.active_resolution  = {0, 0};
     }
@@ -1330,6 +1515,78 @@ namespace spectra::pathtracer {
         if (this->scene_snapshot.has_value() && scene_entity_has_integer_parameter(this->scene_snapshot->render_settings.sampler, "pixelsamples")) return "Scene";
         if (this->render_config.default_pixel_samples.has_value()) return "Spectra Default";
         return "PBRT Default";
+    }
+
+    void Renderer::Impl::destroy_readback_buffer(ReadbackBuffer& buffer) noexcept {
+        if (buffer.mapped != nullptr && this->device != nullptr && *buffer.memory) vkUnmapMemory(static_cast<VkDevice>(**this->device), static_cast<VkDeviceMemory>(*buffer.memory));
+        buffer.mapped   = nullptr;
+        buffer.buffer   = nullptr;
+        buffer.memory   = nullptr;
+        buffer.capacity = 0;
+    }
+
+    void Renderer::Impl::ensure_readback_buffer(ReadbackBuffer& buffer, const vk::DeviceSize required_size, const vk::BufferUsageFlags usage) {
+        if (required_size == 0) throw std::runtime_error("Cannot allocate an empty Spectra pathtracer readback buffer");
+        if (this->physical_device == nullptr || this->device == nullptr) throw std::runtime_error("Cannot allocate Spectra pathtracer readback buffers without Vulkan handles");
+        if (*buffer.buffer && buffer.capacity >= required_size) return;
+        this->destroy_readback_buffer(buffer);
+        const vk::BufferCreateInfo buffer_create_info{{}, required_size, usage, vk::SharingMode::eExclusive};
+        buffer.buffer = vk::raii::Buffer{*this->device, buffer_create_info};
+        const vk::MemoryRequirements memory_requirements = buffer.buffer.getMemoryRequirements();
+        const std::uint32_t memory_type                  = find_memory_type_index(*this->physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
+        buffer.memory = vk::raii::DeviceMemory{*this->device, memory_allocate_info};
+        buffer.buffer.bindMemory(*buffer.memory, 0);
+        if (vkMapMemory(static_cast<VkDevice>(**this->device), static_cast<VkDeviceMemory>(*buffer.memory), 0, required_size, 0, &buffer.mapped) != VK_SUCCESS) throw std::runtime_error("Failed to map Spectra pathtracer readback buffer memory");
+        buffer.capacity = required_size;
+        if (buffer.mapped == nullptr) throw std::runtime_error("Failed to map Spectra pathtracer readback buffer memory");
+    }
+
+    void Renderer::Impl::destroy_screenshot_resources_noexcept() noexcept {
+        this->destroy_readback_buffer(this->screenshot.readback);
+        this->screenshot.requested = false;
+        this->screenshot.pending   = false;
+        this->screenshot.frame_index = 0;
+        this->screenshot.extent    = vk::Extent2D{};
+        this->screenshot.path.clear();
+    }
+
+    void Renderer::Impl::request_viewport_screenshot() {
+        if (!this->pipeline_ready() || this->render_pipeline == nullptr) throw std::runtime_error("Cannot capture a Spectra pathtracer screenshot before viewport rendering exists");
+        if (this->screenshot.requested || this->screenshot.pending) throw std::runtime_error("A Spectra pathtracer screenshot is already pending");
+        const std::array<int, 2> resolution = this->render_pipeline->film_resolution();
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot capture a Spectra pathtracer screenshot with a non-positive render resolution");
+        this->screenshot.path      = next_pathtracer_screenshot_path();
+        this->screenshot.requested = true;
+    }
+
+    void Renderer::Impl::record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer) {
+        if (!this->screenshot.requested) return;
+        if (this->screenshot.pending) throw std::runtime_error("Cannot record a Spectra pathtracer screenshot while another screenshot is pending");
+        if (!this->pipeline_ready() || this->render_pipeline == nullptr) throw std::runtime_error("Cannot record a Spectra pathtracer screenshot without an active render pipeline");
+        const std::array<int, 2> resolution = this->render_pipeline->film_resolution();
+        if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot record a Spectra pathtracer screenshot with a non-positive render resolution");
+        constexpr vk::DeviceSize bytes_per_pixel = sizeof(float) * 4u;
+        const vk::Extent2D extent{static_cast<std::uint32_t>(resolution[0]), static_cast<std::uint32_t>(resolution[1])};
+        const vk::DeviceSize required_size = static_cast<vk::DeviceSize>(extent.width) * static_cast<vk::DeviceSize>(extent.height) * bytes_per_pixel;
+        this->ensure_readback_buffer(this->screenshot.readback, required_size, vk::BufferUsageFlagBits::eTransferDst);
+        this->render_pipeline->record_copy(command_buffer, *this->screenshot.readback.buffer);
+        this->screenshot.requested   = false;
+        this->screenshot.pending     = true;
+        this->screenshot.frame_index = this->statistics.active_frame_index;
+        this->screenshot.extent      = extent;
+    }
+
+    void Renderer::Impl::consume_completed_screenshot(const std::uint32_t frame_index) {
+        if (!this->screenshot.pending || this->screenshot.frame_index != frame_index) return;
+        if (this->screenshot.readback.mapped == nullptr) throw std::runtime_error("Spectra pathtracer screenshot readback buffer is not mapped");
+        if (this->screenshot.path.empty()) throw std::runtime_error("Spectra pathtracer screenshot output path is empty");
+        const std::vector<std::uint8_t> pixels = rgba32_float_to_rgba8(this->screenshot.readback.mapped, this->screenshot.extent);
+        write_png_rgba8(this->screenshot.path, this->screenshot.extent, pixels);
+        this->screenshot.pending     = false;
+        this->screenshot.frame_index = 0;
+        this->screenshot.extent      = vk::Extent2D{};
+        this->screenshot.path.clear();
     }
 
     void Renderer::Impl::initialize_camera_state() {
@@ -1822,7 +2079,7 @@ namespace spectra::pathtracer {
 
     void Renderer::Impl::draw_viewport_toolbar() {
         if (!this->ui.viewport_known) return;
-        if (this->ui.viewport_size[0] < 112.0f || this->ui.viewport_size[1] < 54.0f) return;
+        if (this->ui.viewport_size[0] < 146.0f || this->ui.viewport_size[1] < 54.0f) return;
         const ImVec2 image_min{this->ui.viewport_position[0], this->ui.viewport_position[1]};
         const ImVec2 image_max{image_min.x + this->ui.viewport_size[0], image_min.y + this->ui.viewport_size[1]};
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -1830,7 +2087,7 @@ namespace spectra::pathtracer {
         constexpr float gap = 4.0f;
         const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
         const ImVec2 padding{6.0f, 5.0f};
-        const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 2.0f + gap, origin.y + padding.y * 2.0f + button_size};
+        const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 3.0f + gap * 2.0f, origin.y + padding.y * 2.0f + button_size};
         draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 208), 7.0f);
         draw_list->AddRect(origin, background_max, IM_COL32(92, 102, 112, 96), 7.0f);
 
@@ -1851,6 +2108,15 @@ namespace spectra::pathtracer {
         if (reset_disabled) ImGui::EndDisabled();
         ImGui::SameLine(0.0f, gap);
         if (draw_button(this->overlays_visible ? ICON_MS_VISIBILITY "##overlays" : ICON_MS_VISIBILITY_OFF "##overlays", "Overlays", this->overlays_visible)) this->overlays_visible = !this->overlays_visible;
+        ImGui::SameLine(0.0f, gap);
+        const bool screenshot_busy        = this->screenshot.requested || this->screenshot.pending;
+        const bool screenshot_unavailable = !this->pipeline_ready();
+        const bool screenshot_disabled    = screenshot_busy || screenshot_unavailable;
+        const char* screenshot_tooltip    = screenshot_busy ? "Screenshot Pending" : screenshot_unavailable ? "Screenshot Unavailable" : "Screenshot";
+        if (screenshot_disabled) ImGui::BeginDisabled();
+        if (draw_button(ICON_MS_SCREENSHOT "##screenshot", screenshot_tooltip, false)) this->request_viewport_screenshot();
+        if (screenshot_disabled) ImGui::EndDisabled();
+        if (screenshot_disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", screenshot_tooltip);
         ImGui::PopID();
         ImGui::PopClipRect();
     }
