@@ -4,6 +4,11 @@ export import :math;
 import std;
 
 namespace spectra::scene {
+    export class EmptySceneError final : public std::runtime_error {
+    public:
+        explicit EmptySceneError(const std::string& message) : std::runtime_error(message) {}
+    };
+
     export class Scene {
     public:
         struct Revision {
@@ -423,6 +428,7 @@ namespace spectra::scene {
         [[nodiscard]] DirtyFlags commit(Edit edit);
 
         [[nodiscard]] static Scene parse_pbrt(std::string_view scene_id);
+        [[nodiscard]] static Scene parse_pbrt_file(const std::filesystem::path& scene_path);
 
         [[nodiscard]] static constexpr DirtyFlags combine_dirty_flags(const DirtyFlags lhs, const DirtyFlags rhs) {
             return static_cast<DirtyFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));

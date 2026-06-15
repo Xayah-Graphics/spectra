@@ -1094,6 +1094,9 @@ namespace spectra::pathtracer {
 
         std::optional<scene::Scene::ResolvedScene> scene_snapshot{};
         std::optional<scene::Scene::Info> scene_info{};
+        std::optional<scene::Scene::Revision> observed_scene_revision{};
+        std::string scene_status_state{"Not Renderable"};
+        std::string scene_status_detail{"Scene is empty. Add geometry or open a PBRT scene."};
         RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
         RenderConfig render_config{.rendering_space = RenderingSpace::CameraWorld, .default_pixel_samples = interactive_default_pixel_samples};
         std::array<int, 2> scene_film_resolution{0, 0};
@@ -1222,13 +1225,6 @@ namespace spectra::pathtracer {
     Renderer::Impl::Impl(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) : source_scene(std::move(source_scene)), camera_workspace(std::move(camera_workspace)) {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
-        const scene::Scene::ResolvedScene snapshot = this->source_scene->resolved_scene();
-        const SceneSupportReport report = analyze_scene(snapshot);
-        if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", Renderer::name(), snapshot.name);
-            if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
-            throw std::runtime_error(message);
-        }
     }
 
     Renderer::Impl::~Impl() noexcept {
@@ -1283,26 +1279,37 @@ namespace spectra::pathtracer {
 
     void Renderer::Impl::load_source_scene() {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
-        scene::Scene::ResolvedScene source_snapshot = this->source_scene->resolved_scene();
-        if (this->scene_snapshot.has_value()) {
-            if (this->scene_snapshot->revision == source_snapshot.revision) return;
-            this->unload_pipeline_noexcept();
-            this->unload_scene_noexcept();
-            source_snapshot = this->source_scene->resolved_scene();
-        }
+        const scene::Scene::Revision source_revision = this->source_scene->revision();
+        if (this->observed_scene_revision.has_value() && *this->observed_scene_revision == source_revision) return;
 
-        const SceneSupportReport report = analyze_scene(source_snapshot);
-        if (!report.supported) {
-            std::string message = std::format("{} cannot translate scene \"{}\"", Renderer::name(), source_snapshot.name);
-            if (!report.diagnostics.empty()) message = std::format("{}: {}", message, report.diagnostics.front().message);
-            throw std::runtime_error(message);
-        }
+        this->unload_pipeline_noexcept();
+        this->unload_scene_noexcept();
+        this->observed_scene_revision = source_revision;
 
-        this->scene_snapshot = std::move(source_snapshot);
-        this->scene_info     = this->source_scene->info();
-        this->scene_film_resolution      = {0, 0};
-        this->scene_camera_from_world    = spectra::Transform{};
-        this->scene_sampler_sample_count = 0;
+        try {
+            scene::Scene::ResolvedScene source_snapshot = this->source_scene->resolved_scene();
+            const SceneSupportReport report = analyze_scene(source_snapshot);
+            if (!report.supported) {
+                this->scene_status_state = "Unsupported";
+                this->scene_status_detail = std::format("{} cannot translate scene \"{}\"", Renderer::name(), source_snapshot.name);
+                if (!report.diagnostics.empty()) this->scene_status_detail = std::format("{}: {}", this->scene_status_detail, report.diagnostics.front().message);
+                return;
+            }
+
+            this->scene_info     = this->source_scene->info();
+            this->scene_snapshot = std::move(source_snapshot);
+            this->scene_status_state.clear();
+            this->scene_status_detail.clear();
+            this->scene_film_resolution      = {0, 0};
+            this->scene_camera_from_world    = spectra::Transform{};
+            this->scene_sampler_sample_count = 0;
+        } catch (const scene::EmptySceneError&) {
+            this->scene_status_state = "Empty Scene";
+            this->scene_status_detail = "Scene has no path-traceable geometry yet.";
+        } catch (const std::exception& error) {
+            this->scene_status_state = "Not Renderable";
+            this->scene_status_detail = error.what();
+        }
     }
 
     void Renderer::Impl::attach(HostView host) {
@@ -1334,7 +1341,6 @@ namespace spectra::pathtracer {
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->consume_completed_screenshot(frame.frame_index);
         this->load_source_scene();
-        if (!this->scene_info.has_value()) throw std::runtime_error("Cannot update Spectra pathtracer frame without an active Spectra scene");
         FrameResult result{};
         this->synchronize_render_resolution();
         if (this->sample_config_rebuild_requested && this->pipeline_ready()) this->rebuild_for_sample_config();
@@ -1369,7 +1375,7 @@ namespace spectra::pathtracer {
             width  = static_cast<std::uint32_t>(this->ui.viewport_framebuffer_size[0]);
             height = static_cast<std::uint32_t>(this->ui.viewport_framebuffer_size[1]);
         }
-        const std::string scene_title         = !this->scene_info.has_value() ? "No Scene" : std::string(this->active_scene_info().title);
+        const std::string scene_title         = !this->scene_info.has_value() ? this->scene_status_state : std::string(this->active_scene_info().title);
         const std::array<int, 2> sample_range = !this->scene_info.has_value() ? std::array<int, 2>{0, 0} : this->sample_range();
         return std::format("{} | Spectra Pathtracer | {}x{} | sample {}/{}", scene_title, width, height, sample_range[0], sample_range[1]);
     }
@@ -1377,6 +1383,9 @@ namespace spectra::pathtracer {
     void Renderer::Impl::unload_scene_noexcept() noexcept {
         this->scene_snapshot.reset();
         this->scene_info.reset();
+        this->observed_scene_revision.reset();
+        this->scene_status_state = "Not Renderable";
+        this->scene_status_detail = "Scene is empty. Add geometry or open a PBRT scene.";
         this->scene_film_resolution      = {0, 0};
         this->scene_camera_from_world    = spectra::Transform{};
         this->scene_sampler_sample_count = 0;
@@ -1385,7 +1394,7 @@ namespace spectra::pathtracer {
     }
 
     void Renderer::Impl::create_for_resolution(const std::array<int, 2>& resolution) {
-        if (!this->scene_info.has_value()) throw std::runtime_error("Cannot create Spectra pathtracer without a loaded Spectra scene");
+        if (!this->scene_snapshot.has_value()) throw std::runtime_error("Cannot create Spectra pathtracer without a renderable Spectra scene");
         if (this->render_pipeline != nullptr) throw std::runtime_error("Spectra pathtracer is already loaded");
         if (resolution[0] <= 0 || resolution[1] <= 0) throw std::runtime_error("Cannot create Spectra pathtracer with a non-positive resolution");
         try {
@@ -1467,7 +1476,7 @@ namespace spectra::pathtracer {
 
     void Renderer::Impl::synchronize_render_resolution() {
         constexpr float resolution_stability_seconds = 0.3f;
-        if (!this->scene_info.has_value()) return;
+        if (!this->scene_snapshot.has_value()) return;
         if (!this->render_resolution_sync.candidate_known) return;
         if (this->render_resolution_sync.stable_seconds < resolution_stability_seconds) return;
         if (this->render_resolution_sync.pipeline_created && this->render_resolution_sync.active_resolution == this->render_resolution_sync.candidate_resolution) return;
@@ -1661,6 +1670,10 @@ namespace spectra::pathtracer {
     [[nodiscard]] Renderer::Impl::Status Renderer::Impl::pipeline_status() const {
         Status status{};
         const std::array<int, 2> sample_range = this->sample_range();
+        if (!this->scene_snapshot.has_value()) {
+            status.state = this->scene_status_state;
+            return status;
+        }
         if (this->render_resolution_sync.rebuilding) {
             status.state = "Rebuilding";
             return status;
@@ -1894,6 +1907,9 @@ namespace spectra::pathtracer {
             draw_list->AddText(ImVec2{viewport_position.x + std::max(0.0f, (viewport_size.x - text_size.x) * 0.5f), viewport_position.y + std::max(0.0f, (viewport_size.y - text_size.y) * 0.5f)}, ImGui::GetColorU32(ImGuiCol_TextDisabled), pending_label);
             ImGui::Dummy(viewport_size);
         } else {
+            const std::string pending_label = this->scene_status_detail.empty() ? this->scene_status_state : std::format("{}: {}", this->scene_status_state, this->scene_status_detail);
+            const ImVec2 text_size = ImGui::CalcTextSize(pending_label.c_str());
+            ImGui::GetWindowDrawList()->AddText(ImVec2{viewport_position.x + std::max(0.0f, (viewport_size.x - text_size.x) * 0.5f), viewport_position.y + std::max(0.0f, (viewport_size.y - text_size.y) * 0.5f)}, ImGui::GetColorU32(ImGuiCol_TextDisabled), pending_label.c_str());
             ImGui::Dummy(viewport_size);
         }
         this->draw_viewport_overlays();
@@ -2000,7 +2016,8 @@ namespace spectra::pathtracer {
     void Renderer::Impl::draw_inspector_panel() {
         draw_inspector_section("Inspector");
         if (!this->scene_info.has_value()) {
-            ImGui::TextDisabled("No active Spectra scene");
+            draw_statistics_row("State", this->scene_status_state);
+            draw_statistics_row("Detail", this->scene_status_detail);
             return;
         }
 
@@ -2055,7 +2072,7 @@ namespace spectra::pathtracer {
 
         ImGui::PushClipRect(image_min, image_max, true);
         const Status status = this->pipeline_status();
-        std::string scene_title{"No Scene"};
+        std::string scene_title{this->scene_status_state};
         if (this->scene_info.has_value()) {
             const scene::Scene::Info& scene = this->active_scene_info();
             scene_title = scene.title.empty() ? std::string{scene.name} : std::string{scene.title};
@@ -2159,6 +2176,7 @@ namespace spectra::pathtracer {
         host.register_panel(Panel{
             .id                  = "pathtracer.viewport",
             .title               = "Viewport",
+            .owner_renderer      = std::string{Renderer::name()},
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
             .closable            = false,
             .zero_window_padding = true,
@@ -2168,6 +2186,7 @@ namespace spectra::pathtracer {
             .id             = "pathtracer.render",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,
+            .owner_renderer = std::string{Renderer::name()},
             .shortcut_label = "F8",
             .shortcut_key   = ImGuiKey_F8,
             .draw           = [this] { this->draw_workspace_tab(); },

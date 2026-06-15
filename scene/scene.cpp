@@ -753,7 +753,7 @@ namespace spectra::scene {
             for (const Scene::Sphere& sphere : frame.spheres) append_sphere_shape(scene, document, sphere);
             for (const Scene::PointCloud& point_cloud : frame.point_clouds) append_point_cloud_shapes(scene, document, point_cloud);
             for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume);
-            if (scene.shapes.empty()) throw std::runtime_error(std::format("Preview document \"{}\" produced no canonical pathtracer shapes", document.name));
+            if (scene.shapes.empty()) throw EmptySceneError{std::format("Preview document \"{}\" produced no canonical pathtracer shapes", document.name)};
             return scene;
         }
 
@@ -4083,6 +4083,20 @@ namespace spectra::scene {
 
             throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", requested));
         }
+
+        [[nodiscard]] Scene LoadPbrtSceneFile(const std::filesystem::path& scenePath, std::string sceneName) {
+            if (scenePath.empty()) throw std::runtime_error("PBRT scene file path must not be empty");
+            const std::filesystem::path absolutePath = std::filesystem::absolute(scenePath).lexically_normal();
+            if (!std::filesystem::is_regular_file(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolutePath.string()));
+            if (!IsSceneFile(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file must use .pbrt or .pbrt.gz", absolutePath.string()));
+
+            ScenePbrtBuilder builder(absolutePath);
+            Scene::ResolvedScene scene = builder.Parse();
+            scene.name = std::move(sceneName);
+            scene.title = SceneDisplayName(absolutePath);
+            if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
+            return Scene{std::move(scene)};
+        }
     } // namespace
 
     Scene::Info describe_scene(const Scene::ResolvedScene& scene) {
@@ -4144,12 +4158,13 @@ namespace spectra::scene {
     Scene Scene::parse_pbrt(const std::string_view scene_id) {
         if (scene_id.empty()) throw std::runtime_error("PBRT scene parse requires a non-empty scene id");
         const std::filesystem::path scenePath = ResolveScenePath(scene_id);
-        ScenePbrtBuilder builder(scenePath);
-        Scene::ResolvedScene scene = builder.Parse();
-        scene.name = std::string{scene_id};
-        scene.title = SceneDisplayName(scenePath);
-        if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
-        return Scene{std::move(scene)};
+        return LoadPbrtSceneFile(scenePath, std::string{scene_id});
+    }
+
+    Scene Scene::parse_pbrt_file(const std::filesystem::path& scene_path) {
+        if (scene_path.empty()) throw std::runtime_error("PBRT scene file path must not be empty");
+        const std::filesystem::path absolutePath = std::filesystem::absolute(scene_path).lexically_normal();
+        return LoadPbrtSceneFile(absolutePath, absolutePath.string());
     }
 
 } // namespace spectra::scene

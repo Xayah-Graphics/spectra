@@ -59,9 +59,5 @@ target_link_libraries(
         spectra::scene
         spectra::pathtracer
         spectra::rasterizer
-        xayah::bouncing_ball
-        xayah::sparkles
-        xayah::cloth
-        xayah::pyro
 )
 set_property(TARGET spectra_gui PROPERTY CXX_MODULE_STD ON)

@@ -4,7 +4,7 @@ export import spectra.scene;
 import std;
 
 namespace spectra::rasterizer {
-    export enum class VisualizationKind {
+    export enum class SceneEntryKind {
         Static,
         Dynamic,
     };
@@ -522,78 +522,83 @@ namespace spectra::rasterizer {
         }
     };
 
-    export struct VisualizationEntry {
-        VisualizationEntry(const VisualizationEntry& other) = delete;
-        VisualizationEntry(VisualizationEntry&& other) noexcept = default;
-        VisualizationEntry& operator=(const VisualizationEntry& other) = delete;
-        VisualizationEntry& operator=(VisualizationEntry&& other) noexcept = default;
-        ~VisualizationEntry() noexcept = default;
+    export struct SceneEntry {
+        SceneEntry(const SceneEntry& other) = delete;
+        SceneEntry(SceneEntry&& other) noexcept = default;
+        SceneEntry& operator=(const SceneEntry& other) = delete;
+        SceneEntry& operator=(SceneEntry&& other) noexcept = default;
+        ~SceneEntry() noexcept = default;
 
         std::string id{};
         std::string title{};
-        VisualizationKind kind{VisualizationKind::Static};
+        SceneEntryKind kind{SceneEntryKind::Static};
 
     private:
-        VisualizationEntry(std::string id, std::string title, VisualizationKind kind, std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene, std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source);
+        SceneEntry(std::string id, std::string title, SceneEntryKind kind, std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene, std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source);
 
         std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene{};
         std::move_only_function<std::unique_ptr<VisualizationSourceInstance>()> create_dynamic_source{};
 
-        friend class VisualizationRegistry;
-        friend class VisualizationController;
+        friend class SceneRegistry;
+        friend class SceneController;
     };
 
-    export class VisualizationRegistry final {
+    export class SceneRegistry final {
     public:
-        VisualizationRegistry() = default;
+        SceneRegistry() = default;
 
-        VisualizationRegistry(const VisualizationRegistry& other) = delete;
-        VisualizationRegistry(VisualizationRegistry&& other) noexcept = default;
-        VisualizationRegistry& operator=(const VisualizationRegistry& other) = delete;
-        VisualizationRegistry& operator=(VisualizationRegistry&& other) noexcept = default;
-        ~VisualizationRegistry() noexcept = default;
+        SceneRegistry(const SceneRegistry& other) = delete;
+        SceneRegistry(SceneRegistry&& other) noexcept = default;
+        SceneRegistry& operator=(const SceneRegistry& other) = delete;
+        SceneRegistry& operator=(SceneRegistry&& other) noexcept = default;
+        ~SceneRegistry() noexcept = default;
 
-        void register_static_visualization(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> create_scene);
+        [[nodiscard]] std::size_t upsert_static_scene(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> create_scene);
 
         template <VisualizationSource Source>
         void register_source() {
             const std::string id{Source::visualization_id()};
-            this->ensure_unique_visualization_id(id);
-            this->entries.push_back(VisualizationEntry{id, std::string{Source::visualization_title()}, VisualizationKind::Dynamic, std::move_only_function<std::shared_ptr<scene::Scene>()>{}, [] { return std::make_unique<VisualizationSourceModel<Source>>(); }});
+            this->ensure_unique_entry_id(id);
+            this->entries.push_back(SceneEntry{id, std::string{Source::visualization_title()}, SceneEntryKind::Dynamic, std::move_only_function<std::shared_ptr<scene::Scene>()>{}, [] { return std::make_unique<VisualizationSourceModel<Source>>(); }});
         }
 
         [[nodiscard]] std::unique_ptr<VisualizationSourceInstance> create_dynamic_source(std::size_t index);
         [[nodiscard]] std::shared_ptr<scene::Scene> create_static_scene(std::size_t index);
-        [[nodiscard]] const VisualizationEntry& entry(std::size_t index) const;
+        [[nodiscard]] const SceneEntry& entry(std::size_t index) const;
         [[nodiscard]] std::size_t size() const;
 
     private:
-        void ensure_unique_visualization_id(const std::string& id) const;
+        [[nodiscard]] std::optional<std::size_t> find_entry_index(std::string_view id) const;
+        void ensure_unique_entry_id(const std::string& id) const;
 
-        std::vector<VisualizationEntry> entries{};
+        std::vector<SceneEntry> entries{};
     };
 
-    export class VisualizationController final {
+    export class SceneController final {
     public:
-        explicit VisualizationController(VisualizationRegistry registry);
+        SceneController(SceneRegistry registry, std::shared_ptr<scene::Scene> empty_workspace);
 
-        VisualizationController(const VisualizationController& other) = delete;
-        VisualizationController(VisualizationController&& other) = delete;
-        VisualizationController& operator=(const VisualizationController& other) = delete;
-        VisualizationController& operator=(VisualizationController&& other) = delete;
-        ~VisualizationController() noexcept = default;
+        SceneController(const SceneController& other) = delete;
+        SceneController(SceneController&& other) = delete;
+        SceneController& operator=(const SceneController& other) = delete;
+        SceneController& operator=(SceneController&& other) = delete;
+        ~SceneController() noexcept = default;
 
         [[nodiscard]] std::shared_ptr<scene::Scene> active_workspace();
-        [[nodiscard]] const VisualizationEntry& entry(std::size_t index) const;
+        [[nodiscard]] const SceneEntry& entry(std::size_t index) const;
         [[nodiscard]] std::size_t size() const;
+        [[nodiscard]] bool has_selected_entry() const;
         [[nodiscard]] std::size_t selected_index() const;
         [[nodiscard]] bool pending_switch() const;
+        [[nodiscard]] bool has_activation_error() const;
+        [[nodiscard]] const std::string& activation_error() const;
         void request_activate(std::size_t index);
-        [[nodiscard]] bool apply_pending_visualization();
-        void update_active_visualization(double delta_seconds);
+        [[nodiscard]] bool activate_static_scene(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> load_scene);
+        [[nodiscard]] bool apply_pending_scene();
+        void update_active_scene(double delta_seconds);
 
     private:
-        struct VisualizationSlot {
+        struct SceneSlot {
             std::unique_ptr<VisualizationSourceInstance> source{};
             std::shared_ptr<scene::Scene> workspace{};
             double frame_accumulator_seconds{};
@@ -604,13 +609,18 @@ namespace spectra::rasterizer {
             std::optional<std::uint64_t> committed_playback_frame_index{};
         };
 
-        [[nodiscard]] VisualizationSlot& ensure_slot(std::size_t index);
-        [[nodiscard]] scene::Scene::Document create_dynamic_slot(std::size_t index, VisualizationSlot* slot);
-        void reset_dynamic_visualization(VisualizationSlot& slot, scene::Scene::Timeline timeline);
+        void sync_slot_count();
+        void set_static_slot(std::size_t index, std::shared_ptr<scene::Scene> scene);
+        void clear_activation_error();
+        [[nodiscard]] SceneSlot& ensure_slot(std::size_t index);
+        [[nodiscard]] scene::Scene::Document create_dynamic_slot(std::size_t index, SceneSlot* slot);
+        void reset_dynamic_scene(SceneSlot& slot, scene::Scene::Timeline timeline);
 
-        VisualizationRegistry registry{};
-        std::vector<VisualizationSlot> slots{};
-        std::size_t current_active_index{};
-        std::optional<std::size_t> pending_active_index{};
+        SceneRegistry registry{};
+        std::vector<SceneSlot> slots{};
+        std::shared_ptr<scene::Scene> empty_workspace{};
+        std::optional<std::size_t> selected_entry_index{};
+        std::optional<std::size_t> pending_selected_entry_index{};
+        std::string activation_error_message{};
     };
 } // namespace spectra::rasterizer
