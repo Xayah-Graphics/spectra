@@ -1,5 +1,3 @@
-#include <imgui.h>
-
 #include <vulkan/vulkan_raii.hpp>
 
 import std;
@@ -17,18 +15,10 @@ namespace {
     static_assert(spectra::pathtracer::Host<spectra::Spectra>);
     static_assert(spectra::rasterizer::Host<spectra::Spectra>);
 
-    struct SceneCommandBarState {
-        bool open_pbrt_popup{};
-        bool browser_initialized{};
-        std::filesystem::path browser_directory{};
-        std::array<char, 4096> path_buffer{};
-        std::string browser_error{};
-    };
-
-    struct SceneBrowserEntry {
-        std::filesystem::path path{};
-        std::string label{};
-        bool directory{};
+    struct SceneWorkspaceStatusState {
+        std::string status_text{};
+        bool status_error{};
+        std::chrono::steady_clock::time_point status_expires{};
     };
 
     [[nodiscard]] std::string lowercase_ascii(std::string value) {
@@ -54,193 +44,73 @@ namespace {
         return filename.string();
     }
 
-    void set_path_buffer(SceneCommandBarState& state, const std::filesystem::path& path) {
-        const std::string value = path.string();
-        std::fill(state.path_buffer.begin(), state.path_buffer.end(), '\0');
-        const std::size_t count = std::min(value.size(), state.path_buffer.size() - 1u);
-        std::copy_n(value.data(), count, state.path_buffer.data());
+    void set_scene_status(SceneWorkspaceStatusState& state, std::string text, const bool error) {
+        state.status_text = std::move(text);
+        state.status_error = error;
+        state.status_expires = std::chrono::steady_clock::now() + std::chrono::seconds{4};
     }
 
-    [[nodiscard]] std::filesystem::path selected_picker_path(const SceneCommandBarState& state) {
-        const std::string value{state.path_buffer.data()};
-        if (value.empty()) throw std::runtime_error("Choose a PBRT scene file before opening");
-        std::filesystem::path path{value};
-        if (!path.is_absolute()) path = state.browser_directory / path;
-        return std::filesystem::absolute(path).lexically_normal();
+    [[nodiscard]] bool scene_status_visible(SceneWorkspaceStatusState& state) {
+        if (state.status_text.empty()) return false;
+        if (std::chrono::steady_clock::now() < state.status_expires) return true;
+        state.status_text.clear();
+        state.status_error = false;
+        return false;
     }
 
-    void initialize_scene_browser(SceneCommandBarState& state) {
-        if (state.browser_initialized) return;
-        state.browser_directory = std::filesystem::current_path();
-        state.browser_initialized = true;
-        state.browser_error.clear();
-    }
-
-    [[nodiscard]] bool activate_pbrt_file(spectra::rasterizer::SceneController& controller, SceneCommandBarState& state) {
+    [[nodiscard]] bool activate_pbrt_scene_path(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, const std::filesystem::path& scene_path) {
         try {
-            const std::filesystem::path scene_path = selected_picker_path(state);
-            const std::string id = scene_path.string();
-            const std::string title = scene_file_title(scene_path);
-            const bool activated = controller.activate_static_scene(id, title, [scene_path] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(scene_path)); });
-            if (activated) {
-                state.browser_directory = scene_path.parent_path();
-                state.browser_error.clear();
-            }
-            return activated;
+            if (scene_path.empty()) throw std::runtime_error("Drop a PBRT scene file into the window to load it");
+            const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
+            if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a PBRT scene file, not a folder");
+            if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
+            if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
+            const std::string id = absolute_path.string();
+            const std::string title = scene_file_title(absolute_path);
+            const bool activated = controller.activate_static_scene(id, title, [absolute_path] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(absolute_path)); });
+            if (!activated) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load static scene" : controller.activation_error());
+            set_scene_status(state, std::format("Loaded {}", title), false);
+            return true;
         } catch (const std::exception& error) {
-            state.browser_error = error.what();
+            set_scene_status(state, error.what(), true);
             return false;
         }
     }
 
-    [[nodiscard]] std::vector<SceneBrowserEntry> collect_scene_browser_entries(const std::filesystem::path& directory) {
-        std::vector<SceneBrowserEntry> entries{};
-        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory)) {
-            const std::filesystem::path path = entry.path();
-            if (entry.is_directory()) {
-                entries.push_back(SceneBrowserEntry{.path = path, .label = path.filename().string(), .directory = true});
-                continue;
-            }
-            if (!entry.is_regular_file() || !is_pbrt_scene_file(path)) continue;
-            entries.push_back(SceneBrowserEntry{.path = path, .label = path.filename().string(), .directory = false});
+    [[nodiscard]] bool handle_scene_file_drop(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, const std::span<const std::filesystem::path> paths) {
+        if (paths.empty()) {
+            set_scene_status(state, "Drop a PBRT scene file to load it", true);
+            return true;
         }
-        std::sort(entries.begin(), entries.end(), [](const SceneBrowserEntry& left, const SceneBrowserEntry& right) {
-            if (left.directory != right.directory) return left.directory > right.directory;
-            return lowercase_ascii(left.label) < lowercase_ascii(right.label);
-        });
-        return entries;
+        if (paths.size() != 1u) {
+            set_scene_status(state, "Drop exactly one PBRT scene file", true);
+            return true;
+        }
+        static_cast<void>(activate_pbrt_scene_path(controller, state, paths.front()));
+        return true;
     }
 
-    void draw_scene_browser_entries(spectra::rasterizer::SceneController& controller, SceneCommandBarState& state) {
-        try {
-            std::vector<SceneBrowserEntry> entries = collect_scene_browser_entries(state.browser_directory);
-            if (entries.empty()) ImGui::TextDisabled("%s", "No PBRT scenes in this folder");
-            for (const SceneBrowserEntry& entry : entries) {
-                ImGui::PushID(entry.path.string().c_str());
-                const std::string label = entry.directory ? std::format("[{}]", entry.label) : entry.label;
-                if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-                    if (entry.directory && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        state.browser_directory = std::filesystem::absolute(entry.path).lexically_normal();
-                        state.browser_error.clear();
-                    } else if (!entry.directory) {
-                        set_path_buffer(state, std::filesystem::absolute(entry.path).lexically_normal());
-                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && activate_pbrt_file(controller, state)) ImGui::CloseCurrentPopup();
-                    }
-                }
-                ImGui::PopID();
-            }
-        } catch (const std::exception& error) {
-            state.browser_error = error.what();
-            ImGui::TextDisabled("%s", "Unable to read this folder");
-        }
+    [[nodiscard]] std::string scene_workspace_tooltip(const spectra::rasterizer::SceneEntry* selected_entry, const bool pending_switch) {
+        if (selected_entry == nullptr) return "Empty Project\nDrop a PBRT scene file into the window to load it";
+        return std::format(
+            "{}\n{}{}\nDrop another PBRT scene file into the window to replace it",
+            selected_entry->id,
+            selected_entry->kind == spectra::rasterizer::SceneEntryKind::Static ? "Static" : "Dynamic",
+            pending_switch ? "\nSwitching on next frame" : "");
     }
 
-    void draw_open_pbrt_popup(spectra::rasterizer::SceneController& controller, SceneCommandBarState& state) {
-        if (state.open_pbrt_popup) {
-            initialize_scene_browser(state);
-            ImGui::OpenPopup("Open PBRT Scene");
-            state.open_pbrt_popup = false;
-        }
-
-        ImGui::SetNextWindowSize(ImVec2{620.0f, 460.0f}, ImGuiCond_Appearing);
-        if (!ImGui::BeginPopupModal("Open PBRT Scene", nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
-
-        ImGui::TextDisabled("%s", "Folder");
-        ImGui::TextWrapped("%s", state.browser_directory.string().c_str());
-        if (ImGui::Button("Up")) {
-            const std::filesystem::path parent = state.browser_directory.parent_path();
-            if (!parent.empty()) state.browser_directory = parent;
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputText("##OpenPbrtScenePath", state.path_buffer.data(), state.path_buffer.size());
-
-        ImGui::BeginChild("SpectraOpenPbrtSceneBrowser", ImVec2{0.0f, 270.0f}, false);
-        draw_scene_browser_entries(controller, state);
-        ImGui::EndChild();
-
-        if (!state.browser_error.empty()) ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", state.browser_error.c_str());
-        if (controller.has_activation_error()) ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controller.activation_error().c_str());
-
-        const bool has_path = state.path_buffer.front() != '\0';
-        ImGui::BeginDisabled(!has_path);
-        if (ImGui::Button("Open") && activate_pbrt_file(controller, state)) ImGui::CloseCurrentPopup();
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-
-    [[nodiscard]] bool has_scene_menu_entries(spectra::rasterizer::SceneController& controller, const spectra::rasterizer::SceneEntryKind kind) {
-        for (std::size_t index = 0; index < controller.size(); ++index)
-            if (controller.entry(index).kind == kind) return true;
-        return false;
-    }
-
-    void draw_scene_menu_entries(spectra::rasterizer::SceneController& controller, const spectra::rasterizer::SceneEntryKind kind, const std::optional<std::size_t> selected_index) {
-        for (std::size_t index = 0; index < controller.size(); ++index) {
-            const spectra::rasterizer::SceneEntry& entry = controller.entry(index);
-            if (entry.kind != kind) continue;
-            ImGui::PushID(entry.id.c_str());
-            if (ImGui::MenuItem(entry.title.c_str(), nullptr, selected_index.has_value() && index == *selected_index)) controller.request_activate(index);
-            ImGui::PopID();
-        }
-    }
-
-    void draw_scene_command_bar_widget(spectra::rasterizer::SceneController& controller, SceneCommandBarState& state) {
+    [[nodiscard]] spectra::WorkspaceTitle make_scene_workspace_title(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state) {
         const std::optional<std::size_t> selected_index = controller.has_selected_entry() ? std::optional<std::size_t>{controller.selected_index()} : std::nullopt;
         const spectra::rasterizer::SceneEntry* selected_entry = selected_index.has_value() ? &controller.entry(*selected_index) : nullptr;
-        const std::string preview = std::format("Scene: {}  v", selected_entry != nullptr ? selected_entry->title : "Untitled");
-        const float preview_width = ImGui::CalcTextSize(preview.c_str()).x;
-        const float chip_width = std::clamp(preview_width + ImGui::GetFrameHeight() + 26.0f, 184.0f, 320.0f);
-
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{12.0f, ImGui::GetStyle().FramePadding.y});
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{28.0f / 255.0f, 33.0f / 255.0f, 39.0f / 255.0f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{39.0f / 255.0f, 49.0f / 255.0f, 57.0f / 255.0f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{49.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f});
-        if (ImGui::Button(preview.c_str(), ImVec2{chip_width, 0.0f})) ImGui::OpenPopup("SceneCommandMenu");
-        const bool chip_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar(2);
-
-        if (ImGui::BeginPopup("SceneCommandMenu")) {
-            if (controller.has_activation_error()) {
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 360.0f);
-                ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controller.activation_error().c_str());
-                ImGui::PopTextWrapPos();
-                ImGui::Separator();
-            }
-            if (ImGui::MenuItem("Open PBRT...")) {
-                state.open_pbrt_popup = true;
-                ImGui::CloseCurrentPopup();
-            }
-            if (has_scene_menu_entries(controller, spectra::rasterizer::SceneEntryKind::Static)) {
-                ImGui::Separator();
-                ImGui::TextDisabled("%s", "Loaded Scenes");
-                draw_scene_menu_entries(controller, spectra::rasterizer::SceneEntryKind::Static, selected_index);
-            }
-            if (has_scene_menu_entries(controller, spectra::rasterizer::SceneEntryKind::Dynamic)) {
-                ImGui::Separator();
-                ImGui::TextDisabled("%s", "Dynamic Sources");
-                draw_scene_menu_entries(controller, spectra::rasterizer::SceneEntryKind::Dynamic, selected_index);
-            }
-            ImGui::EndPopup();
+        spectra::WorkspaceTitle title{
+            .detail  = selected_entry != nullptr ? selected_entry->title : "Untitled",
+            .tooltip = scene_workspace_tooltip(selected_entry, controller.pending_switch()),
+        };
+        if (scene_status_visible(state)) {
+            title.status_text = state.status_text;
+            title.status_error = state.status_error;
         }
-
-        draw_open_pbrt_popup(controller, state);
-
-        if (chip_hovered) {
-            if (selected_entry == nullptr) {
-                ImGui::SetTooltip("%s", "Empty Project\nNo scene loaded");
-            } else {
-                ImGui::SetTooltip(
-                    "%s\n%s%s",
-                    selected_entry->id.c_str(),
-                    selected_entry->kind == spectra::rasterizer::SceneEntryKind::Static ? "Static" : "Dynamic",
-                    controller.pending_switch() ? "\nSwitching on next frame" : "");
-            }
-        }
+        return title;
     }
 
     class PathtracerRendererAdapter final {
@@ -455,13 +325,17 @@ namespace {
     void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) {
         if (scene_controller == nullptr) throw std::runtime_error("Renderer registration requires a scene controller");
         if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
-        std::shared_ptr<SceneCommandBarState> scene_command_state = std::make_shared<SceneCommandBarState>();
+        std::shared_ptr<SceneWorkspaceStatusState> scene_status_state = std::make_shared<SceneWorkspaceStatusState>();
         application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace});
         application.register_renderer(PathtracerRendererAdapter{scene_controller, std::move(camera_workspace)});
-        application.register_command_bar_widget(spectra::CommandBarWidget{
-            .id    = "scene.selector",
-            .title = "Scene",
-            .draw  = [scene_controller = std::move(scene_controller), scene_command_state = std::move(scene_command_state)] { draw_scene_command_bar_widget(*scene_controller, *scene_command_state); },
+        std::shared_ptr<spectra::rasterizer::SceneController> drop_scene_controller = scene_controller;
+        std::shared_ptr<SceneWorkspaceStatusState> drop_scene_status_state = scene_status_state;
+        application.set_workspace_title_provider([scene_controller = std::move(scene_controller), scene_status_state = std::move(scene_status_state)] { return make_scene_workspace_title(*scene_controller, *scene_status_state); });
+        application.register_file_drop_handler(spectra::FileDropHandler{
+            .id             = "scene.file-drop",
+            .title          = "Scene File Drop",
+            .owner_renderer = {},
+            .handle         = [scene_controller = std::move(drop_scene_controller), scene_status_state = std::move(drop_scene_status_state)](const std::span<const std::filesystem::path> paths) { return handle_scene_file_drop(*scene_controller, *scene_status_state, paths); },
         });
     }
 } // namespace

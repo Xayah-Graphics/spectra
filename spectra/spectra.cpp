@@ -314,6 +314,11 @@ namespace spectra {
         glfwSetWindowSizeLimits(this->surface.window.get(), 800, 480, GLFW_DONT_CARE, GLFW_DONT_CARE);
         glfwSetWindowUserPointer(this->surface.window.get(), this);
         glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
+        glfwSetDropCallback(this->surface.window.get(), [](GLFWwindow* window, const int path_count, const char** paths) {
+            Spectra* spectra = static_cast<Spectra*>(glfwGetWindowUserPointer(window));
+            if (spectra == nullptr) return;
+            spectra->queue_file_drop(path_count, paths);
+        });
     }
 
     void Spectra::create_surface() {
@@ -592,6 +597,7 @@ namespace spectra {
 
         if (ImGui::GetMainViewport() == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
+        this->dispatch_file_drops();
 
         if (this->renderer_registry.slots.empty()) throw std::runtime_error("Spectra requires at least one registered renderer");
         if (this->renderer_registry.active_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
@@ -767,7 +773,9 @@ namespace spectra {
         this->workspace.panels.clear();
         this->workspace.renderer_popover_tabs.clear();
         this->workspace.toolbar_actions.clear();
-        this->workspace.command_bar_widgets.clear();
+        this->workspace.title_provider = nullptr;
+        this->file_drop.handlers.clear();
+        this->file_drop.pending_batches.clear();
         this->renderer_registry.active_index    = 0;
         this->workspace.dock_layout_initialized = false;
         this->workspace.renderer_popover_open   = false;
@@ -848,7 +856,7 @@ namespace spectra {
         const std::size_t panel_count                                = this->workspace.panels.size();
         const std::size_t renderer_popover_tab_count                 = this->workspace.renderer_popover_tabs.size();
         const std::size_t toolbar_action_count                       = this->workspace.toolbar_actions.size();
-        const std::size_t command_bar_widget_count                   = this->workspace.command_bar_widgets.size();
+        const std::size_t file_drop_handler_count                    = this->file_drop.handlers.size();
         const bool dock_layout_initialized                           = this->workspace.dock_layout_initialized;
         const bool renderer_popover_open                             = this->workspace.renderer_popover_open;
         const std::string active_renderer_popover_tab_id             = this->workspace.active_renderer_popover_tab_id;
@@ -861,7 +869,7 @@ namespace spectra {
             this->workspace.panels.resize(panel_count);
             this->workspace.renderer_popover_tabs.resize(renderer_popover_tab_count);
             this->workspace.toolbar_actions.resize(toolbar_action_count);
-            this->workspace.command_bar_widgets.resize(command_bar_widget_count);
+            this->file_drop.handlers.resize(file_drop_handler_count);
             this->workspace.dock_layout_initialized                  = dock_layout_initialized;
             this->workspace.renderer_popover_open                    = renderer_popover_open;
             this->workspace.active_renderer_popover_tab_id           = active_renderer_popover_tab_id;
@@ -919,16 +927,44 @@ namespace spectra {
         this->workspace.toolbar_actions.push_back(std::move(action));
     }
 
-    void Spectra::store_command_bar_widget(CommandBarWidget widget) {
-        if (widget.id.empty()) throw std::runtime_error("Spectra command bar widget id must not be empty");
-        if (widget.title.empty()) throw std::runtime_error("Spectra command bar widget title must not be empty");
-        if (!widget.draw) throw std::runtime_error("Spectra command bar widget draw callback must not be empty");
-        for (const CommandBarWidget& existing_widget : this->workspace.command_bar_widgets) {
-            if (!owner_scopes_overlap(existing_widget.owner_renderer, widget.owner_renderer)) continue;
-            if (existing_widget.id == widget.id) throw std::runtime_error(std::string{"Duplicate Spectra command bar widget id: "} + widget.id);
-            if (existing_widget.title == widget.title) throw std::runtime_error(std::string{"Duplicate Spectra command bar widget title: "} + widget.title);
+    void Spectra::set_workspace_title_provider(std::move_only_function<WorkspaceTitle()> provider) {
+        if (!provider) throw std::runtime_error("Spectra workspace title provider must not be empty");
+        this->workspace.title_provider = std::move(provider);
+    }
+
+    void Spectra::store_file_drop_handler(FileDropHandler handler) {
+        if (handler.id.empty()) throw std::runtime_error("Spectra file drop handler id must not be empty");
+        if (handler.title.empty()) throw std::runtime_error("Spectra file drop handler title must not be empty");
+        if (!handler.handle) throw std::runtime_error("Spectra file drop handler callback must not be empty");
+        for (const FileDropHandler& existing_handler : this->file_drop.handlers) {
+            if (!owner_scopes_overlap(existing_handler.owner_renderer, handler.owner_renderer)) continue;
+            if (existing_handler.id == handler.id) throw std::runtime_error(std::string{"Duplicate Spectra file drop handler id: "} + handler.id);
+            if (existing_handler.title == handler.title) throw std::runtime_error(std::string{"Duplicate Spectra file drop handler title: "} + handler.title);
         }
-        this->workspace.command_bar_widgets.push_back(std::move(widget));
+        this->file_drop.handlers.push_back(std::move(handler));
+    }
+
+    void Spectra::queue_file_drop(const int path_count, const char** paths) noexcept {
+        if (path_count <= 0 || paths == nullptr) return;
+        std::vector<std::filesystem::path> batch{};
+        batch.reserve(static_cast<std::size_t>(path_count));
+        for (int path_index = 0; path_index < path_count; ++path_index) {
+            if (paths[path_index] == nullptr) continue;
+            batch.push_back(std::filesystem::path{paths[path_index]}.lexically_normal());
+        }
+        if (!batch.empty()) this->file_drop.pending_batches.push_back(std::move(batch));
+    }
+
+    void Spectra::dispatch_file_drops() {
+        if (this->file_drop.pending_batches.empty()) return;
+        std::vector<std::vector<std::filesystem::path>> pending_batches = std::exchange(this->file_drop.pending_batches, {});
+        for (const std::vector<std::filesystem::path>& batch : pending_batches) {
+            const std::span<const std::filesystem::path> paths{batch.data(), batch.size()};
+            for (FileDropHandler& handler : this->file_drop.handlers) {
+                if (!this->contribution_belongs_to_active_renderer(handler.owner_renderer)) continue;
+                if (handler.handle(paths)) break;
+            }
+        }
     }
 
     std::string Spectra::resolve_contribution_owner(std::string owner_renderer) const {
@@ -1019,8 +1055,31 @@ namespace spectra {
             return;
         }
 
+        WorkspaceTitle workspace_title{};
+        if (this->workspace.title_provider) workspace_title = this->workspace.title_provider();
+
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f}, "Spectra");
+        const std::string command_bar_title = this->window_title.base.empty() ? std::string{"Spectra"} : this->window_title.base;
+        ImGui::TextColored(ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f}, "%s", command_bar_title.c_str());
+        bool workspace_title_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        if (!workspace_title.detail.empty()) {
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(ImVec4{94.0f / 255.0f, 105.0f / 255.0f, 116.0f / 255.0f, 1.0f}, "/");
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(ImVec4{188.0f / 255.0f, 197.0f / 255.0f, 208.0f / 255.0f, 1.0f}, "%s", workspace_title.detail.c_str());
+            workspace_title_hovered = workspace_title_hovered || ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        }
+        if (!workspace_title.status_text.empty()) {
+            ImGui::SameLine(0.0f, 10.0f);
+            constexpr ImGuiWindowFlags status_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
+            ImGui::BeginChild("SpectraWorkspaceStatus", ImVec2{260.0f, ImGui::GetFrameHeight()}, false, status_flags);
+            ImGui::AlignTextToFramePadding();
+            const ImVec4 status_color = workspace_title.status_error ? ImVec4{1.0f, 0.42f, 0.36f, 1.0f} : ImVec4{111.0f / 255.0f, 207.0f / 255.0f, 185.0f / 255.0f, 1.0f};
+            ImGui::TextColored(status_color, "%s", workspace_title.status_text.c_str());
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", workspace_title.status_text.c_str());
+            ImGui::EndChild();
+        }
+        if (workspace_title_hovered && !workspace_title.tooltip.empty()) ImGui::SetTooltip("%s", workspace_title.tooltip.c_str());
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 10.0f);
@@ -1032,11 +1091,6 @@ namespace spectra {
             if (renderer_index + 1 < this->renderer_registry.slots.size()) ImGui::SameLine(0.0f, 6.0f);
         }
 
-        std::vector<CommandBarWidget*> visible_widgets{};
-        for (CommandBarWidget& widget : this->workspace.command_bar_widgets) {
-            if (this->contribution_belongs_to_active_renderer(widget.owner_renderer)) visible_widgets.push_back(&widget);
-        }
-
         std::vector<RendererPopoverTab*> visible_tabs{};
         for (RendererPopoverTab& tab : this->workspace.renderer_popover_tabs) {
             if (this->contribution_belongs_to_active_renderer(tab.owner_renderer)) visible_tabs.push_back(&tab);
@@ -1045,26 +1099,6 @@ namespace spectra {
         std::vector<ToolbarAction*> visible_actions{};
         for (ToolbarAction& action : this->workspace.toolbar_actions) {
             if (this->contribution_belongs_to_active_renderer(action.owner_renderer)) visible_actions.push_back(&action);
-        }
-
-        if (visible_widgets.empty() && visible_tabs.empty() && visible_actions.empty()) {
-            ImGui::End();
-            ImGui::PopStyleColor(2);
-            ImGui::PopStyleVar(2);
-            return;
-        }
-
-        if (!visible_widgets.empty()) {
-            ImGui::SameLine(0.0f, 10.0f);
-            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-            ImGui::SameLine(0.0f, 10.0f);
-            for (std::size_t widget_index = 0; widget_index < visible_widgets.size(); ++widget_index) {
-                CommandBarWidget* widget = visible_widgets[widget_index];
-                ImGui::PushID(widget->id.c_str());
-                widget->draw();
-                ImGui::PopID();
-                if (widget_index + 1 < visible_widgets.size()) ImGui::SameLine(0.0f, 6.0f);
-            }
         }
 
         if (visible_tabs.empty() && visible_actions.empty()) {

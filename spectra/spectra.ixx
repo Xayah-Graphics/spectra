@@ -53,11 +53,18 @@ namespace spectra {
         std::move_only_function<void()> trigger{};
     };
 
-    export struct CommandBarWidget {
+    export struct WorkspaceTitle {
+        std::string detail{};
+        std::string tooltip{};
+        std::string status_text{};
+        bool status_error{};
+    };
+
+    export struct FileDropHandler {
         std::string id{};
         std::string title{};
         std::string owner_renderer{};
-        std::move_only_function<void()> draw{};
+        std::move_only_function<bool(std::span<const std::filesystem::path>)> handle{};
     };
 
     export struct FrameContext {
@@ -112,12 +119,12 @@ namespace spectra {
         std::move_only_function<void()>{std::move(action.trigger)};
     };
 
-    export template <typename CommandBarWidgetContribution>
-    concept CommandBarWidgetLike = requires(CommandBarWidgetContribution widget) {
-        std::string{std::move(widget.id)};
-        std::string{std::move(widget.title)};
-        std::string{std::move(widget.owner_renderer)};
-        std::move_only_function<void()>{std::move(widget.draw)};
+    export template <typename FileDropHandlerContribution>
+    concept FileDropHandlerLike = requires(FileDropHandlerContribution handler) {
+        std::string{std::move(handler.id)};
+        std::string{std::move(handler.title)};
+        std::string{std::move(handler.owner_renderer)};
+        std::move_only_function<bool(std::span<const std::filesystem::path>)>{std::move(handler.handle)};
     };
 
     export template <typename FrameResultContribution>
@@ -167,9 +174,10 @@ namespace spectra {
         template <typename ToolbarActionContribution>
             requires ToolbarActionLike<ToolbarActionContribution>
         void register_toolbar_action(ToolbarActionContribution action);
-        template <typename CommandBarWidgetContribution>
-            requires CommandBarWidgetLike<CommandBarWidgetContribution>
-        void register_command_bar_widget(CommandBarWidgetContribution widget);
+        void set_workspace_title_provider(std::move_only_function<WorkspaceTitle()> provider);
+        template <typename FileDropHandlerContribution>
+            requires FileDropHandlerLike<FileDropHandlerContribution>
+        void register_file_drop_handler(FileDropHandlerContribution handler);
 
     protected:
         struct FrameState;
@@ -239,13 +247,15 @@ namespace spectra {
         void store_panel(Panel panel);
         void store_renderer_popover_tab(RendererPopoverTab tab);
         void store_toolbar_action(ToolbarAction action);
-        void store_command_bar_widget(CommandBarWidget widget);
+        void store_file_drop_handler(FileDropHandler handler);
 
         [[nodiscard]] std::string resolve_contribution_owner(std::string owner_renderer) const;
         [[nodiscard]] bool contribution_belongs_to_active_renderer(std::string_view owner_renderer) const;
         void sync_active_renderer_popover_tab();
         void activate_renderer(std::size_t renderer_index);
 
+        void queue_file_drop(int path_count, const char** paths) noexcept;
+        void dispatch_file_drops();
         void process_command_bar_shortcuts();
         void draw_command_bar();
         void draw_dockspace();
@@ -312,6 +322,11 @@ namespace spectra {
         } timing;
 
         struct {
+            std::vector<FileDropHandler> handlers{};
+            std::vector<std::vector<std::filesystem::path>> pending_batches{};
+        } file_drop;
+
+        struct {
             std::vector<RendererSlot> slots{};
             std::optional<std::string> registering_name{};
             std::size_t active_index{0};
@@ -321,7 +336,7 @@ namespace spectra {
             std::vector<Panel> panels{};
             std::vector<RendererPopoverTab> renderer_popover_tabs{};
             std::vector<ToolbarAction> toolbar_actions{};
-            std::vector<CommandBarWidget> command_bar_widgets{};
+            std::move_only_function<WorkspaceTitle()> title_provider{};
             bool dock_layout_initialized{false};
             bool renderer_popover_open{false};
             std::string active_renderer_popover_tab_id{};
@@ -383,14 +398,14 @@ namespace spectra {
         });
     }
 
-    template <typename CommandBarWidgetContribution>
-        requires CommandBarWidgetLike<CommandBarWidgetContribution>
-    void Spectra::register_command_bar_widget(CommandBarWidgetContribution widget) {
-        this->store_command_bar_widget(CommandBarWidget{
-            .id             = std::string{std::move(widget.id)},
-            .title          = std::string{std::move(widget.title)},
-            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(widget.owner_renderer)}),
-            .draw           = std::move(widget.draw),
+    template <typename FileDropHandlerContribution>
+        requires FileDropHandlerLike<FileDropHandlerContribution>
+    void Spectra::register_file_drop_handler(FileDropHandlerContribution handler) {
+        this->store_file_drop_handler(FileDropHandler{
+            .id             = std::string{std::move(handler.id)},
+            .title          = std::string{std::move(handler.title)},
+            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(handler.owner_renderer)}),
+            .handle         = std::move(handler.handle),
         });
     }
 } // namespace spectra
