@@ -744,7 +744,7 @@ namespace spectra::rasterizer {
         });
         host.register_sidebar_tab(SidebarTab{
             .id             = "rasterizer.panel",
-            .title          = "Rasterizer",
+            .title          = "Renderer",
             .icon           = ICON_MS_TUNE,
             .shortcut_label = "F8",
             .shortcut_key   = ImGuiKey_F8,

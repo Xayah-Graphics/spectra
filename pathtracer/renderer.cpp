@@ -2168,8 +2168,8 @@ namespace spectra::pathtracer {
         });
         host.register_sidebar_tab(SidebarTab{
             .id             = "pathtracer.render",
-            .title          = "Render",
-            .icon           = ICON_MS_SETTINGS,
+            .title          = "Renderer",
+            .icon           = ICON_MS_TUNE,
             .shortcut_label = "F3",
             .shortcut_key   = ImGuiKey_F3,
             .draw           = [this] { this->draw_workspace_tab(); },
