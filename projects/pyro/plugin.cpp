@@ -443,13 +443,7 @@ namespace {
         return result;
     }
 
-    struct VolumeChannelStorage {
-        std::vector<float> values{};
-        SpectraDynamicSceneVolumeChannel view{};
-    };
-
     struct VolumeStorage {
-        std::vector<VolumeChannelStorage> channels{};
         std::vector<SpectraDynamicSceneVolumeChannel> channel_views{};
         SpectraDynamicSceneVolume view{};
     };
@@ -485,16 +479,13 @@ namespace {
                 copy3(storage.view.voxel_size, volume.voxel_size);
                 storage.view.material_name = make_string(volume.material_name);
                 for (const xayah::projects::pyro::VisualVolumeChannel& channel : volume.channels) {
-                    VolumeChannelStorage& channel_storage = storage.channels.emplace_back();
-                    channel_storage.view.name = make_string(channel.name);
-                    channel_storage.view.dimensions[0] = channel.dimensions[0];
-                    channel_storage.view.dimensions[1] = channel.dimensions[1];
-                    channel_storage.view.dimensions[2] = channel.dimensions[2];
-                    channel_storage.values.assign(channel.values.begin(), channel.values.end());
-                    channel_storage.view.values = SpectraDynamicSceneFloatSpan{.data = channel_storage.values.data(), .count = static_cast<std::uint64_t>(channel_storage.values.size())};
+                    SpectraDynamicSceneVolumeChannel& channel_view = storage.channel_views.emplace_back();
+                    channel_view.name = make_string(channel.name);
+                    channel_view.dimensions[0] = channel.dimensions[0];
+                    channel_view.dimensions[1] = channel.dimensions[1];
+                    channel_view.dimensions[2] = channel.dimensions[2];
+                    channel_view.values = SpectraDynamicSceneFloatSpan{.data = channel.values.data(), .count = static_cast<std::uint64_t>(channel.values.size())};
                 }
-                storage.channel_views.reserve(storage.channels.size());
-                for (const VolumeChannelStorage& channel : storage.channels) storage.channel_views.push_back(channel.view);
                 storage.view.channels = SpectraDynamicSceneVolumeChannelSpan{.data = storage.channel_views.data(), .count = static_cast<std::uint64_t>(storage.channel_views.size())};
             }
             this->volume_views.reserve(this->volumes.size());

@@ -849,11 +849,12 @@ namespace spectra::rasterizer {
                     .dimensions = {channel.dimensions[0], channel.dimensions[1], channel.dimensions[2]},
                 };
                 if (converted.dimensions != result.dimensions) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" dimensions do not match", name, converted.name));
-                const std::span<const float> values = abi_span(channel.values.data, channel.values.count, std::format("Dynamic scene volume \"{}\" channel \"{}\" values", name, converted.name));
-                converted.values.reserve(values.size());
-                for (std::size_t index = 0u; index < values.size(); ++index) converted.values.push_back(finite_float(values[index], std::format("Dynamic scene volume \"{}\" channel \"{}\" value #{}", name, converted.name, index)));
                 const std::uint64_t expected_count = static_cast<std::uint64_t>(converted.dimensions[0]) * static_cast<std::uint64_t>(converted.dimensions[1]) * static_cast<std::uint64_t>(converted.dimensions[2]);
-                if (expected_count != converted.values.size()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value count does not match dimensions", name, converted.name));
+                const std::span<const float> values = abi_span(channel.values.data, channel.values.count, std::format("Dynamic scene volume \"{}\" channel \"{}\" values", name, converted.name));
+                if (expected_count != values.size()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value count does not match dimensions", name, converted.name));
+                converted.values.assign(values.begin(), values.end());
+                for (std::size_t index = 0u; index < converted.values.size(); ++index)
+                    if (!std::isfinite(converted.values[index])) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value #{} must be finite", name, converted.name, index));
                 result.channels.push_back(std::move(converted));
             }
             return result;
