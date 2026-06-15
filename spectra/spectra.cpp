@@ -614,8 +614,8 @@ namespace spectra {
     void Spectra::record_frame(FrameState& frame) {
         this->process_command_bar_shortcuts();
         this->draw_dockspace();
-        this->draw_sidebar();
         this->draw_registered_panels();
+        this->draw_sidebar();
         this->draw_command_bar();
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_slot_index];
@@ -994,7 +994,6 @@ namespace spectra {
                 this->workspace.active_sidebar_tab_id           = tab.id;
                 this->workspace.sidebar_visible                 = !selected;
                 this->workspace.sidebar_tab_selection_requested = true;
-                this->workspace.dock_layout_initialized         = false;
             }
             for (ToolbarAction& action : this->workspace.toolbar_actions) {
                 if (!this->contribution_belongs_to_active_renderer(action.owner_renderer)) continue;
@@ -1098,7 +1097,6 @@ namespace spectra {
                 this->workspace.active_sidebar_tab_id           = tab->id;
                 this->workspace.sidebar_visible                 = !selected;
                 this->workspace.sidebar_tab_selection_requested = true;
-                this->workspace.dock_layout_initialized         = false;
             }
             pop_toolbar_button_style();
             if (ImGui::IsItemHovered() && !tab->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", tab->title.c_str(), tab->shortcut_label.c_str());
@@ -1157,13 +1155,7 @@ namespace spectra {
         ImGui::DockBuilderSetNodePos(dockspace_id, dock_pos);
         ImGui::DockBuilderSetNodeSize(dockspace_id, dock_size);
 
-        ImGuiID center_id = dockspace_id;
-        ImGuiID right_id  = 0;
-        if (this->workspace.sidebar_visible && !this->workspace.active_sidebar_tab_id.empty()) {
-            right_id = ImGui::DockBuilderSplitNode(center_id, ImGuiDir_Right, 0.28f, nullptr, &center_id);
-            if (right_id == 0 || center_id == 0) throw std::runtime_error("Failed to build Spectra sidebar dock layout");
-            ImGui::DockBuilderDockWindow("Sidebar", right_id);
-        }
+        const ImGuiID center_id = dockspace_id;
 
         for (const Panel& panel : this->workspace.panels) {
             if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
@@ -1179,7 +1171,6 @@ namespace spectra {
             node->LocalFlags |= ImGuiDockNodeFlags_HiddenTabBar;
         };
         hide_tab_bar(center_id);
-        if (right_id != 0) hide_tab_bar(right_id);
         ImGui::DockBuilderFinish(dockspace_id);
         this->workspace.dock_layout_initialized = true;
     }
@@ -1193,20 +1184,54 @@ namespace spectra {
         }
         if (visible_tabs.empty()) return;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 10.0f});
+        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+        constexpr float margin = 12.0f;
+        const float bar_height = command_bar_height();
+        const float popover_width = std::min(460.0f, std::max(360.0f, main_viewport->WorkSize.x * 0.28f));
+        const float popover_height = main_viewport->WorkSize.y - bar_height - margin * 2.0f;
+        if (popover_height <= 120.0f) throw std::runtime_error("Viewport is too small for the Spectra renderer popover");
+        const ImVec2 popover_position{main_viewport->WorkPos.x + main_viewport->WorkSize.x - popover_width - margin, main_viewport->WorkPos.y + bar_height + margin};
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGui::SetNextWindowPos(popover_position, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2{popover_width, popover_height}, ImGuiCond_Always);
+
+        constexpr ImGuiWindowFlags popover_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{8.0f, 8.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 25.0f / 255.0f, 1.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 25.0f / 255.0f, 0.98f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{70.0f / 255.0f, 82.0f / 255.0f, 94.0f / 255.0f, 0.85f});
         ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f});
         ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 56.0f / 255.0f, 1.0f});
         ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4{48.0f / 255.0f, 66.0f / 255.0f, 78.0f / 255.0f, 1.0f});
-        const bool began = ImGui::Begin("Sidebar", nullptr, ImGuiWindowFlags_NoCollapse);
+        const bool began = ImGui::Begin("RendererPopover", nullptr, popover_flags);
         if (!began) {
             ImGui::End();
-            ImGui::PopStyleColor(4);
-            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(5);
+            ImGui::PopStyleVar(4);
             return;
         }
-        if (ImGui::BeginTabBar("SidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+
+        bool close_requested = false;
+        ImGui::PushID("SpectraRendererPopoverHeader");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(ICON_MS_TUNE);
+        ImGui::SameLine(0.0f, 6.0f);
+        ImGui::TextUnformatted("Renderer");
+        const float close_button_size = ImGui::GetFrameHeight();
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8.0f, ImGui::GetContentRegionMax().x - close_button_size));
+        if (ImGui::Button(ICON_MS_CLOSE "##close", ImVec2{close_button_size, close_button_size})) close_requested = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Close Renderer");
+        ImGui::PopID();
+        ImGui::Separator();
+
+        if (!close_requested && visible_tabs.size() == 1u) {
+            this->workspace.active_sidebar_tab_id           = visible_tabs.front()->id;
+            this->workspace.sidebar_tab_selection_requested = false;
+            visible_tabs.front()->draw();
+        } else if (!close_requested && ImGui::BeginTabBar("SidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
             const bool selection_requested = this->workspace.sidebar_tab_selection_requested;
             const std::string requested_tab_id = this->workspace.active_sidebar_tab_id;
             bool selection_request_consumed = !selection_requested;
@@ -1228,8 +1253,12 @@ namespace spectra {
             ImGui::EndTabBar();
         }
         ImGui::End();
-        ImGui::PopStyleColor(4);
-        ImGui::PopStyleVar(2);
+        if (close_requested) {
+            this->workspace.sidebar_visible                 = false;
+            this->workspace.sidebar_tab_selection_requested = false;
+        }
+        ImGui::PopStyleColor(5);
+        ImGui::PopStyleVar(4);
     }
 
     void Spectra::draw_registered_panels() {
