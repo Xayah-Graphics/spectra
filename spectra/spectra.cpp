@@ -84,35 +84,35 @@ namespace {
         style.WindowRounding       = 7.0f;
         style.WindowBorderSize     = 1.0f;
         style.ChildRounding        = 6.0f;
-        style.ChildBorderSize      = 1.0f;
+        style.ChildBorderSize      = 0.0f;
         style.PopupRounding        = 7.0f;
         style.PopupBorderSize      = 1.0f;
         style.ColorButtonPosition  = ImGuiDir_Right;
         style.FrameRounding        = 5.0f;
-        style.FrameBorderSize      = 1.0f;
+        style.FrameBorderSize      = 0.0f;
         style.GrabRounding         = 5.0f;
         style.ScrollbarRounding    = 8.0f;
         style.TabRounding          = 6.0f;
         style.TabBorderSize        = 0.0f;
         style.IndentSpacing        = 14.0f;
-        style.ItemSpacing          = ImVec2{8.0f, 7.0f};
+        style.ItemSpacing          = ImVec2{8.0f, 6.0f};
         style.ItemInnerSpacing     = ImVec2{7.0f, 5.0f};
-        style.FramePadding         = ImVec2{9.0f, 5.0f};
-        style.CellPadding          = ImVec2{8.0f, 5.0f};
-        style.WindowPadding        = ImVec2{11.0f, 10.0f};
-        style.SeparatorTextPadding = ImVec2{8.0f, 4.0f};
+        style.FramePadding         = ImVec2{8.0f, 4.0f};
+        style.CellPadding          = ImVec2{7.0f, 4.0f};
+        style.WindowPadding        = ImVec2{10.0f, 9.0f};
+        style.SeparatorTextPadding = ImVec2{6.0f, 3.0f};
         style.SelectableTextAlign  = ImVec2{0.0f, 0.5f};
 
         style.Colors[ImGuiCol_Text]                 = ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TextDisabled]         = ImVec4{132.0f / 255.0f, 143.0f / 255.0f, 156.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_WindowBg]             = ImVec4{16.0f / 255.0f, 18.0f / 255.0f, 21.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ChildBg]              = ImVec4{20.0f / 255.0f, 23.0f / 255.0f, 27.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_PopupBg]              = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Border]               = ImVec4{48.0f / 255.0f, 55.0f / 255.0f, 63.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TextDisabled]         = ImVec4{126.0f / 255.0f, 137.0f / 255.0f, 149.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_WindowBg]             = ImVec4{14.0f / 255.0f, 16.0f / 255.0f, 19.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ChildBg]              = ImVec4{17.0f / 255.0f, 20.0f / 255.0f, 24.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_PopupBg]              = ImVec4{19.0f / 255.0f, 23.0f / 255.0f, 27.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Border]               = ImVec4{50.0f / 255.0f, 58.0f / 255.0f, 66.0f / 255.0f, 0.58f};
         style.Colors[ImGuiCol_BorderShadow]         = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
-        style.Colors[ImGuiCol_FrameBg]              = ImVec4{29.0f / 255.0f, 34.0f / 255.0f, 40.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_FrameBgHovered]       = ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 55.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_FrameBgActive]        = ImVec4{47.0f / 255.0f, 62.0f / 255.0f, 72.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBg]              = ImVec4{25.0f / 255.0f, 30.0f / 255.0f, 35.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBgHovered]       = ImVec4{34.0f / 255.0f, 43.0f / 255.0f, 50.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_FrameBgActive]        = ImVec4{38.0f / 255.0f, 57.0f / 255.0f, 64.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TitleBg]              = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TitleBgActive]        = ImVec4{21.0f / 255.0f, 25.0f / 255.0f, 30.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TitleBgCollapsed]     = ImVec4{15.0f / 255.0f, 17.0f / 255.0f, 20.0f / 255.0f, 1.0f};
@@ -124,28 +124,28 @@ namespace {
         style.Colors[ImGuiCol_CheckMark]            = ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_SliderGrab]           = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_SliderGrabActive]     = ImVec4{118.0f / 255.0f, 195.0f / 255.0f, 245.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Button]               = ImVec4{31.0f / 255.0f, 37.0f / 255.0f, 43.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ButtonHovered]        = ImVec4{43.0f / 255.0f, 55.0f / 255.0f, 64.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_ButtonActive]         = ImVec4{47.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Header]               = ImVec4{31.0f / 255.0f, 38.0f / 255.0f, 45.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_HeaderHovered]        = ImVec4{43.0f / 255.0f, 58.0f / 255.0f, 70.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_HeaderActive]         = ImVec4{48.0f / 255.0f, 79.0f / 255.0f, 96.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_Separator]            = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_SeparatorHovered]     = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_SeparatorActive]      = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Button]               = ImVec4{27.0f / 255.0f, 33.0f / 255.0f, 38.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ButtonHovered]        = ImVec4{36.0f / 255.0f, 47.0f / 255.0f, 54.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_ButtonActive]         = ImVec4{38.0f / 255.0f, 68.0f / 255.0f, 76.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Header]               = ImVec4{26.0f / 255.0f, 33.0f / 255.0f, 38.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_HeaderHovered]        = ImVec4{36.0f / 255.0f, 50.0f / 255.0f, 58.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_HeaderActive]         = ImVec4{39.0f / 255.0f, 70.0f / 255.0f, 78.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Separator]            = ImVec4{55.0f / 255.0f, 64.0f / 255.0f, 72.0f / 255.0f, 0.38f};
+        style.Colors[ImGuiCol_SeparatorHovered]     = ImVec4{72.0f / 255.0f, 125.0f / 255.0f, 134.0f / 255.0f, 0.65f};
+        style.Colors[ImGuiCol_SeparatorActive]      = ImVec4{86.0f / 255.0f, 169.0f / 255.0f, 174.0f / 255.0f, 0.85f};
         style.Colors[ImGuiCol_ResizeGrip]           = ImVec4{47.0f / 255.0f, 54.0f / 255.0f, 62.0f / 255.0f, 0.7f};
         style.Colors[ImGuiCol_ResizeGripHovered]    = ImVec4{78.0f / 255.0f, 112.0f / 255.0f, 132.0f / 255.0f, 0.8f};
         style.Colors[ImGuiCol_ResizeGripActive]     = ImVec4{92.0f / 255.0f, 145.0f / 255.0f, 169.0f / 255.0f, 0.95f};
-        style.Colors[ImGuiCol_Tab]                  = ImVec4{22.0f / 255.0f, 25.0f / 255.0f, 29.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TabHovered]           = ImVec4{42.0f / 255.0f, 57.0f / 255.0f, 69.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TabActive]            = ImVec4{35.0f / 255.0f, 43.0f / 255.0f, 51.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_Tab]                  = ImVec4{22.0f / 255.0f, 27.0f / 255.0f, 31.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabHovered]           = ImVec4{35.0f / 255.0f, 50.0f / 255.0f, 57.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TabActive]            = ImVec4{31.0f / 255.0f, 45.0f / 255.0f, 51.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TabUnfocused]         = ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 24.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TabUnfocusedActive]   = ImVec4{27.0f / 255.0f, 32.0f / 255.0f, 38.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_DockingPreview]       = ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.42f};
         style.Colors[ImGuiCol_DockingEmptyBg]       = ImVec4{14.0f / 255.0f, 16.0f / 255.0f, 19.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TableHeaderBg]        = ImVec4{26.0f / 255.0f, 31.0f / 255.0f, 36.0f / 255.0f, 1.0f};
         style.Colors[ImGuiCol_TableBorderStrong]    = ImVec4{50.0f / 255.0f, 58.0f / 255.0f, 67.0f / 255.0f, 1.0f};
-        style.Colors[ImGuiCol_TableBorderLight]     = ImVec4{39.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 1.0f};
+        style.Colors[ImGuiCol_TableBorderLight]     = ImVec4{39.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 0.55f};
         style.Colors[ImGuiCol_TableRowBg]           = ImVec4{0.0f, 0.0f, 0.0f, 0.0f};
         style.Colors[ImGuiCol_TableRowBgAlt]        = ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 0.58f};
         style.Colors[ImGuiCol_TextSelectedBg]       = ImVec4{64.0f / 255.0f, 124.0f / 255.0f, 163.0f / 255.0f, 0.45f};
@@ -162,11 +162,11 @@ namespace {
 
     void push_toolbar_button_style(const bool active) {
         const ImGuiStyle& style = ImGui::GetStyle();
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, active ? style.Colors[ImGuiCol_HeaderActive] : style.Colors[ImGuiCol_Button]);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ImVec4{59.0f / 255.0f, 96.0f / 255.0f, 116.0f / 255.0f, 1.0f} : style.Colors[ImGuiCol_ButtonHovered]);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, active ? ImVec4{35.0f / 255.0f, 64.0f / 255.0f, 72.0f / 255.0f, 1.0f} : ImVec4{24.0f / 255.0f, 29.0f / 255.0f, 34.0f / 255.0f, 0.92f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ImVec4{45.0f / 255.0f, 83.0f / 255.0f, 92.0f / 255.0f, 1.0f} : ImVec4{34.0f / 255.0f, 42.0f / 255.0f, 48.0f / 255.0f, 1.0f});
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_ButtonActive]);
-        ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.95f} : style.Colors[ImGuiCol_Border]);
+        ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4{93.0f / 255.0f, 207.0f / 255.0f, 199.0f / 255.0f, 0.72f} : style.Colors[ImGuiCol_Border]);
     }
 
     void pop_toolbar_button_style() {
@@ -176,11 +176,11 @@ namespace {
 
     void push_renderer_button_style(const bool active) {
         const ImGuiStyle& style = ImGui::GetStyle();
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, active ? ImVec4{49.0f / 255.0f, 78.0f / 255.0f, 95.0f / 255.0f, 1.0f} : ImVec4{28.0f / 255.0f, 33.0f / 255.0f, 39.0f / 255.0f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ImVec4{60.0f / 255.0f, 97.0f / 255.0f, 116.0f / 255.0f, 1.0f} : ImVec4{39.0f / 255.0f, 49.0f / 255.0f, 57.0f / 255.0f, 1.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, active ? ImVec4{35.0f / 255.0f, 65.0f / 255.0f, 73.0f / 255.0f, 1.0f} : ImVec4{24.0f / 255.0f, 29.0f / 255.0f, 34.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? ImVec4{44.0f / 255.0f, 82.0f / 255.0f, 91.0f / 255.0f, 1.0f} : ImVec4{34.0f / 255.0f, 42.0f / 255.0f, 48.0f / 255.0f, 1.0f});
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, style.Colors[ImGuiCol_ButtonActive]);
-        ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4{91.0f / 255.0f, 166.0f / 255.0f, 230.0f / 255.0f, 0.85f} : ImVec4{49.0f / 255.0f, 57.0f / 255.0f, 65.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Border, active ? ImVec4{93.0f / 255.0f, 207.0f / 255.0f, 199.0f / 255.0f, 0.68f} : ImVec4{47.0f / 255.0f, 55.0f / 255.0f, 62.0f / 255.0f, 0.62f});
     }
 
     void pop_renderer_button_style() {
@@ -1009,8 +1009,8 @@ namespace spectra {
         constexpr ImGuiWindowFlags command_bar_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 7.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{13.0f / 255.0f, 15.0f / 255.0f, 18.0f / 255.0f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{42.0f / 255.0f, 48.0f / 255.0f, 55.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{12.0f / 255.0f, 14.0f / 255.0f, 17.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{42.0f / 255.0f, 50.0f / 255.0f, 58.0f / 255.0f, 0.72f});
         const bool began = ImGui::Begin("SpectraCommandBar", nullptr, command_bar_flags);
         if (!began) {
             ImGui::End();
@@ -1187,15 +1187,15 @@ namespace spectra {
         ImGui::SetNextWindowSize(ImVec2{popover_width, popover_height}, ImGuiCond_Always);
 
         constexpr ImGuiWindowFlags popover_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{14.0f, 12.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{8.0f, 8.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{15.0f, 13.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{8.0f, 6.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 7.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{18.0f / 255.0f, 21.0f / 255.0f, 25.0f / 255.0f, 0.98f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{70.0f / 255.0f, 82.0f / 255.0f, 94.0f / 255.0f, 0.85f});
-        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4{24.0f / 255.0f, 28.0f / 255.0f, 33.0f / 255.0f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4{38.0f / 255.0f, 47.0f / 255.0f, 56.0f / 255.0f, 1.0f});
-        ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4{48.0f / 255.0f, 66.0f / 255.0f, 78.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{17.0f / 255.0f, 20.0f / 255.0f, 24.0f / 255.0f, 0.985f});
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{66.0f / 255.0f, 77.0f / 255.0f, 86.0f / 255.0f, 0.48f});
+        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4{24.0f / 255.0f, 29.0f / 255.0f, 33.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4{32.0f / 255.0f, 53.0f / 255.0f, 59.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4{38.0f / 255.0f, 61.0f / 255.0f, 68.0f / 255.0f, 1.0f});
         const bool began = ImGui::Begin("RendererPopover", nullptr, popover_flags);
         if (!began) {
             ImGui::End();
@@ -1205,35 +1205,53 @@ namespace spectra {
         }
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(ICON_MS_TUNE);
+        ImGui::TextColored(ImVec4{93.0f / 255.0f, 207.0f / 255.0f, 199.0f / 255.0f, 0.9f}, "%s", ICON_MS_TUNE);
         ImGui::SameLine(0.0f, 6.0f);
         ImGui::TextUnformatted("Renderer");
-        ImGui::Separator();
+        const ImVec2 header_line_min = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2{0.0f, 5.0f});
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddLine(ImVec2{header_line_min.x, header_line_min.y + 2.0f}, ImVec2{header_line_min.x + ImGui::GetContentRegionAvail().x, header_line_min.y + 2.0f}, ImGui::GetColorU32(ImVec4{62.0f / 255.0f, 72.0f / 255.0f, 81.0f / 255.0f, 0.45f}), 1.0f);
+        ImGui::Spacing();
 
         if (visible_tabs.size() == 1u) {
             this->workspace.active_renderer_popover_tab_id           = visible_tabs.front()->id;
             this->workspace.renderer_popover_tab_selection_requested = false;
             visible_tabs.front()->draw();
-        } else if (ImGui::BeginTabBar("RendererPopoverTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        } else {
             const bool selection_requested = this->workspace.renderer_popover_tab_selection_requested;
             const std::string requested_tab_id = this->workspace.active_renderer_popover_tab_id;
             bool selection_request_consumed = !selection_requested;
-            for (RendererPopoverTab* tab : visible_tabs) {
+            const float gap = 4.0f;
+            const float segment_width = std::max(48.0f, (ImGui::GetContentRegionAvail().x - gap * static_cast<float>(visible_tabs.size() - 1u)) / static_cast<float>(visible_tabs.size()));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{gap, 0.0f});
+            for (std::size_t tab_index = 0; tab_index < visible_tabs.size(); ++tab_index) {
+                RendererPopoverTab* tab = visible_tabs[tab_index];
                 const bool requested_tab         = selection_requested && tab->id == requested_tab_id;
-                const ImGuiTabItemFlags tab_flags = requested_tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                const bool selected              = requested_tab || (!selection_requested && tab->id == this->workspace.active_renderer_popover_tab_id);
                 const std::string label           = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
-                if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
-                    if (!selection_requested || requested_tab) {
-                        this->workspace.active_renderer_popover_tab_id = tab->id;
-                        if (requested_tab) selection_request_consumed = true;
-                        ImGui::Spacing();
-                        tab->draw();
-                    }
-                    ImGui::EndTabItem();
+                if (requested_tab) selection_request_consumed = true;
+                ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4{34.0f / 255.0f, 59.0f / 255.0f, 65.0f / 255.0f, 1.0f} : ImVec4{24.0f / 255.0f, 29.0f / 255.0f, 34.0f / 255.0f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, selected ? ImVec4{42.0f / 255.0f, 72.0f / 255.0f, 79.0f / 255.0f, 1.0f} : ImVec4{32.0f / 255.0f, 40.0f / 255.0f, 46.0f / 255.0f, 1.0f});
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{45.0f / 255.0f, 86.0f / 255.0f, 93.0f / 255.0f, 1.0f});
+                if (ImGui::Button(label.c_str(), ImVec2{segment_width, ImGui::GetFrameHeight()})) {
+                    this->workspace.active_renderer_popover_tab_id           = tab->id;
+                    this->workspace.renderer_popover_tab_selection_requested = false;
+                    selection_request_consumed = true;
                 }
+                ImGui::PopStyleColor(3);
+                if (tab_index + 1u < visible_tabs.size()) ImGui::SameLine();
+            }
+            ImGui::PopStyleVar(2);
+            ImGui::Spacing();
+            for (RendererPopoverTab* tab : visible_tabs) {
+                const bool selected = tab->id == this->workspace.active_renderer_popover_tab_id;
+                if (!selected) continue;
+                tab->draw();
+                break;
             }
             if (selection_request_consumed) this->workspace.renderer_popover_tab_selection_requested = false;
-            ImGui::EndTabBar();
         }
         ImGui::End();
         ImGui::PopStyleColor(5);

@@ -1760,16 +1760,80 @@ namespace spectra::pathtracer {
 
 
 namespace {
+    [[nodiscard]] ImVec4 inspector_label_color() {
+        return ImVec4{137.0f / 255.0f, 148.0f / 255.0f, 160.0f / 255.0f, 1.0f};
+    }
+
+    [[nodiscard]] ImVec4 inspector_section_color() {
+        return ImVec4{218.0f / 255.0f, 225.0f / 255.0f, 232.0f / 255.0f, 1.0f};
+    }
+
+    [[nodiscard]] float inspector_label_width() {
+        return std::clamp(ImGui::GetContentRegionAvail().x * 0.34f, 96.0f, 122.0f);
+    }
+
+    void draw_inspector_section(const char* label) {
+        ImGui::Spacing();
+        ImGui::TextColored(inspector_section_color(), "%s", label);
+        const ImVec2 line_min = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2{0.0f, 3.0f});
+        ImGui::GetWindowDrawList()->AddLine(ImVec2{line_min.x, line_min.y + 1.0f}, ImVec2{line_min.x + ImGui::GetContentRegionAvail().x, line_min.y + 1.0f}, ImGui::GetColorU32(ImVec4{62.0f / 255.0f, 72.0f / 255.0f, 81.0f / 255.0f, 0.34f}), 1.0f);
+    }
+
     void draw_statistics_row(const char* label, const char* value) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextDisabled("%s", label);
-        ImGui::TableSetColumnIndex(1);
+        const float row_start = ImGui::GetCursorPosX();
+        const float label_width = inspector_label_width();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(inspector_label_color(), "%s", label);
+        ImGui::SameLine(row_start + label_width);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(1.0f, ImGui::GetContentRegionAvail().x));
         ImGui::TextUnformatted(value);
+        ImGui::PopTextWrapPos();
     }
 
     void draw_statistics_row(const char* label, const std::string& value) {
         draw_statistics_row(label, value.c_str());
+    }
+
+    void begin_control_row(const char* label) {
+        const float row_start = ImGui::GetCursorPosX();
+        const float label_width = inspector_label_width();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(inspector_label_color(), "%s", label);
+        ImGui::SameLine(row_start + label_width);
+        ImGui::SetNextItemWidth(-1.0f);
+    }
+
+    [[nodiscard]] bool draw_quiet_action_button(const char* label) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{28.0f / 255.0f, 34.0f / 255.0f, 39.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{38.0f / 255.0f, 49.0f / 255.0f, 55.0f / 255.0f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{39.0f / 255.0f, 69.0f / 255.0f, 76.0f / 255.0f, 1.0f});
+        const bool clicked = ImGui::Button(label);
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+        return clicked;
+    }
+
+    void draw_thin_progress_bar(const float fraction, const char* label) {
+        const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+        const float height = 5.0f;
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max{min.x + width, min.y + height};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(min, max, ImGui::GetColorU32(ImVec4{25.0f / 255.0f, 30.0f / 255.0f, 35.0f / 255.0f, 1.0f}), 3.0f);
+        draw_list->AddRectFilled(min, ImVec2{min.x + width * std::clamp(fraction, 0.0f, 1.0f), max.y}, ImGui::GetColorU32(ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 0.9f}), 3.0f);
+        ImGui::Dummy(ImVec2{width, height});
+        ImGui::TextDisabled("%s", label);
+    }
+
+    void draw_quiet_splitter(const char* id, const float width, const float height) {
+        ImGui::InvisibleButton(id, ImVec2{width, height});
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        const float y = std::floor((min.y + max.y) * 0.5f);
+        const ImU32 color = ImGui::GetColorU32((ImGui::IsItemHovered() || ImGui::IsItemActive()) ? ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 0.72f} : ImVec4{68.0f / 255.0f, 78.0f / 255.0f, 87.0f / 255.0f, 0.28f});
+        ImGui::GetWindowDrawList()->AddLine(ImVec2{min.x + 8.0f, y}, ImVec2{max.x - 8.0f, y}, color, 1.0f);
     }
 
     [[nodiscard]] std::string resolution_text(const std::array<int, 2>& resolution) {
@@ -1847,25 +1911,24 @@ namespace spectra::pathtracer {
         if (usable_height > minimum_panel_height * 2.0f) session_height = std::clamp(session_height, minimum_panel_height, usable_height - minimum_panel_height);
         else session_height = std::max(1.0f, session_height);
 
-        ImGui::BeginChild("SpectraPathtracerRenderSessionPanel", ImVec2{0.0f, session_height}, true);
+        ImGui::BeginChild("SpectraPathtracerRenderSessionPanel", ImVec2{0.0f, session_height}, false);
         this->draw_render_session_panel();
         ImGui::EndChild();
 
         const float splitter_width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-        ImGui::InvisibleButton("SpectraPathtracerSidebarSplitter", ImVec2{splitter_width, splitter_height});
+        draw_quiet_splitter("SpectraPathtracerSidebarSplitter", splitter_width, splitter_height);
         if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         if (ImGui::IsItemActive() && usable_height > 1.0f) {
             this->ui.sidebar_split_ratio = std::clamp(this->ui.sidebar_split_ratio + ImGui::GetIO().MouseDelta.y / usable_height, 0.25f, 0.75f);
         }
 
-        ImGui::BeginChild("SpectraPathtracerInspectorPanel", ImVec2{0.0f, 0.0f}, true);
+        ImGui::BeginChild("SpectraPathtracerInspectorPanel", ImVec2{0.0f, 0.0f}, false);
         this->draw_inspector_panel();
         ImGui::EndChild();
     }
 
     void Renderer::Impl::draw_render_session_panel() {
         const Status status = this->pipeline_status();
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
         std::array<int, 2> render_resolution{0, 0};
         if (this->render_resolution_sync.pipeline_created) render_resolution = this->render_resolution_sync.active_resolution;
         else if (this->render_resolution_sync.candidate_known) render_resolution = this->render_resolution_sync.candidate_resolution;
@@ -1875,175 +1938,111 @@ namespace spectra::pathtracer {
         const float progress = samples[1] > 0 ? std::clamp(static_cast<float>(samples[0]) / static_cast<float>(samples[1]), 0.0f, 1.0f) : 0.0f;
         const std::string progress_label = samples[1] > 0 ? std::format("{} / {}", samples[0], samples[1]) : "Pending";
 
-        ImGui::SeparatorText("Render Session");
-        if (ImGui::BeginTable("SpectraPathtracerSessionSummary", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("State", status.state);
-            draw_statistics_row("Resolution", resolution_text(render_resolution));
-            draw_statistics_row("Render SPP", positive_int_text(this->scene_sampler_sample_count));
-            draw_statistics_row("SPP Source", this->sample_source_text());
-            const std::string frame_text = this->statistics.frame_milliseconds.has_value() && this->statistics.frame_milliseconds.average() > 0.0f ? std::format("{:.3f} ms | {:.1f} FPS", this->statistics.last_frame_milliseconds, 1000.0f / this->statistics.frame_milliseconds.average()) : "Collecting";
-            draw_statistics_row("Frame", frame_text);
-            const std::string throughput_text = this->statistics.throughput_mspp.has_value() ? std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()) : "Collecting";
-            draw_statistics_row("Throughput", throughput_text);
-            ImGui::EndTable();
+        draw_inspector_section("Render Session");
+        draw_statistics_row("State", status.state);
+        draw_statistics_row("Resolution", resolution_text(render_resolution));
+        draw_statistics_row("Render SPP", positive_int_text(this->scene_sampler_sample_count));
+        draw_statistics_row("SPP Source", this->sample_source_text());
+        const std::string frame_text = this->statistics.frame_milliseconds.has_value() && this->statistics.frame_milliseconds.average() > 0.0f ? std::format("{:.3f} ms | {:.1f} FPS", this->statistics.last_frame_milliseconds, 1000.0f / this->statistics.frame_milliseconds.average()) : "Collecting";
+        draw_statistics_row("Frame", frame_text);
+        const std::string throughput_text = this->statistics.throughput_mspp.has_value() ? std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()) : "Collecting";
+        draw_statistics_row("Throughput", throughput_text);
+        draw_thin_progress_bar(progress, progress_label.c_str());
+
+        draw_inspector_section("Sampling");
+        begin_control_row("Default SPP");
+        ImGui::BeginDisabled(!this->scene_snapshot.has_value());
+        int default_sample_count = this->render_config.default_pixel_samples.value_or(interactive_default_pixel_samples);
+        if (ImGui::InputInt("##PathtracerDefaultSPP", &default_sample_count, 16, 64)) this->set_default_pixel_samples(default_sample_count);
+        ImGui::EndDisabled();
+
+        begin_control_row("Override");
+        bool override_enabled = this->render_config.pixel_samples.has_value();
+        const bool override_changed = ImGui::Checkbox("##PathtracerOverrideSPPEnabled", &override_enabled);
+        if (override_changed && override_enabled) this->set_override_pixel_samples(this->override_pixel_samples_input);
+        if (override_changed && !override_enabled) this->set_override_pixel_samples(std::nullopt);
+
+        begin_control_row("Override SPP");
+        ImGui::BeginDisabled(!override_enabled);
+        int override_sample_count = this->override_pixel_samples_input;
+        if (ImGui::InputInt("##PathtracerOverrideSPP", &override_sample_count, 16, 64)) this->set_override_pixel_samples(override_sample_count);
+        ImGui::EndDisabled();
+
+        if (this->pipeline_ready()) {
+            begin_control_row("Max Iterations");
+            const int previous_target_sample_count = this->render_pipeline->target_sample_count();
+            int target_sample_count = previous_target_sample_count;
+            if (ImGui::SliderInt("##PathtracerMaxIterations", &target_sample_count, 1, this->scene_sampler_sample_count)) {
+                this->render_pipeline->set_target_sample_count(target_sample_count);
+                if (target_sample_count != previous_target_sample_count) this->clear_throughput_statistics();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
+        } else {
+            draw_statistics_row("Max Iterations", "Pending");
         }
 
-        ImGui::ProgressBar(progress, ImVec2{-1.0f, 0.0f}, progress_label.c_str());
+        begin_control_row("Accumulation");
+        ImGui::BeginDisabled(!this->pipeline_ready());
+        if (draw_quiet_action_button(ICON_MS_RESTART_ALT " Reset")) this->request_accumulation_reset();
+        ImGui::EndDisabled();
 
-        ImGui::SeparatorText("Sampling");
-        if (ImGui::BeginTable("SpectraPathtracerSamplingControls", 2, table_flags)) {
-            ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Default SPP");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::BeginDisabled(!this->scene_snapshot.has_value());
-            int default_sample_count = this->render_config.default_pixel_samples.value_or(interactive_default_pixel_samples);
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::InputInt("##PathtracerDefaultSPP", &default_sample_count, 16, 64)) this->set_default_pixel_samples(default_sample_count);
-            ImGui::EndDisabled();
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Override");
-            ImGui::TableSetColumnIndex(1);
-            bool override_enabled = this->render_config.pixel_samples.has_value();
-            const bool override_changed = ImGui::Checkbox("##PathtracerOverrideSPPEnabled", &override_enabled);
-            if (override_changed && override_enabled) this->set_override_pixel_samples(this->override_pixel_samples_input);
-            if (override_changed && !override_enabled) this->set_override_pixel_samples(std::nullopt);
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Override SPP");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::BeginDisabled(!override_enabled);
-            int override_sample_count = this->override_pixel_samples_input;
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::InputInt("##PathtracerOverrideSPP", &override_sample_count, 16, 64)) this->set_override_pixel_samples(override_sample_count);
-            ImGui::EndDisabled();
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Max Iterations");
-            ImGui::TableSetColumnIndex(1);
-            if (this->pipeline_ready()) {
-                const int previous_target_sample_count = this->render_pipeline->target_sample_count();
-                int target_sample_count = previous_target_sample_count;
-                ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::SliderInt("##PathtracerMaxIterations", &target_sample_count, 1, this->scene_sampler_sample_count)) {
-                    this->render_pipeline->set_target_sample_count(target_sample_count);
-                    if (target_sample_count != previous_target_sample_count) this->clear_throughput_statistics();
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Interactive stop sample count. Changing it resets accumulation.");
-            } else {
-                ImGui::TextDisabled("%s", "Pending");
-            }
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Accumulation");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::BeginDisabled(!this->pipeline_ready());
-            if (ImGui::Button(ICON_MS_RESTART_ALT " Reset")) this->request_accumulation_reset();
-            ImGui::EndDisabled();
-
-            ImGui::EndTable();
-        }
-
-        ImGui::SeparatorText("Tone Mapping");
-        if (ImGui::BeginTable("SpectraPathtracerToneControls", 2, table_flags)) {
-            ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Exposure");
-            ImGui::TableSetColumnIndex(1);
-            if (this->pipeline_ready()) {
-                float exposure = this->render_pipeline->current_exposure();
-                ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::DragFloat("##PathtracerExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->render_pipeline->set_exposure(exposure);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Viewport exposure multiplier. This does not reset accumulation.");
-            } else {
-                ImGui::TextDisabled("%s", "Pending");
-            }
-            ImGui::EndTable();
+        draw_inspector_section("Tone Mapping");
+        if (this->pipeline_ready()) {
+            begin_control_row("Exposure");
+            float exposure = this->render_pipeline->current_exposure();
+            if (ImGui::DragFloat("##PathtracerExposure", &exposure, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) this->render_pipeline->set_exposure(exposure);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Viewport exposure multiplier. This does not reset accumulation.");
+        } else {
+            draw_statistics_row("Exposure", "Pending");
         }
     }
 
     void Renderer::Impl::draw_inspector_panel() {
-        ImGui::SeparatorText("Inspector");
+        draw_inspector_section("Inspector");
         if (!this->scene_info.has_value()) {
             ImGui::TextDisabled("No active Spectra scene");
             return;
         }
 
         const scene::Scene::Info& scene = this->active_scene_info();
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
 
-        ImGui::SeparatorText("Scene");
-        if (ImGui::BeginTable("SpectraPathtracerInspectorScene", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Name", std::string(scene.name));
-            draw_statistics_row("Title", std::string(scene.title));
-            draw_statistics_row("Film", resolution_text(this->scene_film_resolution));
-            draw_statistics_row("Sampler SPP", positive_int_text(this->scene_sampler_sample_count));
-            ImGui::EndTable();
-        }
+        draw_inspector_section("Scene");
+        draw_statistics_row("Name", std::string(scene.name));
+        draw_statistics_row("Title", std::string(scene.title));
+        draw_statistics_row("Film", resolution_text(this->scene_film_resolution));
+        draw_statistics_row("Sampler SPP", positive_int_text(this->scene_sampler_sample_count));
 
-        ImGui::SeparatorText("Pipeline");
-        if (ImGui::BeginTable("SpectraPathtracerInspectorPipeline", 2, table_flags)) {
-            ImGui::TableSetupColumn("Stage", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Implementation", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Camera", std::string(scene.camera));
-            draw_statistics_row("Sampler", std::string(scene.sampler));
-            draw_statistics_row("Integrator", std::string(scene.integrator));
-            draw_statistics_row("Accelerator", std::string(scene.accelerator));
-            ImGui::EndTable();
-        }
+        draw_inspector_section("Pipeline");
+        draw_statistics_row("Camera", std::string(scene.camera));
+        draw_statistics_row("Sampler", std::string(scene.sampler));
+        draw_statistics_row("Integrator", std::string(scene.integrator));
+        draw_statistics_row("Accelerator", std::string(scene.accelerator));
 
-        ImGui::SeparatorText("Resources");
-        if (ImGui::BeginTable("SpectraPathtracerInspectorResources", 2, table_flags)) {
-            ImGui::TableSetupColumn("Resource", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Count", ImGuiTableColumnFlags_WidthStretch);
-            draw_statistics_row("Shapes", std::format("{}", scene.shape_count));
-            draw_statistics_row("Materials", std::format("{}", scene.material_count));
-            draw_statistics_row("Textures", std::format("{}", scene.texture_count));
-            draw_statistics_row("Media", std::format("{}", scene.medium_count));
-            draw_statistics_row("Lights", std::format("{}", scene.light_count));
-            draw_statistics_row("Area Lights", std::format("{}", scene.area_light_count));
-            draw_statistics_row("Infinite", std::format("{}", scene.infinite_light_count));
-            draw_statistics_row("Definitions", std::format("{}", scene.object_definition_count));
-            draw_statistics_row("Instances", std::format("{}", scene.object_instance_count));
-            ImGui::EndTable();
-        }
+        draw_inspector_section("Resources");
+        draw_statistics_row("Shapes", std::format("{}", scene.shape_count));
+        draw_statistics_row("Materials", std::format("{}", scene.material_count));
+        draw_statistics_row("Textures", std::format("{}", scene.texture_count));
+        draw_statistics_row("Media", std::format("{}", scene.medium_count));
+        draw_statistics_row("Lights", std::format("{}", scene.light_count));
+        draw_statistics_row("Area Lights", std::format("{}", scene.area_light_count));
+        draw_statistics_row("Infinite", std::format("{}", scene.infinite_light_count));
+        draw_statistics_row("Definitions", std::format("{}", scene.object_definition_count));
+        draw_statistics_row("Instances", std::format("{}", scene.object_instance_count));
 
-        ImGui::SeparatorText("Camera");
-        if (ImGui::BeginTable("SpectraPathtracerInspectorCamera", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            if (this->camera.initialized) {
-                draw_statistics_row("Eye", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.eye.x, this->camera.state.eye.y, this->camera.state.eye.z));
-                draw_statistics_row("Target", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.target.x, this->camera.state.target.y, this->camera.state.target.z));
-                draw_statistics_row("Up", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.up.x, this->camera.state.up.y, this->camera.state.up.z));
-                draw_statistics_row("FOV", std::format("{:.3f}", this->camera.state.vertical_fov_degrees));
-            } else {
-                draw_statistics_row("State", "Pending");
-            }
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("%s", "Actions");
-            ImGui::TableSetColumnIndex(1);
-            ImGui::BeginDisabled(!this->camera.initialized || !this->pipeline_ready());
-            if (ImGui::Button(ICON_MS_RESTART_ALT " Reset")) this->reset_camera();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Camera");
-            ImGui::EndDisabled();
-            ImGui::EndTable();
+        draw_inspector_section("Camera");
+        if (this->camera.initialized) {
+            draw_statistics_row("Eye", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.eye.x, this->camera.state.eye.y, this->camera.state.eye.z));
+            draw_statistics_row("Target", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.target.x, this->camera.state.target.y, this->camera.state.target.z));
+            draw_statistics_row("Up", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.up.x, this->camera.state.up.y, this->camera.state.up.z));
+            draw_statistics_row("FOV", std::format("{:.3f}", this->camera.state.vertical_fov_degrees));
+        } else {
+            draw_statistics_row("State", "Pending");
         }
+        begin_control_row("Actions");
+        ImGui::BeginDisabled(!this->camera.initialized || !this->pipeline_ready());
+        if (draw_quiet_action_button(ICON_MS_RESTART_ALT " Reset")) this->reset_camera();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Camera");
+        ImGui::EndDisabled();
     }
 
     void Renderer::Impl::draw_viewport_overlays() {
@@ -2123,13 +2122,13 @@ namespace spectra::pathtracer {
         const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
         const ImVec2 padding{6.0f, 5.0f};
         const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 3.0f + gap * 2.0f, origin.y + padding.y * 2.0f + button_size};
-        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 208), 7.0f);
-        draw_list->AddRect(origin, background_max, IM_COL32(92, 102, 112, 96), 7.0f);
+        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 198), 7.0f);
+        draw_list->AddRect(origin, background_max, IM_COL32(86, 98, 108, 72), 7.0f);
 
         ImGui::PushClipRect(image_min, image_max, true);
         ImGui::PushID("SpectraPathtracerViewportToolbar");
         const auto draw_button = [button_size](const char* label, const char* tooltip, const bool active) {
-            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.16f, 0.28f, 0.34f, 1.0f});
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{35.0f / 255.0f, 65.0f / 255.0f, 73.0f / 255.0f, 1.0f});
             const bool clicked = ImGui::Button(label, ImVec2{button_size, button_size});
             if (active) ImGui::PopStyleColor();
             draw_tooltip(tooltip);
@@ -2169,8 +2168,8 @@ namespace spectra::pathtracer {
             .id             = "pathtracer.render",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,
-            .shortcut_label = "F3",
-            .shortcut_key   = ImGuiKey_F3,
+            .shortcut_label = "F8",
+            .shortcut_key   = ImGuiKey_F8,
             .draw           = [this] { this->draw_workspace_tab(); },
         });
     }

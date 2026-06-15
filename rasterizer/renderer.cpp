@@ -316,13 +316,46 @@ namespace {
         throw std::runtime_error("No matching Vulkan memory type for Spectra rasterizer");
     }
 
+    [[nodiscard]] ImVec4 inspector_label_color() {
+        return ImVec4{137.0f / 255.0f, 148.0f / 255.0f, 160.0f / 255.0f, 1.0f};
+    }
+
+    [[nodiscard]] ImVec4 inspector_section_color() {
+        return ImVec4{218.0f / 255.0f, 225.0f / 255.0f, 232.0f / 255.0f, 1.0f};
+    }
+
+    [[nodiscard]] float inspector_label_width() {
+        return std::clamp(ImGui::GetContentRegionAvail().x * 0.34f, 96.0f, 122.0f);
+    }
+
+    void draw_inspector_section(const char* label) {
+        ImGui::Spacing();
+        ImGui::TextColored(inspector_section_color(), "%s", label);
+        const ImVec2 line_min = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2{0.0f, 3.0f});
+        ImGui::GetWindowDrawList()->AddLine(ImVec2{line_min.x, line_min.y + 1.0f}, ImVec2{line_min.x + ImGui::GetContentRegionAvail().x, line_min.y + 1.0f}, ImGui::GetColorU32(ImVec4{62.0f / 255.0f, 72.0f / 255.0f, 81.0f / 255.0f, 0.34f}), 1.0f);
+    }
+
     bool draw_property_row(const char* label, const std::string_view value) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextDisabled("%s", label);
-        ImGui::TableSetColumnIndex(1);
+        const float row_start = ImGui::GetCursorPosX();
+        const float label_width = inspector_label_width();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(inspector_label_color(), "%s", label);
+        ImGui::SameLine(row_start + label_width);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(1.0f, ImGui::GetContentRegionAvail().x));
         ImGui::TextUnformatted(value.data(), value.data() + value.size());
-        return ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        ImGui::PopTextWrapPos();
+        return hovered;
+    }
+
+    void draw_quiet_splitter(const char* id, const float width, const float height) {
+        ImGui::InvisibleButton(id, ImVec2{width, height});
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        const float y = std::floor((min.y + max.y) * 0.5f);
+        const ImU32 color = ImGui::GetColorU32((ImGui::IsItemHovered() || ImGui::IsItemActive()) ? ImVec4{91.0f / 255.0f, 197.0f / 255.0f, 184.0f / 255.0f, 0.72f} : ImVec4{68.0f / 255.0f, 78.0f / 255.0f, 87.0f / 255.0f, 0.28f});
+        ImGui::GetWindowDrawList()->AddLine(ImVec2{min.x + 8.0f, y}, ImVec2{max.x - 8.0f, y}, color, 1.0f);
     }
 
     [[nodiscard]] std::string normalize_display_path(std::string value) {
@@ -449,10 +482,11 @@ namespace {
     }
 
     void draw_color_row(const char* label, const spectra::scene::Vector3& color) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextDisabled("%s", label);
-        ImGui::TableSetColumnIndex(1);
+        const float row_start = ImGui::GetCursorPosX();
+        const float label_width = inspector_label_width();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(inspector_label_color(), "%s", label);
+        ImGui::SameLine(row_start + label_width);
         ImGui::PushID(label);
         ImGui::ColorButton("##color", ImVec4{color.x, color.y, color.z, 1.0f}, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2{18.0f, 18.0f});
         ImGui::PopID();
@@ -462,10 +496,11 @@ namespace {
     }
 
     void draw_color_row(const char* label, const spectra::scene::Vector4& color) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextDisabled("%s", label);
-        ImGui::TableSetColumnIndex(1);
+        const float row_start = ImGui::GetCursorPosX();
+        const float label_width = inspector_label_width();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(inspector_label_color(), "%s", label);
+        ImGui::SameLine(row_start + label_width);
         ImGui::PushID(label);
         ImGui::ColorButton("##color", ImVec4{color.x, color.y, color.z, color.w}, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop | ImGuiColorEditFlags_AlphaPreview, ImVec2{18.0f, 18.0f});
         ImGui::PopID();
@@ -3055,13 +3090,13 @@ namespace spectra::rasterizer {
         const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
         const ImVec2 padding{6.0f, 5.0f};
         const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 5.0f + gap * 4.0f, origin.y + padding.y * 2.0f + button_size};
-        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 208), 7.0f);
-        draw_list->AddRect(origin, background_max, IM_COL32(92, 102, 112, 96), 7.0f);
+        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 198), 7.0f);
+        draw_list->AddRect(origin, background_max, IM_COL32(86, 98, 108, 72), 7.0f);
 
         ImGui::PushClipRect(image_min, image_max, true);
         ImGui::PushID("SpectraRasterizerViewportToolbar");
         const auto draw_button = [button_size](const char* label, const char* tooltip, const bool active) {
-            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.16f, 0.28f, 0.34f, 1.0f});
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{35.0f / 255.0f, 65.0f / 255.0f, 73.0f / 255.0f, 1.0f});
             const bool clicked = ImGui::Button(label, ImVec2{button_size, button_size});
             if (active) ImGui::PopStyleColor();
             draw_tooltip(tooltip);
@@ -3361,7 +3396,7 @@ namespace spectra::rasterizer {
 
     void Renderer::draw_scene_collection_panel() {
         this->rebuild_scene_ui_cache_if_needed();
-        ImGui::SeparatorText("Scene Collection");
+        draw_inspector_section("Scene Collection");
 
         const std::array camera_kinds{SceneObjectKind::Camera};
         const std::array light_kinds{SceneObjectKind::Light};
@@ -3427,49 +3462,37 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::draw_inspector_transform(const scene::Transform& transform) {
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
-        ImGui::SeparatorText("Transform");
-        if (ImGui::BeginTable("SpectraRasterizerInspectorTransform", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_property_row("Position", format_vector3(transform.position));
-            draw_property_row("Rotation", format_quaternion(transform.rotation));
-            draw_property_row("Scale", format_vector3(transform.scale));
-            ImGui::EndTable();
-        }
+        draw_inspector_section("Transform");
+        draw_property_row("Position", format_vector3(transform.position));
+        draw_property_row("Rotation", format_quaternion(transform.rotation));
+        draw_property_row("Scale", format_vector3(transform.scale));
     }
 
     void Renderer::draw_inspector_material_block(const std::string_view material_name) {
         const scene::Scene::PreviewMaterial material = this->resolve_material(material_name);
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
-        ImGui::SeparatorText("Material");
-        if (ImGui::BeginTable("SpectraRasterizerInspectorMaterial", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            draw_property_row("Name", material.name);
-            draw_property_row("Surface", preview_surface_kind_name(material.surface_kind));
-            draw_property_row("Alpha", preview_alpha_mode_name(material.alpha_mode));
-            draw_color_row("Base Color", material.base_color);
-            if (!material.base_color_texture.empty()) draw_property_row("Base Texture", material.base_color_texture);
-            draw_color_row("Emission", material.emission_color);
-            if (!material.emission_texture.empty()) draw_property_row("Emission Texture", material.emission_texture);
-            draw_property_row("Emission Str", format_float(material.emission_strength));
-            draw_property_row("Roughness", format_float(material.roughness));
-            if (!material.roughness_texture.empty()) draw_property_row("Roughness Texture", material.roughness_texture);
-            draw_property_row("Metallic", format_float(material.metallic));
-            draw_property_row("Alpha Cutoff", format_float(material.alpha_cutoff));
-            if (!material.normal_texture.empty()) draw_property_row("Normal Texture", material.normal_texture);
-            if (material.surface_kind == scene::Scene::PreviewSurfaceKind::Volume) {
-                draw_property_row("Density Scale", format_float(material.volume_density_scale));
-                draw_property_row("Temp Scale", format_float(material.volume_temperature_scale));
-            }
-            ImGui::EndTable();
+        draw_inspector_section("Material");
+        draw_property_row("Name", material.name);
+        draw_property_row("Surface", preview_surface_kind_name(material.surface_kind));
+        draw_property_row("Alpha", preview_alpha_mode_name(material.alpha_mode));
+        draw_color_row("Base Color", material.base_color);
+        if (!material.base_color_texture.empty()) draw_property_row("Base Texture", material.base_color_texture);
+        draw_color_row("Emission", material.emission_color);
+        if (!material.emission_texture.empty()) draw_property_row("Emission Texture", material.emission_texture);
+        draw_property_row("Emission Str", format_float(material.emission_strength));
+        draw_property_row("Roughness", format_float(material.roughness));
+        if (!material.roughness_texture.empty()) draw_property_row("Roughness Texture", material.roughness_texture);
+        draw_property_row("Metallic", format_float(material.metallic));
+        draw_property_row("Alpha Cutoff", format_float(material.alpha_cutoff));
+        if (!material.normal_texture.empty()) draw_property_row("Normal Texture", material.normal_texture);
+        if (material.surface_kind == scene::Scene::PreviewSurfaceKind::Volume) {
+            draw_property_row("Density Scale", format_float(material.volume_density_scale));
+            draw_property_row("Temp Scale", format_float(material.volume_temperature_scale));
         }
     }
 
     void Renderer::draw_inspector_panel() {
         this->rebuild_scene_ui_cache_if_needed();
-        ImGui::SeparatorText("Inspector");
+        draw_inspector_section("Inspector");
         if (!this->selection.active_scene_object.has_value()) {
             ImGui::TextDisabled("%s", "No object selected");
             return;
@@ -3490,108 +3513,72 @@ namespace spectra::rasterizer {
             throw std::runtime_error("Unknown Spectra rasterizer scene object kind");
         };
 
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoBordersInBodyUntilResize;
-        if (ImGui::BeginTable("SpectraRasterizerInspectorIdentity", 2, table_flags)) {
-            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            const std::string compact_name = this->compact_scene_object_name(*object);
-            const std::string raw_name = this->raw_scene_object_name(*object);
-            const std::string compact_source = this->compact_source_location(object->source);
-            const std::string raw_source = format_source_location(object->source);
-            draw_property_row("Type", scene_object_kind_text(object->key.kind));
-            draw_property_row("Name", compact_name);
-            if (compact_name != raw_name && draw_property_row("Internal ID", raw_name)) ImGui::SetTooltip("%s", raw_name.c_str());
-            if (draw_property_row("Source", compact_source) && compact_source != raw_source) ImGui::SetTooltip("%s", raw_source.c_str());
-            ImGui::EndTable();
-        }
+        const std::string compact_name = this->compact_scene_object_name(*object);
+        const std::string raw_name = this->raw_scene_object_name(*object);
+        const std::string compact_source = this->compact_source_location(object->source);
+        const std::string raw_source = format_source_location(object->source);
+        draw_property_row("Type", scene_object_kind_text(object->key.kind));
+        draw_property_row("Name", compact_name);
+        if (compact_name != raw_name && draw_property_row("Internal ID", raw_name)) ImGui::SetTooltip("%s", raw_name.c_str());
+        if (draw_property_row("Source", compact_source) && compact_source != raw_source) ImGui::SetTooltip("%s", raw_source.c_str());
 
         switch (object->key.kind) {
         case SceneObjectKind::Camera:
             this->draw_inspector_transform(object->transform);
-            ImGui::SeparatorText("Camera");
-            if (ImGui::BeginTable("SpectraRasterizerInspectorCamera", 2, table_flags)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_property_row("Target", format_vector3(object->camera_target));
-                draw_property_row("Up", format_vector3(object->camera_up));
-                draw_property_row("FOV", format_float(object->camera_vertical_fov_degrees));
-                draw_property_row("Near", format_float(object->camera_near_plane));
-                draw_property_row("Far", format_float(object->camera_far_plane));
-                ImGui::EndTable();
-            }
+            draw_inspector_section("Camera");
+            draw_property_row("Target", format_vector3(object->camera_target));
+            draw_property_row("Up", format_vector3(object->camera_up));
+            draw_property_row("FOV", format_float(object->camera_vertical_fov_degrees));
+            draw_property_row("Near", format_float(object->camera_near_plane));
+            draw_property_row("Far", format_float(object->camera_far_plane));
             break;
         case SceneObjectKind::Light:
             this->draw_inspector_transform(object->transform);
-            ImGui::SeparatorText("Light");
-            if (ImGui::BeginTable("SpectraRasterizerInspectorLight", 2, table_flags)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_property_row("Kind", preview_light_kind_name(object->light_kind));
-                draw_color_row("Color", object->light_color);
-                draw_property_row("Intensity", format_float(object->light_intensity));
-                if (object->light_kind == scene::Scene::PreviewLightKind::Spot) draw_property_row("Cone Angle", format_float(object->light_cone_angle_degrees));
-                ImGui::EndTable();
-            }
+            draw_inspector_section("Light");
+            draw_property_row("Kind", preview_light_kind_name(object->light_kind));
+            draw_color_row("Color", object->light_color);
+            draw_property_row("Intensity", format_float(object->light_intensity));
+            if (object->light_kind == scene::Scene::PreviewLightKind::Spot) draw_property_row("Cone Angle", format_float(object->light_cone_angle_degrees));
             break;
         case SceneObjectKind::Mesh:
             this->draw_inspector_transform(object->transform);
-            ImGui::SeparatorText("Mesh");
-            if (ImGui::BeginTable("SpectraRasterizerInspectorMesh", 2, table_flags)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_property_row("Material", object->material_name);
-                draw_property_row("Vertices", std::format("{}", object->vertex_count));
-                draw_property_row("Indices", std::format("{}", object->index_count));
-                draw_property_row("Triangles", std::format("{}", object->index_count / 3u));
-                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
-                ImGui::EndTable();
-            }
+            draw_inspector_section("Mesh");
+            draw_property_row("Material", object->material_name);
+            draw_property_row("Vertices", std::format("{}", object->vertex_count));
+            draw_property_row("Indices", std::format("{}", object->index_count));
+            draw_property_row("Triangles", std::format("{}", object->index_count / 3u));
+            draw_property_row("Dynamic", object->dynamic ? "true" : "false");
             this->draw_inspector_material_block(object->material_name);
             break;
         case SceneObjectKind::Sphere:
             this->draw_inspector_transform(object->transform);
-            ImGui::SeparatorText("Sphere");
-            if (ImGui::BeginTable("SpectraRasterizerInspectorSphere", 2, table_flags)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_property_row("Material", object->material_name);
-                draw_property_row("Radius", format_float(object->sphere_radius));
-                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
-                ImGui::EndTable();
-            }
+            draw_inspector_section("Sphere");
+            draw_property_row("Material", object->material_name);
+            draw_property_row("Radius", format_float(object->sphere_radius));
+            draw_property_row("Dynamic", object->dynamic ? "true" : "false");
             this->draw_inspector_material_block(object->material_name);
             break;
         case SceneObjectKind::PointCloud:
             this->draw_inspector_transform(object->transform);
-            ImGui::SeparatorText("Point Cloud");
-            if (ImGui::BeginTable("SpectraRasterizerInspectorPointCloud", 2, table_flags)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_property_row("Material", object->material_name);
-                draw_property_row("Points", std::format("{}", object->point_count));
-                draw_property_row("Radius Range", std::format("{} - {}", format_float(object->minimum_radius), format_float(object->maximum_radius)));
-                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
-                ImGui::EndTable();
-            }
+            draw_inspector_section("Point Cloud");
+            draw_property_row("Material", object->material_name);
+            draw_property_row("Points", std::format("{}", object->point_count));
+            draw_property_row("Radius Range", std::format("{} - {}", format_float(object->minimum_radius), format_float(object->maximum_radius)));
+            draw_property_row("Dynamic", object->dynamic ? "true" : "false");
             this->draw_inspector_material_block(object->material_name);
             break;
         case SceneObjectKind::VolumeGrid:
-            ImGui::SeparatorText("Volume");
-            if (ImGui::BeginTable("SpectraRasterizerInspectorVolume", 2, table_flags)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 118.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                draw_property_row("Material", object->material_name);
-                draw_property_row("Dimensions", format_dimensions3(object->dimensions));
-                draw_property_row("Origin", format_vector3(object->origin));
-                draw_property_row("Voxel Size", format_vector3(object->voxel_size));
-                draw_property_row("Dynamic", object->dynamic ? "true" : "false");
-                for (std::size_t channel_index = 0; channel_index < object->volume_channels.size(); ++channel_index) {
-                    const SceneVolumeChannelSummary& channel = object->volume_channels.at(channel_index);
-                    const std::string channel_label = std::format("Channel {}", channel_index);
-                    const std::string channel_value = std::format("{} | {} | {} values", channel.name, format_dimensions3(channel.dimensions), channel.value_count);
-                    draw_property_row(channel_label.c_str(), channel_value);
-                }
-                ImGui::EndTable();
+            draw_inspector_section("Volume");
+            draw_property_row("Material", object->material_name);
+            draw_property_row("Dimensions", format_dimensions3(object->dimensions));
+            draw_property_row("Origin", format_vector3(object->origin));
+            draw_property_row("Voxel Size", format_vector3(object->voxel_size));
+            draw_property_row("Dynamic", object->dynamic ? "true" : "false");
+            for (std::size_t channel_index = 0; channel_index < object->volume_channels.size(); ++channel_index) {
+                const SceneVolumeChannelSummary& channel = object->volume_channels.at(channel_index);
+                const std::string channel_label = std::format("Channel {}", channel_index);
+                const std::string channel_value = std::format("{} | {} | {} values", channel.name, format_dimensions3(channel.dimensions), channel.value_count);
+                draw_property_row(channel_label.c_str(), channel_value);
             }
             this->draw_inspector_material_block(object->material_name);
             break;
@@ -3610,18 +3597,18 @@ namespace spectra::rasterizer {
         if (usable_height > minimum_panel_height * 2.0f) collection_height = std::clamp(collection_height, minimum_panel_height, usable_height - minimum_panel_height);
         else collection_height = std::max(1.0f, collection_height);
 
-        ImGui::BeginChild("SpectraRasterizerSceneCollectionPanel", ImVec2{0.0f, collection_height}, true);
+        ImGui::BeginChild("SpectraRasterizerSceneCollectionPanel", ImVec2{0.0f, collection_height}, false);
         this->draw_scene_collection_panel();
         ImGui::EndChild();
 
         const float splitter_width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-        ImGui::InvisibleButton("SpectraRasterizerSidebarSplitter", ImVec2{splitter_width, splitter_height});
+        draw_quiet_splitter("SpectraRasterizerSidebarSplitter", splitter_width, splitter_height);
         if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         if (ImGui::IsItemActive() && usable_height > 1.0f) {
             this->ui.sidebar_split_ratio = std::clamp(this->ui.sidebar_split_ratio + ImGui::GetIO().MouseDelta.y / usable_height, 0.25f, 0.75f);
         }
 
-        ImGui::BeginChild("SpectraRasterizerInspectorPanel", ImVec2{0.0f, 0.0f}, true);
+        ImGui::BeginChild("SpectraRasterizerInspectorPanel", ImVec2{0.0f, 0.0f}, false);
         this->draw_inspector_panel();
         ImGui::EndChild();
     }
