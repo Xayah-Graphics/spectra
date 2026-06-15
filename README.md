@@ -1,4 +1,4 @@
-![Spectra](https://github.com/Xayah-Graphics/imagebed/blob/01ee4171e91dde40477d7d0e0d01d581ca86b463/spectra-banner2.png)
+![Spectra](https://github.com/Xayah-Graphics/imagebed/blob/14c6599b610e65a7ef42174e6910dac53004cec9/spectra-banner2.png)
 # Spectra
 
 [![Windows](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml)
