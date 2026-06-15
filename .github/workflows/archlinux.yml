@@ -1,0 +1,92 @@
+name: Arch Linux
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SPECTRA_CMAKE_VERSION: '4.3.0'
+  SPECTRA_CUDA_VERSION: '13.2.1'
+  SPECTRA_CUDA_DRIVER_VERSION: '595.58.03'
+  SPECTRA_VULKAN_VERSION: '1.4.350.0'
+  SPECTRA_OPTIX_TAG: 'v9.1.0'
+  SPECTRA_SLANG_VERSION: '2026.11'
+
+jobs:
+  build:
+    name: Arch Linux Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build in Arch Linux
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -e SPECTRA_CMAKE_VERSION="${SPECTRA_CMAKE_VERSION}" \
+            -e SPECTRA_CUDA_VERSION="${SPECTRA_CUDA_VERSION}" \
+            -e SPECTRA_CUDA_DRIVER_VERSION="${SPECTRA_CUDA_DRIVER_VERSION}" \
+            -e SPECTRA_VULKAN_VERSION="${SPECTRA_VULKAN_VERSION}" \
+            -e SPECTRA_OPTIX_TAG="${SPECTRA_OPTIX_TAG}" \
+            -e SPECTRA_SLANG_VERSION="${SPECTRA_SLANG_VERSION}" \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            archlinux:base-devel \
+            bash -lc '
+              set -euo pipefail
+
+              pacman -Sy --noconfirm --needed archlinux-keyring
+              pacman -Syu --noconfirm --needed git curl tar xz unzip ninja python
+
+              curl -L -o /tmp/cmake.tar.gz "https://github.com/Kitware/CMake/releases/download/v${SPECTRA_CMAKE_VERSION}/cmake-${SPECTRA_CMAKE_VERSION}-linux-x86_64.tar.gz"
+              mkdir -p /opt/cmake
+              tar -xf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1
+
+              curl -L -o /tmp/cuda.run "https://developer.download.nvidia.com/compute/cuda/${SPECTRA_CUDA_VERSION}/local_installers/cuda_${SPECTRA_CUDA_VERSION}_${SPECTRA_CUDA_DRIVER_VERSION}_linux.run"
+              sh /tmp/cuda.run --silent --toolkit --installpath=/opt/cuda-${SPECTRA_CUDA_VERSION}
+
+              curl -L -o /tmp/vulkan.tar.xz "https://sdk.lunarg.com/sdk/download/${SPECTRA_VULKAN_VERSION}/linux/vulkansdk-linux-x86_64-${SPECTRA_VULKAN_VERSION}.tar.xz"
+              mkdir -p /opt/vulkan
+              tar -xf /tmp/vulkan.tar.xz -C /opt/vulkan
+
+              curl -L -o /tmp/slang.tar.gz "https://github.com/shader-slang/slang/releases/download/v${SPECTRA_SLANG_VERSION}/slang-${SPECTRA_SLANG_VERSION}-linux-x86_64.tar.gz"
+              mkdir -p /opt/slang
+              tar -xf /tmp/slang.tar.gz -C /opt/slang --strip-components=1
+
+              git clone --depth 1 --branch "${SPECTRA_OPTIX_TAG}" https://github.com/NVIDIA/optix-sdk.git /opt/optix-sdk
+
+              export PATH="/opt/cmake/bin:/opt/cuda-${SPECTRA_CUDA_VERSION}/bin:/opt/slang/bin:${PATH}"
+              export LD_LIBRARY_PATH="/opt/cuda-${SPECTRA_CUDA_VERSION}/lib64:/opt/slang/lib:${LD_LIBRARY_PATH:-}"
+              export CUDA_PATH="/opt/cuda-${SPECTRA_CUDA_VERSION}"
+              export CUDAToolkit_ROOT="/opt/cuda-${SPECTRA_CUDA_VERSION}"
+              export VULKAN_SDK="/opt/vulkan/${SPECTRA_VULKAN_VERSION}/x86_64"
+              export PATH="${VULKAN_SDK}/bin:${PATH}"
+              export LD_LIBRARY_PATH="${VULKAN_SDK}/lib:${LD_LIBRARY_PATH}"
+
+              cmake --version
+              nvcc --version | tee /tmp/spectra-nvcc-version.txt
+              grep -Eq "release 13\.2" /tmp/spectra-nvcc-version.txt
+              command -v ninja >/dev/null
+              command -v slangc >/dev/null
+              test -f "${VULKAN_SDK}/include/vulkan/vulkan.h"
+              test -f /opt/optix-sdk/include/optix.h
+
+              cmake \
+                -S /workspace \
+                -B /workspace/cmake-build-release \
+                -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DSPECTRA_OPTIX_PATH=/opt/optix-sdk
+
+              cmake --build /workspace/cmake-build-release --parallel 30
+            '
