@@ -2,6 +2,7 @@ module;
 
 #if defined(_WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
+#define GLFW_EXPOSE_NATIVE_WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -9,6 +10,9 @@ module;
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#if defined(_WIN32)
+#include <GLFW/glfw3native.h>
+#endif
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
@@ -192,6 +196,23 @@ namespace {
         return left.empty() || right.empty() || left == right;
     }
 
+#if defined(_WIN32)
+    [[nodiscard]] HICON load_spectra_window_icon(const int size) {
+        const HINSTANCE instance = GetModuleHandleW(nullptr);
+        if (instance == nullptr) throw std::runtime_error("Failed to get Spectra executable module for window icon");
+        HICON icon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR | LR_SHARED));
+        if (icon == nullptr) throw std::runtime_error("Failed to load Spectra window icon resource");
+        return icon;
+    }
+
+    void apply_spectra_window_icon(GLFWwindow* window) {
+        HWND native_window = glfwGetWin32Window(window);
+        if (native_window == nullptr) throw std::runtime_error("Failed to get Spectra Win32 window handle");
+        SendMessageW(native_window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(load_spectra_window_icon(GetSystemMetrics(SM_CXSMICON))));
+        SendMessageW(native_window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(load_spectra_window_icon(GetSystemMetrics(SM_CXICON))));
+    }
+#endif
+
     [[nodiscard]] constexpr std::array<const char*, 5> required_device_extensions() {
 #if defined(_WIN32)
         return {vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName, vk::KHRExternalMemoryWin32ExtensionName, vk::KHRExternalSemaphoreWin32ExtensionName};
@@ -311,6 +332,9 @@ namespace spectra {
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
         this->surface.window.reset(glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr));
         if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
+#if defined(_WIN32)
+        apply_spectra_window_icon(this->surface.window.get());
+#endif
         glfwSetWindowSizeLimits(this->surface.window.get(), 800, 480, GLFW_DONT_CARE, GLFW_DONT_CARE);
         glfwSetWindowUserPointer(this->surface.window.get(), this);
         glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });

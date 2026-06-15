@@ -1,78 +1,58 @@
+![Spectra](https://github.com/Xayah-Graphics/imagebed/blob/01ee4171e91dde40477d7d0e0d01d581ca86b463/spectra-banner.png)
 # Spectra
 
 [![Windows](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml)
 [![Arch Linux](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml)
 [![License](https://img.shields.io/github/license/Xayah-Graphics/spectra)](LICENSE)
-![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white)
-![CMake 4.3](https://img.shields.io/badge/CMake-4.3-064F8C?logo=cmake&logoColor=white)
-![Vulkan 1.4](https://img.shields.io/badge/Vulkan-1.4-AC162C?logo=vulkan&logoColor=white)
-![CUDA 13.x](https://img.shields.io/badge/CUDA-13.x-76B900?logo=nvidia&logoColor=white)
-![OptiX 9.1](https://img.shields.io/badge/OptiX-9.1-76B900?logo=nvidia&logoColor=white)
 
-Spectra is an alpha-stage renderer and visualization workspace for graphics research, physical simulation, and 3D reconstruction experiments. It provides a Vulkan-based interactive host with two renderer backends:
+Spectra is an alpha-stage renderer and visualization workspace for graphics research, physical simulation, and 3D
+reconstruction experiments. It provides a Vulkan-based interactive host with two renderer backends:
 
 - **Spectra Rasterizer** for live scene and simulation preview.
 - **Spectra Pathtracer** for OptiX/CUDA path-traced rendering of the current scene snapshot.
 
-The project is designed around a shared scene workspace. Static PBRT scenes and runtime dynamic scene plugins are loaded by the application layer, then consumed by both renderers without renderer-owned file loading.
+The project is designed around a shared scene workspace. Static PBRT scenes and runtime dynamic scene plugins are loaded
+by the application layer, then consumed by both renderers without renderer-owned file loading.
 
-## Status
-
-This is an alpha release. The architecture is usable for local research workflows, but the UI, scene model, and dynamic plugin ABI may still change.
-
-## Features
-
-- Empty-project startup.
-- Runtime drag-and-drop loading for `.pbrt` and `.pbrt.gz` scenes.
-- Runtime dynamic scene loading through a document-only C ABI plugin model.
-- Shared PBRT-oriented scene description for rasterizer preview and path tracing.
-- Keyboard-first dynamic timeline controls in the rasterizer.
-
-## Requirements
-
-- CMake 4.3 or newer.
-- C++23 compiler with module support.
-- Vulkan SDK 1.4 or newer.
-- Slang compiler available as `slangc`.
-- CUDA Toolkit 13.0 or newer.
-- NVIDIA OptiX SDK.
-- Windows with MSVC, or Linux/WSL for the pathtracer.
+| Pathtracing Rendering                                                                                                                       | Physical Simulation                                                                                                                                   |
+|---------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/883141b90fd655fa7e4b227d8a54842ee137392c/spectra-pathtracer-cornell-box.png) | ![Cloth Simulation](https://github.com/Xayah-Graphics/imagebed/blob/0b600f42860a713b7bad36e350fbb55f29a4d97c/spectra-pathtracer-cloth-simulation.png) |
 
 ## Build
 
+- C++23 compiler with module support.
+- CMake 4.3 or newer.
+- Vulkan SDK 1.4 or newer.
+- CUDA Toolkit 13.0 or newer.
+- NVIDIA OptiX SDK.
+
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPECTRA_OPTIX_PATH=/path/to/OptiX-SDK
+cmake -S . -B build -G Ninja -DSPECTRA_OPTIX_PATH=/path/to/OptiX-SDK
 cmake --build build --parallel
 ```
 
-The main GUI executable is `spectra_gui`.
+## Usage
 
-## Run
-
-Start with an empty workspace:
-
-```bash
-./build/spectra_gui
-```
-
-Open a scene at startup:
+You may load PBRT scenes and dynamic scene plugins directly from the command line.
 
 ```bash
 ./build/spectra_gui --scene /path/to/scene.pbrt
 ./build/spectra_gui --scene /path/to/plugin.dll
 ```
 
-At runtime, drag one supported file into the Spectra window:
+You may also load PBRT scenes and dynamic scene plugins through the GUI.
 
-- `.pbrt`
-- `.pbrt.gz`
-- platform dynamic libraries: `.dll` on Windows, `.so` on Linux/WSL
+```bash
+./build/spectra_gui
+```
 
-Only one dropped file is accepted at a time. Invalid files keep the current scene active.
+then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window.
 
-## Dynamic Scene Plugins
 
-Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers, link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
+## Dynamic Scene Plugins Developer Guide
+
+Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
+link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
 
 A dynamic scene plugin only needs to:
 
@@ -80,7 +60,8 @@ A dynamic scene plugin only needs to:
 2. Export `spectra_dynamic_scene_plugin()`.
 3. Declare the ABI structs exactly as documented below.
 
-The plugin owns all returned string and array views. Spectra copies view data immediately. Returned views must stay valid until the next ABI call on the same instance or until `destroy`.
+The plugin owns all returned string and array views. Spectra copies view data immediately. Returned views must stay
+valid until the next ABI call on the same instance or until `destroy`.
 
 ### Binary Contract
 
@@ -89,7 +70,8 @@ The plugin owns all returned string and array views. Spectra copies view data im
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
 - Use the platform default C calling convention.
-- Do not use `#pragma pack`, custom alignment, C++ standard library types, C++ exceptions, RTTI objects, allocators, or Spectra C++ types across the ABI.
+- Do not use `#pragma pack`, custom alignment, C++ standard library types, C++ exceptions, RTTI objects, allocators, or
+  Spectra C++ types across the ABI.
 
 ### Required ABI Declarations
 
@@ -321,7 +303,9 @@ struct SpectraDynamicScenePlugin {
 extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `SPECTRA_DYNAMIC_SCENE_ABI_VERSION`, set `struct_size` to `sizeof(SpectraDynamicScenePlugin)`, and provide every function pointer.
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to
+`SPECTRA_DYNAMIC_SCENE_ABI_VERSION`, set `struct_size` to `sizeof(SpectraDynamicScenePlugin)`, and provide every
+function pointer.
 
 ### Data Rules
 
@@ -346,17 +330,8 @@ The returned descriptor must stay valid while the library is loaded. Set `abi_ve
 - `frame` returns dynamic primitives for the requested frame cursor.
 - `last_error` returns the most recent instance-local error string; it may be empty.
 
-Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through `last_error`.
-
-## Repository Layout
-
-```text
-spectra/      Vulkan host, renderer registration, UI shell
-rasterizer/   Vulkan rasterizer, scene runtime, dynamic plugin loader
-pathtracer/   OptiX/CUDA pathtracer
-scene/        Shared PBRT-oriented scene model and parser
-vendor/       Third-party dependencies
-```
+Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
+`last_error`.
 
 ## License
 

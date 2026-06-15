@@ -2,12 +2,20 @@ cmake_minimum_required(VERSION 4.3.0)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 project(spectra VERSION 1.0.0 LANGUAGES C CXX CUDA)
 
+
+# ============================================================================
+# C++ Configuration
+# ============================================================================
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
+
+# ============================================================================
+# CUDA Configuration
+# ============================================================================
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_EXTENSIONS OFF)
@@ -15,6 +23,10 @@ set(CMAKE_CUDA_ARCHITECTURES 120)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+
+# ============================================================================
+# Build Configuration
+# ============================================================================
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type" FORCE)
 endif ()
@@ -23,14 +35,19 @@ set(SPECTRA_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(SPECTRA_BINARY_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
 
+
+# ============================================================================
+# Dependencies
+# ============================================================================
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 
 add_subdirectory(vendor)
 
-###########################################################################
-# spectra core
 
+# ============================================================================
+# Spectra Core
+# ============================================================================
 add_library(spectra_core)
 add_library(spectra::core ALIAS spectra_core)
 target_sources(
@@ -45,9 +62,10 @@ target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw vendor::im
 target_include_directories(spectra_core PUBLIC ${SPECTRA_ROOT_DIR}/vendor/imgui PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
-###########################################################################
-# scene
 
+# ============================================================================
+# Scene
+# ============================================================================
 add_library(spectra_scene)
 add_library(spectra::scene ALIAS spectra_scene)
 target_sources(
@@ -63,9 +81,10 @@ target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTR
 target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB vendor::lodepng)
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
-###########################################################################
-# pathtracer
 
+# ============================================================================
+# Pathtracer Configuration
+# ============================================================================
 option(SPECTRA_FLOAT_AS_DOUBLE "Use 64-bit floats for the Spectra pathtracer" OFF)
 set(SPECTRA_OPTIX_PATH "" CACHE PATH "Path to OptiX SDK for the Spectra pathtracer")
 set(SPECTRA_OPTIX_GPU_ARCH "" CACHE STRING "CUDA architecture used when compiling spectra OptiX PTX")
@@ -178,6 +197,10 @@ set(SPECTRA_PATHTRACER_CUDA_COMPILE_OPTIONS
         "$<$<COMPILE_LANGUAGE:CUDA>:--forward-unknown-to-host-compiler>"
 )
 
+
+# ============================================================================
+# Pathtracer Generated Sources
+# ============================================================================
 get_filename_component(SPECTRA_PATHTRACER_CUDA_COMPILER_BIN "${CMAKE_CUDA_COMPILER}" DIRECTORY)
 find_program(
         SPECTRA_PATHTRACER_BIN2C
@@ -223,10 +246,10 @@ set(SPECTRA_PATHTRACER_INCLUDE_DIRS
 set(SPECTRA_PATHTRACER_BIN2C_SCRIPT ${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_pathtracer_bin2c_embed.cmake)
 file(WRITE "${SPECTRA_PATHTRACER_BIN2C_SCRIPT}" [=[
 set(file_contents)
-foreach(obj IN LISTS OBJECTS)
+foreach (obj IN LISTS OBJECTS)
     get_filename_component(obj_ext "${obj}" EXT)
     get_filename_component(obj_dir "${obj}" DIRECTORY)
-    if(obj_ext MATCHES "\\.(optixir|ptx)$")
+    if (obj_ext MATCHES "\\.(optixir|ptx)$")
         execute_process(
                 COMMAND "${BIN_TO_C_COMMAND}" --name "${VAR_NAME}" "${obj}"
                 WORKING_DIRECTORY "${obj_dir}"
@@ -234,16 +257,16 @@ foreach(obj IN LISTS OBJECTS)
                 OUTPUT_VARIABLE output
                 ERROR_VARIABLE error_var
         )
-        if(NOT result EQUAL 0)
+        if (NOT result EQUAL 0)
             message(FATAL_ERROR "bin2c failed for ${obj}: ${error_var}")
-        endif()
+        endif ()
         file(SIZE "${obj}" obj_size)
         string(APPEND file_contents " \n${output}\nunsigned long long ${VAR_NAME}_SIZE = ${obj_size}ull;\n")
-    endif()
-endforeach()
-if(file_contents STREQUAL "")
+    endif ()
+endforeach ()
+if (file_contents STREQUAL "")
     message(FATAL_ERROR "No OptiX input was passed to bin2c: ${OBJECTS}")
-endif()
+endif ()
 file(WRITE "${OUTPUT}" "${file_contents}")
 ]=])
 
@@ -311,6 +334,10 @@ add_custom_command(
         VERBATIM
 )
 
+
+# ============================================================================
+# Pathtracer Source Lists
+# ============================================================================
 set(SPECTRA_PATHTRACER_CORE_SOURCE
         pathtracer/core/bssrdf.cu
         pathtracer/core/bxdfs.cu
@@ -375,6 +402,10 @@ target_compile_options(
 )
 add_dependencies(spectra_pathtracer_optix_input spectra_pathtracer_soa_generated)
 
+
+# ============================================================================
+# Pathtracer Targets
+# ============================================================================
 set(SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT ${SPECTRA_PATHTRACER_GENERATED_DIR}/optix.cu.ptx_embedded.c)
 add_custom_command(
         OUTPUT ${SPECTRA_PATHTRACER_EMBEDDED_OPTIX_INPUT}
@@ -451,9 +482,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
 
-###########################################################################
-# rasterizer
 
+# ============================================================================
+# Rasterizer
+# ============================================================================
 add_library(spectra_rasterizer)
 add_library(spectra::rasterizer ALIAS spectra_rasterizer)
 
@@ -517,11 +549,15 @@ target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spe
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 
-###########################################################################
-# gui
 
+# ============================================================================
+# GUI
+# ============================================================================
 add_executable(spectra_gui main.cpp)
 add_executable(spectra::gui ALIAS spectra_gui)
+if (WIN32)
+    target_sources(spectra_gui PRIVATE spectra.rc)
+endif ()
 target_link_libraries(
         spectra_gui
         PRIVATE
