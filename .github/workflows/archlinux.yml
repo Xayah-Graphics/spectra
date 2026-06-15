@@ -70,7 +70,7 @@ jobs:
           set -euxo pipefail
           mkdir -p /opt/slang
           curl -L --fail --retry 5 --retry-delay 2 "${SPECTRA_SLANG_URL}" -o /tmp/slang.tar.gz
-          tar -xzf /tmp/slang.tar.gz -C /opt/slang --strip-components=1
+          tar -xzf /tmp/slang.tar.gz -C /opt/slang
           rm -f /tmp/slang.tar.gz
 
           test -x /opt/slang/bin/slangc
