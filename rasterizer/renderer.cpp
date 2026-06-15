@@ -750,26 +750,6 @@ namespace spectra::rasterizer {
             .shortcut_key   = ImGuiKey_F8,
             .draw           = [this] { this->draw_rasterizer_window(); },
         });
-        host.register_toolbar_action(ToolbarAction{
-            .id             = "rasterizer.timeline.play_pause",
-            .title          = "Play / Pause",
-            .icon           = ICON_MS_PLAY_PAUSE,
-            .shortcut_label = "Space",
-            .shortcut_key   = ImGuiKey_Space,
-            .enabled        = [this] { return this->timeline_streaming_enabled(); },
-            .active         = [this] { return this->timeline_playing(); },
-            .trigger        = [this] { this->toggle_timeline_playback(); },
-        });
-        host.register_toolbar_action(ToolbarAction{
-            .id             = "rasterizer.timeline.reset",
-            .title          = "Reset",
-            .icon           = ICON_MS_RESTART_ALT,
-            .shortcut_label = "R",
-            .shortcut_key   = ImGuiKey_R,
-            .enabled        = [this] { return this->timeline_enabled(); },
-            .active         = [] { return false; },
-            .trigger        = [this] { this->request_timeline_reset(); },
-        });
     }
 
     std::string Renderer::window_detail() const {
@@ -2558,6 +2538,7 @@ namespace spectra::rasterizer {
         this->consume_completed_selection_pick(frame.frame_index);
         this->lifecycle.active_frame_index = frame.frame_index;
         FrameResult result{};
+        this->handle_timeline_shortcuts();
         this->ensure_viewport_resources();
         this->ensure_camera_resources();
         this->ensure_mesh_resources();
@@ -3240,6 +3221,41 @@ namespace spectra::rasterizer {
         draw_list->AddRectFilled(hud_min, hud_max, IM_COL32(15, 18, 22, 184), 7.0f);
         draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
 
+        float next_left_overlay_y = hud_max.y + 8.0f;
+        if (scene->timeline_enabled) {
+            constexpr const char* timeline_separator = "\xC2\xB7";
+            std::string timeline_hint{};
+            std::string compact_timeline_hint{};
+            if (timeline.mode == scene::Scene::TimelineMode::Playback) {
+                timeline_hint         = std::format("Playback {} R Reset", timeline_separator);
+                compact_timeline_hint = std::format("Playback {} R", timeline_separator);
+            } else {
+                const char* playback_state = timeline.playing ? "Playing" : "Paused";
+                const char* space_action = timeline.playing ? "Space Pause" : "Space Play";
+                timeline_hint         = std::format("{} {} {} {} R Reset", playback_state, timeline_separator, space_action, timeline_separator);
+                compact_timeline_hint = std::format("{} {} Space {} R", playback_state, timeline_separator, timeline_separator);
+            }
+
+            const ImVec2 timeline_padding{10.0f, 7.0f};
+            ImVec2 timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
+            if (timeline_text.x + timeline_padding.x * 2.0f > image_size.x - 24.0f) {
+                timeline_hint = std::move(compact_timeline_hint);
+                timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
+            }
+            if (timeline_text.x + timeline_padding.x * 2.0f > image_size.x - 24.0f) {
+                timeline_hint = timeline.mode == scene::Scene::TimelineMode::Playback ? "R Reset" : "Space / R";
+                timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
+            }
+
+            const ImVec2 timeline_min{image_min.x + 12.0f, next_left_overlay_y};
+            const ImVec2 timeline_max{timeline_min.x + timeline_text.x + timeline_padding.x * 2.0f, timeline_min.y + timeline_text.y + timeline_padding.y * 2.0f};
+            const bool timeline_active = timeline.mode != scene::Scene::TimelineMode::Playback && timeline.playing;
+            draw_list->AddRectFilled(timeline_min, timeline_max, timeline_active ? IM_COL32(12, 42, 38, 184) : IM_COL32(15, 18, 22, 164), 7.0f);
+            draw_list->AddRect(timeline_min, timeline_max, timeline_active ? IM_COL32(72, 202, 154, 96) : IM_COL32(92, 102, 112, 72), 7.0f);
+            draw_list->AddText(ImVec2{timeline_min.x + timeline_padding.x, timeline_min.y + timeline_padding.y}, IM_COL32(218, 236, 232, 255), timeline_hint.c_str());
+            next_left_overlay_y = timeline_max.y + 8.0f;
+        }
+
         std::string selection_text = this->scene_selection_summary();
         const ImVec2 selection_padding{10.0f, 7.0f};
         ImVec2 selection_size = ImGui::CalcTextSize(selection_text.c_str());
@@ -3247,7 +3263,7 @@ namespace spectra::rasterizer {
             selection_text = this->selection.active_scene_object.has_value() ? std::format("{} selected", this->selection.selected_scene_objects.size()) : "No selection";
             selection_size = ImGui::CalcTextSize(selection_text.c_str());
         }
-        const ImVec2 selection_min{image_min.x + 12.0f, hud_max.y + 8.0f};
+        const ImVec2 selection_min{image_min.x + 12.0f, next_left_overlay_y};
         const ImVec2 selection_max{selection_min.x + selection_size.x + selection_padding.x * 2.0f, selection_min.y + selection_size.y + selection_padding.y * 2.0f};
         const ImU32 selection_background = this->selection.active_scene_object.has_value() ? IM_COL32(12, 38, 48, 190) : IM_COL32(15, 18, 22, 150);
         draw_list->AddRectFilled(selection_min, selection_max, selection_background, 7.0f);
@@ -3297,6 +3313,15 @@ namespace spectra::rasterizer {
         this->handle_viewport_input(image_rect);
         this->draw_viewport_overlays(image_rect);
         this->draw_viewport_toolbar(image_rect);
+    }
+
+    void Renderer::handle_timeline_shortcuts() {
+        if (!this->timeline_enabled()) return;
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.WantTextInput) return;
+        if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+        if (this->timeline_streaming_enabled() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) this->toggle_timeline_playback();
+        if (ImGui::IsKeyPressed(ImGuiKey_R, false)) this->request_timeline_reset();
     }
 
     void Renderer::commit_timeline_from_ui(scene::Scene::Timeline timeline) {

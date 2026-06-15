@@ -324,6 +324,7 @@ namespace spectra::rasterizer {
         void draw_inspector_panel();
         void draw_inspector_material_block(std::string_view material_name);
         void draw_inspector_transform(const scene::Transform& transform);
+        void handle_timeline_shortcuts();
         void commit_timeline_from_ui(scene::Scene::Timeline timeline);
         [[nodiscard]] bool timeline_enabled() const;
         [[nodiscard]] bool timeline_streaming_enabled() const;
