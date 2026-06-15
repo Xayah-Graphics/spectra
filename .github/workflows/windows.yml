@@ -60,23 +60,10 @@ jobs:
           cuda: ${{ env.SPECTRA_CUDA_VERSION }}
 
       - name: Install Vulkan SDK
-        id: vulkan-sdk
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
           vulkan_version: ${{ env.SPECTRA_VULKAN_VERSION }}
           cache: true
-
-      - name: Export Vulkan SDK
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $vulkanSdk = "${{ steps.vulkan-sdk.outputs.VULKAN_SDK }}"
-          if ([string]::IsNullOrWhiteSpace($vulkanSdk)) {
-            throw "The Vulkan SDK action did not report a VULKAN_SDK output."
-          }
-
-          "VULKAN_SDK=$vulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          (Join-Path $vulkanSdk "Bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install Slang
         shell: pwsh
