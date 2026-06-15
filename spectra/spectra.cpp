@@ -612,10 +612,11 @@ namespace spectra {
     }
 
     void Spectra::record_frame(FrameState& frame) {
-        this->draw_command_bar();
+        this->process_command_bar_shortcuts();
         this->draw_dockspace();
         this->draw_sidebar();
         this->draw_registered_panels();
+        this->draw_command_bar();
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_slot_index];
         command_buffer.reset();
@@ -964,7 +965,7 @@ namespace spectra {
         this->sync_active_sidebar_tab();
     }
 
-    void Spectra::draw_command_bar() {
+    void Spectra::process_command_bar_shortcuts() {
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
             for (Panel& panel : this->workspace.panels) {
@@ -988,14 +989,17 @@ namespace spectra {
             }
         }
         this->sync_active_sidebar_tab();
+    }
 
+    void Spectra::draw_command_bar() {
+        this->sync_active_sidebar_tab();
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         ImGui::SetNextWindowViewport(main_viewport->ID);
         ImGui::SetNextWindowPos(main_viewport->WorkPos);
         ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, command_bar_height()});
 
-        constexpr ImGuiWindowFlags command_bar_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        constexpr ImGuiWindowFlags command_bar_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 7.0f});
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{6.0f, 0.0f});
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{13.0f / 255.0f, 15.0f / 255.0f, 18.0f / 255.0f, 1.0f});
@@ -1164,17 +1168,24 @@ namespace spectra {
             return;
         }
         if (ImGui::BeginTabBar("SidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            const bool selection_requested = this->workspace.sidebar_tab_selection_requested;
+            const std::string requested_tab_id = this->workspace.active_sidebar_tab_id;
+            bool selection_request_consumed = !selection_requested;
             for (SidebarTab* tab : visible_tabs) {
-                const ImGuiTabItemFlags tab_flags = this->workspace.sidebar_tab_selection_requested && tab->id == this->workspace.active_sidebar_tab_id ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                const bool requested_tab         = selection_requested && tab->id == requested_tab_id;
+                const ImGuiTabItemFlags tab_flags = requested_tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
                 const std::string label           = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
                 if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
-                    this->workspace.active_sidebar_tab_id = tab->id;
-                    ImGui::Spacing();
-                    tab->draw();
+                    if (!selection_requested || requested_tab) {
+                        this->workspace.active_sidebar_tab_id = tab->id;
+                        if (requested_tab) selection_request_consumed = true;
+                        ImGui::Spacing();
+                        tab->draw();
+                    }
                     ImGui::EndTabItem();
                 }
             }
-            this->workspace.sidebar_tab_selection_requested = false;
+            if (selection_request_consumed) this->workspace.sidebar_tab_selection_requested = false;
             ImGui::EndTabBar();
         }
         ImGui::End();

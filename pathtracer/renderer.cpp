@@ -878,11 +878,12 @@ namespace spectra::pathtracer {
         void load_source_scene();
 
         void draw_viewport_window();
+        void draw_viewport_overlays();
+        void draw_viewport_toolbar();
         void draw_render_tab();
         void draw_camera_tab();
         void draw_scene_tab();
         void draw_tone_mapping_tab();
-        void draw_performance_overlay();
 
         void unload_scene_noexcept() noexcept;
         void create_for_resolution(const std::array<int, 2>& resolution);
@@ -913,7 +914,7 @@ namespace spectra::pathtracer {
         std::uint32_t frame_count{};
         vk::Extent2D swapchain_extent{};
         bool attached{false};
-        bool performance_overlay_visible{true};
+        bool overlays_visible{true};
         std::shared_ptr<const scene::Scene> source_scene{};
         std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
 
@@ -1528,27 +1529,18 @@ namespace {
         return std::format("{}", value);
     }
 
-    [[nodiscard]] ImFont* overlay_value_font() {
-        ImGuiIO& io = ImGui::GetIO();
-        if (io.Fonts == nullptr) throw std::runtime_error("ImGui font atlas is unavailable");
-        if (io.Fonts->Fonts.Size < 2) throw std::runtime_error("Spectra performance overlay requires the mono UI font");
-        ImFont* font = io.Fonts->Fonts.back();
-        if (font == nullptr) throw std::runtime_error("Spectra performance overlay mono font is null");
-        return font;
+    void draw_tooltip(const char* text) {
+        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) return;
+        ImGui::SetTooltip("%s", text);
     }
 
-    void draw_overlay_statistics_row(const char* label, const char* value) {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextDisabled("%s", label);
-        ImGui::TableSetColumnIndex(1);
-        ImGui::PushFont(overlay_value_font());
-        ImGui::TextUnformatted(value);
-        ImGui::PopFont();
-    }
-
-    void draw_overlay_statistics_row(const char* label, const std::string& value) {
-        draw_overlay_statistics_row(label, value.c_str());
+    [[nodiscard]] std::string fitting_overlay_text(const std::initializer_list<std::string> candidates, const float max_width) {
+        if (!(max_width > 0.0f)) return {};
+        for (const std::string& text : candidates) {
+            if (text.empty()) continue;
+            if (ImGui::CalcTextSize(text.c_str()).x <= max_width) return text;
+        }
+        return {};
     }
 } // namespace
 
@@ -1568,7 +1560,8 @@ namespace spectra::pathtracer {
         this->ui.viewport_position         = {viewport_position.x, viewport_position.y};
         this->ui.viewport_size             = {viewport_size.x, viewport_size.y};
         this->ui.viewport_framebuffer_size = viewport_framebuffer_size;
-        this->ui.viewport_hovered          = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow);
+        const ImVec2 viewport_max{viewport_position.x + viewport_size.x, viewport_position.y + viewport_size.y};
+        this->ui.viewport_hovered          = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(viewport_position, viewport_max);
         this->ui.viewport_focused          = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootWindow);
         this->observe_viewport_render_resolution(viewport_framebuffer_size);
         if (this->pipeline_ready()) {
@@ -1577,16 +1570,17 @@ namespace spectra::pathtracer {
             if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra pathtracer viewport descriptor is null");
             const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
             ImGui::Image(ImTextureRef{texture_id}, viewport_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
-            ImGui::SetCursorScreenPos(viewport_position);
         } else if (this->scene_info.has_value()) {
             const char* pending_label = this->render_resolution_sync.rebuilding ? "Rebuilding pathtracer" : "Waiting for viewport resolution";
             const ImVec2 text_size    = ImGui::CalcTextSize(pending_label);
-            ImGui::SetCursorScreenPos(ImVec2{viewport_position.x + std::max(0.0f, (viewport_size.x - text_size.x) * 0.5f), viewport_position.y + std::max(0.0f, (viewport_size.y - text_size.y) * 0.5f)});
-            ImGui::TextDisabled("%s", pending_label);
-            ImGui::SetCursorScreenPos(viewport_position);
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            draw_list->AddText(ImVec2{viewport_position.x + std::max(0.0f, (viewport_size.x - text_size.x) * 0.5f), viewport_position.y + std::max(0.0f, (viewport_size.y - text_size.y) * 0.5f)}, ImGui::GetColorU32(ImGuiCol_TextDisabled), pending_label);
+            ImGui::Dummy(viewport_size);
+        } else {
+            ImGui::Dummy(viewport_size);
         }
-        ImGui::InvisibleButton("ViewportInputSurface", viewport_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-        this->draw_performance_overlay();
+        this->draw_viewport_overlays();
+        this->draw_viewport_toolbar();
     }
 
     void Renderer::Impl::draw_camera_tab() {
@@ -1760,64 +1754,105 @@ namespace spectra::pathtracer {
         }
     }
 
-    void Renderer::Impl::draw_performance_overlay() {
-        if (!this->performance_overlay_visible || !this->ui.viewport_known) return;
+    void Renderer::Impl::draw_viewport_overlays() {
+        if (!this->overlays_visible || !this->ui.viewport_known) return;
+        const ImVec2 image_min{this->ui.viewport_position[0], this->ui.viewport_position[1]};
+        const ImVec2 image_size{this->ui.viewport_size[0], this->ui.viewport_size[1]};
+        if (image_size.x <= 1.0f || image_size.y <= 1.0f) return;
+        const ImVec2 image_max{image_min.x + image_size.x, image_min.y + image_size.y};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-        const ImVec2 overlay_position{this->ui.viewport_position[0] + 12.0f, this->ui.viewport_position[1] + 12.0f};
-        ImGui::SetNextWindowPos(overlay_position, ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.48f);
-        constexpr ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{10.0f, 8.0f});
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 7.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.050f, 0.058f, 0.068f, 0.88f});
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.250f, 0.310f, 0.360f, 0.62f});
-        const bool began = ImGui::Begin("PathtracerPerformanceOverlay", nullptr, overlay_flags);
-        if (!began) {
-            ImGui::End();
-            ImGui::PopStyleColor(2);
-            ImGui::PopStyleVar(3);
-            return;
+        ImGui::PushClipRect(image_min, image_max, true);
+        const Status status = this->pipeline_status();
+        std::string scene_title{"No Scene"};
+        if (this->scene_info.has_value()) {
+            const scene::Scene::Info& scene = this->active_scene_info();
+            scene_title = scene.title.empty() ? std::string{scene.name} : std::string{scene.title};
+        }
+        const std::string render_resolution = this->render_resolution_sync.pipeline_created ? resolution_text(this->render_resolution_sync.active_resolution) : "Pending";
+        std::string sample_text{"sample pending"};
+        std::string progress_text{"pending"};
+        if (this->render_pipeline != nullptr) {
+            sample_text   = std::format("sample {} / {}", this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count());
+            progress_text = std::format("{:.1f}%", this->render_pipeline->completion_ratio() * 100.0f);
         }
 
-        constexpr ImGuiTableFlags table_flags = ImGuiTableFlags_SizingFixedFit;
-        const Status status         = this->pipeline_status();
-        const std::string scene_title         = this->scene_info.has_value() ? std::string{this->active_scene_info().title} : "No Scene";
-        const std::string viewport_resolution = resolution_text(this->ui.viewport_framebuffer_size);
-        const std::string render_resolution   = this->render_resolution_sync.pipeline_created ? resolution_text(this->render_resolution_sync.active_resolution) : "Pending";
-
-        ImGui::TextDisabled("%s", "Performance");
-        if (ImGui::BeginTable("SpectraPathtracerPerformanceOverlayStats", 2, table_flags)) {
-            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 76.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 148.0f);
-            draw_overlay_statistics_row("Scene", scene_title);
-            draw_overlay_statistics_row("State", status.state);
-            if (this->render_pipeline != nullptr) {
-                draw_overlay_statistics_row("Sample", std::format("{} / {}", this->render_pipeline->current_sample(), this->render_pipeline->target_sample_count()));
-                draw_overlay_statistics_row("Progress", std::format("{:.1f}%", this->render_pipeline->completion_ratio() * 100.0f));
-            } else {
-                draw_overlay_statistics_row("Sample", "No Pipeline");
-                draw_overlay_statistics_row("Progress", "Pending");
+        if (image_size.y >= 90.0f) {
+            const ImVec2 hud_padding{10.0f, 7.0f};
+            const float hud_text_width = std::max(0.0f, image_size.x - 24.0f - hud_padding.x * 2.0f);
+            const std::string hud = fitting_overlay_text({
+                std::format("{} | {} | {} | {} | render {}", scene_title, status.state, sample_text, progress_text, render_resolution),
+                std::format("{} | {} | {} | render {}", status.state, sample_text, progress_text, render_resolution),
+                std::format("{} | render {}", status.state, render_resolution),
+                status.state,
+            }, hud_text_width);
+            if (!hud.empty()) {
+                const ImVec2 hud_size = ImGui::CalcTextSize(hud.c_str());
+                const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
+                const ImVec2 hud_max{hud_min.x + hud_size.x + hud_padding.x * 2.0f, hud_min.y + hud_size.y + hud_padding.y * 2.0f};
+                draw_list->AddRectFilled(hud_min, hud_max, IM_COL32(15, 18, 22, 184), 7.0f);
+                draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
             }
-            draw_overlay_statistics_row("Viewport", viewport_resolution);
-            draw_overlay_statistics_row("Render", render_resolution);
-            draw_overlay_statistics_row("Frame", std::format("{:.3f} ms", this->statistics.last_frame_milliseconds));
-            if (this->statistics.frame_milliseconds.has_value()) {
-                const float average_frame_milliseconds = this->statistics.frame_milliseconds.average();
-                if (!(average_frame_milliseconds > 0.0f)) throw std::runtime_error("Average frame time must be positive after statistics are collected");
-                draw_overlay_statistics_row("FPS Avg", std::format("{:.1f}", 1000.0f / average_frame_milliseconds));
-            } else {
-                draw_overlay_statistics_row("FPS Avg", "Collecting");
-            }
-            if (this->statistics.throughput_mspp.has_value())
-                draw_overlay_statistics_row("Throughput", std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()));
-            else
-                draw_overlay_statistics_row("Throughput", "Collecting");
-            ImGui::EndTable();
         }
-        ImGui::End();
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar(3);
+
+        const std::string frame_text = std::format("frame {:.3f} ms", this->statistics.last_frame_milliseconds);
+        std::string fps_text{"FPS collecting"};
+        if (this->statistics.frame_milliseconds.has_value()) {
+            const float average_frame_milliseconds = this->statistics.frame_milliseconds.average();
+            if (!(average_frame_milliseconds > 0.0f)) throw std::runtime_error("Average frame time must be positive after statistics are collected");
+            fps_text = std::format("FPS {:.1f}", 1000.0f / average_frame_milliseconds);
+        }
+        const std::string throughput_text = this->statistics.throughput_mspp.has_value() ? std::format("{:.2f} MSPP/s", this->statistics.throughput_mspp.average()) : "throughput collecting";
+        const ImVec2 chip_padding{10.0f, 7.0f};
+        const float chip_text_width = std::max(0.0f, image_size.x - 24.0f - chip_padding.x * 2.0f);
+        const std::string chip = fitting_overlay_text({
+            std::format("{} | {} | {}", frame_text, fps_text, throughput_text),
+            std::format("{} | {}", frame_text, fps_text),
+            frame_text,
+        }, chip_text_width);
+        if (!chip.empty() && image_size.y >= 48.0f) {
+            const ImVec2 chip_size = ImGui::CalcTextSize(chip.c_str());
+            const ImVec2 chip_min{image_max.x - chip_size.x - chip_padding.x * 2.0f - 12.0f, image_max.y - chip_size.y - chip_padding.y * 2.0f - 12.0f};
+            const ImVec2 chip_max{chip_min.x + chip_size.x + chip_padding.x * 2.0f, chip_min.y + chip_size.y + chip_padding.y * 2.0f};
+            draw_list->AddRectFilled(chip_min, chip_max, IM_COL32(15, 18, 22, 164), 7.0f);
+            draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, IM_COL32(206, 214, 220, 255), chip.c_str());
+        }
+        ImGui::PopClipRect();
+    }
+
+    void Renderer::Impl::draw_viewport_toolbar() {
+        if (!this->ui.viewport_known) return;
+        if (this->ui.viewport_size[0] < 112.0f || this->ui.viewport_size[1] < 54.0f) return;
+        const ImVec2 image_min{this->ui.viewport_position[0], this->ui.viewport_position[1]};
+        const ImVec2 image_max{image_min.x + this->ui.viewport_size[0], image_min.y + this->ui.viewport_size[1]};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        constexpr float button_size = 30.0f;
+        constexpr float gap = 4.0f;
+        const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
+        const ImVec2 padding{6.0f, 5.0f};
+        const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 2.0f + gap, origin.y + padding.y * 2.0f + button_size};
+        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 208), 7.0f);
+        draw_list->AddRect(origin, background_max, IM_COL32(92, 102, 112, 96), 7.0f);
+
+        ImGui::PushClipRect(image_min, image_max, true);
+        ImGui::PushID("SpectraPathtracerViewportToolbar");
+        const auto draw_button = [button_size](const char* label, const char* tooltip, const bool active) {
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.16f, 0.28f, 0.34f, 1.0f});
+            const bool clicked = ImGui::Button(label, ImVec2{button_size, button_size});
+            if (active) ImGui::PopStyleColor();
+            draw_tooltip(tooltip);
+            return clicked;
+        };
+
+        ImGui::SetCursorScreenPos(ImVec2{origin.x + padding.x, origin.y + padding.y});
+        const bool reset_disabled = !this->camera.initialized || !this->pipeline_ready();
+        if (reset_disabled) ImGui::BeginDisabled();
+        if (draw_button(ICON_MS_RESET_FOCUS "##reset_view", "Reset Camera", false)) this->reset_camera();
+        if (reset_disabled) ImGui::EndDisabled();
+        ImGui::SameLine(0.0f, gap);
+        if (draw_button(this->overlays_visible ? ICON_MS_VISIBILITY "##overlays" : ICON_MS_VISIBILITY_OFF "##overlays", "Overlays", this->overlays_visible)) this->overlays_visible = !this->overlays_visible;
+        ImGui::PopID();
+        ImGui::PopClipRect();
     }
 
     void Renderer::Impl::register_panels(HostView& host) {
@@ -1861,16 +1896,6 @@ namespace spectra::pathtracer {
             .shortcut_label = "F6",
             .shortcut_key   = ImGuiKey_F6,
             .draw           = [this] { this->draw_tone_mapping_tab(); },
-        });
-        host.register_toolbar_action(ToolbarAction{
-            .id             = "pathtracer.performance_overlay",
-            .title          = "Performance Overlay",
-            .icon           = ICON_MS_ANALYTICS,
-            .shortcut_label = "F9",
-            .shortcut_key   = ImGuiKey_F9,
-            .enabled        = [] { return true; },
-            .active         = [this] { return this->performance_overlay_visible; },
-            .trigger        = [this] { this->performance_overlay_visible = !this->performance_overlay_visible; },
         });
     }
 } // namespace spectra::pathtracer

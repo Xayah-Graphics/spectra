@@ -234,6 +234,7 @@ namespace spectra {
         void sync_active_sidebar_tab();
         void activate_renderer(std::size_t renderer_index);
 
+        void process_command_bar_shortcuts();
         void draw_command_bar();
         void draw_dockspace();
         void draw_sidebar();
