@@ -3,8 +3,15 @@ add_library(spectra::rasterizer ALIAS spectra_rasterizer)
 
 find_program(SLANGC_EXECUTABLE NAMES slangc REQUIRED)
 set(SPECTRA_RASTERIZER_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-function(spectra_rasterizer_shader output_variable shader_name stage entry embed_name)
-        set(shader_file "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader_name}.slang")
+
+file(GLOB SPECTRA_RASTERIZER_SHADER_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang")
+if(NOT SPECTRA_RASTERIZER_SHADER_FILES)
+        message(FATAL_ERROR "Spectra rasterizer requires at least one Slang shader in ${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+endif()
+
+function(spectra_rasterizer_shader_stage output_variable shader_file shader_name stage)
+        set(entry "${stage}_main")
+        set(embed_name "spectra_rasterizer_${shader_name}_${stage}_spv")
         set(output_file "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_${shader_name}_${stage}_spv.h")
         add_custom_command(
                 OUTPUT "${output_file}"
@@ -16,28 +23,23 @@ function(spectra_rasterizer_shader output_variable shader_name stage entry embed
         set("${output_variable}" "${output_file}" PARENT_SCOPE)
 endfunction()
 
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_VERTEX_HEADER mesh vertex vertex_main spectra_rasterizer_mesh_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER mesh fragment fragment_main spectra_rasterizer_mesh_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_PICK_VERTEX_HEADER mesh_pick vertex vertex_main spectra_rasterizer_mesh_pick_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_PICK_FRAGMENT_HEADER mesh_pick fragment fragment_main spectra_rasterizer_mesh_pick_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_SELECTION_MASK_VERTEX_HEADER mesh_selection_mask vertex vertex_main spectra_rasterizer_mesh_selection_mask_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_MESH_SELECTION_MASK_FRAGMENT_HEADER mesh_selection_mask fragment fragment_main spectra_rasterizer_mesh_selection_mask_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_VERTEX_HEADER point_cloud vertex vertex_main spectra_rasterizer_point_cloud_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_FRAGMENT_HEADER point_cloud fragment fragment_main spectra_rasterizer_point_cloud_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_PICK_VERTEX_HEADER point_cloud_pick vertex vertex_main spectra_rasterizer_point_cloud_pick_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_PICK_FRAGMENT_HEADER point_cloud_pick fragment fragment_main spectra_rasterizer_point_cloud_pick_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_VERTEX_HEADER point_cloud_selection_mask vertex vertex_main spectra_rasterizer_point_cloud_selection_mask_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_FRAGMENT_HEADER point_cloud_selection_mask fragment fragment_main spectra_rasterizer_point_cloud_selection_mask_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER volume vertex vertex_main spectra_rasterizer_volume_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER volume fragment fragment_main spectra_rasterizer_volume_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_PICK_VERTEX_HEADER volume_pick vertex vertex_main spectra_rasterizer_volume_pick_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_PICK_FRAGMENT_HEADER volume_pick fragment fragment_main spectra_rasterizer_volume_pick_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_SELECTION_MASK_VERTEX_HEADER volume_selection_mask vertex vertex_main spectra_rasterizer_volume_selection_mask_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VOLUME_SELECTION_MASK_FRAGMENT_HEADER volume_selection_mask fragment fragment_main spectra_rasterizer_volume_selection_mask_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VIEWPORT_GRID_VERTEX_HEADER viewport_grid vertex vertex_main spectra_rasterizer_viewport_grid_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_VIEWPORT_GRID_FRAGMENT_HEADER viewport_grid fragment fragment_main spectra_rasterizer_viewport_grid_fragment_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_SELECTION_OUTLINE_VERTEX_HEADER selection_outline vertex vertex_main spectra_rasterizer_selection_outline_vertex_spv)
-spectra_rasterizer_shader(SPECTRA_RASTERIZER_SELECTION_OUTLINE_FRAGMENT_HEADER selection_outline fragment fragment_main spectra_rasterizer_selection_outline_fragment_spv)
+set(SPECTRA_RASTERIZER_SHADER_HEADERS)
+set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT)
+foreach(shader_file IN LISTS SPECTRA_RASTERIZER_SHADER_FILES)
+        get_filename_component(shader_name "${shader_file}" NAME_WE)
+        foreach(stage IN ITEMS vertex fragment)
+                spectra_rasterizer_shader_stage(shader_header "${shader_file}" "${shader_name}" "${stage}")
+                list(APPEND SPECTRA_RASTERIZER_SHADER_HEADERS "${shader_header}")
+                get_filename_component(shader_header_name "${shader_header}" NAME)
+                string(APPEND SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT "#include <${shader_header_name}>\n")
+        endforeach()
+endforeach()
+
+set(SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER "${SPECTRA_RASTERIZER_GENERATED_DIR}/spectra_rasterizer_shaders_spv.h")
+file(MAKE_DIRECTORY "${SPECTRA_RASTERIZER_GENERATED_DIR}")
+file(GENERATE OUTPUT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}" CONTENT "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_CONTENT}")
+set_source_files_properties("${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}" PROPERTIES GENERATED TRUE)
+
 target_sources(
         spectra_rasterizer
         PUBLIC
@@ -51,28 +53,8 @@ target_sources(
         PRIVATE
         renderer.cpp
         visualization.cpp
-        "${SPECTRA_RASTERIZER_MESH_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_MESH_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_MESH_PICK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_MESH_PICK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_MESH_SELECTION_MASK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_MESH_SELECTION_MASK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_POINT_CLOUD_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_POINT_CLOUD_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_POINT_CLOUD_PICK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_POINT_CLOUD_PICK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_POINT_CLOUD_SELECTION_MASK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_VOLUME_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_VOLUME_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_VOLUME_PICK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_VOLUME_PICK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_VOLUME_SELECTION_MASK_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_VOLUME_SELECTION_MASK_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_VIEWPORT_GRID_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_VIEWPORT_GRID_FRAGMENT_HEADER}"
-        "${SPECTRA_RASTERIZER_SELECTION_OUTLINE_VERTEX_HEADER}"
-        "${SPECTRA_RASTERIZER_SELECTION_OUTLINE_FRAGMENT_HEADER}"
+        "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
+        ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
 target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene)
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
