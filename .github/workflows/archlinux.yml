@@ -29,7 +29,7 @@ jobs:
       CMAKE_BUILD_TYPE: Release
       SPECTRA_BUILD_DIR: build
       SPECTRA_MIN_CMAKE_VERSION: '4.3'
-      SPECTRA_CUDA_VERSION: '13.2'
+      SPECTRA_CUDA_MAJOR_VERSION: '13'
       SPECTRA_OPTIX_TAG: v9.1.0
       SPECTRA_SLANG_URL: https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-linux-x86_64.tar.gz
       CUDAToolkit_ROOT: /opt/cuda
@@ -111,7 +111,7 @@ jobs:
             exit 1
           fi
 
-          nvcc --version | grep -Eq "release ${SPECTRA_CUDA_VERSION//./\\.}"
+          nvcc --version | grep -Eq "release ${SPECTRA_CUDA_MAJOR_VERSION}\\."
 
       - name: Checkout
         uses: actions/checkout@v4

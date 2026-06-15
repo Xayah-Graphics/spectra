@@ -6,7 +6,7 @@
 ![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white)
 ![CMake 4.3](https://img.shields.io/badge/CMake-4.3-064F8C?logo=cmake&logoColor=white)
 ![Vulkan 1.4](https://img.shields.io/badge/Vulkan-1.4-AC162C?logo=vulkan&logoColor=white)
-![CUDA 13.2](https://img.shields.io/badge/CUDA-13.2-76B900?logo=nvidia&logoColor=white)
+![CUDA 13.x](https://img.shields.io/badge/CUDA-13.x-76B900?logo=nvidia&logoColor=white)
 ![OptiX 9.1](https://img.shields.io/badge/OptiX-9.1-76B900?logo=nvidia&logoColor=white)
 
 Spectra is an alpha-stage renderer and visualization workspace for graphics research, physical simulation, and 3D reconstruction experiments. It provides a Vulkan-based interactive host with two renderer backends:
