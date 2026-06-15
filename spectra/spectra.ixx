@@ -310,7 +310,7 @@ namespace spectra {
             std::vector<SidebarTab> sidebar_tabs{};
             std::vector<ToolbarAction> toolbar_actions{};
             bool dock_layout_initialized{false};
-            bool sidebar_visible{true};
+            bool sidebar_visible{false};
             std::string active_sidebar_tab_id{};
             bool sidebar_tab_selection_requested{false};
         } workspace;

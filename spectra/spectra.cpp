@@ -769,7 +769,7 @@ namespace spectra {
         this->workspace.toolbar_actions.clear();
         this->renderer_registry.active_index    = 0;
         this->workspace.dock_layout_initialized = false;
-        this->workspace.sidebar_visible         = true;
+        this->workspace.sidebar_visible         = false;
         this->workspace.active_sidebar_tab_id.clear();
         this->workspace.sidebar_tab_selection_requested = false;
     }
@@ -902,7 +902,7 @@ namespace spectra {
         this->workspace.sidebar_tabs.push_back(std::move(tab));
         if (initialize_active_sidebar_tab) {
             this->workspace.active_sidebar_tab_id           = this->workspace.sidebar_tabs.back().id;
-            this->workspace.sidebar_tab_selection_requested = true;
+            this->workspace.sidebar_tab_selection_requested = false;
         }
         this->workspace.dock_layout_initialized = false;
     }
@@ -950,8 +950,7 @@ namespace spectra {
         for (const SidebarTab& tab : this->workspace.sidebar_tabs) {
             if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
             this->workspace.active_sidebar_tab_id           = tab.id;
-            this->workspace.sidebar_visible                 = true;
-            this->workspace.sidebar_tab_selection_requested = true;
+            this->workspace.sidebar_tab_selection_requested = this->workspace.sidebar_visible;
             return;
         }
         this->workspace.active_sidebar_tab_id.clear();
