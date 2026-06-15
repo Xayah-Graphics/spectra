@@ -17,11 +17,6 @@ export module spectra;
 import std;
 
 namespace spectra {
-    export enum class DockSlot : std::uint8_t {
-        Center,
-        Floating,
-    };
-
     export struct Panel {
         std::string id{};
         std::string title{};
@@ -29,7 +24,6 @@ namespace spectra {
         std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
-        DockSlot dock_slot{DockSlot::Floating};
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
@@ -37,7 +31,7 @@ namespace spectra {
         std::move_only_function<void()> draw{};
     };
 
-    export struct SidebarTab {
+    export struct RendererPopoverTab {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -87,7 +81,6 @@ namespace spectra {
         std::string{std::move(panel.owner_renderer)};
         std::string{std::move(panel.shortcut_label)};
         static_cast<ImGuiKey>(panel.shortcut_key);
-        static_cast<std::underlying_type_t<DockSlot>>(panel.dock_slot);
         static_cast<ImGuiWindowFlags>(panel.window_flags);
         { panel.visible } -> std::convertible_to<bool>;
         { panel.closable } -> std::convertible_to<bool>;
@@ -95,8 +88,8 @@ namespace spectra {
         std::move_only_function<void()>{std::move(panel.draw)};
     };
 
-    export template <typename SidebarTabContribution>
-    concept SidebarTabLike = requires(SidebarTabContribution tab) {
+    export template <typename RendererPopoverTabContribution>
+    concept RendererPopoverTabLike = requires(RendererPopoverTabContribution tab) {
         std::string{std::move(tab.id)};
         std::string{std::move(tab.title)};
         std::string{std::move(tab.icon)};
@@ -168,9 +161,9 @@ namespace spectra {
         template <typename PanelContribution>
             requires PanelLike<PanelContribution>
         void register_panel(PanelContribution panel);
-        template <typename SidebarTabContribution>
-            requires SidebarTabLike<SidebarTabContribution>
-        void register_sidebar_tab(SidebarTabContribution tab);
+        template <typename RendererPopoverTabContribution>
+            requires RendererPopoverTabLike<RendererPopoverTabContribution>
+        void register_renderer_popover_tab(RendererPopoverTabContribution tab);
         template <typename ToolbarActionContribution>
             requires ToolbarActionLike<ToolbarActionContribution>
         void register_toolbar_action(ToolbarActionContribution action);
@@ -244,19 +237,19 @@ namespace spectra {
 
         void store_renderer(RendererSlot renderer);
         void store_panel(Panel panel);
-        void store_sidebar_tab(SidebarTab tab);
+        void store_renderer_popover_tab(RendererPopoverTab tab);
         void store_toolbar_action(ToolbarAction action);
         void store_command_bar_widget(CommandBarWidget widget);
 
         [[nodiscard]] std::string resolve_contribution_owner(std::string owner_renderer) const;
         [[nodiscard]] bool contribution_belongs_to_active_renderer(std::string_view owner_renderer) const;
-        void sync_active_sidebar_tab();
+        void sync_active_renderer_popover_tab();
         void activate_renderer(std::size_t renderer_index);
 
         void process_command_bar_shortcuts();
         void draw_command_bar();
         void draw_dockspace();
-        void draw_sidebar();
+        void draw_renderer_popover();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
 
@@ -326,13 +319,13 @@ namespace spectra {
 
         struct {
             std::vector<Panel> panels{};
-            std::vector<SidebarTab> sidebar_tabs{};
+            std::vector<RendererPopoverTab> renderer_popover_tabs{};
             std::vector<ToolbarAction> toolbar_actions{};
             std::vector<CommandBarWidget> command_bar_widgets{};
             bool dock_layout_initialized{false};
-            bool sidebar_visible{false};
-            std::string active_sidebar_tab_id{};
-            bool sidebar_tab_selection_requested{false};
+            bool renderer_popover_open{false};
+            std::string active_renderer_popover_tab_id{};
+            bool renderer_popover_tab_selection_requested{false};
         } workspace;
     };
 
@@ -352,7 +345,6 @@ namespace spectra {
             .owner_renderer      = this->resolve_contribution_owner(std::string{std::move(panel.owner_renderer)}),
             .shortcut_label      = std::string{std::move(panel.shortcut_label)},
             .shortcut_key        = static_cast<ImGuiKey>(panel.shortcut_key),
-            .dock_slot           = static_cast<DockSlot>(static_cast<std::underlying_type_t<DockSlot>>(panel.dock_slot)),
             .window_flags        = static_cast<ImGuiWindowFlags>(panel.window_flags),
             .visible             = static_cast<bool>(panel.visible),
             .closable            = static_cast<bool>(panel.closable),
@@ -361,10 +353,10 @@ namespace spectra {
         });
     }
 
-    template <typename SidebarTabContribution>
-        requires SidebarTabLike<SidebarTabContribution>
-    void Spectra::register_sidebar_tab(SidebarTabContribution tab) {
-        this->store_sidebar_tab(SidebarTab{
+    template <typename RendererPopoverTabContribution>
+        requires RendererPopoverTabLike<RendererPopoverTabContribution>
+    void Spectra::register_renderer_popover_tab(RendererPopoverTabContribution tab) {
+        this->store_renderer_popover_tab(RendererPopoverTab{
             .id             = std::string{std::move(tab.id)},
             .title          = std::string{std::move(tab.title)},
             .icon           = std::string{std::move(tab.icon)},

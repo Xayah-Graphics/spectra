@@ -15,11 +15,6 @@ export module spectra.rasterizer.host;
 import std;
 
 namespace spectra::rasterizer {
-    export enum class DockSlot : std::uint8_t {
-        Center = 0,
-        Floating = 1,
-    };
-
     export struct Panel {
         std::string id{};
         std::string title{};
@@ -27,7 +22,6 @@ namespace spectra::rasterizer {
         std::string owner_renderer{};
         std::string shortcut_label{};
         ImGuiKey shortcut_key{ImGuiKey_None};
-        DockSlot dock_slot{DockSlot::Floating};
         ImGuiWindowFlags window_flags{0};
         bool visible{true};
         bool closable{true};
@@ -35,7 +29,7 @@ namespace spectra::rasterizer {
         std::move_only_function<void()> draw{};
     };
 
-    export struct SidebarTab {
+    export struct RendererPopoverTab {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -71,20 +65,20 @@ namespace spectra::rasterizer {
     };
 
     export template <typename HostType>
-    concept Host = requires(HostType& host, Panel panel, SidebarTab tab, ToolbarAction action) {
+    concept Host = requires(HostType& host, Panel panel, RendererPopoverTab tab, ToolbarAction action) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
         { host.swapchain_extent() } -> std::same_as<vk::Extent2D>;
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
-        { host.register_sidebar_tab(std::move(tab)) } -> std::same_as<void>;
+        { host.register_renderer_popover_tab(std::move(tab)) } -> std::same_as<void>;
         { host.register_toolbar_action(std::move(action)) } -> std::same_as<void>;
     };
 
     export class HostView {
     public:
         template <Host HostType>
-        explicit HostView(HostType& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](Panel panel) { host.register_panel(std::move(panel)); }), registerSidebarTabCallback([&host](SidebarTab tab) { host.register_sidebar_tab(std::move(tab)); }), registerToolbarActionCallback([&host](ToolbarAction action) { host.register_toolbar_action(std::move(action)); }) {}
+        explicit HostView(HostType& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](Panel panel) { host.register_panel(std::move(panel)); }), registerRendererPopoverTabCallback([&host](RendererPopoverTab tab) { host.register_renderer_popover_tab(std::move(tab)); }), registerToolbarActionCallback([&host](ToolbarAction action) { host.register_toolbar_action(std::move(action)); }) {}
 
         HostView(const HostView& other)                = delete;
         HostView(HostView&& other) noexcept            = default;
@@ -112,8 +106,8 @@ namespace spectra::rasterizer {
             this->registerPanelCallback(std::move(panel));
         }
 
-        void register_sidebar_tab(SidebarTab tab) {
-            this->registerSidebarTabCallback(std::move(tab));
+        void register_renderer_popover_tab(RendererPopoverTab tab) {
+            this->registerRendererPopoverTabCallback(std::move(tab));
         }
 
         void register_toolbar_action(ToolbarAction action) {
@@ -126,7 +120,7 @@ namespace spectra::rasterizer {
         std::move_only_function<std::uint32_t()> frameCountCallback{};
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
         std::move_only_function<void(Panel)> registerPanelCallback{};
-        std::move_only_function<void(SidebarTab)> registerSidebarTabCallback{};
+        std::move_only_function<void(RendererPopoverTab)> registerRendererPopoverTabCallback{};
         std::move_only_function<void(ToolbarAction)> registerToolbarActionCallback{};
     };
 } // namespace spectra::rasterizer

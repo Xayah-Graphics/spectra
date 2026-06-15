@@ -615,7 +615,7 @@ namespace spectra {
         this->process_command_bar_shortcuts();
         this->draw_dockspace();
         this->draw_registered_panels();
-        this->draw_sidebar();
+        this->draw_renderer_popover();
         this->draw_command_bar();
 
         const vk::raii::CommandBuffer& command_buffer = this->sync.command_buffers[frame.frame_slot_index];
@@ -765,14 +765,14 @@ namespace spectra {
         }
         this->renderer_registry.slots.clear();
         this->workspace.panels.clear();
-        this->workspace.sidebar_tabs.clear();
+        this->workspace.renderer_popover_tabs.clear();
         this->workspace.toolbar_actions.clear();
         this->workspace.command_bar_widgets.clear();
         this->renderer_registry.active_index    = 0;
         this->workspace.dock_layout_initialized = false;
-        this->workspace.sidebar_visible         = false;
-        this->workspace.active_sidebar_tab_id.clear();
-        this->workspace.sidebar_tab_selection_requested = false;
+        this->workspace.renderer_popover_open   = false;
+        this->workspace.active_renderer_popover_tab_id.clear();
+        this->workspace.renderer_popover_tab_selection_requested = false;
     }
 
     void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
@@ -845,27 +845,27 @@ namespace spectra {
         }
         const bool first_renderer = this->renderer_registry.slots.empty();
         if (this->renderer_registry.registering_name.has_value()) throw std::runtime_error("Nested Spectra renderer registration is not supported");
-        const std::size_t panel_count              = this->workspace.panels.size();
-        const std::size_t sidebar_tab_count        = this->workspace.sidebar_tabs.size();
-        const std::size_t toolbar_action_count     = this->workspace.toolbar_actions.size();
-        const std::size_t command_bar_widget_count = this->workspace.command_bar_widgets.size();
-        const bool dock_layout_initialized         = this->workspace.dock_layout_initialized;
-        const bool sidebar_visible                 = this->workspace.sidebar_visible;
-        const std::string active_sidebar_tab_id    = this->workspace.active_sidebar_tab_id;
-        const bool sidebar_tab_selection_requested = this->workspace.sidebar_tab_selection_requested;
+        const std::size_t panel_count                                = this->workspace.panels.size();
+        const std::size_t renderer_popover_tab_count                 = this->workspace.renderer_popover_tabs.size();
+        const std::size_t toolbar_action_count                       = this->workspace.toolbar_actions.size();
+        const std::size_t command_bar_widget_count                   = this->workspace.command_bar_widgets.size();
+        const bool dock_layout_initialized                           = this->workspace.dock_layout_initialized;
+        const bool renderer_popover_open                             = this->workspace.renderer_popover_open;
+        const std::string active_renderer_popover_tab_id             = this->workspace.active_renderer_popover_tab_id;
+        const bool renderer_popover_tab_selection_requested = this->workspace.renderer_popover_tab_selection_requested;
         this->renderer_registry.registering_name = std::string{renderer_name};
         try {
             renderer.attach(*this);
             if (this->imgui.initialized) renderer.after_imgui_created();
         } catch (...) {
             this->workspace.panels.resize(panel_count);
-            this->workspace.sidebar_tabs.resize(sidebar_tab_count);
+            this->workspace.renderer_popover_tabs.resize(renderer_popover_tab_count);
             this->workspace.toolbar_actions.resize(toolbar_action_count);
             this->workspace.command_bar_widgets.resize(command_bar_widget_count);
-            this->workspace.dock_layout_initialized         = dock_layout_initialized;
-            this->workspace.sidebar_visible                 = sidebar_visible;
-            this->workspace.active_sidebar_tab_id           = active_sidebar_tab_id;
-            this->workspace.sidebar_tab_selection_requested = sidebar_tab_selection_requested;
+            this->workspace.dock_layout_initialized                  = dock_layout_initialized;
+            this->workspace.renderer_popover_open                    = renderer_popover_open;
+            this->workspace.active_renderer_popover_tab_id           = active_renderer_popover_tab_id;
+            this->workspace.renderer_popover_tab_selection_requested = renderer_popover_tab_selection_requested;
             this->renderer_registry.registering_name.reset();
             throw;
         }
@@ -878,11 +878,6 @@ namespace spectra {
         if (panel.id.empty()) throw std::runtime_error("Spectra panel id must not be empty");
         if (panel.title.empty()) throw std::runtime_error("Spectra panel title must not be empty");
         if (!panel.draw) throw std::runtime_error("Spectra panel draw callback must not be empty");
-        switch (panel.dock_slot) {
-        case DockSlot::Center:
-        case DockSlot::Floating: break;
-        default: throw std::runtime_error("Spectra panel dock slot is invalid");
-        }
         for (const Panel& existing_panel : this->workspace.panels) {
             if (!owner_scopes_overlap(existing_panel.owner_renderer, panel.owner_renderer)) continue;
             if (existing_panel.id == panel.id) throw std::runtime_error(std::string{"Duplicate Spectra panel id: "} + panel.id);
@@ -892,22 +887,21 @@ namespace spectra {
         this->workspace.dock_layout_initialized = false;
     }
 
-    void Spectra::store_sidebar_tab(SidebarTab tab) {
-        if (tab.id.empty()) throw std::runtime_error("Spectra sidebar tab id must not be empty");
-        if (tab.title.empty()) throw std::runtime_error("Spectra sidebar tab title must not be empty");
-        if (!tab.draw) throw std::runtime_error("Spectra sidebar tab draw callback must not be empty");
-        for (const SidebarTab& existing_tab : this->workspace.sidebar_tabs) {
+    void Spectra::store_renderer_popover_tab(RendererPopoverTab tab) {
+        if (tab.id.empty()) throw std::runtime_error("Spectra renderer popover tab id must not be empty");
+        if (tab.title.empty()) throw std::runtime_error("Spectra renderer popover tab title must not be empty");
+        if (!tab.draw) throw std::runtime_error("Spectra renderer popover tab draw callback must not be empty");
+        for (const RendererPopoverTab& existing_tab : this->workspace.renderer_popover_tabs) {
             if (!owner_scopes_overlap(existing_tab.owner_renderer, tab.owner_renderer)) continue;
-            if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab id: "} + tab.id);
-            if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra sidebar tab title: "} + tab.title);
+            if (existing_tab.id == tab.id) throw std::runtime_error(std::string{"Duplicate Spectra renderer popover tab id: "} + tab.id);
+            if (existing_tab.title == tab.title) throw std::runtime_error(std::string{"Duplicate Spectra renderer popover tab title: "} + tab.title);
         }
-        const bool initialize_active_sidebar_tab = this->workspace.active_sidebar_tab_id.empty();
-        this->workspace.sidebar_tabs.push_back(std::move(tab));
-        if (initialize_active_sidebar_tab) {
-            this->workspace.active_sidebar_tab_id           = this->workspace.sidebar_tabs.back().id;
-            this->workspace.sidebar_tab_selection_requested = false;
+        const bool initialize_active_renderer_popover_tab = this->workspace.active_renderer_popover_tab_id.empty();
+        this->workspace.renderer_popover_tabs.push_back(std::move(tab));
+        if (initialize_active_renderer_popover_tab) {
+            this->workspace.active_renderer_popover_tab_id           = this->workspace.renderer_popover_tabs.back().id;
+            this->workspace.renderer_popover_tab_selection_requested = false;
         }
-        this->workspace.dock_layout_initialized = false;
     }
 
     void Spectra::store_toolbar_action(ToolbarAction action) {
@@ -957,26 +951,26 @@ namespace spectra {
         return owner_renderer == this->renderer_registry.slots[this->renderer_registry.active_index].name;
     }
 
-    void Spectra::sync_active_sidebar_tab() {
-        for (const SidebarTab& tab : this->workspace.sidebar_tabs) {
+    void Spectra::sync_active_renderer_popover_tab() {
+        for (const RendererPopoverTab& tab : this->workspace.renderer_popover_tabs) {
             if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
-            if (tab.id == this->workspace.active_sidebar_tab_id) return;
+            if (tab.id == this->workspace.active_renderer_popover_tab_id) return;
         }
-        for (const SidebarTab& tab : this->workspace.sidebar_tabs) {
+        for (const RendererPopoverTab& tab : this->workspace.renderer_popover_tabs) {
             if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
-            this->workspace.active_sidebar_tab_id           = tab.id;
-            this->workspace.sidebar_tab_selection_requested = this->workspace.sidebar_visible;
+            this->workspace.active_renderer_popover_tab_id           = tab.id;
+            this->workspace.renderer_popover_tab_selection_requested = this->workspace.renderer_popover_open;
             return;
         }
-        this->workspace.active_sidebar_tab_id.clear();
-        this->workspace.sidebar_visible = false;
+        this->workspace.active_renderer_popover_tab_id.clear();
+        this->workspace.renderer_popover_open = false;
     }
 
     void Spectra::activate_renderer(const std::size_t renderer_index) {
         if (renderer_index >= this->renderer_registry.slots.size()) throw std::runtime_error("Spectra active renderer index is out of range");
         this->renderer_registry.active_index    = renderer_index;
         this->workspace.dock_layout_initialized = false;
-        this->sync_active_sidebar_tab();
+        this->sync_active_renderer_popover_tab();
     }
 
     void Spectra::process_command_bar_shortcuts() {
@@ -986,14 +980,14 @@ namespace spectra {
                 if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
                 if (panel.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(panel.shortcut_key, false)) panel.visible = !panel.visible;
             }
-            this->sync_active_sidebar_tab();
-            for (SidebarTab& tab : this->workspace.sidebar_tabs) {
+            this->sync_active_renderer_popover_tab();
+            for (RendererPopoverTab& tab : this->workspace.renderer_popover_tabs) {
                 if (!this->contribution_belongs_to_active_renderer(tab.owner_renderer)) continue;
                 if (tab.shortcut_key == ImGuiKey_None || !ImGui::IsKeyPressed(tab.shortcut_key, false)) continue;
-                const bool selected                             = this->workspace.sidebar_visible && tab.id == this->workspace.active_sidebar_tab_id;
-                this->workspace.active_sidebar_tab_id           = tab.id;
-                this->workspace.sidebar_visible                 = !selected;
-                this->workspace.sidebar_tab_selection_requested = true;
+                const bool selected                                     = this->workspace.renderer_popover_open && tab.id == this->workspace.active_renderer_popover_tab_id;
+                this->workspace.active_renderer_popover_tab_id           = tab.id;
+                this->workspace.renderer_popover_open                    = !selected;
+                this->workspace.renderer_popover_tab_selection_requested = true;
             }
             for (ToolbarAction& action : this->workspace.toolbar_actions) {
                 if (!this->contribution_belongs_to_active_renderer(action.owner_renderer)) continue;
@@ -1001,11 +995,11 @@ namespace spectra {
                 if (action.shortcut_key != ImGuiKey_None && ImGui::IsKeyPressed(action.shortcut_key, false)) action.trigger();
             }
         }
-        this->sync_active_sidebar_tab();
+        this->sync_active_renderer_popover_tab();
     }
 
     void Spectra::draw_command_bar() {
-        this->sync_active_sidebar_tab();
+        this->sync_active_renderer_popover_tab();
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         ImGui::SetNextWindowViewport(main_viewport->ID);
@@ -1043,8 +1037,8 @@ namespace spectra {
             if (this->contribution_belongs_to_active_renderer(widget.owner_renderer)) visible_widgets.push_back(&widget);
         }
 
-        std::vector<SidebarTab*> visible_tabs{};
-        for (SidebarTab& tab : this->workspace.sidebar_tabs) {
+        std::vector<RendererPopoverTab*> visible_tabs{};
+        for (RendererPopoverTab& tab : this->workspace.renderer_popover_tabs) {
             if (this->contribution_belongs_to_active_renderer(tab.owner_renderer)) visible_tabs.push_back(&tab);
         }
 
@@ -1089,14 +1083,14 @@ namespace spectra {
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 6.0f);
         std::size_t button_index = 0;
-        for (SidebarTab* tab : visible_tabs) {
-            const bool selected = this->workspace.sidebar_visible && tab->id == this->workspace.active_sidebar_tab_id;
+        for (RendererPopoverTab* tab : visible_tabs) {
+            const bool selected = this->workspace.renderer_popover_open && tab->id == this->workspace.active_renderer_popover_tab_id;
             const char* label   = tab->icon.empty() ? tab->title.c_str() : tab->icon.c_str();
             push_toolbar_button_style(selected);
             if (ImGui::Button(label, ImVec2{button_size, button_size})) {
-                this->workspace.active_sidebar_tab_id           = tab->id;
-                this->workspace.sidebar_visible                 = !selected;
-                this->workspace.sidebar_tab_selection_requested = true;
+                this->workspace.active_renderer_popover_tab_id           = tab->id;
+                this->workspace.renderer_popover_open                    = !selected;
+                this->workspace.renderer_popover_tab_selection_requested = true;
             }
             pop_toolbar_button_style();
             if (ImGui::IsItemHovered() && !tab->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", tab->title.c_str(), tab->shortcut_label.c_str());
@@ -1159,11 +1153,7 @@ namespace spectra {
 
         for (const Panel& panel : this->workspace.panels) {
             if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
-            switch (panel.dock_slot) {
-            case DockSlot::Center: ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id); break;
-            case DockSlot::Floating: break;
-            default: throw std::runtime_error("Spectra panel dock slot is invalid");
-            }
+            ImGui::DockBuilderDockWindow(panel.title.c_str(), center_id);
         }
         const auto hide_tab_bar = [](const ImGuiID node_id) {
             ImGuiDockNode* node = ImGui::DockBuilderGetNode(node_id);
@@ -1175,11 +1165,11 @@ namespace spectra {
         this->workspace.dock_layout_initialized = true;
     }
 
-    void Spectra::draw_sidebar() {
-        if (!this->workspace.sidebar_visible || this->workspace.active_sidebar_tab_id.empty()) return;
+    void Spectra::draw_renderer_popover() {
+        if (!this->workspace.renderer_popover_open || this->workspace.active_renderer_popover_tab_id.empty()) return;
 
-        std::vector<SidebarTab*> visible_tabs{};
-        for (SidebarTab& tab : this->workspace.sidebar_tabs) {
+        std::vector<RendererPopoverTab*> visible_tabs{};
+        for (RendererPopoverTab& tab : this->workspace.renderer_popover_tabs) {
             if (this->contribution_belongs_to_active_renderer(tab.owner_renderer)) visible_tabs.push_back(&tab);
         }
         if (visible_tabs.empty()) return;
@@ -1214,34 +1204,27 @@ namespace spectra {
             return;
         }
 
-        bool close_requested = false;
-        ImGui::PushID("SpectraRendererPopoverHeader");
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(ICON_MS_TUNE);
         ImGui::SameLine(0.0f, 6.0f);
         ImGui::TextUnformatted("Renderer");
-        const float close_button_size = ImGui::GetFrameHeight();
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8.0f, ImGui::GetContentRegionMax().x - close_button_size));
-        if (ImGui::Button(ICON_MS_CLOSE "##close", ImVec2{close_button_size, close_button_size})) close_requested = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Close Renderer");
-        ImGui::PopID();
         ImGui::Separator();
 
-        if (!close_requested && visible_tabs.size() == 1u) {
-            this->workspace.active_sidebar_tab_id           = visible_tabs.front()->id;
-            this->workspace.sidebar_tab_selection_requested = false;
+        if (visible_tabs.size() == 1u) {
+            this->workspace.active_renderer_popover_tab_id           = visible_tabs.front()->id;
+            this->workspace.renderer_popover_tab_selection_requested = false;
             visible_tabs.front()->draw();
-        } else if (!close_requested && ImGui::BeginTabBar("SidebarTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
-            const bool selection_requested = this->workspace.sidebar_tab_selection_requested;
-            const std::string requested_tab_id = this->workspace.active_sidebar_tab_id;
+        } else if (ImGui::BeginTabBar("RendererPopoverTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            const bool selection_requested = this->workspace.renderer_popover_tab_selection_requested;
+            const std::string requested_tab_id = this->workspace.active_renderer_popover_tab_id;
             bool selection_request_consumed = !selection_requested;
-            for (SidebarTab* tab : visible_tabs) {
+            for (RendererPopoverTab* tab : visible_tabs) {
                 const bool requested_tab         = selection_requested && tab->id == requested_tab_id;
                 const ImGuiTabItemFlags tab_flags = requested_tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
                 const std::string label           = tab->icon.empty() ? tab->title : std::format("{} {}", tab->icon, tab->title);
                 if (ImGui::BeginTabItem(label.c_str(), nullptr, tab_flags)) {
                     if (!selection_requested || requested_tab) {
-                        this->workspace.active_sidebar_tab_id = tab->id;
+                        this->workspace.active_renderer_popover_tab_id = tab->id;
                         if (requested_tab) selection_request_consumed = true;
                         ImGui::Spacing();
                         tab->draw();
@@ -1249,14 +1232,10 @@ namespace spectra {
                     ImGui::EndTabItem();
                 }
             }
-            if (selection_request_consumed) this->workspace.sidebar_tab_selection_requested = false;
+            if (selection_request_consumed) this->workspace.renderer_popover_tab_selection_requested = false;
             ImGui::EndTabBar();
         }
         ImGui::End();
-        if (close_requested) {
-            this->workspace.sidebar_visible                 = false;
-            this->workspace.sidebar_tab_selection_requested = false;
-        }
         ImGui::PopStyleColor(5);
         ImGui::PopStyleVar(4);
     }

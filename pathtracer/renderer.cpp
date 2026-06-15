@@ -2160,13 +2160,12 @@ namespace spectra::pathtracer {
         host.register_panel(Panel{
             .id                  = "pathtracer.viewport",
             .title               = "Viewport",
-            .dock_slot           = DockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
             .closable            = false,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_sidebar_tab(SidebarTab{
+        host.register_renderer_popover_tab(RendererPopoverTab{
             .id             = "pathtracer.render",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,

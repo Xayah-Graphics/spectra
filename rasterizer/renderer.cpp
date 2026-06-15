@@ -736,13 +736,12 @@ namespace spectra::rasterizer {
             .icon                = ICON_MS_GRID_VIEW,
             .shortcut_label      = "F7",
             .shortcut_key        = ImGuiKey_F7,
-            .dock_slot           = DockSlot::Center,
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
             .closable            = false,
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_sidebar_tab(SidebarTab{
+        host.register_renderer_popover_tab(RendererPopoverTab{
             .id             = "rasterizer.panel",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,

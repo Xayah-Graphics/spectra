@@ -37,10 +37,6 @@ namespace {
 
     static_assert(spectra::pathtracer::Host<spectra::Spectra>);
     static_assert(spectra::rasterizer::Host<spectra::Spectra>);
-    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::DockSlot::Center) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Center));
-    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::pathtracer::DockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
-    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::rasterizer::DockSlot::Center) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Center));
-    static_assert(static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::rasterizer::DockSlot::Floating) == static_cast<std::underlying_type_t<spectra::DockSlot>>(spectra::DockSlot::Floating));
     static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::bouncing_ball::Visualization>);
     static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::sparkles::Visualization>);
     static_assert(spectra::rasterizer::VisualizationSource<xayah::projects::cloth::Visualization>);
