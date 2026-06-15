@@ -15,7 +15,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         bouncing_ball.ixx
-        visualization.ixx
         PRIVATE
         bouncing_ball.cpp
 )
@@ -24,3 +23,14 @@ set_property(TARGET xayah_bouncing_ball PROPERTY CXX_MODULE_STD ON)
 add_executable(xayah_bouncing_ball_cli main.cpp)
 target_link_libraries(xayah_bouncing_ball_cli PRIVATE xayah::bouncing_ball)
 set_property(TARGET xayah_bouncing_ball_cli PROPERTY CXX_MODULE_STD ON)
+
+add_library(xayah_bouncing_ball_plugin MODULE plugin.cpp)
+target_link_libraries(xayah_bouncing_ball_plugin PRIVATE xayah::bouncing_ball)
+set_property(TARGET xayah_bouncing_ball_plugin PROPERTY CXX_MODULE_STD ON)
+set_target_properties(
+        xayah_bouncing_ball_plugin
+        PROPERTIES
+        PREFIX ""
+        RUNTIME_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+        LIBRARY_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+)

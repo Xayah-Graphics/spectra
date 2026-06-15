@@ -21,7 +21,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         cloth.ixx
-        visualization.ixx
         PRIVATE
         cloth.cpp
         cloth.cu
@@ -33,3 +32,14 @@ set_property(TARGET xayah_cloth PROPERTY CXX_MODULE_STD ON)
 add_executable(xayah_cloth_cli main.cpp)
 target_link_libraries(xayah_cloth_cli PRIVATE xayah::cloth)
 set_property(TARGET xayah_cloth_cli PROPERTY CXX_MODULE_STD ON)
+
+add_library(xayah_cloth_plugin MODULE plugin.cpp)
+target_link_libraries(xayah_cloth_plugin PRIVATE xayah::cloth)
+set_property(TARGET xayah_cloth_plugin PROPERTY CXX_MODULE_STD ON)
+set_target_properties(
+        xayah_cloth_plugin
+        PROPERTIES
+        PREFIX ""
+        RUNTIME_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+        LIBRARY_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+)

@@ -46,16 +46,16 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         host.ixx
         renderer.ixx
-        visualization.ixx
+        scene_runtime.ixx
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         math.ixx
         PRIVATE
         renderer.cpp
-        visualization.cpp
+        scene_runtime.cpp
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene PRIVATE ${CMAKE_DL_LIBS})
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")

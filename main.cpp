@@ -4,7 +4,7 @@ import std;
 import spectra;
 import spectra.pathtracer.renderer;
 import spectra.rasterizer.renderer;
-import spectra.rasterizer.visualization;
+import spectra.rasterizer.scene_runtime;
 import spectra.scene;
 
 namespace {
@@ -58,42 +58,55 @@ namespace {
         return false;
     }
 
-    [[nodiscard]] bool activate_pbrt_scene_path(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, const std::filesystem::path& scene_path) {
-        try {
-            if (scene_path.empty()) throw std::runtime_error("Drop a PBRT scene file into the window to load it");
-            const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
-            if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a PBRT scene file, not a folder");
-            if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
-            if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
-            const std::string id = absolute_path.string();
-            const std::string title = scene_file_title(absolute_path);
-            const bool activated = controller.activate_static_scene(id, title, [absolute_path] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(absolute_path)); });
-            if (!activated) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load static scene" : controller.activation_error());
-            set_scene_status(state, std::format("Loaded {}", title), false);
-            return true;
-        } catch (const std::exception& error) {
-            set_scene_status(state, error.what(), true);
-            return false;
-        }
+    [[nodiscard]] std::string activate_pbrt_scene_path(spectra::rasterizer::SceneController& controller, const std::filesystem::path& scene_path) {
+        if (scene_path.empty()) throw std::runtime_error("Drop a PBRT scene file into the window to load it");
+        const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
+        if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a PBRT scene file, not a folder");
+        if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
+        if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
+        const std::string id = absolute_path.string();
+        const std::string title = scene_file_title(absolute_path);
+        const bool activated = controller.activate_static_scene(id, title, [absolute_path] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(absolute_path)); });
+        if (!activated) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load static scene" : controller.activation_error());
+        return title;
+    }
+
+    [[nodiscard]] std::string activate_dynamic_scene_plugin_path(spectra::rasterizer::SceneController& controller, const std::filesystem::path& plugin_path) {
+        spectra::rasterizer::DynamicScenePluginSource plugin = spectra::rasterizer::load_dynamic_scene_plugin(plugin_path);
+        const std::string title = plugin.title;
+        const bool activated = controller.activate_dynamic_scene(std::move(plugin.id), std::move(plugin.title), std::move(plugin.create_source));
+        if (!activated) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load dynamic scene plugin" : controller.activation_error());
+        return title;
+    }
+
+    [[nodiscard]] std::string activate_scene_path(spectra::rasterizer::SceneController& controller, const std::filesystem::path& scene_path) {
+        if (is_pbrt_scene_file(scene_path)) return activate_pbrt_scene_path(controller, scene_path);
+        if (spectra::rasterizer::is_dynamic_scene_plugin_file(scene_path)) return activate_dynamic_scene_plugin_path(controller, scene_path);
+        throw std::runtime_error(std::format("{}: drop a .pbrt/.pbrt.gz scene or a dynamic scene plugin library", scene_path.string()));
     }
 
     [[nodiscard]] bool handle_scene_file_drop(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, const std::span<const std::filesystem::path> paths) {
         if (paths.empty()) {
-            set_scene_status(state, "Drop a PBRT scene file to load it", true);
+            set_scene_status(state, "Drop a PBRT scene or dynamic scene plugin to load it", true);
             return true;
         }
         if (paths.size() != 1u) {
-            set_scene_status(state, "Drop exactly one PBRT scene file", true);
+            set_scene_status(state, "Drop exactly one scene file or dynamic scene plugin", true);
             return true;
         }
-        static_cast<void>(activate_pbrt_scene_path(controller, state, paths.front()));
+        try {
+            const std::string title = activate_scene_path(controller, paths.front());
+            set_scene_status(state, std::format("Loaded {}", title), false);
+        } catch (const std::exception& error) {
+            set_scene_status(state, error.what(), true);
+        }
         return true;
     }
 
     [[nodiscard]] std::string scene_workspace_tooltip(const spectra::rasterizer::SceneEntry* selected_entry, const bool pending_switch) {
-        if (selected_entry == nullptr) return "Empty Project\nDrop a PBRT scene file into the window to load it";
+        if (selected_entry == nullptr) return "Empty Project\nDrop a PBRT scene or dynamic scene plugin into the window to load it";
         return std::format(
-            "{}\n{}{}\nDrop another PBRT scene file into the window to replace it",
+            "{}\n{}{}\nDrop a PBRT scene or dynamic scene plugin into the window to replace it",
             selected_entry->id,
             selected_entry->kind == spectra::rasterizer::SceneEntryKind::Static ? "Static" : "Dynamic",
             pending_switch ? "\nSwitching on next frame" : "");
@@ -151,7 +164,6 @@ namespace {
         [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
             static_cast<void>(this->scene_controller->apply_pending_scene());
             this->sync_scene_workspace();
-            this->scene_controller->update_active_scene(frame.delta_seconds);
             const spectra::pathtracer::FrameContext frame_context{
                 .frame_index = frame.frame_slot_index,
                 .image_index = frame.image_index,
@@ -274,11 +286,6 @@ namespace {
         return options;
     }
 
-    struct InitialSceneLoad {
-        std::shared_ptr<spectra::scene::Scene> scene{};
-        std::string id{};
-    };
-
     [[nodiscard]] std::shared_ptr<spectra::scene::Scene> make_empty_project_scene() {
         spectra::scene::Scene::Document document{
             .revision = spectra::scene::Scene::Revision{1},
@@ -297,29 +304,16 @@ namespace {
         return std::make_shared<spectra::scene::Scene>(std::move(document));
     }
 
-    [[nodiscard]] InitialSceneLoad load_initial_scene(const std::string& scene_id) {
-        const std::filesystem::path requested_path{scene_id};
-        if (requested_path.is_absolute() && is_pbrt_scene_file(requested_path) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
-        if (std::filesystem::is_regular_file(requested_path)) {
-            const std::filesystem::path absolute_path = std::filesystem::absolute(requested_path).lexically_normal();
-            if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: initial scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
-            return InitialSceneLoad{
-                .scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(absolute_path)),
-                .id    = absolute_path.string(),
-            };
-        }
-        return InitialSceneLoad{
-            .scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(scene_id)),
-            .id    = scene_id,
-        };
-    }
-
     void load_cli_scene(spectra::rasterizer::SceneController& controller, const std::string& scene_id) {
-        InitialSceneLoad initial_scene = load_initial_scene(scene_id);
-        if (initial_scene.scene == nullptr) throw std::runtime_error("Initial scene loader returned null");
-        const std::string title = initial_scene.scene->info().title;
-        std::shared_ptr<spectra::scene::Scene> scene = std::move(initial_scene.scene);
-        if (!controller.activate_static_scene(std::move(initial_scene.id), title, [scene = std::move(scene)] { return scene; })) throw std::runtime_error(controller.activation_error());
+        const std::filesystem::path requested_path{scene_id};
+        if ((is_pbrt_scene_file(requested_path) || spectra::rasterizer::is_dynamic_scene_plugin_file(requested_path)) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
+        if (std::filesystem::is_regular_file(requested_path)) {
+            static_cast<void>(activate_scene_path(controller, requested_path));
+            return;
+        }
+        std::shared_ptr<spectra::scene::Scene> scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(scene_id));
+        const std::string title = scene->info().title;
+        if (!controller.activate_static_scene(scene_id, title, [scene = std::move(scene)] { return scene; })) throw std::runtime_error(controller.activation_error());
     }
 
     void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace) {

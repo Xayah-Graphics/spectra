@@ -21,7 +21,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         pyro.ixx
-        visualization.ixx
         PRIVATE
         pyro.cpp
         pyro.cu
@@ -33,3 +32,14 @@ set_property(TARGET xayah_pyro PROPERTY CXX_MODULE_STD ON)
 add_executable(xayah_pyro_cli main.cpp)
 target_link_libraries(xayah_pyro_cli PRIVATE xayah::pyro)
 set_property(TARGET xayah_pyro_cli PROPERTY CXX_MODULE_STD ON)
+
+add_library(xayah_pyro_plugin MODULE plugin.cpp)
+target_link_libraries(xayah_pyro_plugin PRIVATE xayah::pyro)
+set_property(TARGET xayah_pyro_plugin PROPERTY CXX_MODULE_STD ON)
+set_target_properties(
+        xayah_pyro_plugin
+        PROPERTIES
+        PREFIX ""
+        RUNTIME_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+        LIBRARY_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+)

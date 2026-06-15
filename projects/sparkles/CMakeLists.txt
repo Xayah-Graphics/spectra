@@ -15,7 +15,6 @@ target_sources(
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         sparkles.ixx
-        visualization.ixx
         PRIVATE
         sparkles.cpp
 )
@@ -24,3 +23,14 @@ set_property(TARGET xayah_sparkles PROPERTY CXX_MODULE_STD ON)
 add_executable(xayah_sparkles_cli main.cpp)
 target_link_libraries(xayah_sparkles_cli PRIVATE xayah::sparkles)
 set_property(TARGET xayah_sparkles_cli PROPERTY CXX_MODULE_STD ON)
+
+add_library(xayah_sparkles_plugin MODULE plugin.cpp)
+target_link_libraries(xayah_sparkles_plugin PRIVATE xayah::sparkles)
+set_property(TARGET xayah_sparkles_plugin PROPERTY CXX_MODULE_STD ON)
+set_target_properties(
+        xayah_sparkles_plugin
+        PROPERTIES
+        PREFIX ""
+        RUNTIME_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+        LIBRARY_OUTPUT_DIRECTORY "${SPECTRA_BINARY_ROOT_DIR}/plugins"
+)
