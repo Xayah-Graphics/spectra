@@ -48,7 +48,6 @@ add_subdirectory(spectra)
 add_subdirectory(scene)
 add_subdirectory(pathtracer)
 add_subdirectory(rasterizer)
-add_subdirectory(projects)
 
 add_executable(spectra_gui main.cpp)
 add_executable(spectra::gui ALIAS spectra_gui)

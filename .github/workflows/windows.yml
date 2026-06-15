@@ -133,9 +133,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cmake -S . -B $env:SPECTRA_BUILD_DIR -G Ninja `
-            -DCMAKE_BUILD_TYPE=$env:CMAKE_BUILD_TYPE `
-            -DSPECTRA_OPTIX_PATH="$env:SPECTRA_OPTIX_PATH"
+          cmake -S . -B "$env:SPECTRA_BUILD_DIR" -G Ninja `
+            "-DCMAKE_BUILD_TYPE=$($env:CMAKE_BUILD_TYPE)" `
+            "-DSPECTRA_OPTIX_PATH=$($env:SPECTRA_OPTIX_PATH)"
 
       - name: Build
         shell: pwsh

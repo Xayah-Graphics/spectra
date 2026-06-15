@@ -26,7 +26,6 @@ This is an alpha release. The architecture is usable for local research workflow
 - Runtime drag-and-drop loading for `.pbrt` and `.pbrt.gz` scenes.
 - Runtime dynamic scene loading through a document-only C ABI plugin model.
 - Shared PBRT-oriented scene description for rasterizer preview and path tracing.
-- Built-in example simulation plugins for bouncing ball, cloth, pyro, and sparkles.
 - Keyboard-first dynamic timeline controls in the rasterizer.
 
 ## Requirements
@@ -46,7 +45,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPECTRA_OPTIX_PATH=/pa
 cmake --build build --parallel
 ```
 
-The main GUI executable is `spectra_gui`. The example dynamic scene plugins are built as module libraries into the build tree's `plugins` directory.
+The main GUI executable is `spectra_gui`.
 
 ## Run
 
@@ -356,7 +355,6 @@ spectra/      Vulkan host, renderer registration, UI shell
 rasterizer/   Vulkan rasterizer, scene runtime, dynamic plugin loader
 pathtracer/   OptiX/CUDA pathtracer
 scene/        Shared PBRT-oriented scene model and parser
-projects/     Example simulations and dynamic scene plugins
 vendor/       Third-party dependencies
 ```
 
