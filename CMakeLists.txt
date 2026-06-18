@@ -44,6 +44,52 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(vendor)
 
+function(spectra_download_if_needed url out_path)
+    if (EXISTS "${out_path}")
+        message(STATUS "Using cached file: ${out_path}")
+        return()
+    endif ()
+
+    get_filename_component(out_dir "${out_path}" DIRECTORY)
+    file(MAKE_DIRECTORY "${out_dir}")
+
+    message(STATUS "Downloading ${url}")
+    file(DOWNLOAD
+            "${url}"
+            "${out_path}"
+            TLS_VERIFY ON
+            STATUS dl_status
+    )
+
+    list(GET dl_status 0 dl_code)
+    list(GET dl_status 1 dl_msg)
+    if (NOT dl_code EQUAL 0)
+        message(FATAL_ERROR "Failed to download ${url}: [${dl_code}] ${dl_msg}")
+    endif ()
+endfunction()
+
+set(SPECTRA_XCLI_COMMIT "bb261075e7c8a4722b23f42c3be01aa24024731a")
+set(SPECTRA_XCLI_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor/util/${SPECTRA_XCLI_COMMIT}")
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.ixx"
+        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.ixx"
+)
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.cpp"
+        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.cpp"
+)
+
+add_library(xayah-util-xcli)
+target_sources(
+        xayah-util-xcli
+        PRIVATE
+        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.cpp"
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        "${SPECTRA_XCLI_VENDOR_DIR}/xcli.ixx"
+)
+set_property(TARGET xayah-util-xcli PROPERTY CXX_MODULE_STD ON)
+
 
 # ============================================================================
 # Spectra Core
@@ -476,7 +522,7 @@ set_property(TARGET spectra_pathtracer PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 add_executable(spectra_pathtracer_cli pathtracer/pathtracer_cli.cpp)
 add_executable(spectra::pathtracer_cli ALIAS spectra_pathtracer_cli)
-target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer Threads::Threads)
+target_link_libraries(spectra_pathtracer_cli PRIVATE spectra::pathtracer xayah-util-xcli Threads::Threads)
 set_property(TARGET spectra_pathtracer_cli PROPERTY CXX_MODULE_STD ON)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
@@ -565,5 +611,6 @@ target_link_libraries(
         spectra::scene
         spectra::pathtracer
         spectra::rasterizer
+        xayah-util-xcli
 )
 set_property(TARGET spectra_gui PROPERTY CXX_MODULE_STD ON)

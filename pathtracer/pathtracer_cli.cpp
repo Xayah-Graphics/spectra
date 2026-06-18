@@ -1,101 +1,65 @@
-#include <charconv>
-#include <cstdio>
-#include <cuda_runtime_api.h>
-#include <exception>
-#include <memory>
-#include <optional>
 #include <pathtracer/compiled_scene.cuh>
 #include <pathtracer/core/kernel_config.cuh>
 #include <pathtracer/core/render_config.cuh>
 #include <pathtracer/integrator.cuh>
 #include <pathtracer/memory/memory.cuh>
 #include <pathtracer/util/float.cuh>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <system_error>
-#include <utility>
-#include <vector>
 
+import std;
 import spectra.pathtracer.renderer;
 import spectra.scene;
+import xayah.util.xcli;
 
-namespace {
-    class UsageError : public std::runtime_error {
-    public:
-        explicit UsageError(std::string message) : std::runtime_error(std::move(message)) {}
-    };
-
-    void print_usage(std::string_view message) {
-        if (!message.empty()) std::fprintf(stderr, "spectra_pathtracer_cli: %.*s\n\n", static_cast<int>(message.size()), message.data());
-        std::fprintf(stderr, "usage: spectra_pathtracer_cli <scene-name> [--outfile <file.exr>] [--spp <n>] [--seed <n>] [--gpu-device <index>] [--quiet]\n");
-    }
-
-    [[nodiscard]] const std::string& require_value(const std::vector<std::string>& arguments, std::size_t& index, std::string_view option) {
-        ++index;
-        if (index >= arguments.size()) throw UsageError(std::string(option) + " requires a value");
-        return arguments[index];
-    }
-
-    [[nodiscard]] int parse_int(std::string_view text, std::string_view option) {
-        int value                           = 0;
-        const char* begin                   = text.data();
-        const char* end                     = begin + text.size();
-        const std::from_chars_result result = std::from_chars(begin, end, value);
-        if (result.ec != std::errc{} || result.ptr != end) throw UsageError(std::string(option) + " requires an integer value");
-        return value;
-    }
-
-    [[nodiscard]] std::vector<std::string> command_line_arguments(int argc, char* argv[]) {
-        std::vector<std::string> arguments;
-        if (argc > 1) arguments.reserve(static_cast<std::size_t>(argc - 1));
-        for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
-        return arguments;
-    }
-} // namespace
-
-int main(int argc, char* argv[]) {
+int main(const int argc, const char* const* const argv) {
     try {
-        const std::vector<std::string> arguments = command_line_arguments(argc, argv);
-        if (arguments.empty()) throw UsageError("missing scene name");
+        const std::span<const char* const> arguments{argv, static_cast<std::size_t>(argc)};
+        std::string scene_name{};
+        std::string output_file{};
+        std::int32_t pixel_samples{};
+        std::int32_t seed{};
+        std::int32_t gpu_device{};
+        bool quiet{};
+        xayah::util::Command command =
+            xayah::util::Command{"Render a Spectra PBRT scene with the CUDA/OptiX pathtracer."}
+            | xayah::util::positional({.name = "scene-name", .description = "Spectra scene id or scene-root-relative PBRT path", .show_default = false, .required = true}, scene_name)
+            | xayah::util::option({.long_name = "outfile", .value_name = "file.exr", .description = "override the scene output filename", .show_default = false}, output_file)
+            | xayah::util::option({.long_name = "spp", .value_name = "n", .description = "override sampler pixel samples", .default_text = "scene"}, pixel_samples, {.minimum = 1.0})
+            | xayah::util::option({.long_name = "seed", .value_name = "n", .description = "sampler random seed"}, seed)
+            | xayah::util::option({.long_name = "gpu-device", .value_name = "index", .description = "CUDA device index", .default_text = "runtime default"}, gpu_device, {.minimum = 0.0})
+            | xayah::util::option({.long_name = "quiet", .description = "suppress render progress output", .show_default = false}, quiet)
+            | xayah::util::example("default --spp 64 --outfile output.exr")
+            | xayah::util::example("pbrt-book/book.pbrt --quiet --seed 1 --spp 1");
+        const std::string usage = command.help(arguments);
+
+        const auto cli_result = command.parse(arguments);
+        if (!cli_result) {
+            std::cerr << "error: " << cli_result.error() << '\n' << usage << '\n';
+            return 2;
+        }
+        if (cli_result->help_requested) {
+            std::println("{}", usage);
+            return 0;
+        }
+
+        const auto cli_validation = command.validate();
+        if (!cli_validation) {
+            std::cerr << "error: " << cli_validation.error() << '\n';
+            return 2;
+        }
 
         spectra::pathtracer::RuntimeConfig runtime_config{};
         spectra::pathtracer::RenderConfig render_config{};
         render_config.rendering_space = spectra::pathtracer::RenderingSpace::CameraWorld;
-
-        std::optional<std::string> scene_name;
-
-        for (std::size_t index = 0; index < arguments.size(); ++index) {
-            const std::string& argument = arguments[index];
-            if (argument == "--outfile") {
-                render_config.output_file = require_value(arguments, index, argument);
-            } else if (argument == "--spp") {
-                render_config.pixel_samples = parse_int(require_value(arguments, index, argument), argument);
-            } else if (argument == "--seed") {
-                render_config.seed = parse_int(require_value(arguments, index, argument), argument);
-            } else if (argument == "--gpu-device") {
-                runtime_config.cuda_device = parse_int(require_value(arguments, index, argument), argument);
-            } else if (argument == "--quiet") {
-                render_config.quiet = true;
-            } else if (argument == "--help" || argument == "-h") {
-                print_usage({});
-                return 0;
-            } else if (!argument.empty() && argument[0] == '-') {
-                throw UsageError("unknown argument \"" + argument + "\"");
-            } else {
-                if (scene_name.has_value()) throw UsageError("spectra_pathtracer_cli accepts exactly one scene name");
-                scene_name = argument;
-            }
-        }
-
-        if (!scene_name.has_value()) throw UsageError("missing scene name");
-        if (render_config.pixel_samples.has_value() && *render_config.pixel_samples <= 0) throw UsageError("--spp must be positive");
-        if (runtime_config.cuda_device.has_value() && *runtime_config.cuda_device < 0) throw UsageError("--gpu-device must be non-negative");
+        render_config.output_file = std::move(output_file);
+        render_config.seed = static_cast<int>(seed);
+        render_config.quiet = quiet;
+        if (command.option_provided("spp")) render_config.pixel_samples = static_cast<int>(pixel_samples);
+        if (command.option_provided("gpu-device")) runtime_config.cuda_device = static_cast<int>(gpu_device);
 
         spectra::pathtracer::GpuRuntime runtime(runtime_config);
         runtime.UploadKernelConfig(spectra::pathtracer::KernelConfigFrom(render_config));
 
-        spectra::scene::Scene scene = spectra::scene::Scene::parse_pbrt(*scene_name);
+        spectra::scene::Scene scene = spectra::scene::Scene::parse_pbrt(scene_name);
         const spectra::scene::Scene::ResolvedScene scene_snapshot = scene.resolved_scene();
         spectra::pathtracer::PathtracerMemoryScope scene_memory_scope(spectra::pathtracer::PathtracerMemoryScopeKind::Scene, "spectra_pathtracer_cli scene");
         std::unique_ptr<spectra::pathtracer::CompiledScene> compiled_scene = spectra::pathtracer::CompileScene(scene_snapshot, render_config, &scene_memory_scope);
@@ -109,11 +73,8 @@ int main(int argc, char* argv[]) {
         metadata.samplesPerPixel   = integrator.sampler.SamplesPerPixel();
         integrator.film.WriteImage(metadata);
         return 0;
-    } catch (const UsageError& error) {
-        print_usage(error.what());
-        return 1;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
+        std::cerr << error.what() << '\n';
         return 1;
     }
 }

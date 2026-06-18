@@ -6,12 +6,9 @@ import spectra.pathtracer.renderer;
 import spectra.rasterizer.renderer;
 import spectra.rasterizer.scene_runtime;
 import spectra.scene;
+import xayah.util.xcli;
 
 namespace {
-    struct CliOptions {
-        std::optional<std::string> scene_id{};
-    };
-
     static_assert(spectra::pathtracer::Host<spectra::Spectra>);
     static_assert(spectra::rasterizer::Host<spectra::Spectra>);
 
@@ -268,24 +265,6 @@ namespace {
     static_assert(spectra::RendererFor<PathtracerRendererAdapter, spectra::Spectra>);
     static_assert(spectra::RendererFor<RasterizerRendererAdapter, spectra::Spectra>);
 
-    [[nodiscard]] CliOptions parse_cli(const int argc, char** argv) {
-        CliOptions options{};
-        for (int index = 1; index < argc; ++index) {
-            const std::string_view argument{argv[index]};
-            if (argument == "--scene") {
-                ++index;
-                if (index >= argc) throw std::runtime_error("usage: spectra_gui [--scene <scene-id-or-path>]");
-                options.scene_id = argv[index];
-                if (options.scene_id->empty()) throw std::runtime_error("spectra_gui --scene requires a non-empty scene id or path");
-            } else if (argument == "--help" || argument == "-h") {
-                throw std::runtime_error("usage: spectra_gui [--scene <scene-id-or-path>]");
-            } else {
-                throw std::runtime_error("usage: spectra_gui [--scene <scene-id-or-path>]");
-            }
-        }
-        return options;
-    }
-
     [[nodiscard]] std::shared_ptr<spectra::scene::Scene> make_empty_project_scene() {
         spectra::scene::Scene::Document document{
             .revision = spectra::scene::Scene::Revision{1},
@@ -334,12 +313,37 @@ namespace {
     }
 } // namespace
 
-int main(const int argc, char** argv) {
+int main(const int argc, const char* const* const argv) {
     try {
-        const CliOptions options = parse_cli(argc, argv);
+        const std::span<const char* const> arguments{argv, static_cast<std::size_t>(argc)};
+        std::optional<std::string> scene_id{};
+        xayah::util::Command command =
+            xayah::util::Command{"Open the Spectra visualization workspace."}
+            | xayah::util::option({.long_name = "scene", .value_name = "scene-id-or-path", .description = "PBRT scene id/path or dynamic scene plugin path", .show_default = false}, scene_id)
+            | xayah::util::example("--scene default")
+            | xayah::util::example("--scene scenes/pbrt-book/book.pbrt")
+            | xayah::util::example("--scene C:/path/to/plugin.dll");
+        const std::string usage = command.help(arguments);
+
+        const auto cli_result = command.parse(arguments);
+        if (!cli_result) {
+            std::cerr << "error: " << cli_result.error() << '\n' << usage << std::endl;
+            return 2;
+        }
+        if (cli_result->help_requested) {
+            std::cout << usage << std::endl;
+            return 0;
+        }
+
+        const auto cli_validation = command.validate();
+        if (!cli_validation) {
+            std::cerr << "error: " << cli_validation.error() << std::endl;
+            return 2;
+        }
+
         spectra::rasterizer::SceneRegistry scene_registry{};
         std::shared_ptr<spectra::rasterizer::SceneController> scene_controller = std::make_shared<spectra::rasterizer::SceneController>(std::move(scene_registry), make_empty_project_scene());
-        if (options.scene_id.has_value()) load_cli_scene(*scene_controller, *options.scene_id);
+        if (scene_id.has_value()) load_cli_scene(*scene_controller, *scene_id);
         std::shared_ptr<spectra::scene::Scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::Scene::CameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
