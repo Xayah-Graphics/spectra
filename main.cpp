@@ -225,6 +225,7 @@ namespace {
     };
 
     [[nodiscard]] DynamicSceneActivationResult activate_dynamic_scene_plugin(spectra::rasterizer::SceneController& controller, spectra::rasterizer::DynamicSceneOpenRequest request) {
+        if (request.host_services == nullptr) request.host_services = controller.dynamic_host_services();
         spectra::rasterizer::DynamicScenePluginSource plugin = spectra::rasterizer::load_dynamic_scene_plugin(std::move(request));
         const std::string id = plugin.id;
         const std::string title = plugin.title;
@@ -609,11 +610,12 @@ namespace {
 
     class RasterizerRendererAdapter final {
     public:
-        RasterizerRendererAdapter(std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
+        RasterizerRendererAdapter(std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host_services(std::move(dynamic_host_services)) {
             if (this->scene_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
+            if (this->dynamic_host_services == nullptr) throw std::runtime_error("Rasterizer adapter requires dynamic scene host services");
             this->active_workspace = this->scene_controller->active_workspace();
-            this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace);
+            this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace, this->dynamic_host_services);
         }
 
         RasterizerRendererAdapter(const RasterizerRendererAdapter& other) = delete;
@@ -675,6 +677,7 @@ namespace {
 
         std::shared_ptr<spectra::rasterizer::SceneController> scene_controller{};
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
+        std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services{};
         std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::rasterizer::Renderer> renderer{};
     };
@@ -731,9 +734,10 @@ namespace {
         return std::nullopt;
     }
 
-    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::optional<spectra::rasterizer::DynamicScenePluginInfo> initial_dynamic_scene_plugin) {
+    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services, std::optional<spectra::rasterizer::DynamicScenePluginInfo> initial_dynamic_scene_plugin) {
         if (scene_controller == nullptr) throw std::runtime_error("Renderer registration requires a scene controller");
         if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
+        if (dynamic_host_services == nullptr) throw std::runtime_error("Renderer registration requires dynamic scene host services");
         std::shared_ptr<SceneWorkspaceStatusState> scene_status_state = std::make_shared<SceneWorkspaceStatusState>();
         std::shared_ptr<DynamicSceneProjectState> dynamic_scene_project = std::make_shared<DynamicSceneProjectState>();
         if (initial_dynamic_scene_plugin.has_value()) {
@@ -741,7 +745,7 @@ namespace {
             begin_dynamic_scene_project(*dynamic_scene_project, std::move(*initial_dynamic_scene_plugin));
             set_scene_status(*scene_status_state, std::format("Opened dynamic project {}", title), false);
         }
-        application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace});
+        application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, std::move(dynamic_host_services)});
         application.register_renderer(PathtracerRendererAdapter{scene_controller, std::move(camera_workspace)});
         std::shared_ptr<spectra::rasterizer::SceneController> drop_scene_controller = scene_controller;
         std::shared_ptr<SceneWorkspaceStatusState> drop_scene_status_state = scene_status_state;
@@ -799,13 +803,14 @@ int main(const int argc, const char* const* const argv) {
         }
 
         spectra::rasterizer::SceneRegistry scene_registry{};
-        std::shared_ptr<spectra::rasterizer::SceneController> scene_controller = std::make_shared<spectra::rasterizer::SceneController>(std::move(scene_registry), make_empty_project_scene());
+        std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services = std::make_shared<spectra::rasterizer::DynamicSceneHostServiceRouter>();
+        std::shared_ptr<spectra::rasterizer::SceneController> scene_controller = std::make_shared<spectra::rasterizer::SceneController>(std::move(scene_registry), make_empty_project_scene(), dynamic_host_services);
         std::optional<spectra::rasterizer::DynamicScenePluginInfo> initial_dynamic_scene_plugin{};
         if (scene_id.has_value()) initial_dynamic_scene_plugin = load_cli_scene(*scene_controller, *scene_id);
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::CameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        register_renderers(app, std::move(scene_controller), std::move(camera_workspace), std::move(initial_dynamic_scene_plugin));
+        register_renderers(app, std::move(scene_controller), std::move(camera_workspace), std::move(dynamic_host_services), std::move(initial_dynamic_scene_plugin));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

@@ -1,5 +1,13 @@
 module;
 
+#if defined(_WIN32)
+#define VK_USE_PLATFORM_WIN32_KHR
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
 #include <material_symbols/IconsMaterialSymbols.h>
@@ -15,6 +23,7 @@ module spectra.rasterizer.renderer;
 
 import spectra.rasterizer.host;
 import spectra.rasterizer.math;
+import spectra.rasterizer.scene_runtime;
 import spectra.scene;
 import std;
 
@@ -57,6 +66,19 @@ namespace {
     struct ViewportImagePlaneInstance {
         std::array<float, 16> model{};
         std::array<float, 4> tint{};
+    };
+
+    struct ViewportVoxelGridPushConstantsData {
+        std::array<float, 16> model{};
+        std::array<float, 4> originCellScale{};
+        std::array<float, 4> voxelSize{};
+        std::array<float, 4> color{};
+        std::array<std::uint32_t, 4> dimensions{};
+    };
+
+    struct ViewportVoxelGridCompactionPushConstantsData {
+        std::array<std::uint32_t, 4> dimensions{};
+        std::array<std::uint32_t, 4> counts{};
     };
 
     struct CameraVisualPlanes {
@@ -410,6 +432,22 @@ namespace {
         command_buffer.pipelineBarrier2(dependency_info);
     }
 
+    void transition_buffer_access(const vk::raii::CommandBuffer& command_buffer, const vk::Buffer buffer, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
+        const vk::BufferMemoryBarrier2 buffer_memory_barrier{
+            src_stage,
+            src_access,
+            dst_stage,
+            dst_access,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            buffer,
+            0u,
+            VK_WHOLE_SIZE,
+        };
+        const vk::DependencyInfo dependency_info{{}, 0, nullptr, 1, &buffer_memory_barrier, 0, nullptr};
+        command_buffer.pipelineBarrier2(dependency_info);
+    }
+
     [[nodiscard]] std::uint32_t find_memory_type_index(const vk::raii::PhysicalDevice& physical_device, const std::uint32_t memory_type_bits, const vk::MemoryPropertyFlags required_properties) {
         const vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
         for (std::uint32_t index = 0; index < memory_properties.memoryTypeCount; ++index) {
@@ -418,6 +456,20 @@ namespace {
             if (supported && matching) return index;
         }
         throw std::runtime_error("No matching Vulkan memory type for Spectra rasterizer");
+    }
+
+    [[nodiscard]] spectra::rasterizer::DynamicSceneGpuDeviceIdentity make_dynamic_scene_gpu_device_identity(const vk::raii::PhysicalDevice& physical_device) {
+        const auto properties_chain = physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
+        const vk::PhysicalDeviceProperties properties = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
+        const vk::PhysicalDeviceIDProperties id_properties = properties_chain.get<vk::PhysicalDeviceIDProperties>();
+        spectra::rasterizer::DynamicSceneGpuDeviceIdentity identity{
+            .vendor_id = properties.vendorID,
+            .device_id = properties.deviceID,
+            .device_node_mask = id_properties.deviceNodeMask,
+        };
+        std::ranges::copy(id_properties.deviceUUID, identity.device_uuid.begin());
+        std::ranges::copy(id_properties.deviceLUID, identity.device_luid.begin());
+        return identity;
     }
 
     [[nodiscard]] ImVec4 inspector_label_color() {
@@ -779,11 +831,13 @@ namespace {
 } // namespace
 
 namespace spectra::rasterizer {
-    Renderer::Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
+    Renderer::Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<DynamicSceneHostServiceRouter> dynamic_host_services) {
         this->scene.workspace = std::move(scene_workspace);
         this->scene.camera_workspace = std::move(camera_workspace);
+        this->scene.dynamic_host_services = std::move(dynamic_host_services);
         if (this->scene.workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
         if (this->scene.camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene camera workspace");
+        if (this->scene.dynamic_host_services == nullptr) throw std::runtime_error("Spectra rasterizer requires dynamic scene host services");
         static_cast<void>(this->scene.workspace->document());
         this->ensure_viewport_camera_session();
         this->synchronize_viewport_camera();
@@ -810,6 +864,7 @@ namespace spectra::rasterizer {
         this->destroy_mesh_resources();
         this->destroy_point_cloud_resources();
         this->destroy_viewport_segment_resources();
+        this->destroy_viewport_voxel_grid_resources();
         this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
         this->scene.workspace = std::move(scene_workspace);
@@ -822,11 +877,13 @@ namespace spectra::rasterizer {
     void Renderer::attach(HostView host) {
         if (this->lifecycle.attached) throw std::runtime_error("Spectra rasterizer plugin is already attached");
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
+        this->connect_dynamic_scene_host_services();
         this->register_workspace_contributions(host);
         this->lifecycle.attached = true;
     }
 
     void Renderer::detach() noexcept {
+        this->disconnect_dynamic_scene_host_services();
         this->destroy_selection_resources();
         this->destroy_viewport_resources();
         this->destroy_screenshot_resources();
@@ -834,6 +891,8 @@ namespace spectra::rasterizer {
         this->destroy_viewport_grid_resources();
         this->destroy_point_cloud_resources();
         this->destroy_viewport_segment_resources();
+        this->destroy_viewport_voxel_grid_resources();
+        this->destroy_external_viewport_voxel_buffers();
         this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
         this->destroy_camera_resources();
@@ -1032,6 +1091,18 @@ namespace spectra::rasterizer {
         buffer.capacity = 0;
     }
 
+    void Renderer::destroy_external_buffer(ExternalGpuBuffer& buffer) noexcept {
+        buffer.buffer = nullptr;
+        buffer.memory = nullptr;
+        buffer.capacity = 0;
+    }
+
+    void Renderer::destroy_device_buffer(DeviceGpuBuffer& buffer) noexcept {
+        buffer.buffer = nullptr;
+        buffer.memory = nullptr;
+        buffer.capacity = 0;
+    }
+
     void Renderer::ensure_host_buffer(GpuBuffer& buffer, const vk::DeviceSize required_size, const vk::BufferUsageFlags usage) {
         if (required_size == 0) throw std::runtime_error("Cannot allocate an empty Spectra rasterizer buffer");
         if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot allocate Spectra rasterizer buffers without Vulkan handles");
@@ -1047,6 +1118,197 @@ namespace spectra::rasterizer {
         if (vkMapMemory(static_cast<VkDevice>(**this->host.device), static_cast<VkDeviceMemory>(*buffer.memory), 0, required_size, 0, &buffer.mapped) != VK_SUCCESS) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
         buffer.capacity = required_size;
         if (buffer.mapped == nullptr) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
+    }
+
+    void Renderer::ensure_device_buffer(DeviceGpuBuffer& buffer, const vk::DeviceSize required_size, const vk::BufferUsageFlags usage) {
+        if (required_size == 0) throw std::runtime_error("Cannot allocate an empty Spectra rasterizer device buffer");
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot allocate Spectra rasterizer device buffers without Vulkan handles");
+        if (*buffer.buffer && buffer.capacity >= required_size) return;
+        this->destroy_device_buffer(buffer);
+        const vk::BufferCreateInfo buffer_create_info{{}, required_size, usage, vk::SharingMode::eExclusive};
+        buffer.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
+        const vk::MemoryRequirements memory_requirements = buffer.buffer.getMemoryRequirements();
+        const std::uint32_t memory_type = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
+        buffer.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
+        buffer.buffer.bindMemory(*buffer.memory, 0);
+        buffer.capacity = required_size;
+    }
+
+    DynamicSceneViewportVoxelBufferAllocation Renderer::request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) {
+        if (request.byte_size == 0u) throw std::runtime_error("Dynamic scene viewport voxel buffer byte size must be positive");
+        if (request.byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error("Dynamic scene viewport voxel buffer byte size exceeds Vulkan device size range");
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot allocate dynamic scene viewport voxel buffer before rasterizer is attached");
+
+#if defined(_WIN32)
+        constexpr vk::ExternalMemoryHandleTypeFlagBits handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+        constexpr DynamicSceneGpuResourceHandleKind exported_handle_kind = DynamicSceneGpuResourceHandleKind::OpaqueWin32;
+#else
+        constexpr vk::ExternalMemoryHandleTypeFlagBits handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+        constexpr DynamicSceneGpuResourceHandleKind exported_handle_kind = DynamicSceneGpuResourceHandleKind::OpaqueFileDescriptor;
+#endif
+
+        const std::uint64_t resource_id = this->viewport_voxel_grid_pass.next_resource_id++;
+        if (resource_id == 0u) throw std::runtime_error("Dynamic scene viewport voxel buffer resource id overflowed");
+        ExternalViewportVoxelBuffer resource{
+            .resource_id = resource_id,
+            .byte_size = request.byte_size,
+        };
+
+        const vk::ExternalMemoryBufferCreateInfo external_buffer_create_info{handle_type};
+        vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(request.byte_size), vk::BufferUsageFlagBits::eStorageBuffer, vk::SharingMode::eExclusive};
+        buffer_create_info.setPNext(&external_buffer_create_info);
+        resource.buffer.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
+
+        const vk::MemoryRequirements memory_requirements = resource.buffer.buffer.getMemoryRequirements();
+        const std::uint32_t memory_type = find_memory_type_index(*this->host.physical_device, memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        vk::ExportMemoryAllocateInfo export_memory_allocate_info{handle_type};
+        vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
+        memory_allocate_info.setPNext(&export_memory_allocate_info);
+        resource.buffer.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
+        resource.buffer.buffer.bindMemory(*resource.buffer.memory, 0);
+        resource.buffer.capacity = static_cast<vk::DeviceSize>(request.byte_size);
+
+        this->ensure_viewport_voxel_buffer_descriptor(resource);
+
+#if defined(_WIN32)
+        const vk::MemoryGetWin32HandleInfoKHR handle_info{*resource.buffer.memory, handle_type};
+        HANDLE exported_handle = this->host.device->getMemoryWin32HandleKHR(handle_info);
+        if (exported_handle == nullptr) throw std::runtime_error("Failed to export dynamic scene viewport voxel buffer Win32 handle");
+        const std::uintptr_t exported_handle_value = reinterpret_cast<std::uintptr_t>(exported_handle);
+#else
+        const vk::MemoryGetFdInfoKHR handle_info{*resource.buffer.memory, handle_type};
+        int exported_handle = this->host.device->getMemoryFdKHR(handle_info);
+        if (exported_handle < 0) throw std::runtime_error("Failed to export dynamic scene viewport voxel buffer file descriptor");
+        const std::uintptr_t exported_handle_value = static_cast<std::uintptr_t>(exported_handle);
+#endif
+
+        DynamicSceneViewportVoxelBufferAllocation allocation{
+            .resource_id = resource_id,
+            .byte_size = static_cast<std::uint64_t>(memory_requirements.size),
+            .handle_kind = exported_handle_kind,
+            .handle = exported_handle_value,
+            .device_identity = make_dynamic_scene_gpu_device_identity(*this->host.physical_device),
+        };
+        this->viewport_voxel_grid_pass.buffers.emplace(resource_id, std::move(resource));
+        return allocation;
+    }
+
+    void Renderer::release_viewport_voxel_buffer(const std::uint64_t resource_id) {
+        if (resource_id == 0u) throw std::runtime_error("Dynamic scene viewport voxel buffer resource id must not be zero");
+        const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::iterator found = this->viewport_voxel_grid_pass.buffers.find(resource_id);
+        if (found == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer resource {} does not exist", resource_id));
+        if (this->host.device != nullptr) this->host.device->waitIdle();
+        for (FrameViewportVoxelGridResources& frame_voxel_grids : this->viewport_voxel_grid_pass.frame_voxel_grids) {
+            std::erase_if(frame_voxel_grids.drawCommands, [resource_id](const ViewportVoxelGridDrawCommand& draw_command) {
+                return draw_command.bufferId == resource_id;
+            });
+        }
+        for (std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>::iterator compaction = this->viewport_voxel_grid_pass.compactions.begin(); compaction != this->viewport_voxel_grid_pass.compactions.end();) {
+            if (compaction->first.bufferId != resource_id) {
+                ++compaction;
+                continue;
+            }
+            this->destroy_viewport_voxel_grid_compaction_resource(compaction->second);
+            compaction = this->viewport_voxel_grid_pass.compactions.erase(compaction);
+        }
+        this->viewport_voxel_grid_pass.buffers.erase(found);
+    }
+
+    void Renderer::ensure_viewport_voxel_buffer_descriptor(ExternalViewportVoxelBuffer& resource) {
+        if (resource.descriptor_valid) return;
+        if (!*resource.buffer.buffer) throw std::runtime_error("Dynamic scene viewport voxel buffer has no Vulkan buffer");
+        if (!*this->viewport_voxel_grid_pass.descriptor_set_layout || !*this->viewport_voxel_grid_pass.descriptor_pool) return;
+        const vk::DescriptorSetLayout descriptor_set_layout = *this->viewport_voxel_grid_pass.descriptor_set_layout;
+        const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, 1u, &descriptor_set_layout};
+        resource.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+        if (resource.descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate dynamic scene viewport voxel buffer descriptor set");
+        const vk::DescriptorBufferInfo descriptor_buffer_info{*resource.buffer.buffer, 0u, resource.byte_size};
+        const std::array descriptor_writes{vk::WriteDescriptorSet{*resource.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_info}};
+        this->host.device->updateDescriptorSets(descriptor_writes, {});
+        resource.descriptor_valid = true;
+    }
+
+    void Renderer::ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command) {
+        if (draw_command.sourceKind != scene::Scene::ViewportVoxelGridSourceKind::Bitfield) throw std::runtime_error("Viewport voxel grid compaction requires a bitfield source");
+        const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::iterator source = this->viewport_voxel_grid_pass.buffers.find(draw_command.bufferId);
+        if (source == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Viewport voxel grid bitfield buffer {} does not exist", draw_command.bufferId));
+        if (draw_command.cellCount == 0u) throw std::runtime_error("Viewport voxel grid bitfield compaction requires a non-zero cell count");
+        if (draw_command.bitfieldByteCount == 0u) throw std::runtime_error("Viewport voxel grid bitfield compaction requires a non-zero bitfield byte count");
+        if (draw_command.bitfieldByteCount > source->second.byte_size) throw std::runtime_error(std::format("Viewport voxel grid bitfield byte count {} exceeds buffer {} byte size {}", draw_command.bitfieldByteCount, draw_command.bufferId, source->second.byte_size));
+        if (!*this->viewport_voxel_grid_pass.descriptor_set_layout || !*this->viewport_voxel_grid_pass.compaction_descriptor_set_layout || !*this->viewport_voxel_grid_pass.descriptor_pool) throw std::runtime_error("Viewport voxel grid compaction descriptors are not initialized");
+
+        const ViewportVoxelGridCompactionKey key{
+            .bufferId = draw_command.bufferId,
+            .frameIndex = draw_command.frameIndex,
+            .dimX = draw_command.dimensions[0],
+            .dimY = draw_command.dimensions[1],
+            .dimZ = draw_command.dimensions[2],
+            .indexEncoding = draw_command.indexEncoding,
+        };
+        ViewportVoxelGridCompactionResource& resource = this->viewport_voxel_grid_pass.compactions[key];
+        const vk::DeviceSize compacted_bytes = static_cast<vk::DeviceSize>(draw_command.cellCount) * sizeof(std::uint32_t);
+        const bool compacted_recreated = !*resource.compactedIndexBuffer.buffer || resource.compactedIndexBuffer.capacity < compacted_bytes;
+        const bool counter_recreated = !*resource.counterBuffer.buffer || resource.counterBuffer.capacity < sizeof(std::uint32_t);
+        const bool indirect_recreated = !*resource.indirectBuffer.buffer || resource.indirectBuffer.capacity < sizeof(vk::DrawIndirectCommand);
+        this->ensure_device_buffer(resource.compactedIndexBuffer, compacted_bytes, vk::BufferUsageFlagBits::eStorageBuffer);
+        this->ensure_device_buffer(resource.counterBuffer, sizeof(std::uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst);
+        this->ensure_device_buffer(resource.indirectBuffer, sizeof(vk::DrawIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndirectBuffer);
+        if (compacted_recreated || counter_recreated || indirect_recreated || resource.source_buffer_id != draw_command.bufferId || resource.source_byte_size != source->second.byte_size) {
+            resource.compute_descriptor_sets = nullptr;
+            resource.draw_descriptor_sets = nullptr;
+            resource.compute_descriptor_valid = false;
+            resource.draw_descriptor_valid = false;
+        }
+        resource.source_buffer_id = draw_command.bufferId;
+        resource.source_byte_size = source->second.byte_size;
+        resource.compacted_capacity = draw_command.cellCount;
+
+        if (!resource.compute_descriptor_valid) {
+            const vk::DescriptorSetLayout compute_descriptor_set_layout = *this->viewport_voxel_grid_pass.compaction_descriptor_set_layout;
+            const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, 1u, &compute_descriptor_set_layout};
+            resource.compute_descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+            if (resource.compute_descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate viewport voxel grid compaction descriptor set");
+            const std::array descriptor_buffer_infos{
+                vk::DescriptorBufferInfo{*resource.compactedIndexBuffer.buffer, 0u, compacted_bytes},
+                vk::DescriptorBufferInfo{*resource.counterBuffer.buffer, 0u, sizeof(std::uint32_t)},
+                vk::DescriptorBufferInfo{*source->second.buffer.buffer, 0u, source->second.byte_size},
+                vk::DescriptorBufferInfo{*resource.indirectBuffer.buffer, 0u, sizeof(vk::DrawIndirectCommand)},
+            };
+            const std::array descriptor_writes{
+                vk::WriteDescriptorSet{*resource.compute_descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_infos[0]},
+                vk::WriteDescriptorSet{*resource.compute_descriptor_sets.at(0), 1u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_infos[1]},
+                vk::WriteDescriptorSet{*resource.compute_descriptor_sets.at(0), 2u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_infos[2]},
+                vk::WriteDescriptorSet{*resource.compute_descriptor_sets.at(0), 3u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_infos[3]},
+            };
+            this->host.device->updateDescriptorSets(descriptor_writes, {});
+            resource.compute_descriptor_valid = true;
+        }
+        if (!resource.draw_descriptor_valid) {
+            const vk::DescriptorSetLayout draw_descriptor_set_layout = *this->viewport_voxel_grid_pass.descriptor_set_layout;
+            const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, 1u, &draw_descriptor_set_layout};
+            resource.draw_descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+            if (resource.draw_descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate viewport voxel grid compacted draw descriptor set");
+            const vk::DescriptorBufferInfo descriptor_buffer_info{*resource.compactedIndexBuffer.buffer, 0u, compacted_bytes};
+            const std::array descriptor_writes{vk::WriteDescriptorSet{*resource.draw_descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_info}};
+            this->host.device->updateDescriptorSets(descriptor_writes, {});
+            resource.draw_descriptor_valid = true;
+        }
+    }
+
+    void Renderer::connect_dynamic_scene_host_services() {
+        if (this->scene.dynamic_host_services == nullptr) throw std::runtime_error("Spectra rasterizer dynamic scene host services are not initialized");
+        this->scene.dynamic_host_services->set_viewport_voxel_buffer_backend(
+            [this](const DynamicSceneViewportVoxelBufferRequest& request) {
+                return this->request_viewport_voxel_buffer(request);
+            },
+            [this](const std::uint64_t resource_id) {
+                this->release_viewport_voxel_buffer(resource_id);
+            });
+    }
+
+    void Renderer::disconnect_dynamic_scene_host_services() noexcept {
+        if (this->scene.dynamic_host_services != nullptr) this->scene.dynamic_host_services->clear_viewport_voxel_buffer_backend();
     }
 
     void Renderer::create_image_2d(GpuImage2D& image, const vk::Extent2D extent, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect) {
@@ -1181,6 +1443,51 @@ namespace spectra::rasterizer {
         this->viewport_segment_pass.depth_tested_pipeline   = nullptr;
         this->viewport_segment_pass.pipeline_layout         = nullptr;
         this->viewport_segment_pass.frame_count             = 0;
+    }
+
+    void Renderer::destroy_viewport_voxel_grid_resources() noexcept {
+        if (this->viewport_voxel_grid_pass.frame_count == 0 && !*this->viewport_voxel_grid_pass.descriptor_set_layout && !*this->viewport_voxel_grid_pass.compaction_descriptor_set_layout && !*this->viewport_voxel_grid_pass.descriptor_pool && !*this->viewport_voxel_grid_pass.pipeline_layout && !*this->viewport_voxel_grid_pass.compaction_pipeline_layout && !*this->viewport_voxel_grid_pass.compaction_pipeline && !*this->viewport_voxel_grid_pass.depth_tested_pipeline && !*this->viewport_voxel_grid_pass.always_visible_pipeline && this->viewport_voxel_grid_pass.frame_voxel_grids.empty() && this->viewport_voxel_grid_pass.compactions.empty()) return;
+        this->wait_device_idle_for_cleanup();
+        for (std::pair<const std::uint64_t, ExternalViewportVoxelBuffer>& resource : this->viewport_voxel_grid_pass.buffers) {
+            resource.second.descriptor_sets = nullptr;
+            resource.second.descriptor_valid = false;
+        }
+        for (std::pair<const ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>& resource : this->viewport_voxel_grid_pass.compactions) this->destroy_viewport_voxel_grid_compaction_resource(resource.second);
+        this->viewport_voxel_grid_pass.compactions.clear();
+        this->viewport_voxel_grid_pass.frame_voxel_grids.clear();
+        this->viewport_voxel_grid_pass.always_visible_pipeline = nullptr;
+        this->viewport_voxel_grid_pass.depth_tested_pipeline = nullptr;
+        this->viewport_voxel_grid_pass.compaction_pipeline = nullptr;
+        this->viewport_voxel_grid_pass.compaction_pipeline_layout = nullptr;
+        this->viewport_voxel_grid_pass.pipeline_layout = nullptr;
+        this->viewport_voxel_grid_pass.descriptor_pool = nullptr;
+        this->viewport_voxel_grid_pass.compaction_descriptor_set_layout = nullptr;
+        this->viewport_voxel_grid_pass.descriptor_set_layout = nullptr;
+        this->viewport_voxel_grid_pass.frame_count = 0;
+    }
+
+    void Renderer::destroy_external_viewport_voxel_buffers() noexcept {
+        if (this->viewport_voxel_grid_pass.buffers.empty()) return;
+        this->wait_device_idle_for_cleanup();
+        for (std::pair<const std::uint64_t, ExternalViewportVoxelBuffer>& resource : this->viewport_voxel_grid_pass.buffers) {
+            resource.second.descriptor_sets = nullptr;
+            resource.second.descriptor_valid = false;
+            this->destroy_external_buffer(resource.second.buffer);
+        }
+        this->viewport_voxel_grid_pass.buffers.clear();
+    }
+
+    void Renderer::destroy_viewport_voxel_grid_compaction_resource(ViewportVoxelGridCompactionResource& resource) noexcept {
+        resource.compute_descriptor_sets = nullptr;
+        resource.draw_descriptor_sets = nullptr;
+        resource.compute_descriptor_valid = false;
+        resource.draw_descriptor_valid = false;
+        resource.source_buffer_id = 0u;
+        resource.source_byte_size = 0u;
+        resource.compacted_capacity = 0u;
+        this->destroy_device_buffer(resource.compactedIndexBuffer);
+        this->destroy_device_buffer(resource.counterBuffer);
+        this->destroy_device_buffer(resource.indirectBuffer);
     }
 
     void Renderer::destroy_viewport_image_plane_texture(ViewportImagePlaneTexture& texture) noexcept {
@@ -1570,6 +1877,100 @@ namespace spectra::rasterizer {
         this->viewport_segment_pass.always_visible_pipeline = create_segment_pipeline(always_visible_state);
         this->viewport_segment_pass.frame_count             = this->host.frame_count;
         this->viewport_segment_pass.frame_segments.resize(this->host.frame_count);
+    }
+
+    void Renderer::ensure_viewport_voxel_grid_resources() {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport voxel grid resources without Vulkan handles");
+        if (!*this->camera.descriptor_set_layout) throw std::runtime_error("Spectra rasterizer viewport voxel grid pass requires camera descriptors");
+        if (*this->viewport_voxel_grid_pass.depth_tested_pipeline && *this->viewport_voxel_grid_pass.always_visible_pipeline && *this->viewport_voxel_grid_pass.compaction_pipeline && *this->viewport_voxel_grid_pass.descriptor_set_layout && *this->viewport_voxel_grid_pass.compaction_descriptor_set_layout && *this->viewport_voxel_grid_pass.descriptor_pool && this->viewport_voxel_grid_pass.frame_count == this->host.frame_count) return;
+        this->destroy_viewport_voxel_grid_resources();
+
+        const vk::DescriptorSetLayoutBinding index_buffer_binding{0u, vk::DescriptorType::eStorageBuffer, 1u, vk::ShaderStageFlagBits::eVertex};
+        const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, 1u, &index_buffer_binding};
+        this->viewport_voxel_grid_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, descriptor_set_layout_create_info};
+
+        const std::array compaction_descriptor_bindings{
+            vk::DescriptorSetLayoutBinding{0u, vk::DescriptorType::eStorageBuffer, 1u, vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{1u, vk::DescriptorType::eStorageBuffer, 1u, vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{2u, vk::DescriptorType::eStorageBuffer, 1u, vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{3u, vk::DescriptorType::eStorageBuffer, 1u, vk::ShaderStageFlagBits::eCompute},
+        };
+        const vk::DescriptorSetLayoutCreateInfo compaction_descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(compaction_descriptor_bindings.size()), compaction_descriptor_bindings.data()};
+        this->viewport_voxel_grid_pass.compaction_descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, compaction_descriptor_set_layout_create_info};
+
+        constexpr std::uint32_t max_viewport_voxel_descriptor_sets = 2048u;
+        constexpr std::uint32_t max_viewport_voxel_storage_descriptors = 8192u;
+        const vk::DescriptorPoolSize descriptor_pool_size{vk::DescriptorType::eStorageBuffer, max_viewport_voxel_storage_descriptors};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, max_viewport_voxel_descriptor_sets, 1u, &descriptor_pool_size};
+        this->viewport_voxel_grid_pass.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
+
+        const std::array descriptor_set_layouts{*this->camera.descriptor_set_layout, *this->viewport_voxel_grid_pass.descriptor_set_layout};
+        const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(ViewportVoxelGridPushConstantsData)};
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, static_cast<std::uint32_t>(descriptor_set_layouts.size()), descriptor_set_layouts.data(), 1u, &push_constant_range};
+        this->viewport_voxel_grid_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
+
+        const std::array compaction_descriptor_set_layouts{*this->viewport_voxel_grid_pass.compaction_descriptor_set_layout};
+        const vk::PushConstantRange compaction_push_constant_range{vk::ShaderStageFlagBits::eCompute, 0u, sizeof(ViewportVoxelGridCompactionPushConstantsData)};
+        const vk::PipelineLayoutCreateInfo compaction_pipeline_layout_create_info{{}, static_cast<std::uint32_t>(compaction_descriptor_set_layouts.size()), compaction_descriptor_set_layouts.data(), 1u, &compaction_push_constant_range};
+        this->viewport_voxel_grid_pass.compaction_pipeline_layout = vk::raii::PipelineLayout{*this->host.device, compaction_pipeline_layout_create_info};
+
+        const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_viewport_voxel_grid_vertex_spv_sizeInBytes, spectra_rasterizer_viewport_voxel_grid_vertex_spv};
+        const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_viewport_voxel_grid_fragment_spv_sizeInBytes, spectra_rasterizer_viewport_voxel_grid_fragment_spv};
+        const vk::ShaderModuleCreateInfo compaction_shader_create_info{{}, spectra_rasterizer_viewport_voxel_grid_compact_compute_spv_sizeInBytes, spectra_rasterizer_viewport_voxel_grid_compact_compute_spv};
+        const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
+        const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
+        const vk::raii::ShaderModule compaction_shader{*this->host.device, compaction_shader_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+        const vk::ComputePipelineCreateInfo compaction_pipeline_create_info{{}, vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eCompute, *compaction_shader, "main"}, *this->viewport_voxel_grid_pass.compaction_pipeline_layout};
+        this->viewport_voxel_grid_pass.compaction_pipeline = vk::raii::Pipeline{*this->host.device, nullptr, compaction_pipeline_create_info};
+
+        const vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
+            VK_TRUE,
+            vk::BlendFactor::eSrcAlpha,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        };
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+        const vk::Format color_format = this->viewport.format;
+        const vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{{}, 1u, &color_format, this->viewport.depth_format};
+        const auto create_voxel_pipeline = [&](const vk::PipelineDepthStencilStateCreateInfo& depth_state) {
+            vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{};
+            graphics_pipeline_create_info.setPNext(&pipeline_rendering_create_info);
+            graphics_pipeline_create_info.setStageCount(static_cast<std::uint32_t>(shader_stages.size()));
+            graphics_pipeline_create_info.setPStages(shader_stages.data());
+            graphics_pipeline_create_info.setPVertexInputState(&vertex_input_state);
+            graphics_pipeline_create_info.setPInputAssemblyState(&input_assembly_state);
+            graphics_pipeline_create_info.setPViewportState(&viewport_state);
+            graphics_pipeline_create_info.setPRasterizationState(&rasterization_state);
+            graphics_pipeline_create_info.setPMultisampleState(&multisample_state);
+            graphics_pipeline_create_info.setPDepthStencilState(&depth_state);
+            graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
+            graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
+            graphics_pipeline_create_info.setLayout(*this->viewport_voxel_grid_pass.pipeline_layout);
+            return vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        };
+        this->viewport_voxel_grid_pass.depth_tested_pipeline = create_voxel_pipeline(depth_tested_state);
+        this->viewport_voxel_grid_pass.always_visible_pipeline = create_voxel_pipeline(always_visible_state);
+        this->viewport_voxel_grid_pass.frame_count = this->host.frame_count;
+        this->viewport_voxel_grid_pass.frame_voxel_grids.resize(this->host.frame_count);
+
+        for (std::pair<const std::uint64_t, ExternalViewportVoxelBuffer>& resource : this->viewport_voxel_grid_pass.buffers) this->ensure_viewport_voxel_buffer_descriptor(resource.second);
     }
 
     void Renderer::ensure_viewport_image_plane_resources() {
@@ -2647,6 +3048,49 @@ namespace spectra::rasterizer {
         frame_segments.uploadedRevision = scene_revision;
     }
 
+    void Renderer::upload_viewport_voxel_grid_resources(const std::uint32_t frame_index) {
+        if (frame_index >= this->viewport_voxel_grid_pass.frame_voxel_grids.size()) throw std::runtime_error("Spectra rasterizer viewport voxel grid frame index is out of range");
+        FrameViewportVoxelGridResources& frame_voxel_grids = this->viewport_voxel_grid_pass.frame_voxel_grids.at(frame_index);
+        const scene::Scene::Revision scene_revision = this->scene.workspace->revision();
+        if (frame_voxel_grids.uploadedRevision == scene_revision) return;
+
+        std::vector<ViewportVoxelGridDrawCommand> draw_commands{};
+        const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        for (const scene::Scene::ViewportVoxelGrid& voxel_grid : resolved_frame.viewport_voxel_grids) {
+            const std::uint64_t cell_count = static_cast<std::uint64_t>(voxel_grid.dimensions[0]) * static_cast<std::uint64_t>(voxel_grid.dimensions[1]) * static_cast<std::uint64_t>(voxel_grid.dimensions[2]);
+            if (cell_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" cell count exceeds uint32 draw range", voxel_grid.name));
+            if (voxel_grid.source_kind == scene::Scene::ViewportVoxelGridSourceKind::IndexList && voxel_grid.index_count == 0u) continue;
+            if (voxel_grid.source_kind == scene::Scene::ViewportVoxelGridSourceKind::IndexList && voxel_grid.index_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" index count exceeds uint32 draw range", voxel_grid.name));
+            const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::iterator resource = this->viewport_voxel_grid_pass.buffers.find(voxel_grid.buffer_id);
+            if (resource == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" references unknown voxel buffer {}", voxel_grid.name, voxel_grid.buffer_id));
+            if (voxel_grid.source_byte_size > resource->second.byte_size) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" source byte size exceeds voxel buffer capacity", voxel_grid.name));
+            this->ensure_viewport_voxel_buffer_descriptor(resource->second);
+            if (!resource->second.descriptor_valid || resource->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" voxel buffer descriptor is invalid", voxel_grid.name));
+            const std::uint64_t bitfield_byte_count = (cell_count + 7u) / 8u;
+            if (bitfield_byte_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" bitfield byte count exceeds uint32 range", voxel_grid.name));
+            const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(voxel_grid.transform));
+            ViewportVoxelGridDrawCommand draw_command{
+                .bufferId = voxel_grid.buffer_id,
+                .sourceKind = voxel_grid.source_kind,
+                .indexEncoding = voxel_grid.index_encoding,
+                .indexCount = static_cast<std::uint32_t>(voxel_grid.index_count),
+                .bitfieldByteCount = static_cast<std::uint32_t>(bitfield_byte_count),
+                .cellCount = static_cast<std::uint32_t>(cell_count),
+                .frameIndex = frame_index,
+                .depthMode = voxel_grid.depth_mode,
+                .model = transform.values,
+                .originCellScale = {voxel_grid.origin.x, voxel_grid.origin.y, voxel_grid.origin.z, voxel_grid.cell_scale},
+                .voxelSize = {voxel_grid.voxel_size.x, voxel_grid.voxel_size.y, voxel_grid.voxel_size.z, 0.0f},
+                .color = {voxel_grid.color.x, voxel_grid.color.y, voxel_grid.color.z, voxel_grid.color.w},
+                .dimensions = {voxel_grid.dimensions[0], voxel_grid.dimensions[1], voxel_grid.dimensions[2], voxel_grid.source_kind == scene::Scene::ViewportVoxelGridSourceKind::Bitfield ? 0u : static_cast<std::uint32_t>(voxel_grid.index_encoding)},
+            };
+            if (draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::Bitfield) this->ensure_viewport_voxel_grid_compaction_resource(draw_command);
+            draw_commands.push_back(draw_command);
+        }
+        frame_voxel_grids.drawCommands = std::move(draw_commands);
+        frame_voxel_grids.uploadedRevision = scene_revision;
+    }
+
     void Renderer::upload_viewport_image_plane_resources(const std::uint32_t frame_index) {
         if (frame_index >= this->viewport_image_plane_pass.frame_planes.size()) throw std::runtime_error("Spectra rasterizer viewport image plane frame index is out of range");
         if (!*this->viewport_image_plane_pass.descriptor_set_layout || !*this->viewport_image_plane_pass.sampler) throw std::runtime_error("Spectra rasterizer viewport image plane resources are not initialized");
@@ -3169,6 +3613,7 @@ namespace spectra::rasterizer {
         this->ensure_viewport_grid_resources();
         this->ensure_point_cloud_resources();
         this->ensure_viewport_segment_resources();
+        this->ensure_viewport_voxel_grid_resources();
         this->ensure_viewport_image_plane_resources();
         this->ensure_volume_resources();
         this->ensure_selection_resources();
@@ -3178,6 +3623,7 @@ namespace spectra::rasterizer {
         this->upload_scene_resources(frame.frame_index);
         this->upload_point_cloud_resources(frame.frame_index);
         this->upload_viewport_segment_resources(frame.frame_index);
+        this->upload_viewport_voxel_grid_resources(frame.frame_index);
         this->upload_viewport_image_plane_resources(frame.frame_index);
         this->upload_volume_resources(frame.frame_index);
         this->update_camera_uniform(frame.frame_index);
@@ -3299,6 +3745,106 @@ namespace spectra::rasterizer {
         for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
     }
 
+    void Renderer::record_viewport_voxel_grid_compactions(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->viewport_voxel_grid_pass.frame_voxel_grids.size()) throw std::runtime_error("Spectra rasterizer active viewport voxel grid frame index is out of range");
+        const FrameViewportVoxelGridResources& frame_voxel_grids = this->viewport_voxel_grid_pass.frame_voxel_grids.at(this->lifecycle.active_frame_index);
+        for (const ViewportVoxelGridDrawCommand& draw_command : frame_voxel_grids.drawCommands) {
+            if (draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::Bitfield) this->record_viewport_voxel_grid_compaction(command_buffer, draw_command);
+        }
+    }
+
+    void Renderer::record_viewport_voxel_grid_pass(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->viewport_voxel_grid_pass.frame_voxel_grids.size()) throw std::runtime_error("Spectra rasterizer active viewport voxel grid frame index is out of range");
+        FrameViewportVoxelGridResources& frame_voxel_grids = this->viewport_voxel_grid_pass.frame_voxel_grids.at(this->lifecycle.active_frame_index);
+        if (frame_voxel_grids.drawCommands.empty()) return;
+        const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
+        command_buffer.setViewport(0u, viewport);
+        command_buffer.setScissor(0u, scissor);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_voxel_grid_pass.pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
+        std::optional<scene::Scene::ViewportSegmentDepthMode> bound_depth_mode{};
+        for (const ViewportVoxelGridDrawCommand& draw_command : frame_voxel_grids.drawCommands) {
+            const vk::raii::DescriptorSets* draw_descriptor_sets{};
+            const ViewportVoxelGridCompactionResource* compaction_resource{};
+            if (draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::IndexList) {
+                const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::const_iterator resource = this->viewport_voxel_grid_pass.buffers.find(draw_command.bufferId);
+                if (resource == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Viewport voxel grid buffer {} was released before rendering", draw_command.bufferId));
+                if (!resource->second.descriptor_valid || resource->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid buffer {} descriptor is invalid", draw_command.bufferId));
+                draw_descriptor_sets = &resource->second.descriptor_sets;
+            } else {
+                const ViewportVoxelGridCompactionKey key{
+                    .bufferId = draw_command.bufferId,
+                    .frameIndex = draw_command.frameIndex,
+                    .dimX = draw_command.dimensions[0],
+                    .dimY = draw_command.dimensions[1],
+                    .dimZ = draw_command.dimensions[2],
+                    .indexEncoding = draw_command.indexEncoding,
+                };
+                const std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>::const_iterator compaction = this->viewport_voxel_grid_pass.compactions.find(key);
+                if (compaction == this->viewport_voxel_grid_pass.compactions.end()) throw std::runtime_error(std::format("Viewport voxel grid compaction resource for buffer {} does not exist", draw_command.bufferId));
+                if (!compaction->second.draw_descriptor_valid || compaction->second.draw_descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid compacted descriptor for buffer {} is invalid", draw_command.bufferId));
+                draw_descriptor_sets = &compaction->second.draw_descriptor_sets;
+                compaction_resource = &compaction->second;
+            }
+            if (!bound_depth_mode.has_value() || *bound_depth_mode != draw_command.depthMode) {
+                const vk::raii::Pipeline& pipeline = draw_command.depthMode == scene::Scene::ViewportSegmentDepthMode::AlwaysVisible ? this->viewport_voxel_grid_pass.always_visible_pipeline : this->viewport_voxel_grid_pass.depth_tested_pipeline;
+                command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+                bound_depth_mode = draw_command.depthMode;
+            }
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_voxel_grid_pass.pipeline_layout, 1u, *draw_descriptor_sets->at(0), {});
+            const ViewportVoxelGridPushConstantsData push_constants{
+                .model = draw_command.model,
+                .originCellScale = draw_command.originCellScale,
+                .voxelSize = draw_command.voxelSize,
+                .color = draw_command.color,
+                .dimensions = draw_command.dimensions,
+            };
+            command_buffer.pushConstants(*this->viewport_voxel_grid_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
+            if (draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::IndexList) {
+                command_buffer.draw(36u, draw_command.indexCount, 0u, 0u);
+            } else {
+                if (compaction_resource == nullptr || !*compaction_resource->indirectBuffer.buffer) throw std::runtime_error(std::format("Viewport voxel grid compacted indirect buffer for source {} is invalid", draw_command.bufferId));
+                command_buffer.drawIndirect(*compaction_resource->indirectBuffer.buffer, 0u, 1u, sizeof(vk::DrawIndirectCommand));
+            }
+        }
+    }
+
+    void Renderer::record_viewport_voxel_grid_compaction(const vk::raii::CommandBuffer& command_buffer, const ViewportVoxelGridDrawCommand& draw_command) {
+        if (draw_command.sourceKind != scene::Scene::ViewportVoxelGridSourceKind::Bitfield) throw std::runtime_error("Viewport voxel grid compaction record requires a bitfield source");
+        const ViewportVoxelGridCompactionKey key{
+            .bufferId = draw_command.bufferId,
+            .frameIndex = draw_command.frameIndex,
+            .dimX = draw_command.dimensions[0],
+            .dimY = draw_command.dimensions[1],
+            .dimZ = draw_command.dimensions[2],
+            .indexEncoding = draw_command.indexEncoding,
+        };
+        const std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>::const_iterator compaction = this->viewport_voxel_grid_pass.compactions.find(key);
+        if (compaction == this->viewport_voxel_grid_pass.compactions.end()) throw std::runtime_error(std::format("Viewport voxel grid compaction resource for buffer {} does not exist", draw_command.bufferId));
+        const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::const_iterator source = this->viewport_voxel_grid_pass.buffers.find(draw_command.bufferId);
+        if (source == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Viewport voxel grid bitfield buffer {} was released before compaction", draw_command.bufferId));
+        if (!compaction->second.compute_descriptor_valid || compaction->second.compute_descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid compaction descriptor for buffer {} is invalid", draw_command.bufferId));
+        if (!*compaction->second.compactedIndexBuffer.buffer || !*compaction->second.counterBuffer.buffer || !*compaction->second.indirectBuffer.buffer) throw std::runtime_error(std::format("Viewport voxel grid compaction buffers for source {} are invalid", draw_command.bufferId));
+
+        command_buffer.fillBuffer(*compaction->second.counterBuffer.buffer, 0u, sizeof(std::uint32_t), 0u);
+        command_buffer.fillBuffer(*compaction->second.indirectBuffer.buffer, 0u, sizeof(std::uint32_t), 36u);
+        command_buffer.fillBuffer(*compaction->second.indirectBuffer.buffer, sizeof(std::uint32_t), sizeof(vk::DrawIndirectCommand) - sizeof(std::uint32_t), 0u);
+        transition_buffer_access(command_buffer, *source->second.buffer.buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+        transition_buffer_access(command_buffer, *compaction->second.counterBuffer.buffer, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+        transition_buffer_access(command_buffer, *compaction->second.indirectBuffer.buffer, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+
+        const ViewportVoxelGridCompactionPushConstantsData push_constants{
+            .dimensions = {draw_command.dimensions[0], draw_command.dimensions[1], draw_command.dimensions[2], static_cast<std::uint32_t>(draw_command.indexEncoding)},
+            .counts = {draw_command.bitfieldByteCount, draw_command.cellCount, 0u, 0u},
+        };
+        command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *this->viewport_voxel_grid_pass.compaction_pipeline);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *this->viewport_voxel_grid_pass.compaction_pipeline_layout, 0u, *compaction->second.compute_descriptor_sets.at(0), {});
+        command_buffer.pushConstants(*this->viewport_voxel_grid_pass.compaction_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0u, sizeof(push_constants), &push_constants);
+        command_buffer.dispatch((draw_command.bitfieldByteCount + 255u) / 256u, 1u, 1u);
+        transition_buffer_access(command_buffer, *compaction->second.compactedIndexBuffer.buffer, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite, vk::PipelineStageFlagBits2::eVertexShader, vk::AccessFlagBits2::eShaderRead);
+        transition_buffer_access(command_buffer, *compaction->second.indirectBuffer.buffer, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite, vk::PipelineStageFlagBits2::eDrawIndirect, vk::AccessFlagBits2::eIndirectCommandRead);
+    }
+
     void Renderer::record_viewport_image_plane_pass(const vk::raii::CommandBuffer& command_buffer) {
         if (this->lifecycle.active_frame_index >= this->viewport_image_plane_pass.frame_planes.size()) throw std::runtime_error("Spectra rasterizer active viewport image plane frame index is out of range");
         FrameViewportImagePlaneResources& frame_planes = this->viewport_image_plane_pass.frame_planes.at(this->lifecycle.active_frame_index);
@@ -3360,6 +3906,7 @@ namespace spectra::rasterizer {
         if (this->lifecycle.active_frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer active frame volume index is out of range");
         this->record_pending_viewport_image_plane_uploads(command_buffer);
         this->record_pending_volume_upload(command_buffer, this->volume_pass.frame_volumes.at(this->lifecycle.active_frame_index));
+        this->record_viewport_voxel_grid_compactions(command_buffer);
 
         transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eColorAttachmentOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
         this->viewport.layout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -3396,6 +3943,7 @@ namespace spectra::rasterizer {
         this->record_volume_pass(command_buffer);
         this->record_point_cloud_pass(command_buffer);
         this->record_transparent_mesh_pass(command_buffer);
+        this->record_viewport_voxel_grid_pass(command_buffer);
         this->record_viewport_image_plane_pass(command_buffer);
         this->record_viewport_segment_pass(command_buffer);
         command_buffer.endRendering();

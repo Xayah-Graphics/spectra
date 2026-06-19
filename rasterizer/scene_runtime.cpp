@@ -106,8 +106,49 @@ namespace spectra::rasterizer {
         return this->entries.size();
     }
 
-    SceneController::SceneController(SceneRegistry registry, std::shared_ptr<scene::Scene> empty_workspace) : registry(std::move(registry)), empty_workspace(std::move(empty_workspace)) {
+    void DynamicSceneHostServiceRouter::set_viewport_voxel_buffer_backend(std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback) {
+        if (!request_callback) throw std::runtime_error("Dynamic scene viewport voxel buffer request callback must not be empty");
+        if (!release_callback) throw std::runtime_error("Dynamic scene viewport voxel buffer release callback must not be empty");
+        this->request_viewport_voxel_buffer_callback = std::move(request_callback);
+        this->release_viewport_voxel_buffer_callback = std::move(release_callback);
+        this->last_error_message.clear();
+    }
+
+    void DynamicSceneHostServiceRouter::clear_viewport_voxel_buffer_backend() noexcept {
+        this->request_viewport_voxel_buffer_callback = nullptr;
+        this->release_viewport_voxel_buffer_callback = nullptr;
+        this->last_error_message.clear();
+    }
+
+    DynamicSceneViewportVoxelBufferAllocation DynamicSceneHostServiceRouter::request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) {
+        try {
+            if (!this->request_viewport_voxel_buffer_callback) throw std::runtime_error("Dynamic scene viewport voxel buffer backend is not available");
+            this->last_error_message.clear();
+            return this->request_viewport_voxel_buffer_callback(request);
+        } catch (const std::exception& error) {
+            this->last_error_message = error.what();
+            throw;
+        }
+    }
+
+    void DynamicSceneHostServiceRouter::release_viewport_voxel_buffer(const std::uint64_t resource_id) {
+        try {
+            if (!this->release_viewport_voxel_buffer_callback) throw std::runtime_error("Dynamic scene viewport voxel buffer backend is not available");
+            this->last_error_message.clear();
+            this->release_viewport_voxel_buffer_callback(resource_id);
+        } catch (const std::exception& error) {
+            this->last_error_message = error.what();
+            throw;
+        }
+    }
+
+    std::string_view DynamicSceneHostServiceRouter::last_error() const {
+        return this->last_error_message;
+    }
+
+    SceneController::SceneController(SceneRegistry registry, std::shared_ptr<scene::Scene> empty_workspace, std::shared_ptr<DynamicSceneHostServices> host_services) : registry(std::move(registry)), empty_workspace(std::move(empty_workspace)), host_services(std::move(host_services)) {
         if (this->empty_workspace == nullptr) throw std::runtime_error("Scene controller requires an empty Untitled workspace");
+        if (this->host_services == nullptr) throw std::runtime_error("Scene controller requires dynamic scene host services");
         this->slots.resize(this->registry.size());
     }
 
@@ -154,6 +195,10 @@ namespace spectra::rasterizer {
         return slot.source != nullptr;
     }
 
+    std::shared_ptr<DynamicSceneHostServices> SceneController::dynamic_host_services() const {
+        return this->host_services;
+    }
+
     DynamicSceneProjectStatus SceneController::active_dynamic_project_status() {
         return this->active_dynamic_project_source().project_status();
     }
@@ -163,6 +208,7 @@ namespace spectra::rasterizer {
     }
 
     void SceneController::activate_empty_workspace() {
+        this->release_selected_dynamic_slot();
         this->selected_entry_index.reset();
         this->pending_selected_entry_index.reset();
         this->clear_activation_error();
@@ -194,6 +240,7 @@ namespace spectra::rasterizer {
             std::shared_ptr<scene::Scene> cached_scene = scene;
             const std::size_t index = this->registry.upsert_static_scene(std::move(id), std::move(title), [cached_scene = std::move(cached_scene)] { return cached_scene; });
             this->sync_slot_count();
+            this->release_selected_dynamic_slot();
             this->set_static_slot(index, std::move(scene));
             this->selected_entry_index = index;
             this->pending_selected_entry_index.reset();
@@ -234,6 +281,7 @@ namespace spectra::rasterizer {
             static_cast<void>(workspace->resolved_frame());
             const std::size_t index = this->registry.upsert_dynamic_source(std::move(id), std::move(title), std::move(create_source));
             this->sync_slot_count();
+            this->release_selected_dynamic_slot();
             this->set_dynamic_slot(index, std::move(source), std::move(workspace));
             this->selected_entry_index = index;
             this->pending_selected_entry_index.reset();
@@ -373,6 +421,23 @@ namespace spectra::rasterizer {
         slot.committed_playback_frame_index.reset();
     }
 
+    void SceneController::release_selected_dynamic_slot() {
+        if (!this->selected_entry_index.has_value()) return;
+        this->sync_slot_count();
+        if (*this->selected_entry_index >= this->slots.size()) throw std::runtime_error("Selected scene slot index is out of range while releasing dynamic scene resources");
+        const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
+        if (source.kind != SceneEntryKind::Dynamic) return;
+        SceneSlot& slot = this->slots.at(*this->selected_entry_index);
+        slot.source.reset();
+        slot.workspace.reset();
+        slot.frame_accumulator_seconds = 0.0;
+        slot.stream_time_seconds = 0.0;
+        slot.stream_frame_index = 0;
+        slot.observed_reset_request_serial = 0;
+        slot.observed_clear_recording_request_serial = 0;
+        slot.committed_playback_frame_index.reset();
+    }
+
     SceneController::SceneSlot& SceneController::ensure_slot(const std::size_t index) {
         this->sync_slot_count();
         if (index >= this->slots.size()) throw std::runtime_error("Scene slot index is out of range");
@@ -439,7 +504,7 @@ namespace spectra::rasterizer {
     }
 
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 12u;
+        constexpr std::uint32_t plugin_abi_version = 14u;
         constexpr std::string_view scene_api_name = "spectra.dynamic_scene.scene";
         constexpr std::string_view project_api_name = "spectra.dynamic_scene.project";
         constexpr std::uint32_t scene_api_version = 1u;
@@ -555,10 +620,46 @@ namespace spectra::rasterizer {
             SpectraDynamicSceneProjectLogEntrySpan entries{};
         };
 
+        struct SpectraDynamicSceneGpuDeviceIdentity {
+            std::uint32_t vendor_id{};
+            std::uint32_t device_id{};
+            std::uint8_t device_uuid[16]{};
+            std::uint8_t device_luid[8]{};
+            std::uint32_t device_node_mask{};
+        };
+
+        struct SpectraDynamicSceneViewportVoxelBufferRequest {
+            std::uint64_t struct_size{};
+            std::uint64_t byte_size{};
+            SpectraDynamicSceneString debug_name{};
+        };
+
+        struct SpectraDynamicSceneViewportVoxelBufferAllocation {
+            std::uint64_t struct_size{};
+            std::uint64_t resource_id{};
+            std::uint64_t byte_size{};
+            std::uint32_t handle_kind{};
+            std::uintptr_t handle{};
+            SpectraDynamicSceneGpuDeviceIdentity device_identity{};
+        };
+
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneRequestViewportVoxelBufferFn)(void* user_data, const SpectraDynamicSceneViewportVoxelBufferRequest* request, SpectraDynamicSceneViewportVoxelBufferAllocation* allocation);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneReleaseViewportVoxelBufferFn)(void* user_data, std::uint64_t resource_id);
+        typedef SpectraDynamicSceneString (*SpectraDynamicSceneHostLastErrorFn)(void* user_data);
+
+        struct SpectraDynamicSceneHostServices {
+            std::uint64_t struct_size{};
+            void* user_data{};
+            SpectraDynamicSceneRequestViewportVoxelBufferFn request_viewport_voxel_buffer{};
+            SpectraDynamicSceneReleaseViewportVoxelBufferFn release_viewport_voxel_buffer{};
+            SpectraDynamicSceneHostLastErrorFn last_error{};
+        };
+
         struct SpectraDynamicSceneOpenInfo {
             std::uint64_t struct_size{};
             SpectraDynamicSceneString plugin_path{};
             SpectraDynamicSceneOptionSpan options{};
+            const SpectraDynamicSceneHostServices* host_services{};
         };
 
         struct SpectraDynamicSceneTransform {
@@ -774,6 +875,28 @@ namespace spectra::rasterizer {
             std::uint64_t count{};
         };
 
+        struct SpectraDynamicSceneViewportVoxelGrid {
+            SpectraDynamicSceneString name{};
+            std::uint32_t dimensions[3]{};
+            float origin[3]{};
+            float voxel_size[3]{};
+            SpectraDynamicSceneTransform transform{};
+            float color[4]{};
+            float cell_scale{};
+            std::uint32_t depth_mode{};
+            std::uint32_t source_kind{};
+            std::uint32_t index_encoding{};
+            std::uint64_t buffer_id{};
+            std::uint64_t source_byte_size{};
+            std::uint64_t index_count{};
+            std::uint64_t revision{};
+        };
+
+        struct SpectraDynamicSceneViewportVoxelGridSpan {
+            const SpectraDynamicSceneViewportVoxelGrid* data{};
+            std::uint64_t count{};
+        };
+
         struct SpectraDynamicSceneDocumentView {
             std::uint64_t struct_size{};
             SpectraDynamicSceneString default_coordinate_system{};
@@ -786,6 +909,7 @@ namespace spectra::rasterizer {
             SpectraDynamicScenePointCloudSpan point_clouds{};
             SpectraDynamicSceneVolumeSpan volumes{};
             SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
+            SpectraDynamicSceneViewportVoxelGridSpan viewport_voxel_grids{};
         };
 
         struct SpectraDynamicSceneFrameInfo {
@@ -802,6 +926,7 @@ namespace spectra::rasterizer {
             SpectraDynamicSceneVolumeSpan volumes{};
             SpectraDynamicSceneCameraSpan cameras{};
             SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
+            SpectraDynamicSceneViewportVoxelGridSpan viewport_voxel_grids{};
         };
 
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(const SpectraDynamicSceneOpenInfo* open_info, SpectraDynamicSceneInstance** instance);
@@ -923,6 +1048,10 @@ namespace spectra::rasterizer {
             return abi_span(span.data, span.count, context);
         }
 
+        [[nodiscard]] std::span<const SpectraDynamicSceneViewportVoxelGrid> abi_span(const SpectraDynamicSceneViewportVoxelGridSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
         [[nodiscard]] float finite_float(const float value, const std::string_view context) {
             if (!std::isfinite(value)) throw std::runtime_error(std::format("{} must be finite", context));
             return value;
@@ -977,6 +1106,22 @@ namespace spectra::rasterizer {
             case 1u: return scene::Scene::ViewportSegmentDepthMode::AlwaysVisible;
             }
             throw std::runtime_error(std::format("{} has invalid viewport segment depth mode {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::ViewportVoxelGridSourceKind viewport_voxel_grid_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::ViewportVoxelGridSourceKind::IndexList;
+            case 1u: return scene::Scene::ViewportVoxelGridSourceKind::Bitfield;
+            }
+            throw std::runtime_error(std::format("{} has invalid viewport voxel grid source kind {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::ViewportVoxelGridIndexEncoding viewport_voxel_grid_index_encoding_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::ViewportVoxelGridIndexEncoding::Linear;
+            case 1u: return scene::Scene::ViewportVoxelGridIndexEncoding::Morton3D;
+            }
+            throw std::runtime_error(std::format("{} has invalid viewport voxel grid index encoding {}", context, value));
         }
 
         [[nodiscard]] scene::Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
@@ -1232,6 +1377,27 @@ namespace spectra::rasterizer {
             return result;
         }
 
+        [[nodiscard]] scene::Scene::ViewportVoxelGrid make_viewport_voxel_grid(const SpectraDynamicSceneViewportVoxelGrid& voxel_grid, const bool dynamic) {
+            const std::string name = abi_string(voxel_grid.name, "Dynamic scene viewport voxel grid name", false);
+            return scene::Scene::ViewportVoxelGrid{
+                .name = name,
+                .dimensions = {voxel_grid.dimensions[0], voxel_grid.dimensions[1], voxel_grid.dimensions[2]},
+                .origin = make_vector3(voxel_grid.origin, std::format("Dynamic scene viewport voxel grid \"{}\" origin", name)),
+                .voxel_size = make_vector3(voxel_grid.voxel_size, std::format("Dynamic scene viewport voxel grid \"{}\" voxel size", name)),
+                .transform = make_transform(voxel_grid.transform, std::format("Dynamic scene viewport voxel grid \"{}\"", name)),
+                .color = make_vector4(voxel_grid.color, std::format("Dynamic scene viewport voxel grid \"{}\" color", name)),
+                .cell_scale = finite_float(voxel_grid.cell_scale, std::format("Dynamic scene viewport voxel grid \"{}\" cell scale", name)),
+                .depth_mode = viewport_segment_depth_mode_from_u32(voxel_grid.depth_mode, std::format("Dynamic scene viewport voxel grid \"{}\"", name)),
+                .source_kind = viewport_voxel_grid_source_kind_from_u32(voxel_grid.source_kind, std::format("Dynamic scene viewport voxel grid \"{}\"", name)),
+                .index_encoding = viewport_voxel_grid_index_encoding_from_u32(voxel_grid.index_encoding, std::format("Dynamic scene viewport voxel grid \"{}\"", name)),
+                .buffer_id = voxel_grid.buffer_id,
+                .source_byte_size = voxel_grid.source_byte_size,
+                .index_count = voxel_grid.index_count,
+                .revision = voxel_grid.revision,
+                .dynamic = dynamic,
+            };
+        }
+
         template <typename Item>
         void require_unique_name(std::set<std::string>& names, const Item& item, const std::string_view kind) {
             if (item.name.empty()) throw std::runtime_error(std::format("Dynamic scene {} name must not be empty", kind));
@@ -1296,6 +1462,8 @@ namespace spectra::rasterizer {
             }
             for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(view.viewport_segment_sets, "Dynamic scene document viewport segment sets"))
                 document.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, false));
+            for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_span(view.viewport_voxel_grids, "Dynamic scene document viewport voxel grids"))
+                document.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, false));
         }
 
         [[nodiscard]] scene::Scene::FrameSnapshot make_frame_snapshot(const SpectraDynamicSceneFrameView& view, const scene::Scene::FrameInfo& frame, const std::set<std::string>& material_names) {
@@ -1325,6 +1493,8 @@ namespace spectra::rasterizer {
                 snapshot.cameras.push_back(make_camera(camera_view));
             for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(view.viewport_segment_sets, "Dynamic scene frame viewport segment sets"))
                 snapshot.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, true));
+            for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_span(view.viewport_voxel_grids, "Dynamic scene frame viewport voxel grids"))
+                snapshot.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, true));
             return snapshot;
         }
 
@@ -1337,6 +1507,8 @@ namespace spectra::rasterizer {
             std::filesystem::path plugin_path{};
             std::vector<DynamicScenePluginOptionStorage> options{};
             std::vector<SpectraDynamicSceneOption> option_views{};
+            std::shared_ptr<DynamicSceneHostServices> host_services{};
+            SpectraDynamicSceneHostServices host_services_view{};
             std::string source_id{};
         };
 
@@ -1346,6 +1518,91 @@ namespace spectra::rasterizer {
 
         [[nodiscard]] SpectraDynamicSceneString abi_text(const std::string_view value) {
             return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
+        }
+
+        [[nodiscard]] std::uint32_t abi_gpu_resource_handle_kind(const DynamicSceneGpuResourceHandleKind kind) {
+            switch (kind) {
+            case DynamicSceneGpuResourceHandleKind::OpaqueWin32: return 1u;
+            case DynamicSceneGpuResourceHandleKind::OpaqueFileDescriptor: return 2u;
+            }
+            throw std::runtime_error("Dynamic scene GPU resource handle kind is invalid");
+        }
+
+        [[nodiscard]] SpectraDynamicSceneGpuDeviceIdentity abi_gpu_device_identity(const DynamicSceneGpuDeviceIdentity& identity) {
+            SpectraDynamicSceneGpuDeviceIdentity view{
+                .vendor_id = identity.vendor_id,
+                .device_id = identity.device_id,
+                .device_node_mask = identity.device_node_mask,
+            };
+            for (std::size_t index = 0u; index < identity.device_uuid.size(); ++index) view.device_uuid[index] = identity.device_uuid[index];
+            for (std::size_t index = 0u; index < identity.device_luid.size(); ++index) view.device_luid[index] = identity.device_luid[index];
+            return view;
+        }
+
+        thread_local std::string dynamic_scene_host_service_callback_error{};
+
+        [[nodiscard]] SpectraDynamicSceneResult request_viewport_voxel_buffer(void* user_data, const SpectraDynamicSceneViewportVoxelBufferRequest* request, SpectraDynamicSceneViewportVoxelBufferAllocation* allocation) noexcept {
+            try {
+                dynamic_scene_host_service_callback_error.clear();
+                if (user_data == nullptr) throw std::runtime_error("Dynamic scene host services user data pointer is null");
+                if (request == nullptr) throw std::runtime_error("Dynamic scene viewport voxel buffer request pointer is null");
+                if (allocation == nullptr) throw std::runtime_error("Dynamic scene viewport voxel buffer allocation pointer is null");
+                if (request->struct_size != sizeof(SpectraDynamicSceneViewportVoxelBufferRequest)) throw std::runtime_error("Dynamic scene viewport voxel buffer request ABI size mismatch");
+                DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
+                const DynamicSceneViewportVoxelBufferAllocation allocated = host_services.request_viewport_voxel_buffer(DynamicSceneViewportVoxelBufferRequest{
+                    .byte_size = request->byte_size,
+                    .debug_name = abi_string(request->debug_name, "Dynamic scene viewport voxel buffer debug name", true),
+                });
+                *allocation = SpectraDynamicSceneViewportVoxelBufferAllocation{
+                    .struct_size = sizeof(SpectraDynamicSceneViewportVoxelBufferAllocation),
+                    .resource_id = allocated.resource_id,
+                    .byte_size = allocated.byte_size,
+                    .handle_kind = abi_gpu_resource_handle_kind(allocated.handle_kind),
+                    .handle = allocated.handle,
+                    .device_identity = abi_gpu_device_identity(allocated.device_identity),
+                };
+                return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
+            } catch (const std::exception& error) {
+                dynamic_scene_host_service_callback_error = error.what();
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            } catch (...) {
+                dynamic_scene_host_service_callback_error = "unknown dynamic scene host service error";
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            }
+        }
+
+        [[nodiscard]] SpectraDynamicSceneResult release_viewport_voxel_buffer(void* user_data, const std::uint64_t resource_id) noexcept {
+            try {
+                dynamic_scene_host_service_callback_error.clear();
+                if (user_data == nullptr) throw std::runtime_error("Dynamic scene host services user data pointer is null");
+                DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
+                host_services.release_viewport_voxel_buffer(resource_id);
+                return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
+            } catch (const std::exception& error) {
+                dynamic_scene_host_service_callback_error = error.what();
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            } catch (...) {
+                dynamic_scene_host_service_callback_error = "unknown dynamic scene host service error";
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            }
+        }
+
+        [[nodiscard]] SpectraDynamicSceneString dynamic_scene_host_services_last_error(void* user_data) noexcept {
+            if (user_data == nullptr) return abi_text(dynamic_scene_host_service_callback_error);
+            DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
+            const std::string_view service_error = host_services.last_error();
+            if (!service_error.empty()) return abi_text(service_error);
+            return abi_text(dynamic_scene_host_service_callback_error);
+        }
+
+        [[nodiscard]] SpectraDynamicSceneHostServices make_host_services_view(DynamicSceneHostServices& host_services) {
+            return SpectraDynamicSceneHostServices{
+                .struct_size = sizeof(SpectraDynamicSceneHostServices),
+                .user_data = &host_services,
+                .request_viewport_voxel_buffer = request_viewport_voxel_buffer,
+                .release_viewport_voxel_buffer = release_viewport_voxel_buffer,
+                .last_error = dynamic_scene_host_services_last_error,
+            };
         }
 
         [[nodiscard]] bool parse_bool_default(const std::string_view value) {
@@ -1409,6 +1666,9 @@ namespace spectra::rasterizer {
             DynamicScenePluginOpenRequestStorage storage{
                 .plugin_path = normalized_dynamic_scene_plugin_path(request.plugin_path),
             };
+            if (request.host_services == nullptr) throw std::runtime_error("Dynamic scene open request requires host services");
+            storage.host_services = std::move(request.host_services);
+            storage.host_services_view = make_host_services_view(*storage.host_services);
             std::set<std::string> option_keys{};
             storage.options.reserve(request.options.size());
             for (DynamicSceneOpenOption& option : request.options) {
@@ -1705,6 +1965,7 @@ namespace spectra::rasterizer {
             }
 
             [[nodiscard]] SpectraDynamicSceneInstance* create_instance() const {
+                if (this->open_request.host_services == nullptr) throw std::runtime_error("Dynamic scene plugin instance creation requires host services");
                 SpectraDynamicSceneInstance* instance{};
                 const std::string plugin_path_text = this->open_request.plugin_path.string();
                 const SpectraDynamicSceneOpenInfo open_info{
@@ -1714,6 +1975,7 @@ namespace spectra::rasterizer {
                         .data = this->open_request.option_views.empty() ? nullptr : this->open_request.option_views.data(),
                         .count = static_cast<std::uint64_t>(this->open_request.option_views.size()),
                     },
+                    .host_services = &this->open_request.host_services_view,
                 };
                 this->check_result(this->scene_api->create(&open_info, &instance), nullptr, "Dynamic scene plugin create");
                 if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin create returned a null instance");

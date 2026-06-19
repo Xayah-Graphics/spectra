@@ -39,9 +39,71 @@ namespace spectra::rasterizer {
         std::string value{};
     };
 
+    export enum class DynamicSceneGpuResourceHandleKind : std::uint32_t {
+        OpaqueWin32 = 1u,
+        OpaqueFileDescriptor = 2u,
+    };
+
+    export struct DynamicSceneGpuDeviceIdentity {
+        std::uint32_t vendor_id{};
+        std::uint32_t device_id{};
+        std::array<std::uint8_t, 16u> device_uuid{};
+        std::array<std::uint8_t, 8u> device_luid{};
+        std::uint32_t device_node_mask{};
+    };
+
+    export struct DynamicSceneViewportVoxelBufferRequest {
+        std::uint64_t byte_size{};
+        std::string debug_name{};
+    };
+
+    export struct DynamicSceneViewportVoxelBufferAllocation {
+        std::uint64_t resource_id{};
+        std::uint64_t byte_size{};
+        DynamicSceneGpuResourceHandleKind handle_kind{DynamicSceneGpuResourceHandleKind::OpaqueWin32};
+        std::uintptr_t handle{};
+        DynamicSceneGpuDeviceIdentity device_identity{};
+    };
+
+    export class DynamicSceneHostServices {
+    public:
+        DynamicSceneHostServices() = default;
+        DynamicSceneHostServices(const DynamicSceneHostServices& other) = delete;
+        DynamicSceneHostServices(DynamicSceneHostServices&& other) = delete;
+        DynamicSceneHostServices& operator=(const DynamicSceneHostServices& other) = delete;
+        DynamicSceneHostServices& operator=(DynamicSceneHostServices&& other) = delete;
+        virtual ~DynamicSceneHostServices() noexcept = default;
+
+        [[nodiscard]] virtual DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) = 0;
+        virtual void release_viewport_voxel_buffer(std::uint64_t resource_id) = 0;
+        [[nodiscard]] virtual std::string_view last_error() const = 0;
+    };
+
+    export class DynamicSceneHostServiceRouter final : public DynamicSceneHostServices {
+    public:
+        DynamicSceneHostServiceRouter() = default;
+        DynamicSceneHostServiceRouter(const DynamicSceneHostServiceRouter& other) = delete;
+        DynamicSceneHostServiceRouter(DynamicSceneHostServiceRouter&& other) = delete;
+        DynamicSceneHostServiceRouter& operator=(const DynamicSceneHostServiceRouter& other) = delete;
+        DynamicSceneHostServiceRouter& operator=(DynamicSceneHostServiceRouter&& other) = delete;
+        ~DynamicSceneHostServiceRouter() noexcept override = default;
+
+        void set_viewport_voxel_buffer_backend(std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
+        void clear_viewport_voxel_buffer_backend() noexcept;
+        [[nodiscard]] DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) override;
+        void release_viewport_voxel_buffer(std::uint64_t resource_id) override;
+        [[nodiscard]] std::string_view last_error() const override;
+
+    private:
+        std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_viewport_voxel_buffer_callback{};
+        std::move_only_function<void(std::uint64_t)> release_viewport_voxel_buffer_callback{};
+        std::string last_error_message{};
+    };
+
     export struct DynamicSceneOpenRequest {
         std::filesystem::path plugin_path{};
         std::vector<DynamicSceneOpenOption> options{};
+        std::shared_ptr<DynamicSceneHostServices> host_services{};
     };
 
     export struct DynamicSceneProjectAction {
@@ -157,7 +219,7 @@ namespace spectra::rasterizer {
 
     export class SceneController final {
     public:
-        SceneController(SceneRegistry registry, std::shared_ptr<scene::Scene> empty_workspace);
+        SceneController(SceneRegistry registry, std::shared_ptr<scene::Scene> empty_workspace, std::shared_ptr<DynamicSceneHostServices> host_services);
 
         SceneController(const SceneController& other) = delete;
         SceneController(SceneController&& other) = delete;
@@ -174,6 +236,7 @@ namespace spectra::rasterizer {
         [[nodiscard]] bool has_activation_error() const;
         [[nodiscard]] const std::string& activation_error() const;
         [[nodiscard]] bool has_active_dynamic_project();
+        [[nodiscard]] std::shared_ptr<DynamicSceneHostServices> dynamic_host_services() const;
         [[nodiscard]] DynamicSceneProjectStatus active_dynamic_project_status();
         [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> active_dynamic_project_logs();
         void activate_empty_workspace();
@@ -200,6 +263,7 @@ namespace spectra::rasterizer {
         void sync_slot_count();
         void set_static_slot(std::size_t index, std::shared_ptr<scene::Scene> scene);
         void set_dynamic_slot(std::size_t index, std::unique_ptr<DynamicSceneSourceInstance> source, std::shared_ptr<scene::Scene> workspace);
+        void release_selected_dynamic_slot();
         void clear_activation_error();
         [[nodiscard]] SceneSlot& ensure_slot(std::size_t index);
         [[nodiscard]] DynamicSceneSourceInstance& active_dynamic_project_source();
@@ -209,6 +273,7 @@ namespace spectra::rasterizer {
         SceneRegistry registry{};
         std::vector<SceneSlot> slots{};
         std::shared_ptr<scene::Scene> empty_workspace{};
+        std::shared_ptr<DynamicSceneHostServices> host_services{};
         std::optional<std::size_t> selected_entry_index{};
         std::optional<std::size_t> pending_selected_entry_index{};
         std::string activation_error_message{};

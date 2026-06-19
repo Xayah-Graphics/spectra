@@ -12,6 +12,7 @@ module;
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
+export import spectra.rasterizer.scene_runtime;
 export import spectra.scene;
 
 import std;
@@ -21,7 +22,7 @@ namespace spectra::rasterizer {
     public:
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
-        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<DynamicSceneHostServiceRouter> dynamic_host_services);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -44,6 +45,18 @@ namespace spectra::rasterizer {
             vk::raii::Buffer buffer{nullptr};
             vk::raii::DeviceMemory memory{nullptr};
             void* mapped{};
+            vk::DeviceSize capacity{};
+        };
+
+        struct ExternalGpuBuffer {
+            vk::raii::Buffer buffer{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::DeviceSize capacity{};
+        };
+
+        struct DeviceGpuBuffer {
+            vk::raii::Buffer buffer{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
             vk::DeviceSize capacity{};
         };
 
@@ -235,6 +248,59 @@ namespace spectra::rasterizer {
             std::vector<ViewportImagePlaneDrawCommand> drawCommands{};
         };
 
+        struct ViewportVoxelGridDrawCommand {
+            std::uint64_t bufferId{};
+            scene::Scene::ViewportVoxelGridSourceKind sourceKind{scene::Scene::ViewportVoxelGridSourceKind::IndexList};
+            scene::Scene::ViewportVoxelGridIndexEncoding indexEncoding{scene::Scene::ViewportVoxelGridIndexEncoding::Linear};
+            std::uint32_t indexCount{};
+            std::uint32_t bitfieldByteCount{};
+            std::uint32_t cellCount{};
+            std::uint32_t frameIndex{};
+            scene::Scene::ViewportSegmentDepthMode depthMode{scene::Scene::ViewportSegmentDepthMode::DepthTested};
+            std::array<float, 16u> model{};
+            std::array<float, 4u> originCellScale{};
+            std::array<float, 4u> voxelSize{};
+            std::array<float, 4u> color{};
+            std::array<std::uint32_t, 4u> dimensions{};
+        };
+
+        struct FrameViewportVoxelGridResources {
+            scene::Scene::Revision uploadedRevision{};
+            std::vector<ViewportVoxelGridDrawCommand> drawCommands{};
+        };
+
+        struct ExternalViewportVoxelBuffer {
+            ExternalGpuBuffer buffer{};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            std::uint64_t resource_id{};
+            std::uint64_t byte_size{};
+            bool descriptor_valid{};
+        };
+
+        struct ViewportVoxelGridCompactionKey {
+            std::uint64_t bufferId{};
+            std::uint32_t frameIndex{};
+            std::uint32_t dimX{};
+            std::uint32_t dimY{};
+            std::uint32_t dimZ{};
+            scene::Scene::ViewportVoxelGridIndexEncoding indexEncoding{scene::Scene::ViewportVoxelGridIndexEncoding::Linear};
+
+            friend auto operator<=>(const ViewportVoxelGridCompactionKey&, const ViewportVoxelGridCompactionKey&) = default;
+        };
+
+        struct ViewportVoxelGridCompactionResource {
+            DeviceGpuBuffer compactedIndexBuffer{};
+            DeviceGpuBuffer counterBuffer{};
+            DeviceGpuBuffer indirectBuffer{};
+            vk::raii::DescriptorSets compute_descriptor_sets{nullptr};
+            vk::raii::DescriptorSets draw_descriptor_sets{nullptr};
+            std::uint64_t source_buffer_id{};
+            std::uint64_t source_byte_size{};
+            std::uint32_t compacted_capacity{};
+            bool compute_descriptor_valid{};
+            bool draw_descriptor_valid{};
+        };
+
         struct ViewportImagePlaneTexture {
             struct Source {
                 std::uintptr_t data{};
@@ -278,7 +344,16 @@ namespace spectra::rasterizer {
         void create_imgui_descriptor();
 
         void destroy_host_buffer(GpuBuffer& buffer) noexcept;
+        void destroy_external_buffer(ExternalGpuBuffer& buffer) noexcept;
+        void destroy_device_buffer(DeviceGpuBuffer& buffer) noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
+        void ensure_device_buffer(DeviceGpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
+        [[nodiscard]] DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request);
+        void release_viewport_voxel_buffer(std::uint64_t resource_id);
+        void ensure_viewport_voxel_buffer_descriptor(ExternalViewportVoxelBuffer& resource);
+        void ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command);
+        void connect_dynamic_scene_host_services();
+        void disconnect_dynamic_scene_host_services() noexcept;
         void create_image_2d(GpuImage2D& image, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect);
         void destroy_image_2d(GpuImage2D& image) noexcept;
         void create_volume_image(GpuImage3D& image, vk::Extent3D extent);
@@ -288,6 +363,9 @@ namespace spectra::rasterizer {
         void destroy_viewport_grid_resources() noexcept;
         void destroy_point_cloud_resources() noexcept;
         void destroy_viewport_segment_resources() noexcept;
+        void destroy_viewport_voxel_grid_resources() noexcept;
+        void destroy_external_viewport_voxel_buffers() noexcept;
+        void destroy_viewport_voxel_grid_compaction_resource(ViewportVoxelGridCompactionResource& resource) noexcept;
         void destroy_viewport_image_plane_texture(ViewportImagePlaneTexture& texture) noexcept;
         void destroy_viewport_image_plane_resources() noexcept;
         void destroy_volume_resources() noexcept;
@@ -297,6 +375,7 @@ namespace spectra::rasterizer {
         void ensure_viewport_grid_resources();
         void ensure_point_cloud_resources();
         void ensure_viewport_segment_resources();
+        void ensure_viewport_voxel_grid_resources();
         void ensure_viewport_image_plane_resources();
         void ensure_volume_resources();
         void ensure_selection_resources();
@@ -336,6 +415,7 @@ namespace spectra::rasterizer {
         void upload_scene_resources(std::uint32_t frame_index);
         void upload_point_cloud_resources(std::uint32_t frame_index);
         void upload_viewport_segment_resources(std::uint32_t frame_index);
+        void upload_viewport_voxel_grid_resources(std::uint32_t frame_index);
         void upload_viewport_image_plane_resources(std::uint32_t frame_index);
         void upload_volume_resources(std::uint32_t frame_index);
         void record_pending_viewport_image_plane_uploads(const vk::raii::CommandBuffer& command_buffer);
@@ -347,6 +427,9 @@ namespace spectra::rasterizer {
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_point_cloud_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_viewport_voxel_grid_compactions(const vk::raii::CommandBuffer& command_buffer);
+        void record_viewport_voxel_grid_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_viewport_voxel_grid_compaction(const vk::raii::CommandBuffer& command_buffer, const ViewportVoxelGridDrawCommand& draw_command);
         void record_viewport_image_plane_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_viewport_segment_pass(const vk::raii::CommandBuffer& command_buffer);
         void request_selection_pick(std::uint32_t x, std::uint32_t y, bool select, bool additive);
@@ -419,6 +502,7 @@ namespace spectra::rasterizer {
             std::shared_ptr<scene::Scene> workspace{};
             std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
             scene::CameraRevision observed_camera_revision{};
+            std::shared_ptr<DynamicSceneHostServiceRouter> dynamic_host_services{};
         } scene;
 
         struct {
@@ -493,6 +577,22 @@ namespace spectra::rasterizer {
             vk::raii::Pipeline always_visible_pipeline{nullptr};
             std::vector<FrameViewportSegmentResources> frame_segments{};
         } viewport_segment_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
+            vk::raii::DescriptorSetLayout compaction_descriptor_set_layout{nullptr};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::PipelineLayout compaction_pipeline_layout{nullptr};
+            vk::raii::Pipeline compaction_pipeline{nullptr};
+            vk::raii::Pipeline depth_tested_pipeline{nullptr};
+            vk::raii::Pipeline always_visible_pipeline{nullptr};
+            std::vector<FrameViewportVoxelGridResources> frame_voxel_grids{};
+            std::map<std::uint64_t, ExternalViewportVoxelBuffer> buffers{};
+            std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource> compactions{};
+            std::uint64_t next_resource_id{1u};
+        } viewport_voxel_grid_pass;
 
         struct {
             std::uint32_t frame_count{};

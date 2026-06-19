@@ -63,13 +63,16 @@ A dynamic scene plugin only needs to:
 2. Export `spectra_dynamic_scene_plugin()`.
 3. Declare the ABI structs exactly as documented below.
 
-The plugin owns all returned string and array views. Non-image view data is copied into Spectra scene storage during
-conversion. Camera visual RGBA8 pointers are borrowed; the pointed image memory must stay valid for the plugin instance
-lifetime, and `revision` must increase when the pixel contents change.
+The plugin owns all returned string and array views. Scene metadata is copied into Spectra scene storage during
+conversion, but camera visual pixels and viewport voxel grid GPU payloads are borrowed. Camera visual RGBA8 pointers
+must stay valid for the plugin instance lifetime, and `revision` must increase when the pixel contents change. Viewport
+voxel grid data is borrowed GPU data: the plugin requests a Spectra-owned external Vulkan storage buffer through host
+services, imports it into its own GPU runtime, writes the declared source payload, and publishes
+`resource_id + source_kind + index_encoding + source_byte_size + revision`.
 
 ### Binary Contract
 
-- ABI version: `12`.
+- ABI version: `14`.
 - Exported symbol: `spectra_dynamic_scene_plugin`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
@@ -98,7 +101,7 @@ extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra
 ```
 
 The returned descriptor and every capability table returned by `get_api` must stay valid while the library is loaded.
-Set `abi_version` to `12`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
+Set `abi_version` to `14`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
 unsupported optional APIs. The scene API is required; missing it is an error.
 
 ### Data Rules
@@ -116,6 +119,13 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 - Volume dimensions must be positive, and each channel value count must equal `x * y * z`.
 - Viewport segment annotations and camera visualization are preview-only. They are loaded by the rasterizer and ignored
   by the pathtracer/PBRT scene.
+- Viewport voxel grids are preview-only sparse voxel annotations. They are loaded by the rasterizer and ignored by the
+  pathtracer/PBRT scene. `dimensions` and positive `voxel_size` describe the logical grid; `buffer_id` names a
+  host-service GPU buffer. `source_kind` values are `0` compacted `uint32_t` index list and `1` dense occupancy
+  bitfield. `index_encoding` values are `0` row-major linear `x + dimX * (y + dimY * z)` and `1` Morton/Z-order.
+  For `source_kind = 0`, `index_count` is the number of occupied cells in the buffer. For `source_kind = 1`,
+  `index_count` must be `0`; Spectra compacts the bitfield in a Vulkan compute pass before drawing. `source_byte_size`
+  is the valid source payload byte count, and `revision` must increase when the producer rewrites the buffer contents.
 - Viewport width modes: `0` screen-space pixels, `1` world-space units.
 - Viewport depth modes: `0` depth tested, `1` always visible.
 - Camera projection values: `0` perspective, `1` pinhole intrinsics.
@@ -139,6 +149,16 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 
 ### Callback Rules
 
+- Scene API `create` receives a non-null `host_services` pointer in `SpectraDynamicSceneOpenInfo`.
+- Host services `request_viewport_voxel_buffer` allocates a Spectra-owned external Vulkan storage buffer and
+  returns `resource_id`, `byte_size`, `handle_kind`, an OS external memory handle, and Vulkan device identity. Handle
+  kinds are `1` opaque Win32 handle and `2` opaque file descriptor.
+- The producer may import that external memory into CUDA or another GPU runtime and write either compacted `uint32_t`
+  viewport voxel cell indices or a dense bitfield, according to `source_kind`. The producer owns synchronization in
+  v14: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
+  There is no CPU voxel copy path and no semaphore fallback.
+- Host services `release_viewport_voxel_buffer` releases the Spectra resource. Producers must release imported
+  GPU mappings and then release every requested resource before instance destruction or reset.
 - Scene API `create` returns a plugin-owned instance pointer.
 - Scene API `destroy` releases that instance.
 - Scene API `reset` resets simulation state and rebuilds internal visualization buffers.

@@ -279,6 +279,16 @@ namespace spectra::scene {
             AlwaysVisible = 1u,
         };
 
+        enum class ViewportVoxelGridSourceKind : std::uint32_t {
+            IndexList = 0u,
+            Bitfield  = 1u,
+        };
+
+        enum class ViewportVoxelGridIndexEncoding : std::uint32_t {
+            Linear   = 0u,
+            Morton3D = 1u,
+        };
+
         struct CameraImage {
             std::uint32_t width{};
             std::uint32_t height{};
@@ -319,6 +329,25 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
+        struct ViewportVoxelGrid {
+            std::string name{};
+            std::array<std::uint32_t, 3> dimensions{};
+            Vector3 origin{};
+            Vector3 voxel_size{1.0f, 1.0f, 1.0f};
+            Transform transform{};
+            Vector4 color{0.15f, 0.85f, 1.0f, 0.28f};
+            float cell_scale{1.0f};
+            ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
+            ViewportVoxelGridSourceKind source_kind{ViewportVoxelGridSourceKind::IndexList};
+            ViewportVoxelGridIndexEncoding index_encoding{ViewportVoxelGridIndexEncoding::Linear};
+            std::uint64_t buffer_id{};
+            std::uint64_t source_byte_size{};
+            std::uint64_t index_count{};
+            std::uint64_t revision{};
+            bool dynamic{true};
+            SourceLocation source{};
+        };
+
         struct Document {
             Revision revision{};
             std::string name{};
@@ -337,6 +366,7 @@ namespace spectra::scene {
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
             std::vector<ViewportSegmentSet> viewport_segment_sets{};
+            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
         };
 
         enum class TimelineMode {
@@ -358,6 +388,7 @@ namespace spectra::scene {
             std::vector<VolumeGrid> volumes{};
             std::vector<Camera> cameras{};
             std::vector<ViewportSegmentSet> viewport_segment_sets{};
+            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
         };
 
         struct Timeline {
@@ -379,6 +410,7 @@ namespace spectra::scene {
             std::vector<VolumeGrid> volumes{};
             std::vector<Camera> cameras{};
             std::vector<ViewportSegmentSet> viewport_segment_sets{};
+            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
         };
 
         class Builder {

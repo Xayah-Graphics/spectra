@@ -62,6 +62,33 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} has an unsupported depth mode value {}", context, static_cast<std::uint32_t>(depth_mode)));
         }
 
+        void validate_viewport_voxel_grid_source_kind(const Scene::ViewportVoxelGridSourceKind source_kind, const std::string_view context) {
+            switch (source_kind) {
+            case Scene::ViewportVoxelGridSourceKind::IndexList: return;
+            case Scene::ViewportVoxelGridSourceKind::Bitfield: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported voxel source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+        }
+
+        void validate_viewport_voxel_grid_index_encoding(const Scene::ViewportVoxelGridIndexEncoding index_encoding, const std::string_view context) {
+            switch (index_encoding) {
+            case Scene::ViewportVoxelGridIndexEncoding::Linear: return;
+            case Scene::ViewportVoxelGridIndexEncoding::Morton3D: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported voxel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
+        }
+
+        [[nodiscard]] std::uint64_t checked_viewport_voxel_grid_cell_count(const Scene::ViewportVoxelGrid& voxel_grid) {
+            const std::uint64_t dim_x = voxel_grid.dimensions[0];
+            const std::uint64_t dim_y = voxel_grid.dimensions[1];
+            const std::uint64_t dim_z = voxel_grid.dimensions[2];
+            if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" dimensions must be positive", voxel_grid.name));
+            if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" cell count exceeds uint64 range", voxel_grid.name));
+            const std::uint64_t slice = dim_x * dim_y;
+            if (slice > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" cell count exceeds uint64 range", voxel_grid.name));
+            return slice * dim_z;
+        }
+
         void validate_viewport_annotation_transform(const Transform& transform, const std::string_view context) {
             if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
             if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
@@ -94,6 +121,37 @@ namespace spectra::scene {
         void validate_viewport_segment_sets(const std::vector<Scene::ViewportSegmentSet>& segment_sets) {
             validate_unique_scene_item_names(segment_sets, "Scene resolved frame", "viewport segment set");
             for (const Scene::ViewportSegmentSet& segment_set : segment_sets) validate_viewport_segment_set(segment_set);
+        }
+
+        void validate_viewport_voxel_grid(const Scene::ViewportVoxelGrid& voxel_grid) {
+            if (voxel_grid.name.empty()) throw std::runtime_error("Viewport voxel grid name must not be empty");
+            validate_viewport_annotation_transform(voxel_grid.transform, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
+            validate_viewport_annotation_color(voxel_grid.color, std::format("Viewport voxel grid \"{}\" color", voxel_grid.name));
+            validate_viewport_segment_depth_mode(voxel_grid.depth_mode, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
+            validate_viewport_voxel_grid_source_kind(voxel_grid.source_kind, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
+            validate_viewport_voxel_grid_index_encoding(voxel_grid.index_encoding, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
+            if (!is_finite(voxel_grid.origin)) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" origin must be finite", voxel_grid.name));
+            if (!is_finite(voxel_grid.voxel_size) || voxel_grid.voxel_size.x <= 0.0f || voxel_grid.voxel_size.y <= 0.0f || voxel_grid.voxel_size.z <= 0.0f) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" voxel size must be finite and positive", voxel_grid.name));
+            if (!std::isfinite(voxel_grid.cell_scale) || voxel_grid.cell_scale <= 0.0f || voxel_grid.cell_scale > 1.0f) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" cell scale must be in (0, 1]", voxel_grid.name));
+            const std::uint64_t cell_count = checked_viewport_voxel_grid_cell_count(voxel_grid);
+            if (voxel_grid.source_kind == Scene::ViewportVoxelGridSourceKind::IndexList) {
+                if (voxel_grid.index_count > cell_count) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" index count exceeds grid cell count", voxel_grid.name));
+                if (voxel_grid.index_count == 0u) return;
+                if (voxel_grid.buffer_id == 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" has indices but no voxel buffer id", voxel_grid.name));
+                if (voxel_grid.index_count > std::numeric_limits<std::uint64_t>::max() / sizeof(std::uint32_t)) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" index byte count exceeds uint64 range", voxel_grid.name));
+                if (voxel_grid.source_byte_size < voxel_grid.index_count * sizeof(std::uint32_t)) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" source byte size is smaller than its index list", voxel_grid.name));
+                return;
+            }
+            if (voxel_grid.buffer_id == 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" bitfield source has no voxel buffer id", voxel_grid.name));
+            if (voxel_grid.index_count != 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" bitfield source must not provide an index count", voxel_grid.name));
+            const std::uint64_t bitfield_byte_count = (cell_count + 7u) / 8u;
+            if (voxel_grid.source_byte_size < bitfield_byte_count) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" source byte size is smaller than its bitfield", voxel_grid.name));
+            if (voxel_grid.source_byte_size % sizeof(std::uint32_t) != 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" bitfield source byte size must be uint32 aligned", voxel_grid.name));
+        }
+
+        void validate_viewport_voxel_grids(const std::vector<Scene::ViewportVoxelGrid>& voxel_grids) {
+            validate_unique_scene_item_names(voxel_grids, "Scene resolved frame", "viewport voxel grid");
+            for (const Scene::ViewportVoxelGrid& voxel_grid : voxel_grids) validate_viewport_voxel_grid(voxel_grid);
         }
 
         void validate_camera_image(const Scene::CameraImage& image, const std::string_view context) {
@@ -802,9 +860,11 @@ namespace spectra::scene {
                 .volumes = resolve_scene_items(document.volumes, frame.volumes, "volume"),
                 .cameras = resolve_scene_items(document.cameras, frame.cameras, "camera"),
                 .viewport_segment_sets = resolve_scene_items(document.viewport_segment_sets, frame.viewport_segment_sets, "viewport segment set"),
+                .viewport_voxel_grids = resolve_scene_items(document.viewport_voxel_grids, frame.viewport_voxel_grids, "viewport voxel grid"),
             };
             validate_cameras(resolved.cameras, document.active_camera_name, "Scene resolved frame");
             validate_viewport_segment_sets(resolved.viewport_segment_sets);
+            validate_viewport_voxel_grids(resolved.viewport_voxel_grids);
             return resolved;
         }
 
