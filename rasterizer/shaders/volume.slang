@@ -1,8 +1,8 @@
 static const uint MaxViewportDirectLights = 8;
 
 struct CameraUniform {
-    row_major float4x4 viewProjection;
-    row_major float4x4 inverseViewProjection;
+    row_major float4x4 worldToClip;
+    row_major float4x4 clipToWorld;
     float3 cameraPosition;
     float _pad0;
     float3 environmentColor;
@@ -10,10 +10,12 @@ struct CameraUniform {
     float4 lightDirections[MaxViewportDirectLights];
     float4 lightColorIntensities[MaxViewportDirectLights];
     uint4 lightCounts;
-    float3 cameraRight;
+    float3 cameraForward;
     float _pad1;
-    float3 cameraUp;
+    float3 cameraRight;
     float _pad2;
+    float3 cameraUp;
+    float _pad3;
     float4 viewport;
 };
 
@@ -95,7 +97,7 @@ VertexOutput vertex_main(uint vertexIndex : SV_VertexID) {
     float3 extent = volume.extentStepScale.xyz;
     float3 worldPosition = origin + localPosition * extent;
     VertexOutput output;
-    output.position = mul(float4(worldPosition, 1.0), camera.viewProjection);
+    output.position = mul(float4(worldPosition, 1.0), camera.worldToClip);
     output.localPosition = localPosition;
     output.worldPosition = worldPosition;
     return output;

@@ -89,6 +89,7 @@ namespace spectra::rasterizer {
         [[nodiscard]] bool pending_switch() const;
         [[nodiscard]] bool has_activation_error() const;
         [[nodiscard]] const std::string& activation_error() const;
+        void activate_empty_workspace();
         void request_activate(std::size_t index);
         [[nodiscard]] bool activate_static_scene(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> load_scene);
         [[nodiscard]] bool activate_dynamic_scene(std::string id, std::string title, std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_source);
@@ -130,6 +131,52 @@ namespace spectra::rasterizer {
         std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_source{};
     };
 
+    export enum class DynamicSceneOpenOptionKind {
+        Text,
+        DirectoryPath,
+        FilePath,
+        Choice,
+        Bool,
+        Float,
+        UnsignedInteger,
+    };
+
+    export struct DynamicSceneOpenOptionChoice {
+        std::string value{};
+        std::string label{};
+    };
+
+    export struct DynamicSceneOpenOptionSchema {
+        std::string key{};
+        std::string label{};
+        std::string description{};
+        DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Text};
+        bool required{};
+        std::string default_value{};
+        std::vector<DynamicSceneOpenOptionChoice> choices{};
+    };
+
+    export struct DynamicScenePluginInfo {
+        std::string id{};
+        std::string title{};
+        std::string project_panel_title{};
+        std::string open_action_label{};
+        std::string open_action_description{};
+        std::filesystem::path path{};
+        std::vector<DynamicSceneOpenOptionSchema> open_options{};
+    };
+
+    export struct DynamicSceneOpenOption {
+        std::string key{};
+        std::string value{};
+    };
+
+    export struct DynamicSceneOpenRequest {
+        std::filesystem::path plugin_path{};
+        std::vector<DynamicSceneOpenOption> options{};
+    };
+
     export [[nodiscard]] bool is_dynamic_scene_plugin_file(const std::filesystem::path& path);
-    export [[nodiscard]] DynamicScenePluginSource load_dynamic_scene_plugin(const std::filesystem::path& plugin_path);
+    export [[nodiscard]] DynamicScenePluginInfo inspect_dynamic_scene_plugin(const std::filesystem::path& plugin_path);
+    export [[nodiscard]] DynamicScenePluginSource load_dynamic_scene_plugin(DynamicSceneOpenRequest request);
 } // namespace spectra::rasterizer

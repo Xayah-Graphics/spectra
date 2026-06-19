@@ -21,7 +21,7 @@ namespace spectra::rasterizer {
     public:
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
-        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
+        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -30,7 +30,7 @@ namespace spectra::rasterizer {
         Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
-        void set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
+        void set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
 
         void attach(HostView host);
         void detach() noexcept;
@@ -115,11 +115,24 @@ namespace spectra::rasterizer {
             scene::Vector3 origin{};
             scene::Vector3 voxel_size{};
             std::vector<SceneVolumeChannelSummary> volume_channels{};
-            scene::Vector3 camera_target{};
-            scene::Vector3 camera_up{};
+            scene::Vector3 camera_focus{};
+            scene::Vector3 camera_forward{};
+            scene::Vector3 camera_navigation_up{};
+            bool camera_active{};
+            scene::CameraProjectionKind camera_projection_kind{scene::CameraProjectionKind::Perspective};
             float camera_vertical_fov_degrees{};
+            std::uint32_t camera_image_width{};
+            std::uint32_t camera_image_height{};
+            float camera_fx{};
+            float camera_fy{};
+            float camera_cx{};
+            float camera_cy{};
             float camera_near_plane{};
             float camera_far_plane{};
+            bool camera_visual_enabled{};
+            float camera_visual_near{};
+            float camera_visual_far{};
+            std::string camera_image_source{};
             scene::Scene::PreviewLightKind light_kind{scene::Scene::PreviewLightKind::Directional};
             scene::Vector3 light_color{};
             float light_intensity{};
@@ -133,14 +146,15 @@ namespace spectra::rasterizer {
         };
 
         struct CameraUniformData {
-            std::array<float, 16> viewProjection{};
-            std::array<float, 16> inverseViewProjection{};
+            std::array<float, 16> worldToClip{};
+            std::array<float, 16> clipToWorld{};
             std::array<float, 4> cameraPosition{};
             std::array<float, 4> environmentColorIntensity{};
             std::array<std::array<float, 4>, MaxViewportDirectLights> lightDirections{};
             std::array<std::array<float, 4>, MaxViewportDirectLights> lightPositions{};
             std::array<std::array<float, 4>, MaxViewportDirectLights> lightColorIntensities{};
             std::array<std::uint32_t, 4> lightCounts{};
+            std::array<float, 4> cameraForward{};
             std::array<float, 4> cameraRight{};
             std::array<float, 4> cameraUp{};
             std::array<float, 4> viewport{};
@@ -196,6 +210,50 @@ namespace spectra::rasterizer {
             std::vector<PointCloudDrawCommand> drawCommands{};
         };
 
+        struct ViewportSegmentDrawCommand {
+            std::uint32_t firstInstance{};
+            std::uint32_t instanceCount{};
+            scene::Scene::ViewportSegmentDepthMode depthMode{scene::Scene::ViewportSegmentDepthMode::DepthTested};
+        };
+
+        struct FrameViewportSegmentResources {
+            GpuBuffer instanceBuffer{};
+            scene::Scene::Revision uploadedRevision{};
+            std::vector<ViewportSegmentDrawCommand> drawCommands{};
+        };
+
+        struct ViewportImagePlaneDrawCommand {
+            std::uint32_t firstInstance{};
+            std::uint32_t instanceCount{};
+            scene::Scene::ViewportSegmentDepthMode depthMode{scene::Scene::ViewportSegmentDepthMode::DepthTested};
+            std::string imageKey{};
+        };
+
+        struct FrameViewportImagePlaneResources {
+            GpuBuffer instanceBuffer{};
+            scene::Scene::Revision uploadedRevision{};
+            std::vector<ViewportImagePlaneDrawCommand> drawCommands{};
+        };
+
+        struct ViewportImagePlaneTexture {
+            struct Source {
+                std::uintptr_t data{};
+                std::uint64_t byteSize{};
+                std::uint32_t width{};
+                std::uint32_t height{};
+                std::uint64_t revision{};
+
+                friend bool operator==(const Source&, const Source&) = default;
+            };
+
+            GpuBuffer stagingBuffer{};
+            GpuImage2D image{};
+            vk::raii::DescriptorPool descriptor_pool{nullptr};
+            vk::raii::DescriptorSets descriptor_sets{nullptr};
+            Source source{};
+            bool uploadPending{};
+        };
+
         struct FrameVolumeResources {
             GpuBuffer densityStagingBuffer{};
             GpuBuffer temperatureStagingBuffer{};
@@ -229,12 +287,17 @@ namespace spectra::rasterizer {
         void destroy_mesh_resources() noexcept;
         void destroy_viewport_grid_resources() noexcept;
         void destroy_point_cloud_resources() noexcept;
+        void destroy_viewport_segment_resources() noexcept;
+        void destroy_viewport_image_plane_texture(ViewportImagePlaneTexture& texture) noexcept;
+        void destroy_viewport_image_plane_resources() noexcept;
         void destroy_volume_resources() noexcept;
         void destroy_selection_resources() noexcept;
         void ensure_camera_resources();
         void ensure_mesh_resources();
         void ensure_viewport_grid_resources();
         void ensure_point_cloud_resources();
+        void ensure_viewport_segment_resources();
+        void ensure_viewport_image_plane_resources();
         void ensure_volume_resources();
         void ensure_selection_resources();
 
@@ -272,7 +335,10 @@ namespace spectra::rasterizer {
 
         void upload_scene_resources(std::uint32_t frame_index);
         void upload_point_cloud_resources(std::uint32_t frame_index);
+        void upload_viewport_segment_resources(std::uint32_t frame_index);
+        void upload_viewport_image_plane_resources(std::uint32_t frame_index);
         void upload_volume_resources(std::uint32_t frame_index);
+        void record_pending_viewport_image_plane_uploads(const vk::raii::CommandBuffer& command_buffer);
         void record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume);
         void update_camera_uniform(std::uint32_t frame_index);
 
@@ -281,6 +347,8 @@ namespace spectra::rasterizer {
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_point_cloud_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_volume_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_viewport_image_plane_pass(const vk::raii::CommandBuffer& command_buffer);
+        void record_viewport_segment_pass(const vk::raii::CommandBuffer& command_buffer);
         void request_selection_pick(std::uint32_t x, std::uint32_t y, bool select, bool additive);
         void record_selection_pick_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_selection_visuals(const vk::raii::CommandBuffer& command_buffer);
@@ -294,19 +362,21 @@ namespace spectra::rasterizer {
         void consume_completed_screenshot(std::uint32_t frame_index);
 
         [[nodiscard]] std::string active_scene_id() const;
-        [[nodiscard]] scene::Scene::CameraState initial_camera_state_from_scene() const;
-        [[nodiscard]] scene::Scene::CameraState current_viewport_camera_state() const;
+        [[nodiscard]] scene::CameraState initial_camera_state_from_scene() const;
+        [[nodiscard]] scene::CameraState current_viewport_camera_state() const;
         [[nodiscard]] float current_viewport_camera_distance() const;
         void ensure_viewport_camera_session();
+        void reset_viewport_camera_session();
         void synchronize_viewport_camera();
-        void apply_viewport_camera_state(const scene::Scene::CameraSnapshot& snapshot);
-        void commit_viewport_camera_state(scene::Scene::CameraState state);
+        void apply_viewport_camera_state(const scene::CameraSnapshot& snapshot);
+        void commit_viewport_camera_state(scene::CameraState state);
         void reset_viewport_camera_from_scene();
+        void apply_viewport_coordinate_system(std::string_view coordinate_system_name);
         void frame_viewport_scene();
         void frame_selected_objects();
         void set_viewport_axis_view(scene::Vector3 direction);
-        void orbit_viewport_camera(scene::Scene::ViewportCameraDelta delta);
-        void pan_viewport_camera(scene::Scene::ViewportCameraDelta delta, scene::Scene::ViewportCameraSize viewport);
+        void orbit_viewport_camera(scene::ViewportCameraDelta delta);
+        void pan_viewport_camera(scene::ViewportCameraDelta delta, scene::ViewportCameraSize viewport);
         void zoom_viewport_camera(float steps);
         void handle_viewport_input(ViewportImageRect image_rect);
         void draw_viewport_overlays(ViewportImageRect image_rect);
@@ -347,14 +417,15 @@ namespace spectra::rasterizer {
 
         struct {
             std::shared_ptr<scene::Scene> workspace{};
-            std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
-            scene::Scene::Revision observed_camera_revision{};
+            std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
+            scene::CameraRevision observed_camera_revision{};
         } scene;
 
         struct {
             vk::Extent2D requested_extent{};
             float sidebar_split_ratio{0.55f};
             SceneUiCache scene_ui_cache{};
+            std::string active_coordinate_system_name{};
         } ui;
 
         struct {
@@ -371,7 +442,7 @@ namespace spectra::rasterizer {
             vk::raii::Image depth_image{nullptr};
             vk::raii::DeviceMemory depth_memory{nullptr};
             vk::raii::ImageView depth_view{nullptr};
-            scene::Scene::CameraState camera_state{};
+            scene::CameraState camera_state{};
             float camera_near_plane{0.01f};
             float camera_far_plane{200.0f};
             bool camera_initialized{false};
@@ -414,6 +485,25 @@ namespace spectra::rasterizer {
             vk::raii::Pipeline pipeline{nullptr};
             std::vector<FramePointCloudResources> frame_point_clouds{};
         } point_cloud_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline depth_tested_pipeline{nullptr};
+            vk::raii::Pipeline always_visible_pipeline{nullptr};
+            std::vector<FrameViewportSegmentResources> frame_segments{};
+        } viewport_segment_pass;
+
+        struct {
+            std::uint32_t frame_count{};
+            vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
+            vk::raii::Sampler sampler{nullptr};
+            vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::Pipeline depth_tested_pipeline{nullptr};
+            vk::raii::Pipeline always_visible_pipeline{nullptr};
+            std::vector<FrameViewportImagePlaneResources> frame_planes{};
+            std::map<std::string, ViewportImagePlaneTexture> texture_cache{};
+        } viewport_image_plane_pass;
 
         struct {
             std::uint32_t frame_count{};

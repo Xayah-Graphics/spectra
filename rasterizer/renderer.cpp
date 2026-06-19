@@ -39,6 +39,31 @@ namespace {
         float a{};
     };
 
+    struct ViewportSegmentInstance {
+        float sx{};
+        float sy{};
+        float sz{};
+        float width{};
+        float ex{};
+        float ey{};
+        float ez{};
+        std::uint32_t flags{};
+        float r{};
+        float g{};
+        float b{};
+        float a{};
+    };
+
+    struct ViewportImagePlaneInstance {
+        std::array<float, 16> model{};
+        std::array<float, 4> tint{};
+    };
+
+    struct CameraVisualPlanes {
+        std::array<spectra::scene::Vector3, 4> near_corners{};
+        std::array<spectra::scene::Vector3, 4> far_corners{};
+    };
+
     struct DrawPushConstantsData {
         std::array<float, 16> model{};
         std::array<float, 4> base_color{};
@@ -108,6 +133,76 @@ namespace {
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) && std::isfinite(value.w);
     }
 
+    [[nodiscard]] spectra::scene::Vector3 camera_visual_local_corner(const spectra::scene::CameraProjection& projection, const float u, const float v, const float distance) {
+        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Rasterizer camera visual distance must be positive");
+        switch (projection.kind) {
+        case spectra::scene::CameraProjectionKind::Perspective: {
+            const float vertical_fov = spectra::scene::camera_projection_vertical_fov_degrees(projection);
+            const float half_height = distance * std::tan(vertical_fov * std::numbers::pi_v<float> / 360.0f);
+            const float aspect = projection.image_width != 0u && projection.image_height != 0u ? static_cast<float>(projection.image_width) / static_cast<float>(projection.image_height) : 1.0f;
+            const float half_width = half_height * aspect;
+            return spectra::scene::Vector3{u * half_width, v * half_height, distance};
+        }
+        case spectra::scene::CameraProjectionKind::Pinhole:
+            return spectra::scene::Vector3{
+                (u - projection.cx) / projection.fx * distance,
+                (projection.cy - v) / projection.fy * distance,
+                distance,
+            };
+        case spectra::scene::CameraProjectionKind::Orthographic:
+            throw std::runtime_error("Rasterizer camera visual frustum requires perspective or pinhole projection");
+        }
+        throw std::runtime_error("Unknown Spectra camera projection kind");
+    }
+
+    [[nodiscard]] std::array<spectra::scene::Vector3, 4> camera_visual_local_corners(const spectra::scene::CameraProjection& projection, const float distance) {
+        if (projection.kind == spectra::scene::CameraProjectionKind::Pinhole) {
+            const float image_width = static_cast<float>(projection.image_width);
+            const float image_height = static_cast<float>(projection.image_height);
+            return std::array{
+                camera_visual_local_corner(projection, 0.0f, 0.0f, distance),
+                camera_visual_local_corner(projection, image_width, 0.0f, distance),
+                camera_visual_local_corner(projection, image_width, image_height, distance),
+                camera_visual_local_corner(projection, 0.0f, image_height, distance),
+            };
+        }
+        return std::array{
+            camera_visual_local_corner(projection, -1.0f, 1.0f, distance),
+            camera_visual_local_corner(projection, 1.0f, 1.0f, distance),
+            camera_visual_local_corner(projection, 1.0f, -1.0f, distance),
+            camera_visual_local_corner(projection, -1.0f, -1.0f, distance),
+        };
+    }
+
+    [[nodiscard]] spectra::scene::Vector3 camera_visual_world_point(const spectra::scene::CameraFrame& frame, const spectra::scene::Vector3& local) {
+        return frame.position + frame.right * local.x + frame.up * local.y + frame.forward * local.z;
+    }
+
+    [[nodiscard]] CameraVisualPlanes camera_visual_planes(const spectra::scene::Scene::Camera& camera) {
+        if (!camera.visualization.enabled) throw std::runtime_error(std::format("Rasterizer camera \"{}\" visualization is disabled", camera.name));
+        const spectra::scene::CameraFrame frame = spectra::scene::camera_frame(camera.view.pose);
+        const std::array<spectra::scene::Vector3, 4> near_local = camera_visual_local_corners(camera.view.projection, camera.visualization.visual_near);
+        const std::array<spectra::scene::Vector3, 4> far_local = camera_visual_local_corners(camera.view.projection, camera.visualization.visual_far);
+        CameraVisualPlanes planes{};
+        for (std::size_t index = 0u; index < 4u; ++index) {
+            planes.near_corners.at(index) = camera_visual_world_point(frame, near_local.at(index));
+            planes.far_corners.at(index) = camera_visual_world_point(frame, far_local.at(index));
+        }
+        return planes;
+    }
+
+    [[nodiscard]] std::array<float, 16> camera_visual_image_model(const CameraVisualPlanes& planes) {
+        const spectra::scene::Vector3 right = planes.far_corners.at(1u) - planes.far_corners.at(0u);
+        const spectra::scene::Vector3 up = planes.far_corners.at(0u) - planes.far_corners.at(3u);
+        const spectra::scene::Vector3 center = (planes.far_corners.at(0u) + planes.far_corners.at(1u) + planes.far_corners.at(2u) + planes.far_corners.at(3u)) * 0.25f;
+        return std::array<float, 16>{
+            right.x, right.y, right.z, 0.0f,
+            up.x, up.y, up.z, 0.0f,
+            0.0f, 0.0f, 0.0f, 0.0f,
+            center.x, center.y, center.z, 1.0f,
+        };
+    }
+
     [[nodiscard]] const char* preview_surface_kind_name(const spectra::scene::Scene::PreviewSurfaceKind surface_kind) {
         switch (surface_kind) {
         case spectra::scene::Scene::PreviewSurfaceKind::LitSurface: return "LitSurface";
@@ -117,6 +212,15 @@ namespace {
         case spectra::scene::Scene::PreviewSurfaceKind::PointGlyph: return "PointGlyph";
         }
         throw std::runtime_error("Unknown Spectra rasterizer preview surface kind");
+    }
+
+    [[nodiscard]] const char* camera_projection_kind_name(const spectra::scene::CameraProjectionKind projection_kind) {
+        switch (projection_kind) {
+        case spectra::scene::CameraProjectionKind::Perspective: return "Perspective";
+        case spectra::scene::CameraProjectionKind::Orthographic: return "Orthographic";
+        case spectra::scene::CameraProjectionKind::Pinhole: return "Pinhole";
+        }
+        throw std::runtime_error("Unknown Spectra camera projection kind");
     }
 
     [[nodiscard]] std::uint32_t preview_surface_kind_code(const spectra::scene::Scene::PreviewSurfaceKind surface_kind) {
@@ -675,7 +779,7 @@ namespace {
 } // namespace
 
 namespace spectra::rasterizer {
-    Renderer::Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) {
+    Renderer::Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
         this->scene.workspace = std::move(scene_workspace);
         this->scene.camera_workspace = std::move(camera_workspace);
         if (this->scene.workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
@@ -691,7 +795,7 @@ namespace spectra::rasterizer {
         return "Spectra Rasterizer";
     }
 
-    void Renderer::set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) {
+    void Renderer::set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
         if (scene_workspace == nullptr) throw std::runtime_error("Spectra rasterizer scene workspace must not be null");
         if (camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer camera workspace must not be null");
         static_cast<void>(scene_workspace->document());
@@ -701,16 +805,18 @@ namespace spectra::rasterizer {
         this->selection.objects_by_id.clear();
         this->selection.registry_valid = false;
         this->ui.scene_ui_cache = SceneUiCache{};
+        this->ui.active_coordinate_system_name.clear();
         this->destroy_selection_resources();
         this->destroy_mesh_resources();
         this->destroy_point_cloud_resources();
+        this->destroy_viewport_segment_resources();
+        this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
         this->scene.workspace = std::move(scene_workspace);
         this->scene.camera_workspace = std::move(camera_workspace);
-        this->scene.observed_camera_revision = scene::Scene::Revision{};
+        this->scene.observed_camera_revision = scene::CameraRevision{};
         this->viewport.camera_initialized = false;
-        this->ensure_viewport_camera_session();
-        this->synchronize_viewport_camera();
+        this->reset_viewport_camera_session();
     }
 
     void Renderer::attach(HostView host) {
@@ -727,6 +833,8 @@ namespace spectra::rasterizer {
         this->destroy_mesh_resources();
         this->destroy_viewport_grid_resources();
         this->destroy_point_cloud_resources();
+        this->destroy_viewport_segment_resources();
+        this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
         this->destroy_camera_resources();
         this->host.physical_device  = nullptr;
@@ -776,8 +884,8 @@ namespace spectra::rasterizer {
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_renderer_popover_tab(RendererPopoverTab{
-            .id             = "rasterizer.panel",
+        host.register_command_popover(CommandPopover{
+            .id             = "renderer.settings",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,
             .shortcut_label = "F8",
@@ -1064,6 +1172,40 @@ namespace spectra::rasterizer {
         this->point_cloud_pass.frame_count     = 0;
     }
 
+    void Renderer::destroy_viewport_segment_resources() noexcept {
+        if (this->viewport_segment_pass.frame_count == 0 && !*this->viewport_segment_pass.pipeline_layout && !*this->viewport_segment_pass.depth_tested_pipeline && !*this->viewport_segment_pass.always_visible_pipeline && this->viewport_segment_pass.frame_segments.empty()) return;
+        this->wait_device_idle_for_cleanup();
+        for (FrameViewportSegmentResources& frame_segments : this->viewport_segment_pass.frame_segments) this->destroy_host_buffer(frame_segments.instanceBuffer);
+        this->viewport_segment_pass.frame_segments.clear();
+        this->viewport_segment_pass.always_visible_pipeline = nullptr;
+        this->viewport_segment_pass.depth_tested_pipeline   = nullptr;
+        this->viewport_segment_pass.pipeline_layout         = nullptr;
+        this->viewport_segment_pass.frame_count             = 0;
+    }
+
+    void Renderer::destroy_viewport_image_plane_texture(ViewportImagePlaneTexture& texture) noexcept {
+        this->destroy_host_buffer(texture.stagingBuffer);
+        this->destroy_image_2d(texture.image);
+        texture.descriptor_sets = nullptr;
+        texture.descriptor_pool = nullptr;
+        texture.uploadPending = false;
+    }
+
+    void Renderer::destroy_viewport_image_plane_resources() noexcept {
+        if (this->viewport_image_plane_pass.frame_count == 0 && !*this->viewport_image_plane_pass.descriptor_set_layout && !*this->viewport_image_plane_pass.sampler && !*this->viewport_image_plane_pass.pipeline_layout && !*this->viewport_image_plane_pass.depth_tested_pipeline && !*this->viewport_image_plane_pass.always_visible_pipeline && this->viewport_image_plane_pass.frame_planes.empty() && this->viewport_image_plane_pass.texture_cache.empty()) return;
+        this->wait_device_idle_for_cleanup();
+        for (FrameViewportImagePlaneResources& frame_planes : this->viewport_image_plane_pass.frame_planes) this->destroy_host_buffer(frame_planes.instanceBuffer);
+        this->viewport_image_plane_pass.frame_planes.clear();
+        for (std::pair<const std::string, ViewportImagePlaneTexture>& texture : this->viewport_image_plane_pass.texture_cache) this->destroy_viewport_image_plane_texture(texture.second);
+        this->viewport_image_plane_pass.texture_cache.clear();
+        this->viewport_image_plane_pass.always_visible_pipeline = nullptr;
+        this->viewport_image_plane_pass.depth_tested_pipeline   = nullptr;
+        this->viewport_image_plane_pass.pipeline_layout         = nullptr;
+        this->viewport_image_plane_pass.sampler                 = nullptr;
+        this->viewport_image_plane_pass.descriptor_set_layout   = nullptr;
+        this->viewport_image_plane_pass.frame_count             = 0;
+    }
+
     void Renderer::destroy_volume_resources() noexcept {
         if (this->volume_pass.frame_count == 0 && !*this->volume_pass.descriptor_set_layout && !*this->volume_pass.descriptor_pool && this->volume_pass.descriptor_sets.size() == 0 && !*this->volume_pass.sampler && !*this->volume_pass.pipeline_layout && !*this->volume_pass.pipeline && this->volume_pass.frame_volumes.empty()) return;
         this->wait_device_idle_for_cleanup();
@@ -1128,6 +1270,8 @@ namespace spectra::rasterizer {
         this->destroy_mesh_resources();
         this->destroy_viewport_grid_resources();
         this->destroy_point_cloud_resources();
+        this->destroy_viewport_segment_resources();
+        this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
         this->destroy_camera_resources();
 
@@ -1356,6 +1500,175 @@ namespace spectra::rasterizer {
         this->point_cloud_pass.pipeline    = vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
         this->point_cloud_pass.frame_count = this->host.frame_count;
         this->point_cloud_pass.frame_point_clouds.resize(this->host.frame_count);
+    }
+
+    void Renderer::ensure_viewport_segment_resources() {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport segment resources without Vulkan handles");
+        if (!*this->camera.descriptor_set_layout) throw std::runtime_error("Spectra rasterizer viewport segment pass requires camera descriptors");
+        if (*this->viewport_segment_pass.depth_tested_pipeline && *this->viewport_segment_pass.always_visible_pipeline && this->viewport_segment_pass.frame_count == this->host.frame_count) return;
+        this->destroy_viewport_segment_resources();
+
+        const vk::DescriptorSetLayout descriptor_set_layout = *this->camera.descriptor_set_layout;
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 0u, nullptr};
+        this->viewport_segment_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
+
+        const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_viewport_segment_vertex_spv_sizeInBytes, spectra_rasterizer_viewport_segment_vertex_spv};
+        const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_viewport_segment_fragment_spv_sizeInBytes, spectra_rasterizer_viewport_segment_fragment_spv};
+        const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
+        const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+
+        const vk::VertexInputBindingDescription vertex_binding{0u, sizeof(ViewportSegmentInstance), vk::VertexInputRate::eInstance};
+        const std::array vertex_attributes{
+            vk::VertexInputAttributeDescription{0u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportSegmentInstance, sx))},
+            vk::VertexInputAttributeDescription{1u, 0u, vk::Format::eR32G32B32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportSegmentInstance, ex))},
+            vk::VertexInputAttributeDescription{2u, 0u, vk::Format::eR32Uint, static_cast<std::uint32_t>(offsetof(ViewportSegmentInstance, flags))},
+            vk::VertexInputAttributeDescription{3u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportSegmentInstance, r))},
+        };
+        const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1u, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
+            VK_TRUE,
+            vk::BlendFactor::eSrcAlpha,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        };
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+        const vk::Format color_format = this->viewport.format;
+        const vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{{}, 1u, &color_format, this->viewport.depth_format};
+        const auto create_segment_pipeline = [&](const vk::PipelineDepthStencilStateCreateInfo& depth_state) {
+            vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{};
+            graphics_pipeline_create_info.setPNext(&pipeline_rendering_create_info);
+            graphics_pipeline_create_info.setStageCount(static_cast<std::uint32_t>(shader_stages.size()));
+            graphics_pipeline_create_info.setPStages(shader_stages.data());
+            graphics_pipeline_create_info.setPVertexInputState(&vertex_input_state);
+            graphics_pipeline_create_info.setPInputAssemblyState(&input_assembly_state);
+            graphics_pipeline_create_info.setPViewportState(&viewport_state);
+            graphics_pipeline_create_info.setPRasterizationState(&rasterization_state);
+            graphics_pipeline_create_info.setPMultisampleState(&multisample_state);
+            graphics_pipeline_create_info.setPDepthStencilState(&depth_state);
+            graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
+            graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
+            graphics_pipeline_create_info.setLayout(*this->viewport_segment_pass.pipeline_layout);
+            return vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        };
+        this->viewport_segment_pass.depth_tested_pipeline   = create_segment_pipeline(depth_tested_state);
+        this->viewport_segment_pass.always_visible_pipeline = create_segment_pipeline(always_visible_state);
+        this->viewport_segment_pass.frame_count             = this->host.frame_count;
+        this->viewport_segment_pass.frame_segments.resize(this->host.frame_count);
+    }
+
+    void Renderer::ensure_viewport_image_plane_resources() {
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport image plane resources without Vulkan handles");
+        if (!*this->camera.descriptor_set_layout) throw std::runtime_error("Spectra rasterizer viewport image plane pass requires camera descriptors");
+        if (*this->viewport_image_plane_pass.depth_tested_pipeline && *this->viewport_image_plane_pass.always_visible_pipeline && *this->viewport_image_plane_pass.descriptor_set_layout && *this->viewport_image_plane_pass.sampler && this->viewport_image_plane_pass.frame_count == this->host.frame_count) return;
+        this->destroy_viewport_image_plane_resources();
+
+        const std::array image_descriptor_bindings{
+            vk::DescriptorSetLayoutBinding{0u, vk::DescriptorType::eSampledImage, 1u, vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{1u, vk::DescriptorType::eSampler, 1u, vk::ShaderStageFlagBits::eFragment},
+        };
+        const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(image_descriptor_bindings.size()), image_descriptor_bindings.data()};
+        this->viewport_image_plane_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, descriptor_set_layout_create_info};
+
+        const vk::SamplerCreateInfo sampler_create_info{
+            {},
+            vk::Filter::eLinear,
+            vk::Filter::eLinear,
+            vk::SamplerMipmapMode::eLinear,
+            vk::SamplerAddressMode::eClampToEdge,
+            vk::SamplerAddressMode::eClampToEdge,
+            vk::SamplerAddressMode::eClampToEdge,
+            0.0f,
+            VK_FALSE,
+            1.0f,
+            VK_FALSE,
+            vk::CompareOp::eAlways,
+            0.0f,
+            0.0f,
+            vk::BorderColor::eFloatTransparentBlack,
+            VK_FALSE,
+        };
+        this->viewport_image_plane_pass.sampler = vk::raii::Sampler{*this->host.device, sampler_create_info};
+
+        const vk::DescriptorSetLayout camera_descriptor_set_layout = *this->camera.descriptor_set_layout;
+        const vk::DescriptorSetLayout image_descriptor_set_layout = *this->viewport_image_plane_pass.descriptor_set_layout;
+        const std::array descriptor_set_layouts{camera_descriptor_set_layout, image_descriptor_set_layout};
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, static_cast<std::uint32_t>(descriptor_set_layouts.size()), descriptor_set_layouts.data(), 0u, nullptr};
+        this->viewport_image_plane_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
+
+        const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_viewport_image_plane_vertex_spv_sizeInBytes, spectra_rasterizer_viewport_image_plane_vertex_spv};
+        const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_viewport_image_plane_fragment_spv_sizeInBytes, spectra_rasterizer_viewport_image_plane_fragment_spv};
+        const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
+        const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
+        const std::array shader_stages{
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
+            vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
+        };
+
+        const vk::VertexInputBindingDescription vertex_binding{0u, sizeof(ViewportImagePlaneInstance), vk::VertexInputRate::eInstance};
+        const std::array vertex_attributes{
+            vk::VertexInputAttributeDescription{0u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportImagePlaneInstance, model))},
+            vk::VertexInputAttributeDescription{1u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportImagePlaneInstance, model) + sizeof(float) * 4u)},
+            vk::VertexInputAttributeDescription{2u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportImagePlaneInstance, model) + sizeof(float) * 12u)},
+            vk::VertexInputAttributeDescription{3u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportImagePlaneInstance, tint))},
+        };
+        const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1u, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
+            VK_TRUE,
+            vk::BlendFactor::eSrcAlpha,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::BlendFactor::eOne,
+            vk::BlendFactor::eOneMinusSrcAlpha,
+            vk::BlendOp::eAdd,
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        };
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
+        const vk::Format color_format = this->viewport.format;
+        const vk::PipelineRenderingCreateInfo pipeline_rendering_create_info{{}, 1u, &color_format, this->viewport.depth_format};
+        const auto create_plane_pipeline = [&](const vk::PipelineDepthStencilStateCreateInfo& depth_state) {
+            vk::GraphicsPipelineCreateInfo graphics_pipeline_create_info{};
+            graphics_pipeline_create_info.setPNext(&pipeline_rendering_create_info);
+            graphics_pipeline_create_info.setStageCount(static_cast<std::uint32_t>(shader_stages.size()));
+            graphics_pipeline_create_info.setPStages(shader_stages.data());
+            graphics_pipeline_create_info.setPVertexInputState(&vertex_input_state);
+            graphics_pipeline_create_info.setPInputAssemblyState(&input_assembly_state);
+            graphics_pipeline_create_info.setPViewportState(&viewport_state);
+            graphics_pipeline_create_info.setPRasterizationState(&rasterization_state);
+            graphics_pipeline_create_info.setPMultisampleState(&multisample_state);
+            graphics_pipeline_create_info.setPDepthStencilState(&depth_state);
+            graphics_pipeline_create_info.setPColorBlendState(&color_blend_state);
+            graphics_pipeline_create_info.setPDynamicState(&dynamic_state);
+            graphics_pipeline_create_info.setLayout(*this->viewport_image_plane_pass.pipeline_layout);
+            return vk::raii::Pipeline{*this->host.device, nullptr, graphics_pipeline_create_info};
+        };
+        this->viewport_image_plane_pass.depth_tested_pipeline   = create_plane_pipeline(depth_tested_state);
+        this->viewport_image_plane_pass.always_visible_pipeline = create_plane_pipeline(always_visible_state);
+        this->viewport_image_plane_pass.frame_count             = this->host.frame_count;
+        this->viewport_image_plane_pass.frame_planes.resize(this->host.frame_count);
     }
 
     void Renderer::ensure_volume_resources() {
@@ -1664,21 +1977,7 @@ namespace spectra::rasterizer {
         const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
         const scene::Scene::Timeline timeline = this->scene.workspace->timeline();
         std::vector<SceneObjectRecord> objects{};
-        objects.reserve((document->camera.has_value() ? 1u : 0u) + document->lights.size() + document->meshes.size() + document->spheres.size() + document->point_clouds.size() + document->volumes.size());
-
-        if (document->camera.has_value()) {
-            if (document->camera->name.empty()) throw std::runtime_error("Rasterizer scene collection camera name must not be empty");
-            objects.push_back(SceneObjectRecord{
-                .key                         = SceneObjectKey{SceneObjectKind::Camera, document->camera->name},
-                .transform                   = document->camera->transform,
-                .source                      = document->camera->source,
-                .camera_target               = document->camera->target,
-                .camera_up                   = document->camera->up,
-                .camera_vertical_fov_degrees = document->camera->vertical_fov_degrees,
-                .camera_near_plane           = document->camera->near_plane,
-                .camera_far_plane            = document->camera->far_plane,
-            });
-        }
+        objects.reserve(document->cameras.size() + document->lights.size() + document->meshes.size() + document->spheres.size() + document->point_clouds.size() + document->volumes.size());
 
         std::set<std::string_view> light_names{};
         for (const scene::Scene::PreviewLight& light : document->lights) {
@@ -1728,12 +2027,46 @@ namespace spectra::rasterizer {
         std::span<const scene::Scene::Sphere> frame_spheres{};
         std::span<const scene::Scene::PointCloud> frame_point_clouds{};
         std::span<const scene::Scene::VolumeGrid> frame_volumes{};
+        std::span<const scene::Scene::Camera> frame_cameras{};
         if (timeline.current_frame.has_value()) {
             frame_meshes = std::span<const scene::Scene::Mesh>{timeline.current_frame->meshes};
             frame_spheres = std::span<const scene::Scene::Sphere>{timeline.current_frame->spheres};
             frame_point_clouds = std::span<const scene::Scene::PointCloud>{timeline.current_frame->point_clouds};
             frame_volumes = std::span<const scene::Scene::VolumeGrid>{timeline.current_frame->volumes};
+            frame_cameras = std::span<const scene::Scene::Camera>{timeline.current_frame->cameras};
         }
+
+        const auto make_camera_record = [&active_camera_name = document->active_camera_name](const scene::Scene::Camera& camera) {
+            if (camera.name.empty()) throw std::runtime_error("Rasterizer scene collection camera name must not be empty");
+            const scene::CameraFrame camera_frame = scene::camera_frame(camera.view.pose);
+            std::string image_source{};
+            if (camera.visualization.image.has_value()) image_source = std::format("RGBA8 {}x{}", camera.visualization.image->width, camera.visualization.image->height);
+            float vertical_fov{};
+            if (camera.view.projection.kind != scene::CameraProjectionKind::Orthographic) vertical_fov = scene::camera_projection_vertical_fov_degrees(camera.view.projection);
+            return SceneObjectRecord{
+                .key                         = SceneObjectKey{SceneObjectKind::Camera, camera.name},
+                .transform                   = scene::Transform{.position = camera.view.pose.position, .rotation = camera.view.pose.orientation},
+                .source                      = camera.source,
+                .camera_focus                = camera.view.focus,
+                .camera_forward              = camera_frame.forward,
+                .camera_navigation_up        = camera.view.navigation_up,
+                .camera_active               = camera.name == active_camera_name,
+                .camera_projection_kind      = camera.view.projection.kind,
+                .camera_vertical_fov_degrees = vertical_fov,
+                .camera_image_width          = camera.view.projection.image_width,
+                .camera_image_height         = camera.view.projection.image_height,
+                .camera_fx                   = camera.view.projection.fx,
+                .camera_fy                   = camera.view.projection.fy,
+                .camera_cx                   = camera.view.projection.cx,
+                .camera_cy                   = camera.view.projection.cy,
+                .camera_near_plane           = camera.view.projection.near_plane,
+                .camera_far_plane            = camera.view.projection.far_plane,
+                .camera_visual_enabled       = camera.visualization.enabled,
+                .camera_visual_near          = camera.visualization.visual_near,
+                .camera_visual_far           = camera.visualization.visual_far,
+                .camera_image_source         = std::move(image_source),
+            };
+        };
 
         const auto make_mesh_record = [](const scene::Scene::Mesh& mesh) {
             return SceneObjectRecord{
@@ -1798,6 +2131,7 @@ namespace spectra::rasterizer {
             return record;
         };
 
+        append_resolved_records(std::span<const scene::Scene::Camera>{document->cameras}, frame_cameras, "camera", make_camera_record, objects);
         append_resolved_records(std::span<const scene::Scene::Mesh>{document->meshes}, frame_meshes, "mesh", make_mesh_record, objects);
         append_resolved_records(std::span<const scene::Scene::Sphere>{document->spheres}, frame_spheres, "sphere", make_sphere_record, objects);
         append_resolved_records(std::span<const scene::Scene::PointCloud>{document->point_clouds}, frame_point_clouds, "point cloud", make_point_cloud_record, objects);
@@ -2216,6 +2550,191 @@ namespace spectra::rasterizer {
         frame_point_cloud.uploadedRevision = scene_revision;
     }
 
+    void Renderer::upload_viewport_segment_resources(const std::uint32_t frame_index) {
+        if (frame_index >= this->viewport_segment_pass.frame_segments.size()) throw std::runtime_error("Spectra rasterizer viewport segment frame index is out of range");
+        FrameViewportSegmentResources& frame_segments = this->viewport_segment_pass.frame_segments.at(frame_index);
+        const scene::Scene::Revision scene_revision = this->scene.workspace->revision();
+        if (frame_segments.uploadedRevision == scene_revision) return;
+
+        std::vector<ViewportSegmentInstance> instances{};
+        std::vector<ViewportSegmentDrawCommand> draw_commands{};
+        const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        const auto append_segment_instance = [&instances](const spectra::rasterizer::math::Vector3 start, const spectra::rasterizer::math::Vector3 end, const scene::Vector4 color, const float width, const scene::Scene::ViewportSegmentWidthMode width_mode, const std::string_view context) {
+            const spectra::rasterizer::math::Vector3 delta = end - start;
+            if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z) || spectra::rasterizer::math::dot(delta, delta) <= 0.0f) throw std::runtime_error(std::format("{} contains an invalid transformed segment", context));
+            instances.push_back(ViewportSegmentInstance{
+                .sx = start.x,
+                .sy = start.y,
+                .sz = start.z,
+                .width = width,
+                .ex = end.x,
+                .ey = end.y,
+                .ez = end.z,
+                .flags = static_cast<std::uint32_t>(width_mode),
+                .r = color.x,
+                .g = color.y,
+                .b = color.z,
+                .a = color.w,
+            });
+        };
+        for (const scene::Scene::ViewportSegmentSet& segment_set : resolved_frame.viewport_segment_sets) {
+            if (segment_set.segments.empty()) continue;
+            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
+            const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
+            const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(segment_set.transform));
+            instances.reserve(instances.size() + segment_set.segments.size());
+            for (std::size_t segment_index = 0u; segment_index < segment_set.segments.size(); ++segment_index) {
+                const scene::Scene::ViewportSegment& segment = segment_set.segments.at(segment_index);
+                const float width = segment_set.widths.empty() ? segment_set.width : segment_set.widths.at(segment_index);
+                if (!std::isfinite(width) || width <= 0.0f) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" contains an invalid width", segment_set.name));
+                const scene::Vector4 color = segment_set.colors.empty() ? scene::Vector4{1.0f, 1.0f, 1.0f, 0.75f} : segment_set.colors.at(segment_index);
+                if (!finite_scene_vector(color)) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" contains a non-finite color", segment_set.name));
+                if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" contains an invalid color", segment_set.name));
+                const spectra::rasterizer::math::Vector3 start = spectra::rasterizer::math::transform_point(transform, to_render_vector(segment.start));
+                const spectra::rasterizer::math::Vector3 end = spectra::rasterizer::math::transform_point(transform, to_render_vector(segment.end));
+                append_segment_instance(start, end, color, width, segment_set.width_mode, std::format("Rasterizer viewport segment set \"{}\"", segment_set.name));
+            }
+            draw_commands.push_back(ViewportSegmentDrawCommand{
+                .firstInstance = first_instance,
+                .instanceCount = static_cast<std::uint32_t>(segment_set.segments.size()),
+                .depthMode     = segment_set.depth_mode,
+            });
+        }
+        for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
+            if (!camera.visualization.enabled) continue;
+            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
+            if (instances.size() + 12u > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer camera frustum edge count exceeds uint32 range");
+            const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
+            const CameraVisualPlanes planes = camera_visual_planes(camera);
+            const std::array<std::array<const scene::Vector3*, 2>, 12> edges{{
+                {&planes.near_corners.at(0u), &planes.near_corners.at(1u)},
+                {&planes.near_corners.at(1u), &planes.near_corners.at(2u)},
+                {&planes.near_corners.at(2u), &planes.near_corners.at(3u)},
+                {&planes.near_corners.at(3u), &planes.near_corners.at(0u)},
+                {&planes.far_corners.at(0u), &planes.far_corners.at(1u)},
+                {&planes.far_corners.at(1u), &planes.far_corners.at(2u)},
+                {&planes.far_corners.at(2u), &planes.far_corners.at(3u)},
+                {&planes.far_corners.at(3u), &planes.far_corners.at(0u)},
+                {&planes.near_corners.at(0u), &planes.far_corners.at(0u)},
+                {&planes.near_corners.at(1u), &planes.far_corners.at(1u)},
+                {&planes.near_corners.at(2u), &planes.far_corners.at(2u)},
+                {&planes.near_corners.at(3u), &planes.far_corners.at(3u)},
+            }};
+            instances.reserve(instances.size() + edges.size());
+            for (const std::array<const scene::Vector3*, 2>& edge : edges) {
+                append_segment_instance(
+                    to_render_vector(*edge.at(0u)),
+                    to_render_vector(*edge.at(1u)),
+                    camera.visualization.color,
+                    camera.visualization.width,
+                    camera.visualization.width_mode,
+                    std::format("Rasterizer camera \"{}\" visualization", camera.name)
+                );
+            }
+            draw_commands.push_back(ViewportSegmentDrawCommand{
+                .firstInstance = first_instance,
+                .instanceCount = static_cast<std::uint32_t>(edges.size()),
+                .depthMode     = camera.visualization.depth_mode,
+            });
+        }
+
+        frame_segments.drawCommands = std::move(draw_commands);
+        if (!instances.empty()) {
+            const vk::DeviceSize instance_bytes = static_cast<vk::DeviceSize>(instances.size() * sizeof(ViewportSegmentInstance));
+            this->ensure_host_buffer(frame_segments.instanceBuffer, instance_bytes, vk::BufferUsageFlagBits::eVertexBuffer);
+            std::memcpy(frame_segments.instanceBuffer.mapped, instances.data(), static_cast<std::size_t>(instance_bytes));
+        }
+        frame_segments.uploadedRevision = scene_revision;
+    }
+
+    void Renderer::upload_viewport_image_plane_resources(const std::uint32_t frame_index) {
+        if (frame_index >= this->viewport_image_plane_pass.frame_planes.size()) throw std::runtime_error("Spectra rasterizer viewport image plane frame index is out of range");
+        if (!*this->viewport_image_plane_pass.descriptor_set_layout || !*this->viewport_image_plane_pass.sampler) throw std::runtime_error("Spectra rasterizer viewport image plane resources are not initialized");
+        FrameViewportImagePlaneResources& frame_planes = this->viewport_image_plane_pass.frame_planes.at(frame_index);
+        const scene::Scene::Revision scene_revision = this->scene.workspace->revision();
+        if (frame_planes.uploadedRevision == scene_revision) return;
+
+        std::vector<ViewportImagePlaneInstance> instances{};
+        std::vector<ViewportImagePlaneDrawCommand> draw_commands{};
+        const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
+            if (!camera.visualization.enabled || !camera.visualization.image.has_value()) continue;
+            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport image plane instance count exceeds uint32 range");
+            const scene::Scene::CameraImage& image = *camera.visualization.image;
+            if (!finite_scene_vector(image.tint)) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image tint must be finite", camera.name));
+            if (image.tint.x < 0.0f || image.tint.y < 0.0f || image.tint.z < 0.0f || image.tint.w < 0.0f || image.tint.w > 1.0f) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image tint is invalid", camera.name));
+
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image dimensions must be non-zero", camera.name));
+            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Rasterizer camera \"{}\" RGBA8 byte count must be width * height * 4", camera.name));
+            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("Rasterizer camera \"{}\" RGBA8 pointer must not be null", camera.name));
+
+            const std::string image_key = std::format("camera-rgba8://{}", camera.name);
+            const ViewportImagePlaneTexture::Source source{
+                .data = reinterpret_cast<std::uintptr_t>(image.rgba8),
+                .byteSize = image.rgba8_size,
+                .width = image.width,
+                .height = image.height,
+                .revision = image.revision,
+            };
+            const std::map<std::string, ViewportImagePlaneTexture>::const_iterator cached_texture = this->viewport_image_plane_pass.texture_cache.find(image_key);
+            if (cached_texture == this->viewport_image_plane_pass.texture_cache.end() || cached_texture->second.source != source) {
+                const std::map<std::string, ViewportImagePlaneTexture>::iterator existing = this->viewport_image_plane_pass.texture_cache.find(image_key);
+                if (existing != this->viewport_image_plane_pass.texture_cache.end()) {
+                    this->destroy_viewport_image_plane_texture(existing->second);
+                    this->viewport_image_plane_pass.texture_cache.erase(existing);
+                }
+
+                ViewportImagePlaneTexture texture{};
+                this->create_image_2d(texture.image, vk::Extent2D{image.width, image.height}, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor);
+                const vk::DeviceSize texture_bytes = static_cast<vk::DeviceSize>(image.rgba8_size);
+                this->ensure_host_buffer(texture.stagingBuffer, texture_bytes, vk::BufferUsageFlagBits::eTransferSrc);
+                std::memcpy(texture.stagingBuffer.mapped, image.rgba8, static_cast<std::size_t>(texture_bytes));
+
+                const std::array descriptor_pool_sizes{
+                    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1u},
+                    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1u},
+                };
+                const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1u, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+                texture.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
+                const vk::DescriptorSetLayout image_descriptor_set_layout = *this->viewport_image_plane_pass.descriptor_set_layout;
+                const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*texture.descriptor_pool, 1u, &image_descriptor_set_layout};
+                texture.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+                if (texture.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("{}: failed to allocate viewport image plane texture descriptor set", image_key));
+                const vk::DescriptorImageInfo image_info{{}, *texture.image.view, vk::ImageLayout::eShaderReadOnlyOptimal};
+                const vk::DescriptorImageInfo sampler_info{*this->viewport_image_plane_pass.sampler, {}, vk::ImageLayout::eUndefined};
+                const std::array descriptor_writes{
+                    vk::WriteDescriptorSet{*texture.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eSampledImage, &image_info, nullptr, nullptr},
+                    vk::WriteDescriptorSet{*texture.descriptor_sets.at(0), 1u, 0u, 1u, vk::DescriptorType::eSampler, &sampler_info, nullptr, nullptr},
+                };
+                this->host.device->updateDescriptorSets(descriptor_writes, {});
+                texture.source = source;
+                texture.uploadPending = true;
+                this->viewport_image_plane_pass.texture_cache.emplace(image_key, std::move(texture));
+            }
+
+            const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
+            instances.push_back(ViewportImagePlaneInstance{
+                .model = camera_visual_image_model(camera_visual_planes(camera)),
+                .tint = {image.tint.x, image.tint.y, image.tint.z, image.tint.w},
+            });
+            draw_commands.push_back(ViewportImagePlaneDrawCommand{
+                .firstInstance = first_instance,
+                .instanceCount = 1u,
+                .depthMode = camera.visualization.depth_mode,
+                .imageKey = image_key,
+            });
+        }
+
+        frame_planes.drawCommands = std::move(draw_commands);
+        if (!instances.empty()) {
+            const vk::DeviceSize instance_bytes = static_cast<vk::DeviceSize>(instances.size() * sizeof(ViewportImagePlaneInstance));
+            this->ensure_host_buffer(frame_planes.instanceBuffer, instance_bytes, vk::BufferUsageFlagBits::eVertexBuffer);
+            std::memcpy(frame_planes.instanceBuffer.mapped, instances.data(), static_cast<std::size_t>(instance_bytes));
+        }
+        frame_planes.uploadedRevision = scene_revision;
+    }
+
     void Renderer::upload_volume_resources(const std::uint32_t frame_index) {
         if (frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer volume frame index is out of range");
         FrameVolumeResources& frame_volume = this->volume_pass.frame_volumes.at(frame_index);
@@ -2280,6 +2799,32 @@ namespace spectra::rasterizer {
         frame_volume.uploadedRevision = scene_revision;
     }
 
+    void Renderer::record_pending_viewport_image_plane_uploads(const vk::raii::CommandBuffer& command_buffer) {
+        for (std::pair<const std::string, ViewportImagePlaneTexture>& texture_entry : this->viewport_image_plane_pass.texture_cache) {
+            ViewportImagePlaneTexture& texture = texture_entry.second;
+            if (!texture.uploadPending) continue;
+            if (!*texture.image.image) throw std::runtime_error(std::format("{}: viewport image plane upload is missing GPU image", texture_entry.first));
+            if (!*texture.stagingBuffer.buffer) throw std::runtime_error(std::format("{}: viewport image plane upload is missing staging buffer", texture_entry.first));
+            transition_image_layout(command_buffer, *texture.image.image, vk::ImageAspectFlagBits::eColor, texture.image.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+            texture.image.layout = vk::ImageLayout::eTransferDstOptimal;
+
+            const vk::BufferImageCopy region{
+                0,
+                0,
+                0,
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                {0, 0, 0},
+                {texture.image.extent.width, texture.image.extent.height, 1u},
+            };
+            const std::array regions{region};
+            command_buffer.copyBufferToImage(*texture.stagingBuffer.buffer, *texture.image.image, vk::ImageLayout::eTransferDstOptimal, regions);
+
+            transition_image_layout(command_buffer, *texture.image.image, vk::ImageAspectFlagBits::eColor, texture.image.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            texture.image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            texture.uploadPending = false;
+        }
+    }
+
     void Renderer::record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume) {
         if (!frame_volume.uploadPending) return;
         if (!*frame_volume.densityImage.image || !*frame_volume.temperatureImage.image) throw std::runtime_error("Spectra rasterizer volume upload is missing GPU images");
@@ -2314,26 +2859,47 @@ namespace spectra::rasterizer {
         return scene->name;
     }
 
-    scene::Scene::CameraState Renderer::initial_camera_state_from_scene() const {
-        const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
-        if (!scene->camera.has_value()) throw std::runtime_error("Spectra rasterizer viewport requires a scene camera");
-        const scene::Scene::Camera& camera = *scene->camera;
-        return scene::Scene::CameraState{
-            .eye                = camera.transform.position,
-            .target             = camera.target,
-            .up                 = camera.up,
-            .vertical_fov_degrees = camera.vertical_fov_degrees,
+    scene::CameraState Renderer::initial_camera_state_from_scene() const {
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
+        const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        const scene::Scene::Camera* active_camera{};
+        for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
+            if (camera.name != document->active_camera_name) continue;
+            active_camera = &camera;
+            break;
+        }
+        if (active_camera == nullptr) throw std::runtime_error(std::format("Spectra rasterizer viewport requires active scene camera \"{}\"", document->active_camera_name));
+        scene::CameraState state{.view = active_camera->view};
+        if (!document->source.starts_with("pbrt://")) return state;
+
+        const SceneBounds bounds = this->scene_bounds();
+        if (!bounds.valid) return state;
+        const scene::Vector3 center{
+            (bounds.minimum.x + bounds.maximum.x) * 0.5f,
+            (bounds.minimum.y + bounds.maximum.y) * 0.5f,
+            (bounds.minimum.z + bounds.maximum.z) * 0.5f,
         };
+        const scene::Vector3 view_direction = center - state.view.pose.position;
+        if (scene::length_squared(view_direction) <= 1.0e-12f) throw std::runtime_error("Spectra rasterizer PBRT preview camera position overlaps the scene bounds center");
+        if (scene::length_squared(scene::cross(view_direction, state.view.navigation_up)) <= 1.0e-12f) throw std::runtime_error("Spectra rasterizer PBRT preview camera up is parallel to the scene bounds center direction");
+        const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
+        const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
+        const float camera_distance = spectra::rasterizer::math::length(to_render_vector(view_direction));
+        if (!std::isfinite(camera_distance) || camera_distance <= 0.0f) throw std::runtime_error("Spectra rasterizer PBRT preview camera distance must be positive");
+        state.view.focus = center;
+        state.view.pose = scene::camera_pose_from_look_at(state.view.pose.position, state.view.focus, state.view.navigation_up);
+        state.view.projection.far_plane = std::max(state.view.projection.far_plane, camera_distance + radius * 4.0f);
+        return state;
     }
 
-    scene::Scene::CameraState Renderer::current_viewport_camera_state() const {
+    scene::CameraState Renderer::current_viewport_camera_state() const {
         if (!this->viewport.camera_initialized) throw std::runtime_error("Spectra rasterizer viewport camera is not initialized");
         return this->viewport.camera_state;
     }
 
     float Renderer::current_viewport_camera_distance() const {
-        const scene::Scene::CameraState state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 offset = to_render_vector(state.eye) - to_render_vector(state.target);
+        const scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 offset = to_render_vector(state.view.pose.position) - to_render_vector(state.view.focus);
         const float distance = spectra::rasterizer::math::length(offset);
         if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Spectra rasterizer viewport camera distance must be positive");
         return distance;
@@ -2343,30 +2909,48 @@ namespace spectra::rasterizer {
         this->scene.camera_workspace->ensure_camera(this->active_scene_id(), this->initial_camera_state_from_scene());
     }
 
+    void Renderer::reset_viewport_camera_session() {
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->reset_camera(this->active_scene_id(), this->initial_camera_state_from_scene());
+        this->apply_viewport_camera_state(snapshot);
+    }
+
     void Renderer::synchronize_viewport_camera() {
-        const scene::Scene::CameraSnapshot snapshot = this->scene.camera_workspace->snapshot(this->active_scene_id());
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->snapshot(this->active_scene_id());
         if (this->viewport.camera_initialized && snapshot.revision == this->scene.observed_camera_revision) return;
         this->apply_viewport_camera_state(snapshot);
     }
 
-    void Renderer::apply_viewport_camera_state(const scene::Scene::CameraSnapshot& snapshot) {
-        const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
-        if (!scene->camera.has_value()) throw std::runtime_error("Spectra rasterizer viewport requires a scene camera");
+    void Renderer::apply_viewport_camera_state(const scene::CameraSnapshot& snapshot) {
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
+        if (document->active_camera_name.empty() || document->cameras.empty()) throw std::runtime_error("Spectra rasterizer viewport requires a scene camera");
         this->viewport.camera_state = snapshot.state;
-        this->viewport.camera_near_plane = scene->camera->near_plane;
-        this->viewport.camera_far_plane = scene->camera->far_plane;
+        this->viewport.camera_near_plane = snapshot.state.view.projection.near_plane;
+        this->viewport.camera_far_plane = snapshot.state.view.projection.far_plane;
         this->viewport.camera_initialized = true;
         this->scene.observed_camera_revision = snapshot.revision;
     }
 
-    void Renderer::commit_viewport_camera_state(scene::Scene::CameraState state) {
-        const scene::Scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), std::move(state));
+    void Renderer::commit_viewport_camera_state(scene::CameraState state) {
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), std::move(state));
         this->apply_viewport_camera_state(snapshot);
     }
 
     void Renderer::reset_viewport_camera_from_scene() {
-        const scene::Scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), this->initial_camera_state_from_scene());
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), this->initial_camera_state_from_scene());
         this->apply_viewport_camera_state(snapshot);
+    }
+
+    void Renderer::apply_viewport_coordinate_system(const std::string_view coordinate_system_name) {
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
+        const scene::CoordinateSystem coordinate_system = coordinate_system_name.empty() ? document->default_coordinate_system : scene::coordinate_system(coordinate_system_name);
+        if (this->viewport.camera_initialized) {
+            scene::CameraState state = this->current_viewport_camera_state();
+            if (scene::length_squared(scene::cross(state.view.focus - state.view.pose.position, coordinate_system.convention.up)) <= 1.0e-12f) throw std::runtime_error(std::format("Viewport coordinate system \"{}\" up axis is parallel to the current view direction", coordinate_system.name));
+            state.view.navigation_up = coordinate_system.convention.up;
+            state.view.pose = scene::camera_pose_from_look_at(state.view.pose.position, state.view.focus, state.view.navigation_up);
+            this->commit_viewport_camera_state(std::move(state));
+        }
+        this->ui.active_coordinate_system_name = std::string{coordinate_system_name};
     }
 
     Renderer::SceneBounds Renderer::scene_bounds() const {
@@ -2476,11 +3060,13 @@ namespace spectra::rasterizer {
         const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
         const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
         if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
-        scene::Scene::CameraState state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.eye) - to_render_vector(state.target));
+        scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.view.pose.position) - to_render_vector(state.view.focus));
         const float distance = std::clamp(radius * 2.6f, 0.02f, 1000000.0f);
-        state.target = center;
-        state.eye = to_scene_vector(to_render_vector(center) + direction * distance);
+        state.view.focus = center;
+        state.view.pose.position = to_scene_vector(to_render_vector(center) + direction * distance);
+        state.view.pose = scene::camera_pose_from_look_at(state.view.pose.position, state.view.focus, state.view.navigation_up);
+        state.view.projection.far_plane = std::max(state.view.projection.far_plane, distance + radius * 6.0f);
         this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, distance + radius * 6.0f);
         this->commit_viewport_camera_state(std::move(state));
     }
@@ -2499,11 +3085,13 @@ namespace spectra::rasterizer {
         const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
         const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
         if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
-        scene::Scene::CameraState state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.eye) - to_render_vector(state.target));
+        scene::CameraState state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.view.pose.position) - to_render_vector(state.view.focus));
         const float distance = std::clamp(radius * 2.3f, 0.02f, 1000000.0f);
-        state.target = center;
-        state.eye = to_scene_vector(to_render_vector(center) + direction * distance);
+        state.view.focus = center;
+        state.view.pose.position = to_scene_vector(to_render_vector(center) + direction * distance);
+        state.view.pose = scene::camera_pose_from_look_at(state.view.pose.position, state.view.focus, state.view.navigation_up);
+        state.view.projection.far_plane = std::max(state.view.projection.far_plane, distance + radius * 6.0f);
         this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, distance + radius * 6.0f);
         this->commit_viewport_camera_state(std::move(state));
     }
@@ -2511,49 +3099,51 @@ namespace spectra::rasterizer {
     void Renderer::set_viewport_axis_view(const scene::Vector3 direction) {
         const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize(to_render_vector(direction));
         if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
-        scene::Scene::CameraState state = this->current_viewport_camera_state();
-        state.eye = to_scene_vector(to_render_vector(state.target) + normalized * this->current_viewport_camera_distance());
-        state.up = std::abs(normalized.y) > 0.9f ? scene::Vector3{0.0f, 0.0f, -1.0f} : scene::Vector3{0.0f, 1.0f, 0.0f};
+        scene::CameraState state = this->current_viewport_camera_state();
+        const scene::Vector3 normalized_scene = to_scene_vector(normalized);
+        const scene::Vector3 navigation_up = scene::normalize(state.view.navigation_up, "Spectra rasterizer viewport navigation up");
+        const float parallel = std::abs(scene::dot(normalized_scene, navigation_up));
+        const scene::Vector3 up = parallel > 0.9f ? scene::camera_frame(state.view.pose).right : navigation_up;
+        state.view.pose.position = to_scene_vector(to_render_vector(state.view.focus) + normalized * this->current_viewport_camera_distance());
+        state.view.navigation_up = up;
+        state.view.pose = scene::camera_pose_from_look_at(state.view.pose.position, state.view.focus, state.view.navigation_up);
         this->commit_viewport_camera_state(std::move(state));
     }
 
-    void Renderer::orbit_viewport_camera(const scene::Scene::ViewportCameraDelta delta) {
-        this->commit_viewport_camera_state(scene::Scene::orbit_viewport_camera(this->current_viewport_camera_state(), delta));
+    void Renderer::orbit_viewport_camera(const scene::ViewportCameraDelta delta) {
+        this->commit_viewport_camera_state(scene::orbit_viewport_camera(this->current_viewport_camera_state(), delta));
     }
 
-    void Renderer::pan_viewport_camera(const scene::Scene::ViewportCameraDelta delta, const scene::Scene::ViewportCameraSize viewport) {
-        this->commit_viewport_camera_state(scene::Scene::pan_viewport_camera(this->current_viewport_camera_state(), delta, viewport));
+    void Renderer::pan_viewport_camera(const scene::ViewportCameraDelta delta, const scene::ViewportCameraSize viewport) {
+        this->commit_viewport_camera_state(scene::pan_viewport_camera(this->current_viewport_camera_state(), delta, viewport));
     }
 
     void Renderer::zoom_viewport_camera(const float steps) {
-        this->commit_viewport_camera_state(scene::Scene::zoom_viewport_camera(this->current_viewport_camera_state(), steps));
+        this->commit_viewport_camera_state(scene::zoom_viewport_camera(this->current_viewport_camera_state(), steps));
     }
 
     Renderer::CameraUniformData Renderer::make_viewport_camera_uniform() const {
         if (!this->viewport.camera_initialized) throw std::runtime_error("Spectra rasterizer viewport camera is not initialized");
         if (this->viewport.extent.width == 0 || this->viewport.extent.height == 0) throw std::runtime_error("Cannot create Spectra rasterizer camera uniform without a viewport extent");
-        const std::shared_ptr<const scene::Scene::Document> scene = this->scene.workspace->document();
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
         const float aspect = static_cast<float>(this->viewport.extent.width) / static_cast<float>(this->viewport.extent.height);
-        const scene::Scene::CameraState state = this->current_viewport_camera_state();
+        const scene::CameraState state = this->current_viewport_camera_state();
         const float distance = this->current_viewport_camera_distance();
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(to_render_vector(state.eye), to_render_vector(state.target), to_render_vector(state.up));
         const float far_plane = std::max(this->viewport.camera_far_plane, distance * 4.0f);
-        const spectra::rasterizer::math::Matrix4 projection = spectra::rasterizer::math::perspective_matrix(state.vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
-        const spectra::rasterizer::math::Matrix4 inverse_projection = spectra::rasterizer::math::inverse_perspective_matrix(state.vertical_fov_degrees, aspect, this->viewport.camera_near_plane, far_plane);
-        const spectra::rasterizer::math::Matrix4 view_projection = spectra::rasterizer::math::look_at_matrix(basis) * projection;
-        const spectra::rasterizer::math::Matrix4 inverse_view_projection = inverse_projection * spectra::rasterizer::math::inverse_look_at_matrix(basis);
-        const ViewportLightingData lighting = explicit_scene_lighting_uniform(*scene);
+        const scene::VulkanCameraMatrices camera_matrices = scene::make_vulkan_camera_matrices(state.view, aspect, far_plane);
+        const ViewportLightingData lighting = explicit_scene_lighting_uniform(*document);
         return CameraUniformData{
-            .viewProjection            = view_projection.values,
-            .inverseViewProjection     = inverse_view_projection.values,
-            .cameraPosition            = {basis.eye.x, basis.eye.y, basis.eye.z, 0.0f},
+            .worldToClip               = camera_matrices.world_to_clip,
+            .clipToWorld               = camera_matrices.clip_to_world,
+            .cameraPosition            = {camera_matrices.frame.position.x, camera_matrices.frame.position.y, camera_matrices.frame.position.z, 0.0f},
             .environmentColorIntensity = lighting.environmentColorIntensity,
             .lightDirections           = lighting.lightDirections,
             .lightPositions            = lighting.lightPositions,
             .lightColorIntensities     = lighting.lightColorIntensities,
             .lightCounts               = lighting.lightCounts,
-            .cameraRight               = {basis.side.x, basis.side.y, basis.side.z, 0.0f},
-            .cameraUp                  = {basis.up.x, basis.up.y, basis.up.z, 0.0f},
+            .cameraForward             = {camera_matrices.frame.forward.x, camera_matrices.frame.forward.y, camera_matrices.frame.forward.z, 0.0f},
+            .cameraRight               = {camera_matrices.frame.right.x, camera_matrices.frame.right.y, camera_matrices.frame.right.z, 0.0f},
+            .cameraUp                  = {camera_matrices.frame.up.x, camera_matrices.frame.up.y, camera_matrices.frame.up.z, 0.0f},
             .viewport                  = {static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, distance},
         };
     }
@@ -2578,6 +3168,8 @@ namespace spectra::rasterizer {
         this->ensure_mesh_resources();
         this->ensure_viewport_grid_resources();
         this->ensure_point_cloud_resources();
+        this->ensure_viewport_segment_resources();
+        this->ensure_viewport_image_plane_resources();
         this->ensure_volume_resources();
         this->ensure_selection_resources();
         this->rebuild_selection_registry_if_needed();
@@ -2585,6 +3177,8 @@ namespace spectra::rasterizer {
         validate_material_library(*this->scene.workspace->document());
         this->upload_scene_resources(frame.frame_index);
         this->upload_point_cloud_resources(frame.frame_index);
+        this->upload_viewport_segment_resources(frame.frame_index);
+        this->upload_viewport_image_plane_resources(frame.frame_index);
         this->upload_volume_resources(frame.frame_index);
         this->update_camera_uniform(frame.frame_index);
         result.window_detail = this->window_detail();
@@ -2621,8 +3215,8 @@ namespace spectra::rasterizer {
         };
         std::vector<TransparentMeshSortItem> draw_commands{};
         draw_commands.reserve(frame_scene.drawCommands.size());
-        const scene::Scene::CameraState camera_state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 camera_position = to_render_vector(camera_state.eye);
+        const scene::CameraState camera_state = this->current_viewport_camera_state();
+        const spectra::rasterizer::math::Vector3 camera_position = to_render_vector(camera_state.view.pose.position);
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
             if (draw_command.material.alpha_mode != scene::Scene::PreviewAlphaMode::Blend) continue;
             const spectra::rasterizer::math::Vector3 sort_point = spectra::rasterizer::math::transform_point(spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform)), to_render_vector(draw_command.sortPoint));
@@ -2705,10 +3299,66 @@ namespace spectra::rasterizer {
         for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
     }
 
+    void Renderer::record_viewport_image_plane_pass(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->viewport_image_plane_pass.frame_planes.size()) throw std::runtime_error("Spectra rasterizer active viewport image plane frame index is out of range");
+        FrameViewportImagePlaneResources& frame_planes = this->viewport_image_plane_pass.frame_planes.at(this->lifecycle.active_frame_index);
+        if (frame_planes.drawCommands.empty()) return;
+        const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
+        command_buffer.setViewport(0u, viewport);
+        command_buffer.setScissor(0u, scissor);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_image_plane_pass.pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
+        const std::array<vk::Buffer, 1> vertex_buffers{*frame_planes.instanceBuffer.buffer};
+        constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
+        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+        std::optional<scene::Scene::ViewportSegmentDepthMode> bound_depth_mode{};
+        std::string bound_image_key{};
+        for (const ViewportImagePlaneDrawCommand& draw_command : frame_planes.drawCommands) {
+            const std::map<std::string, ViewportImagePlaneTexture>::const_iterator texture_iterator = this->viewport_image_plane_pass.texture_cache.find(draw_command.imageKey);
+            if (texture_iterator == this->viewport_image_plane_pass.texture_cache.end()) throw std::runtime_error(std::format("{}: viewport image plane texture was not uploaded", draw_command.imageKey));
+            const ViewportImagePlaneTexture& texture = texture_iterator->second;
+            if (!*texture.image.view || texture.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("{}: viewport image plane texture descriptor is invalid", draw_command.imageKey));
+            if (!bound_depth_mode.has_value() || *bound_depth_mode != draw_command.depthMode) {
+                const vk::raii::Pipeline& pipeline = draw_command.depthMode == scene::Scene::ViewportSegmentDepthMode::AlwaysVisible ? this->viewport_image_plane_pass.always_visible_pipeline : this->viewport_image_plane_pass.depth_tested_pipeline;
+                command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+                bound_depth_mode = draw_command.depthMode;
+            }
+            if (bound_image_key != draw_command.imageKey) {
+                command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_image_plane_pass.pipeline_layout, 1u, *texture.descriptor_sets.at(0), {});
+                bound_image_key = draw_command.imageKey;
+            }
+            command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
+        }
+    }
+
+    void Renderer::record_viewport_segment_pass(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->viewport_segment_pass.frame_segments.size()) throw std::runtime_error("Spectra rasterizer active viewport segment frame index is out of range");
+        FrameViewportSegmentResources& frame_segments = this->viewport_segment_pass.frame_segments.at(this->lifecycle.active_frame_index);
+        if (frame_segments.drawCommands.empty()) return;
+        const vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, 1.0f};
+        const vk::Rect2D scissor{{0, 0}, this->viewport.extent};
+        command_buffer.setViewport(0u, viewport);
+        command_buffer.setScissor(0u, scissor);
+        command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_segment_pass.pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
+        const std::array<vk::Buffer, 1> vertex_buffers{*frame_segments.instanceBuffer.buffer};
+        constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
+        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+        std::optional<scene::Scene::ViewportSegmentDepthMode> bound_depth_mode{};
+        for (const ViewportSegmentDrawCommand& draw_command : frame_segments.drawCommands) {
+            if (!bound_depth_mode.has_value() || *bound_depth_mode != draw_command.depthMode) {
+                const vk::raii::Pipeline& pipeline = draw_command.depthMode == scene::Scene::ViewportSegmentDepthMode::AlwaysVisible ? this->viewport_segment_pass.always_visible_pipeline : this->viewport_segment_pass.depth_tested_pipeline;
+                command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+                bound_depth_mode = draw_command.depthMode;
+            }
+            command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
+        }
+    }
+
     void Renderer::record_frame(const vk::raii::CommandBuffer& command_buffer) {
         if (!*this->viewport.image) return;
         if (this->lifecycle.active_frame_index >= this->mesh_pass.frame_scenes.size()) throw std::runtime_error("Spectra rasterizer active frame index is out of range");
         if (this->lifecycle.active_frame_index >= this->volume_pass.frame_volumes.size()) throw std::runtime_error("Spectra rasterizer active frame volume index is out of range");
+        this->record_pending_viewport_image_plane_uploads(command_buffer);
         this->record_pending_volume_upload(command_buffer, this->volume_pass.frame_volumes.at(this->lifecycle.active_frame_index));
 
         transition_image_layout(command_buffer, *this->viewport.image, vk::ImageAspectFlagBits::eColor, this->viewport.layout, vk::ImageLayout::eColorAttachmentOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
@@ -2746,6 +3396,8 @@ namespace spectra::rasterizer {
         this->record_volume_pass(command_buffer);
         this->record_point_cloud_pass(command_buffer);
         this->record_transparent_mesh_pass(command_buffer);
+        this->record_viewport_image_plane_pass(command_buffer);
+        this->record_viewport_segment_pass(command_buffer);
         command_buffer.endRendering();
 
         this->record_selection_visuals(command_buffer);
@@ -3029,7 +3681,7 @@ namespace spectra::rasterizer {
         ImGuiIO& io = ImGui::GetIO();
         if (io.MouseWheel != 0.0f) this->zoom_viewport_camera(io.MouseWheel);
 
-        const scene::Scene::ViewportCameraDelta delta{
+        const scene::ViewportCameraDelta delta{
             .x_pixels = io.MouseDelta.x,
             .y_pixels = io.MouseDelta.y,
         };
@@ -3048,17 +3700,17 @@ namespace spectra::rasterizer {
             const ImVec2 gizmo_max{gizmo_origin.x + 78.0f, gizmo_origin.y + 78.0f};
             over_viewport_control = mouse_position.x >= gizmo_origin.x && mouse_position.x <= gizmo_max.x && mouse_position.y >= gizmo_origin.y && mouse_position.y <= gizmo_max.y;
         }
-        const scene::Scene::ViewportCameraSize viewport_size{
+        const scene::ViewportCameraSize viewport_size{
             .width = std::max(1.0f, image_size.x),
             .height = std::max(1.0f, image_size.y),
         };
         if (io.KeyAlt) {
             if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) this->orbit_viewport_camera(delta);
             else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) this->pan_viewport_camera(delta, viewport_size);
-            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) this->zoom_viewport_camera(scene::Scene::viewport_drag_zoom_steps(delta));
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) this->zoom_viewport_camera(scene::viewport_drag_zoom_steps(delta));
         } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
             if (io.KeyShift) this->pan_viewport_camera(delta, viewport_size);
-            else if (io.KeyCtrl) this->zoom_viewport_camera(scene::Scene::viewport_drag_zoom_steps(delta));
+            else if (io.KeyCtrl) this->zoom_viewport_camera(scene::viewport_drag_zoom_steps(delta));
             else this->orbit_viewport_camera(delta);
         }
 
@@ -3147,14 +3799,15 @@ namespace spectra::rasterizer {
         };
 
         constexpr float axis_radius = 22.0f;
-        const scene::Scene::CameraState state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::CameraBasis basis = spectra::rasterizer::math::camera_basis(to_render_vector(state.eye), to_render_vector(state.target), to_render_vector(state.up));
+        const scene::CameraState state = this->current_viewport_camera_state();
+        const scene::CameraFrame frame = scene::camera_frame(state.view.pose);
 
         const auto project_axis = [&](const spectra::rasterizer::math::Vector3 axis) {
+            const scene::Vector3 scene_axis = to_scene_vector(axis);
             return spectra::rasterizer::math::Vector3{
-                spectra::rasterizer::math::dot(axis, basis.side),
-                spectra::rasterizer::math::dot(axis, basis.up),
-                -spectra::rasterizer::math::dot(axis, basis.forward),
+                scene::dot(scene_axis, frame.right),
+                scene::dot(scene_axis, frame.up),
+                -scene::dot(scene_axis, frame.forward),
             };
         };
 
@@ -3397,6 +4050,21 @@ namespace spectra::rasterizer {
     void Renderer::draw_scene_collection_panel() {
         this->rebuild_scene_ui_cache_if_needed();
         draw_inspector_section("Scene Collection");
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.workspace->document();
+        const std::string scene_coordinate_label = scene::coordinate_system_label(document->default_coordinate_system);
+        draw_property_row("Scene Coord", scene_coordinate_label);
+        const std::string active_coordinate_label = this->ui.active_coordinate_system_name.empty() ? std::format("Scene Default ({})", scene_coordinate_label) : std::format("{} ({})", this->ui.active_coordinate_system_name, scene::coordinate_system_label(scene::coordinate_system(this->ui.active_coordinate_system_name)));
+        ImGui::TextDisabled("%s", "Viewport Coord");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (ImGui::BeginCombo("##SpectraViewportCoordinateSystem", active_coordinate_label.c_str())) {
+            const std::string scene_default_label = std::format("Scene Default ({})", scene_coordinate_label);
+            if (ImGui::Selectable(scene_default_label.c_str(), this->ui.active_coordinate_system_name.empty())) this->apply_viewport_coordinate_system(std::string_view{});
+            for (const std::string_view coordinate_system_name : scene::coordinate_system_names()) {
+                const std::string coordinate_system_label = std::format("{} ({})", coordinate_system_name, scene::coordinate_system_label(scene::coordinate_system(coordinate_system_name)));
+                if (ImGui::Selectable(coordinate_system_label.c_str(), this->ui.active_coordinate_system_name == coordinate_system_name)) this->apply_viewport_coordinate_system(coordinate_system_name);
+            }
+            ImGui::EndCombo();
+        }
 
         const std::array camera_kinds{SceneObjectKind::Camera};
         const std::array light_kinds{SceneObjectKind::Light};
@@ -3526,11 +4194,24 @@ namespace spectra::rasterizer {
         case SceneObjectKind::Camera:
             this->draw_inspector_transform(object->transform);
             draw_inspector_section("Camera");
-            draw_property_row("Target", format_vector3(object->camera_target));
-            draw_property_row("Up", format_vector3(object->camera_up));
-            draw_property_row("FOV", format_float(object->camera_vertical_fov_degrees));
+            draw_property_row("Active", object->camera_active ? "true" : "false");
+            draw_property_row("Focus", format_vector3(object->camera_focus));
+            draw_property_row("Forward", format_vector3(object->camera_forward));
+            draw_property_row("Navigation Up", format_vector3(object->camera_navigation_up));
+            draw_property_row("Projection", camera_projection_kind_name(object->camera_projection_kind));
+            if (object->camera_projection_kind != scene::CameraProjectionKind::Orthographic) draw_property_row("FOV", format_float(object->camera_vertical_fov_degrees));
+            if (object->camera_projection_kind == scene::CameraProjectionKind::Pinhole) {
+                draw_property_row("Image Size", std::format("{} x {}", object->camera_image_width, object->camera_image_height));
+                draw_property_row("fx/fy", std::format("{} / {}", format_float(object->camera_fx), format_float(object->camera_fy)));
+                draw_property_row("cx/cy", std::format("{} / {}", format_float(object->camera_cx), format_float(object->camera_cy)));
+            }
             draw_property_row("Near", format_float(object->camera_near_plane));
             draw_property_row("Far", format_float(object->camera_far_plane));
+            draw_property_row("Visual", object->camera_visual_enabled ? "true" : "false");
+            if (object->camera_visual_enabled) {
+                draw_property_row("Visual Range", std::format("{} - {}", format_float(object->camera_visual_near), format_float(object->camera_visual_far)));
+                if (!object->camera_image_source.empty()) draw_property_row("Image", object->camera_image_source);
+            }
             break;
         case SceneObjectKind::Light:
             this->draw_inspector_transform(object->transform);

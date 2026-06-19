@@ -16,50 +16,6 @@ namespace spectra::scene {
     [[nodiscard]] Scene::Info describe_scene(const Scene::ResolvedScene& scene);
 
     namespace {
-        void validate_scene_id(const std::string_view scene_id) {
-            if (scene_id.empty()) throw std::runtime_error("Scene camera workspace requires a non-empty scene id");
-        }
-
-        void validate_camera_state(const Scene::CameraState& state) {
-            if (!is_finite(state.eye)) throw std::runtime_error("Scene camera eye must be finite");
-            if (!is_finite(state.target)) throw std::runtime_error("Scene camera target must be finite");
-            if (!is_finite(state.up)) throw std::runtime_error("Scene camera up vector must be finite");
-            const Vector3 view = state.target - state.eye;
-            if (!(length_squared(view) > 1.0e-12f)) throw std::runtime_error("Scene camera eye and target must not overlap");
-            if (!(length_squared(state.up) > 1.0e-12f)) throw std::runtime_error("Scene camera up vector must not be zero");
-            if (!(length_squared(cross(view, state.up)) > 1.0e-12f)) throw std::runtime_error("Scene camera up vector must not be parallel to the view direction");
-            if (!std::isfinite(state.vertical_fov_degrees) || !(state.vertical_fov_degrees > 0.0f) || !(state.vertical_fov_degrees < 180.0f)) throw std::runtime_error("Scene camera vertical FOV must be inside (0, 180)");
-        }
-
-        struct ViewportCameraFrame {
-            Vector3 forward{};
-            Vector3 right{};
-            Vector3 up{};
-        };
-
-        void validate_viewport_camera_delta(const Scene::ViewportCameraDelta delta) {
-            if (!std::isfinite(delta.x_pixels) || !std::isfinite(delta.y_pixels)) throw std::runtime_error("Scene viewport camera delta must be finite");
-        }
-
-        void validate_viewport_camera_size(const Scene::ViewportCameraSize viewport) {
-            if (!std::isfinite(viewport.width) || !std::isfinite(viewport.height) || !(viewport.width > 0.0f) || !(viewport.height > 0.0f)) throw std::runtime_error("Scene viewport camera size must be finite and positive");
-        }
-
-        [[nodiscard]] float clamp_viewport_camera_pitch(const float pitch) {
-            constexpr float limit = std::numbers::pi_v<float> * 0.49f;
-            return std::clamp(pitch, -limit, limit);
-        }
-
-        [[nodiscard]] ViewportCameraFrame viewport_camera_frame(const Scene::CameraState& state) {
-            validate_camera_state(state);
-            ViewportCameraFrame frame{};
-            frame.forward = normalize(state.target - state.eye, "Scene viewport camera forward");
-            const Vector3 normalized_up = normalize(state.up, "Scene viewport camera up");
-            frame.right = normalize(cross(normalized_up, frame.forward), "Scene viewport camera right");
-            frame.up = cross(frame.forward, frame.right);
-            return frame;
-        }
-
         template <typename Item>
         void validate_unique_scene_item_names(const std::vector<Item>& items, const std::string_view layer, const std::string_view kind) {
             std::set<std::string_view> names{};
@@ -88,6 +44,115 @@ namespace spectra::scene {
                 resolved.push_back(frame_item);
             }
             return resolved;
+        }
+
+        void validate_viewport_segment_width_mode(const Scene::ViewportSegmentWidthMode width_mode, const std::string_view context) {
+            switch (width_mode) {
+            case Scene::ViewportSegmentWidthMode::Screen: return;
+            case Scene::ViewportSegmentWidthMode::World: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported width mode value {}", context, static_cast<std::uint32_t>(width_mode)));
+        }
+
+        void validate_viewport_segment_depth_mode(const Scene::ViewportSegmentDepthMode depth_mode, const std::string_view context) {
+            switch (depth_mode) {
+            case Scene::ViewportSegmentDepthMode::DepthTested: return;
+            case Scene::ViewportSegmentDepthMode::AlwaysVisible: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported depth mode value {}", context, static_cast<std::uint32_t>(depth_mode)));
+        }
+
+        void validate_viewport_annotation_transform(const Transform& transform, const std::string_view context) {
+            if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            const float length_squared_value = transform.rotation.x * transform.rotation.x + transform.rotation.y * transform.rotation.y + transform.rotation.z * transform.rotation.z + transform.rotation.w * transform.rotation.w;
+            if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(std::format("{} has an invalid rotation quaternion", context));
+        }
+
+        void validate_viewport_annotation_color(const Vector4 color, const std::string_view context) {
+            if (!std::isfinite(color.x) || !std::isfinite(color.y) || !std::isfinite(color.z) || !std::isfinite(color.w)) throw std::runtime_error(std::format("{} has a non-finite color", context));
+            if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(std::format("{} has an invalid color", context));
+        }
+
+        void validate_viewport_segment_set(const Scene::ViewportSegmentSet& segment_set) {
+            if (segment_set.name.empty()) throw std::runtime_error("Viewport segment set name must not be empty");
+            if (!std::isfinite(segment_set.width) || segment_set.width <= 0.0f) throw std::runtime_error(std::format("Viewport segment set \"{}\" has an invalid default width", segment_set.name));
+            if (!segment_set.widths.empty() && segment_set.widths.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" width count does not match segment count", segment_set.name));
+            if (!segment_set.colors.empty() && segment_set.colors.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" color count does not match segment count", segment_set.name));
+            validate_viewport_segment_width_mode(segment_set.width_mode, std::format("Viewport segment set \"{}\"", segment_set.name));
+            validate_viewport_segment_depth_mode(segment_set.depth_mode, std::format("Viewport segment set \"{}\"", segment_set.name));
+            for (std::size_t index = 0u; index < segment_set.segments.size(); ++index) {
+                const Scene::ViewportSegment& segment = segment_set.segments.at(index);
+                if (!is_finite(segment.start) || !is_finite(segment.end)) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains a non-finite segment endpoint", segment_set.name));
+                if (length_squared(segment.end - segment.start) <= 0.0f) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains a zero-length segment", segment_set.name));
+                if (!segment_set.widths.empty() && (!std::isfinite(segment_set.widths.at(index)) || segment_set.widths.at(index) <= 0.0f)) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains an invalid segment width", segment_set.name));
+                if (!segment_set.colors.empty()) validate_viewport_annotation_color(segment_set.colors.at(index), std::format("Viewport segment set \"{}\" segment #{}", segment_set.name, index));
+            }
+        }
+
+        void validate_viewport_segment_sets(const std::vector<Scene::ViewportSegmentSet>& segment_sets) {
+            validate_unique_scene_item_names(segment_sets, "Scene resolved frame", "viewport segment set");
+            for (const Scene::ViewportSegmentSet& segment_set : segment_sets) validate_viewport_segment_set(segment_set);
+        }
+
+        void validate_camera_image(const Scene::CameraImage& image, const std::string_view context) {
+            validate_viewport_annotation_color(image.tint, std::format("{} image tint", context));
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} RGBA8 image dimensions must be non-zero", context));
+            const std::uint64_t byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+            if (image.rgba8_size != byte_count) throw std::runtime_error(std::format("{} RGBA8 image byte count must be width * height * 4", context));
+            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("{} RGBA8 image pointer must not be null", context));
+        }
+
+        void validate_camera_visualization(const Scene::CameraVisualization& visualization, const std::string_view context) {
+            validate_viewport_annotation_color(visualization.color, std::format("{} visualization color", context));
+            if (!std::isfinite(visualization.width) || !(visualization.width > 0.0f)) throw std::runtime_error(std::format("{} visualization width must be positive", context));
+            validate_viewport_segment_width_mode(visualization.width_mode, std::format("{} visualization", context));
+            validate_viewport_segment_depth_mode(visualization.depth_mode, std::format("{} visualization", context));
+            if (!std::isfinite(visualization.visual_near) || !std::isfinite(visualization.visual_far) || !(visualization.visual_near > 0.0f) || !(visualization.visual_far > visualization.visual_near)) throw std::runtime_error(std::format("{} visualization range must satisfy visual_far > visual_near > 0", context));
+            if (visualization.image.has_value()) validate_camera_image(*visualization.image, context);
+        }
+
+        void validate_camera(const Scene::Camera& camera, const std::string_view context) {
+            if (camera.name.empty()) throw std::runtime_error(std::format("{} camera name must not be empty", context));
+            static_cast<void>(make_vulkan_camera_matrices(camera.view, 1.0f, camera.view.projection.far_plane));
+            validate_camera_visualization(camera.visualization, std::format("{} camera \"{}\"", context, camera.name));
+            if (camera.visualization.enabled && camera.view.projection.kind == CameraProjectionKind::Orthographic) throw std::runtime_error(std::format("{} camera \"{}\" visualization requires perspective or pinhole projection", context, camera.name));
+        }
+
+        void validate_cameras(const std::vector<Scene::Camera>& cameras, const std::string& active_camera_name, const std::string_view context) {
+            validate_unique_scene_item_names(cameras, context, "camera");
+            if (active_camera_name.empty()) throw std::runtime_error(std::format("{} active camera name must not be empty", context));
+            bool found_active_camera = false;
+            for (const Scene::Camera& camera : cameras) {
+                validate_camera(camera, context);
+                found_active_camera = found_active_camera || camera.name == active_camera_name;
+            }
+            if (!found_active_camera) throw std::runtime_error(std::format("{} active camera \"{}\" does not exist", context, active_camera_name));
+        }
+
+        [[nodiscard]] const Scene::Camera& require_active_camera(const std::vector<Scene::Camera>& cameras, const std::string& active_camera_name, const std::string_view context) {
+            for (const Scene::Camera& camera : cameras)
+                if (camera.name == active_camera_name) return camera;
+            throw std::runtime_error(std::format("{} active camera \"{}\" does not exist", context, active_camera_name));
+        }
+
+        [[nodiscard]] float pathtracer_camera_fov_degrees(const Scene::Camera& camera) {
+            switch (camera.view.projection.kind) {
+            case CameraProjectionKind::Perspective:
+                return camera.view.projection.vertical_fov_degrees;
+            case CameraProjectionKind::Pinhole: {
+                constexpr float principal_point_tolerance = 1.0e-3f;
+                const float centered_x = static_cast<float>(camera.view.projection.image_width) * 0.5f;
+                const float centered_y = static_cast<float>(camera.view.projection.image_height) * 0.5f;
+                if (std::abs(camera.view.projection.cx - centered_x) > principal_point_tolerance || std::abs(camera.view.projection.cy - centered_y) > principal_point_tolerance)
+                    throw std::runtime_error(std::format("Active camera \"{}\" uses off-center pinhole intrinsics; current pathtracer camera adapter requires a centered principal point", camera.name));
+                return camera_projection_vertical_fov_degrees(camera.view.projection);
+            }
+            case CameraProjectionKind::Orthographic:
+                throw std::runtime_error(std::format("Active camera \"{}\" uses orthographic projection; preview pathtracer conversion currently requires a perspective camera", camera.name));
+            }
+            throw std::runtime_error("Unknown scene camera projection kind");
         }
 
         [[nodiscard]] bool contains_name(const std::set<std::string>& values, const std::string& value) {
@@ -251,20 +316,6 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::Parameter texture_parameter(std::string name, std::vector<std::string> values, const Scene::SourceLocation& source) {
             return Scene::Parameter{.type = "texture", .name = std::move(name), .values = std::move(values), .source = source};
-        }
-
-        [[nodiscard]] Quaternion normalized_quaternion(const Quaternion value, const std::string_view context) {
-            const float length_squared_value = value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
-            if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(std::format("{} has an invalid rotation quaternion", context));
-            const float inv_length = 1.0f / std::sqrt(length_squared_value);
-            return Quaternion{value.x * inv_length, value.y * inv_length, value.z * inv_length, value.w * inv_length};
-        }
-
-        [[nodiscard]] Vector3 rotate_vector(const Quaternion rotation, const Vector3 value) {
-            const Vector3 qv{rotation.x, rotation.y, rotation.z};
-            const Vector3 uv = cross(qv, value);
-            const Vector3 uuv = cross(qv, uv);
-            return value + ((uv * rotation.w) + uuv) * 2.0f;
         }
 
         [[nodiscard]] Vector3 transform_point(const Transform& transform, const Vector3 point, const std::string_view context) {
@@ -712,28 +763,13 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] SceneTransform make_look_at_transform(const Vector3 eye, const Vector3 target, const Vector3 up) {
-            const Vector3 forward = normalize(target - eye, "canonical camera forward");
-            const Vector3 right = normalize(cross(normalize(up, "canonical camera up"), forward), "canonical camera right");
-            const Vector3 camera_up = cross(forward, right);
-            SceneTransform transform{};
-            transform.matrix = {
-                right.x, camera_up.x, forward.x, eye.x,
-                right.y, camera_up.y, forward.y, eye.y,
-                right.z, camera_up.z, forward.z, eye.z,
-                0.0f, 0.0f, 0.0f, 1.0f,
-            };
-            transform.inverse = {
-                right.x, right.y, right.z, -dot(right, eye),
-                camera_up.x, camera_up.y, camera_up.z, -dot(camera_up, eye),
-                forward.x, forward.y, forward.z, -dot(forward, eye),
-                0.0f, 0.0f, 0.0f, 1.0f,
-            };
-            return transform;
+            return camera_world_from_camera(camera_pose_from_look_at(eye, target, up));
         }
 
         [[nodiscard]] Scene::ResolvedScene make_resolved_scene_from_preview(const Scene::Document& document, const Scene::ResolvedFrame& frame, const Scene::Revision revision) {
             if (document.name.empty()) throw std::runtime_error("Preview document name must not be empty when building canonical scene");
-            if (!document.camera.has_value()) throw std::runtime_error(std::format("Preview document \"{}\" requires a camera for canonical path tracing", document.name));
+            validate_cameras(frame.cameras, document.active_camera_name, std::format("Preview document \"{}\"", document.name));
+            const Scene::Camera& active_camera = require_active_camera(frame.cameras, document.active_camera_name, std::format("Preview document \"{}\"", document.name));
             Scene::ResolvedScene scene{
                 .revision = revision,
                 .name = document.name,
@@ -742,10 +778,11 @@ namespace spectra::scene {
             };
             scene.render_settings.camera = Scene::Entity{
                 .type = "perspective",
-                .parameters = {float_parameter("fov", {document.camera->vertical_fov_degrees}, document.camera->source)},
-                .source = document.camera->source,
+                .parameters = {float_parameter("fov", {pathtracer_camera_fov_degrees(active_camera)}, active_camera.source)},
+                .source = active_camera.source,
             };
-            scene.render_settings.camera_transform = SceneTransformSet{.start = make_look_at_transform(document.camera->transform.position, document.camera->target, document.camera->up), .end = make_look_at_transform(document.camera->transform.position, document.camera->target, document.camera->up)};
+            const SceneTransform world_from_camera = camera_world_from_camera(active_camera.view.pose);
+            scene.render_settings.camera_transform = SceneTransformSet{.start = world_from_camera, .end = world_from_camera};
             const std::set<std::string> texture_names = append_canonical_textures(scene, document);
             append_canonical_materials(scene, document, texture_names, !frame.volumes.empty());
             append_preview_lights(scene, document);
@@ -758,12 +795,17 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] Scene::ResolvedFrame resolve_document_frame(const Scene::Document& document, const Scene::FrameSnapshot& frame) {
-            return Scene::ResolvedFrame{
+            Scene::ResolvedFrame resolved{
                 .meshes = resolve_scene_items(document.meshes, frame.meshes, "mesh"),
                 .spheres = resolve_scene_items(document.spheres, frame.spheres, "sphere"),
                 .point_clouds = resolve_scene_items(document.point_clouds, frame.point_clouds, "point cloud"),
                 .volumes = resolve_scene_items(document.volumes, frame.volumes, "volume"),
+                .cameras = resolve_scene_items(document.cameras, frame.cameras, "camera"),
+                .viewport_segment_sets = resolve_scene_items(document.viewport_segment_sets, frame.viewport_segment_sets, "viewport segment set"),
             };
+            validate_cameras(resolved.cameras, document.active_camera_name, "Scene resolved frame");
+            validate_viewport_segment_sets(resolved.viewport_segment_sets);
+            return resolved;
         }
 
         [[nodiscard]] Scene::ResolvedFrame make_rasterizer_preview_frame(Scene::ResolvedFrame frame) {
@@ -1044,100 +1086,6 @@ namespace spectra::scene {
         }
     } // namespace
 
-    void Scene::CameraWorkspace::ensure_camera(std::string scene_id, Scene::CameraState state) {
-        validate_scene_id(scene_id);
-        validate_camera_state(state);
-        std::scoped_lock lock{this->mutex};
-        if (this->cameras.contains(scene_id)) return;
-        this->cameras.emplace(std::move(scene_id), Scene::CameraSnapshot{
-                                                       .revision = Scene::Revision{1},
-                                                       .state    = std::move(state),
-                                                   });
-    }
-
-    Scene::CameraSnapshot Scene::CameraWorkspace::snapshot(const std::string_view scene_id) const {
-        validate_scene_id(scene_id);
-        std::scoped_lock lock{this->mutex};
-        const std::map<std::string, Scene::CameraSnapshot>::const_iterator found = this->cameras.find(std::string{scene_id});
-        if (found == this->cameras.end()) throw std::runtime_error(std::format("Scene camera session \"{}\" does not exist", scene_id));
-        return found->second;
-    }
-
-    Scene::CameraSnapshot Scene::CameraWorkspace::commit(const std::string_view scene_id, Scene::CameraState state) {
-        validate_scene_id(scene_id);
-        validate_camera_state(state);
-        std::scoped_lock lock{this->mutex};
-        const std::map<std::string, Scene::CameraSnapshot>::iterator found = this->cameras.find(std::string{scene_id});
-        if (found == this->cameras.end()) throw std::runtime_error(std::format("Scene camera session \"{}\" does not exist", scene_id));
-        found->second = Scene::CameraSnapshot{
-            .revision = Scene::Revision{found->second.revision.value + 1u},
-            .state    = std::move(state),
-        };
-        return found->second;
-    }
-
-    float Scene::viewport_drag_zoom_steps(const Scene::ViewportCameraDelta delta) {
-        validate_viewport_camera_delta(delta);
-        return -delta.y_pixels * 0.035f;
-    }
-
-    Scene::CameraState Scene::orbit_viewport_camera(Scene::CameraState state, const Scene::ViewportCameraDelta delta) {
-        validate_camera_state(state);
-        validate_viewport_camera_delta(delta);
-        if (delta.x_pixels == 0.0f && delta.y_pixels == 0.0f) return state;
-        constexpr float orbit_radians_per_pixel = 0.006f;
-        const Vector3 offset = state.eye - state.target;
-        const float distance = length(offset);
-        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Scene viewport camera orbit distance must be positive");
-        const float yaw = std::atan2(offset.x, offset.z) + delta.x_pixels * orbit_radians_per_pixel;
-        const float pitch = clamp_viewport_camera_pitch(std::asin(std::clamp(offset.y / distance, -1.0f, 1.0f)) + delta.y_pixels * orbit_radians_per_pixel);
-        const float cos_pitch = std::cos(pitch);
-        const Vector3 direction{
-            std::sin(yaw) * cos_pitch,
-            std::sin(pitch),
-            std::cos(yaw) * cos_pitch,
-        };
-        state.eye = state.target + direction * distance;
-        validate_camera_state(state);
-        return state;
-    }
-
-    Scene::CameraState Scene::pan_viewport_camera(Scene::CameraState state, const Scene::ViewportCameraDelta delta, const Scene::ViewportCameraSize viewport) {
-        validate_camera_state(state);
-        validate_viewport_camera_delta(delta);
-        validate_viewport_camera_size(viewport);
-        if (delta.x_pixels == 0.0f && delta.y_pixels == 0.0f) return state;
-        const ViewportCameraFrame frame = viewport_camera_frame(state);
-        const float distance = length(state.eye - state.target);
-        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Scene viewport camera pan distance must be positive");
-        const float pan_scale = 2.0f * distance * std::tan(state.vertical_fov_degrees * std::numbers::pi_v<float> / 360.0f) / viewport.height;
-        if (!std::isfinite(pan_scale) || !(pan_scale > 0.0f)) throw std::runtime_error("Scene viewport camera pan scale must be positive");
-        const float horizontal_offset = -delta.x_pixels * pan_scale;
-        const float vertical_offset = delta.y_pixels * pan_scale;
-        const Vector3 offset = frame.right * horizontal_offset + frame.up * vertical_offset;
-        state.eye += offset;
-        state.target += offset;
-        validate_camera_state(state);
-        return state;
-    }
-
-    Scene::CameraState Scene::zoom_viewport_camera(Scene::CameraState state, const float steps) {
-        validate_camera_state(state);
-        if (!std::isfinite(steps)) throw std::runtime_error("Scene viewport camera zoom steps must be finite");
-        if (steps == 0.0f) return state;
-        constexpr float minimum_distance = 0.02f;
-        constexpr float maximum_distance = 1000000.0f;
-        const Vector3 target_to_eye = state.eye - state.target;
-        const float distance = length(target_to_eye);
-        if (!std::isfinite(distance) || !(distance > 0.0f)) throw std::runtime_error("Scene viewport camera zoom distance must be positive");
-        const float zoom_factor = std::pow(0.88f, steps);
-        if (!std::isfinite(zoom_factor) || !(zoom_factor > 0.0f)) throw std::runtime_error("Scene viewport camera zoom factor must be positive");
-        const float new_distance = std::clamp(distance * zoom_factor, minimum_distance, maximum_distance);
-        state.eye = state.target + target_to_eye / distance * new_distance;
-        validate_camera_state(state);
-        return state;
-    }
-
     void Scene::Edit::replace_timeline(Scene::Timeline timeline) {
         this->timeline_replacement = std::move(timeline);
         this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Timeline);
@@ -1223,6 +1171,7 @@ namespace spectra::scene {
 
     Scene::Scene(Scene::Document document) {
         if (document.revision.value == 0) document.revision = Scene::Revision{1};
+        document.default_coordinate_system = coordinate_system(document.default_coordinate_system.name);
         this->current_revision = document.revision;
         this->current_document = std::make_shared<Scene::Document>(std::move(document));
         this->current_timeline.frames_per_second = this->current_document->frames_per_second;
@@ -1238,6 +1187,7 @@ namespace spectra::scene {
     Scene::Scene(Scene::ResolvedScene scene, Scene::Document preview_document) {
         if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
         if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
+        preview_document.default_coordinate_system = coordinate_system(preview_document.default_coordinate_system.name);
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
         this->current_document = std::make_shared<Scene::Document>(std::move(preview_document));
@@ -2640,21 +2590,25 @@ namespace spectra::scene {
         [[nodiscard]] Scene::Camera make_camera(const Scene::ResolvedScene& scene, const Bounds& bounds) {
             if (scene.render_settings.camera.type != "perspective") throw std::runtime_error(std::format("PBRT preview scene loader only supports perspective cameras, got \"{}\"", scene.render_settings.camera.type));
             require_static_transform(scene.render_settings.camera_transform, "PBRT preview camera");
-            const std::array<float, 16>& world_from_camera = scene.render_settings.camera_transform.start.matrix;
-            const Vector3 eye{matrix_value(world_from_camera, 0u, 3u), matrix_value(world_from_camera, 1u, 3u), matrix_value(world_from_camera, 2u, 3u)};
-            const Vector3 up = normalize(Vector3{matrix_value(world_from_camera, 0u, 1u), matrix_value(world_from_camera, 1u, 1u), matrix_value(world_from_camera, 2u, 1u)}, "PBRT preview camera up vector");
+            const CameraPose pose = camera_pose_from_world_from_camera(scene.render_settings.camera_transform.start);
+            const CameraFrame frame = camera_frame(pose);
             const Vector3 target = center(bounds);
             const float scene_radius = radius(bounds);
-            const float camera_distance = length(eye - target);
+            const float camera_distance = length(pose.position - target);
             const float far_plane = std::max(20.0f, camera_distance + scene_radius * 4.0f);
             return Scene::Camera{
                 .name               = "camera.main",
-                .transform          = Transform{.position = eye},
-                .target             = target,
-                .up                 = up,
-                .vertical_fov_degrees = required_one_float_value(scene.render_settings.camera, "fov", "PBRT preview camera"),
-                .near_plane          = 0.01f,
-                .far_plane           = far_plane,
+                .view               = CameraViewState{
+                    .pose = pose,
+                    .focus = target,
+                    .navigation_up = frame.up,
+                    .projection = CameraProjection{
+                        .kind = CameraProjectionKind::Perspective,
+                        .vertical_fov_degrees = required_one_float_value(scene.render_settings.camera, "fov", "PBRT preview camera"),
+                        .near_plane = 0.01f,
+                        .far_plane = far_plane,
+                    },
+                },
                 .source             = scene.render_settings.camera.source,
             };
         }
@@ -2771,7 +2725,9 @@ namespace spectra::scene {
         const std::set<std::string> referenced_material_names = referenced_shape_material_names(scene);
         const std::map<std::string, std::size_t> material_indices = append_materials(scene, referenced_material_names, document);
         append_meshes(object_source_prefix_value, scene, document, material_indices, bounds);
-        document.camera = make_camera(scene, bounds);
+        Scene::Camera camera = make_camera(scene, bounds);
+        document.active_camera_name = camera.name;
+        document.cameras.push_back(std::move(camera));
         append_pbrt_preview_lights(scene, document);
         return document;
     }
@@ -4138,6 +4094,7 @@ namespace spectra::scene {
         return Scene::Info{
             .name                    = scene.name,
             .title                   = scene.title,
+            .coordinate_system       = coordinate_system_label(coordinate_system("PBRT")),
             .camera                  = scene.render_settings.camera.type,
             .sampler                 = scene.render_settings.sampler.type,
             .integrator              = scene.render_settings.integrator.type,

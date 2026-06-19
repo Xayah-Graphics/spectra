@@ -1,8 +1,8 @@
 static const uint MaxViewportDirectLights = 8;
 
 struct CameraUniform {
-    row_major float4x4 viewProjection;
-    row_major float4x4 inverseViewProjection;
+    row_major float4x4 worldToClip;
+    row_major float4x4 clipToWorld;
     float3 cameraPosition;
     float _pad0;
     float3 environmentColor;
@@ -10,10 +10,12 @@ struct CameraUniform {
     float4 lightDirections[MaxViewportDirectLights];
     float4 lightColorIntensities[MaxViewportDirectLights];
     uint4 lightCounts;
-    float3 cameraRight;
+    float3 cameraForward;
     float _pad1;
-    float3 cameraUp;
+    float3 cameraRight;
     float _pad2;
+    float3 cameraUp;
+    float _pad3;
     float4 viewport;
 };
 
@@ -68,8 +70,8 @@ float grid_lod_alpha(float2 coordinate, float pixelWorld) {
 
 [shader("fragment")]
 FragmentOutput fragment_main(VertexOutput input) {
-    float4 nearPosition = mul(float4(input.ndc, 0.0, 1.0), camera.inverseViewProjection);
-    float4 farPosition = mul(float4(input.ndc, 1.0, 1.0), camera.inverseViewProjection);
+    float4 nearPosition = mul(float4(input.ndc, 0.0, 1.0), camera.clipToWorld);
+    float4 farPosition = mul(float4(input.ndc, 1.0, 1.0), camera.clipToWorld);
     if (abs(nearPosition.w) <= 1.0e-6 || abs(farPosition.w) <= 1.0e-6) discard;
 
     float3 nearWorld = nearPosition.xyz / nearPosition.w;
@@ -81,7 +83,7 @@ FragmentOutput fragment_main(VertexOutput input) {
     if (planeT <= 0.0) discard;
 
     float3 worldPosition = nearWorld + ray * planeT;
-    float4 clipPosition = mul(float4(worldPosition, 1.0), camera.viewProjection);
+    float4 clipPosition = mul(float4(worldPosition, 1.0), camera.worldToClip);
     if (clipPosition.w <= 0.0) discard;
 
     float depth = clipPosition.z / clipPosition.w;

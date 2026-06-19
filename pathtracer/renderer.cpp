@@ -855,53 +855,6 @@ namespace {
         return vector / length;
     }
 
-    [[nodiscard]] spectra::Vector3f camera_effective_up(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
-        const spectra::Vector3f view_direction = center - eye;
-        if (finite_length(spectra::Cross(view_direction, up), "Camera view/up cross product is invalid") > 1.0e-10f) return up;
-        return std::abs(up.y) < 0.9f ? spectra::Vector3f{0.0f, 1.0f, 0.0f} : spectra::Vector3f{1.0f, 0.0f, 0.0f};
-    }
-
-    struct CameraFrame {
-        spectra::Vector3f forward{};
-        spectra::Vector3f right{};
-        spectra::Vector3f up{};
-    };
-
-    [[nodiscard]] CameraFrame camera_frame_from_points(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
-        CameraFrame frame{};
-        frame.forward                          = normalized_vector(center - eye, "Camera eye and center must not overlap");
-        const spectra::Vector3f effective_up   = camera_effective_up(eye, center, up);
-        const spectra::Vector3f positive_right = normalized_vector(spectra::Cross(effective_up, frame.forward), "Camera right vector is invalid");
-        frame.right                            = positive_right;
-        frame.up                               = spectra::Cross(frame.forward, positive_right);
-        return frame;
-    }
-
-    [[nodiscard]] spectra::Transform camera_from_world_transform_from_points(const spectra::Point3f& eye, const spectra::Point3f& center, const spectra::Vector3f& up) {
-        const CameraFrame frame = camera_frame_from_points(eye, center, up);
-        const spectra::Vector3f eye_vector{eye.x, eye.y, eye.z};
-        spectra::Transform transform{spectra::SquareMatrix<4>{
-            frame.right.x,
-            frame.right.y,
-            frame.right.z,
-            -spectra::Dot(frame.right, eye_vector),
-            frame.up.x,
-            frame.up.y,
-            frame.up.z,
-            -spectra::Dot(frame.up, eye_vector),
-            frame.forward.x,
-            frame.forward.y,
-            frame.forward.z,
-            -spectra::Dot(frame.forward, eye_vector),
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-        }};
-        validate_transform_matrix(transform, "Camera transform contains a non-finite value");
-        return transform;
-    }
-
     [[nodiscard]] spectra::Point3f camera_focus_center_from_bounds(const spectra::Point3f& eye, const spectra::Vector3f& forward, const spectra::Bounds3f& focus_bounds) {
         validate_bounds(focus_bounds, "Camera focus bounds are invalid");
 
@@ -935,6 +888,36 @@ namespace {
         return eye + forward * focus_distance;
     }
 
+    [[nodiscard]] spectra::scene::SceneTransform scene_transform_from_pathtracer_transform(const spectra::Transform& transform) {
+        const spectra::SquareMatrix<4>& matrix = transform.GetMatrix();
+        const spectra::SquareMatrix<4>& inverse = transform.GetInverseMatrix();
+        spectra::scene::SceneTransform result{};
+        for (std::size_t row = 0u; row < 4u; ++row) {
+            for (std::size_t column = 0u; column < 4u; ++column) {
+                result.matrix.at(row * 4u + column) = matrix[static_cast<int>(row)][static_cast<int>(column)];
+                result.inverse.at(row * 4u + column) = inverse[static_cast<int>(row)][static_cast<int>(column)];
+            }
+        }
+        return result;
+    }
+
+    [[nodiscard]] spectra::Transform pathtracer_transform_from_scene_transform(const spectra::scene::SceneTransform& transform) {
+        return spectra::Transform{
+            spectra::SquareMatrix<4>{
+                transform.matrix.at(0u), transform.matrix.at(1u), transform.matrix.at(2u), transform.matrix.at(3u),
+                transform.matrix.at(4u), transform.matrix.at(5u), transform.matrix.at(6u), transform.matrix.at(7u),
+                transform.matrix.at(8u), transform.matrix.at(9u), transform.matrix.at(10u), transform.matrix.at(11u),
+                transform.matrix.at(12u), transform.matrix.at(13u), transform.matrix.at(14u), transform.matrix.at(15u),
+            },
+            spectra::SquareMatrix<4>{
+                transform.inverse.at(0u), transform.inverse.at(1u), transform.inverse.at(2u), transform.inverse.at(3u),
+                transform.inverse.at(4u), transform.inverse.at(5u), transform.inverse.at(6u), transform.inverse.at(7u),
+                transform.inverse.at(8u), transform.inverse.at(9u), transform.inverse.at(10u), transform.inverse.at(11u),
+                transform.inverse.at(12u), transform.inverse.at(13u), transform.inverse.at(14u), transform.inverse.at(15u),
+            },
+        };
+    }
+
 } // namespace
 
 namespace spectra::pathtracer {
@@ -960,21 +943,31 @@ namespace spectra::pathtracer {
         return info.camera_fov_degrees;
     }
 
-    [[nodiscard]] scene::Scene::CameraState scene_camera_state_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds, const float fov_degrees) {
+    [[nodiscard]] scene::CameraState scene_camera_state_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds, const float fov_degrees) {
         const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
         const spectra::Point3f eye      = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
         const spectra::Vector3f forward = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
-        const spectra::Vector3f up      = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 1.0f, 0.0f}), "Base camera up vector is invalid");
-        return scene::Scene::CameraState{
-            .eye                = to_scene_vector(eye),
-            .target             = to_scene_vector(camera_focus_center_from_bounds(eye, forward, focus_bounds)),
-            .up                 = to_scene_vector(up),
-            .vertical_fov_degrees = fov_degrees,
+        const scene::SceneTransform scene_world_from_camera = scene_transform_from_pathtracer_transform(world_from_camera);
+        const scene::CameraPose pose = scene::camera_pose_from_world_from_camera(scene_world_from_camera);
+        const scene::CameraFrame frame = scene::camera_frame(pose);
+        return scene::CameraState{
+            .view = scene::CameraViewState{
+                .pose = pose,
+                .focus = to_scene_vector(camera_focus_center_from_bounds(eye, forward, focus_bounds)),
+                .navigation_up = frame.up,
+                .projection = scene::CameraProjection{
+                    .kind = scene::CameraProjectionKind::Perspective,
+                    .vertical_fov_degrees = fov_degrees,
+                    .near_plane = 0.01f,
+                    .far_plane = 200.0f,
+                },
+            },
         };
     }
 
-    [[nodiscard]] spectra::Transform moving_from_camera_from_scene_camera_state(const spectra::Transform& base_camera_from_world, const scene::Scene::CameraState& state) {
-        const spectra::Transform current_camera_from_world = camera_from_world_transform_from_points(to_point(state.eye), to_point(state.target), to_vector(state.up));
+    [[nodiscard]] spectra::Transform moving_from_camera_from_scene_camera_state(const spectra::Transform& base_camera_from_world, const scene::CameraState& state) {
+        const scene::SceneTransform world_from_current_camera = scene::camera_world_from_camera(state.view.pose);
+        const spectra::Transform current_camera_from_world = spectra::Inverse(pathtracer_transform_from_scene_transform(world_from_current_camera));
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
 
@@ -990,11 +983,11 @@ namespace spectra::pathtracer {
 
     class Renderer::Impl {
     public:
-        Impl(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
+        Impl(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         ~Impl() noexcept;
 
         void attach(HostView host);
-        void set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
+        void set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
@@ -1065,8 +1058,8 @@ namespace spectra::pathtracer {
         void consume_completed_screenshot(std::uint32_t frame_index);
         void initialize_camera_state();
         void synchronize_camera_workspace();
-        void apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot);
-        void commit_camera_state(scene::Scene::CameraState state);
+        void apply_camera_snapshot(const scene::CameraSnapshot& snapshot);
+        void commit_camera_state(scene::CameraState state);
         void reset_camera();
         void clear_throughput_statistics();
         void update_frame_statistics(std::uint32_t frame_index, std::uint32_t image_index, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
@@ -1080,7 +1073,7 @@ namespace spectra::pathtracer {
         bool attached{false};
         bool overlays_visible{true};
         std::shared_ptr<const scene::Scene> source_scene{};
-        std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace{};
+        std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
 
         struct {
             bool viewport_known{false};
@@ -1128,15 +1121,22 @@ namespace spectra::pathtracer {
         struct {
             bool initialized{false};
             bool input_enabled{false};
-            scene::Scene::CameraState state{
-                .eye                = scene::Vector3{0.0f, 0.0f, 0.0f},
-                .target             = scene::Vector3{0.0f, 0.0f, 1.0f},
-                .up                 = scene::Vector3{0.0f, 1.0f, 0.0f},
-                .vertical_fov_degrees = 60.0f,
+            scene::CameraState state{
+                .view = scene::camera_view_from_look_at(
+                    scene::Vector3{0.0f, 0.0f, 0.0f},
+                    scene::Vector3{0.0f, 0.0f, 1.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::CameraProjection{
+                        .kind = scene::CameraProjectionKind::Perspective,
+                        .vertical_fov_degrees = 60.0f,
+                        .near_plane = 0.01f,
+                        .far_plane = 200.0f,
+                    }
+                ),
             };
             spectra::Transform moving_from_camera{};
             spectra::Transform camera_from_world{};
-            scene::Scene::Revision observed_revision{};
+            scene::CameraRevision observed_revision{};
         } camera;
 
         struct {
@@ -1152,7 +1152,7 @@ namespace spectra::pathtracer {
         } statistics;
     };
 
-    Renderer::Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_scene), std::move(camera_workspace))) {}
+    Renderer::Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_scene), std::move(camera_workspace))) {}
 
     Renderer::~Renderer() noexcept = default;
 
@@ -1160,7 +1160,7 @@ namespace spectra::pathtracer {
 
     Renderer& Renderer::operator=(Renderer&& other) noexcept = default;
 
-    void Renderer::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) {
+    void Renderer::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
         this->impl->set_scene_workspace(std::move(source_scene), std::move(camera_workspace));
     }
 
@@ -1222,7 +1222,7 @@ namespace spectra::pathtracer {
         return this->sum / static_cast<float>(this->count);
     }
 
-    Renderer::Impl::Impl(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) : source_scene(std::move(source_scene)), camera_workspace(std::move(camera_workspace)) {
+    Renderer::Impl::Impl(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : source_scene(std::move(source_scene)), camera_workspace(std::move(camera_workspace)) {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
     }
@@ -1231,7 +1231,7 @@ namespace spectra::pathtracer {
         this->destroy_screenshot_resources_noexcept();
     }
 
-    void Renderer::Impl::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace) {
+    void Renderer::Impl::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
         if (source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         if (camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
         if (this->source_scene == source_scene && this->camera_workspace == camera_workspace) return;
@@ -1390,7 +1390,7 @@ namespace spectra::pathtracer {
         this->scene_camera_from_world    = spectra::Transform{};
         this->scene_sampler_sample_count = 0;
         this->camera.initialized         = false;
-        this->camera.observed_revision   = scene::Scene::Revision{};
+        this->camera.observed_revision   = scene::CameraRevision{};
     }
 
     void Renderer::Impl::create_for_resolution(const std::array<int, 2>& resolution) {
@@ -1600,7 +1600,7 @@ namespace spectra::pathtracer {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
         this->camera.camera_from_world = this->scene_camera_from_world;
         this->camera.input_enabled    = false;
-        const scene::Scene::CameraState state = scene_camera_state_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
+        const scene::CameraState state = scene_camera_state_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
         this->camera_workspace->ensure_camera(this->active_scene_id(), state);
         this->apply_camera_snapshot(this->camera_workspace->snapshot(this->active_scene_id()));
     }
@@ -1608,13 +1608,13 @@ namespace spectra::pathtracer {
     void Renderer::Impl::synchronize_camera_workspace() {
         if (!this->pipeline_ready()) return;
         if (!this->camera.initialized) this->initialize_camera_state();
-        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->snapshot(this->active_scene_id());
+        const scene::CameraSnapshot snapshot = this->camera_workspace->snapshot(this->active_scene_id());
         if (snapshot.revision == this->camera.observed_revision) return;
         this->apply_camera_snapshot(snapshot);
         this->request_accumulation_reset();
     }
 
-    void Renderer::Impl::apply_camera_snapshot(const scene::Scene::CameraSnapshot& snapshot) {
+    void Renderer::Impl::apply_camera_snapshot(const scene::CameraSnapshot& snapshot) {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot apply camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot apply camera state without an active Spectra pathtracer");
         this->camera.state              = snapshot.state;
@@ -1624,16 +1624,16 @@ namespace spectra::pathtracer {
         this->camera.observed_revision = snapshot.revision;
     }
 
-    void Renderer::Impl::commit_camera_state(scene::Scene::CameraState state) {
-        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), std::move(state));
+    void Renderer::Impl::commit_camera_state(scene::CameraState state) {
+        const scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), std::move(state));
         this->camera.observed_revision = snapshot.revision;
     }
 
     void Renderer::Impl::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pipeline_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
-        const scene::Scene::CameraState state = scene_camera_state_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
-        const scene::Scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), state);
+        const scene::CameraState state = scene_camera_state_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
+        const scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), state);
         this->apply_camera_snapshot(snapshot);
         this->request_accumulation_reset();
     }
@@ -1712,12 +1712,12 @@ namespace spectra::pathtracer {
         const bool shift = io.KeyShift;
         const bool ctrl  = io.KeyCtrl;
         const bool alt   = io.KeyAlt;
-        scene::Scene::CameraState state = this->camera.state;
+        scene::CameraState state = this->camera.state;
         bool camera_changed = false;
 
         const std::array<float, 2> viewport_size = this->ui.viewport_size;
         if (!std::isfinite(viewport_size[0]) || !std::isfinite(viewport_size[1]) || !(viewport_size[0] > 0.0f) || !(viewport_size[1] > 0.0f)) throw std::runtime_error("Camera viewport size must be finite and positive");
-        const scene::Scene::ViewportCameraSize scene_viewport_size{
+        const scene::ViewportCameraSize scene_viewport_size{
             .width = viewport_size[0],
             .height = viewport_size[1],
         };
@@ -1725,31 +1725,31 @@ namespace spectra::pathtracer {
         const bool middle_dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
         const bool right_dragging  = ImGui::IsMouseDragging(ImGuiMouseButton_Right);
         if (left_dragging || middle_dragging || right_dragging) {
-            const scene::Scene::ViewportCameraDelta delta{
+            const scene::ViewportCameraDelta delta{
                 .x_pixels = io.MouseDelta.x,
                 .y_pixels = io.MouseDelta.y,
             };
             if (delta.x_pixels != 0.0f || delta.y_pixels != 0.0f) {
                 if (alt) {
                     if (left_dragging) {
-                        state = scene::Scene::orbit_viewport_camera(state, delta);
+                        state = scene::orbit_viewport_camera(state, delta);
                         camera_changed = true;
                     } else if (middle_dragging) {
-                        state = scene::Scene::pan_viewport_camera(state, delta, scene_viewport_size);
+                        state = scene::pan_viewport_camera(state, delta, scene_viewport_size);
                         camera_changed = true;
                     } else if (right_dragging) {
-                        state = scene::Scene::zoom_viewport_camera(state, scene::Scene::viewport_drag_zoom_steps(delta));
+                        state = scene::zoom_viewport_camera(state, scene::viewport_drag_zoom_steps(delta));
                         camera_changed = true;
                     }
                 } else if (middle_dragging) {
                     if (shift) {
-                        state = scene::Scene::pan_viewport_camera(state, delta, scene_viewport_size);
+                        state = scene::pan_viewport_camera(state, delta, scene_viewport_size);
                         camera_changed = true;
                     } else if (ctrl) {
-                        state = scene::Scene::zoom_viewport_camera(state, scene::Scene::viewport_drag_zoom_steps(delta));
+                        state = scene::zoom_viewport_camera(state, scene::viewport_drag_zoom_steps(delta));
                         camera_changed = true;
                     } else {
-                        state = scene::Scene::orbit_viewport_camera(state, delta);
+                        state = scene::orbit_viewport_camera(state, delta);
                         camera_changed = true;
                     }
                 }
@@ -1757,7 +1757,7 @@ namespace spectra::pathtracer {
         }
 
         if (io.MouseWheel != 0.0f) {
-            state = scene::Scene::zoom_viewport_camera(state, io.MouseWheel);
+            state = scene::zoom_viewport_camera(state, io.MouseWheel);
             camera_changed = true;
         }
 
@@ -2026,6 +2026,7 @@ namespace spectra::pathtracer {
         draw_inspector_section("Scene");
         draw_statistics_row("Name", std::string(scene.name));
         draw_statistics_row("Title", std::string(scene.title));
+        draw_statistics_row("Coordinate", std::string(scene.coordinate_system));
         draw_statistics_row("Film", resolution_text(this->scene_film_resolution));
         draw_statistics_row("Sampler SPP", positive_int_text(this->scene_sampler_sample_count));
 
@@ -2048,10 +2049,10 @@ namespace spectra::pathtracer {
 
         draw_inspector_section("Camera");
         if (this->camera.initialized) {
-            draw_statistics_row("Eye", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.eye.x, this->camera.state.eye.y, this->camera.state.eye.z));
-            draw_statistics_row("Target", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.target.x, this->camera.state.target.y, this->camera.state.target.z));
-            draw_statistics_row("Up", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.up.x, this->camera.state.up.y, this->camera.state.up.z));
-            draw_statistics_row("FOV", std::format("{:.3f}", this->camera.state.vertical_fov_degrees));
+            draw_statistics_row("Eye", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.view.pose.position.x, this->camera.state.view.pose.position.y, this->camera.state.view.pose.position.z));
+            draw_statistics_row("Focus", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.view.focus.x, this->camera.state.view.focus.y, this->camera.state.view.focus.z));
+            draw_statistics_row("Navigation Up", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.view.navigation_up.x, this->camera.state.view.navigation_up.y, this->camera.state.view.navigation_up.z));
+            draw_statistics_row("FOV", std::format("{:.3f}", this->camera.state.view.projection.vertical_fov_degrees));
         } else {
             draw_statistics_row("State", "Pending");
         }
@@ -2182,8 +2183,8 @@ namespace spectra::pathtracer {
             .zero_window_padding = true,
             .draw                = [this] { this->draw_viewport_window(); },
         });
-        host.register_renderer_popover_tab(RendererPopoverTab{
-            .id             = "pathtracer.render",
+        host.register_command_popover(CommandPopover{
+            .id             = "renderer.settings",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,
             .owner_renderer = std::string{Renderer::name()},

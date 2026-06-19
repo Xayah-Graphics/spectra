@@ -1,4 +1,4 @@
-export module spectra.scene:math;
+export module spectra.scene.math;
 
 import std;
 
@@ -148,5 +148,19 @@ namespace spectra::scene {
         const float vector_length = length(value);
         if (!std::isfinite(vector_length) || vector_length <= 0.0f) throw std::runtime_error(std::format("{} contains a zero-length vector", context));
         return value / vector_length;
+    }
+
+    export [[nodiscard]] Quaternion normalized_quaternion(const Quaternion value, const std::string_view context) {
+        const float length_squared_value = value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
+        if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(std::format("{} has an invalid rotation quaternion", context));
+        const float inv_length = 1.0f / std::sqrt(length_squared_value);
+        return Quaternion{value.x * inv_length, value.y * inv_length, value.z * inv_length, value.w * inv_length};
+    }
+
+    export [[nodiscard]] Vector3 rotate_vector(const Quaternion rotation, const Vector3 value) {
+        const Vector3 qv{rotation.x, rotation.y, rotation.z};
+        const Vector3 uv = cross(qv, value);
+        const Vector3 uuv = cross(qv, uv);
+        return value + ((uv * rotation.w) + uuv) * 2.0f;
     }
 } // namespace spectra::scene

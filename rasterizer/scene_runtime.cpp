@@ -146,6 +146,12 @@ namespace spectra::rasterizer {
         return this->activation_error_message;
     }
 
+    void SceneController::activate_empty_workspace() {
+        this->selected_entry_index.reset();
+        this->pending_selected_entry_index.reset();
+        this->clear_activation_error();
+    }
+
     void SceneController::clear_activation_error() {
         this->activation_error_message.clear();
     }
@@ -395,9 +401,9 @@ namespace spectra::rasterizer {
     }
 
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 1u;
+        constexpr std::uint32_t plugin_abi_version = 10u;
 
-        struct SpectraDynamicSceneInstance;
+        typedef void SpectraDynamicSceneInstance;
 
         enum SpectraDynamicSceneResult {
             SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0,
@@ -405,185 +411,305 @@ namespace spectra::rasterizer {
         };
 
         struct SpectraDynamicSceneString {
-            const char* data;
-            std::uint64_t size;
+            const char* data{};
+            std::uint64_t size{};
         };
 
-        struct SpectraDynamicSceneStringSpan {
-            const SpectraDynamicSceneString* data;
-            std::uint64_t count;
+        struct SpectraDynamicSceneOption {
+            SpectraDynamicSceneString key{};
+            SpectraDynamicSceneString value{};
+        };
+
+        struct SpectraDynamicSceneOptionSpan {
+            const SpectraDynamicSceneOption* data{};
+            std::uint64_t count{};
+        };
+
+        enum SpectraDynamicSceneOpenOptionKind {
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_TEXT = 0,
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_DIRECTORY_PATH = 1,
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_FILE_PATH = 2,
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_CHOICE = 3,
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_BOOL = 4,
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_FLOAT = 5,
+            SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_UNSIGNED_INTEGER = 6,
+        };
+
+        struct SpectraDynamicSceneOpenOptionChoice {
+            SpectraDynamicSceneString value{};
+            SpectraDynamicSceneString label{};
+        };
+
+        struct SpectraDynamicSceneOpenOptionChoiceSpan {
+            const SpectraDynamicSceneOpenOptionChoice* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneOpenOptionSchema {
+            SpectraDynamicSceneString key{};
+            SpectraDynamicSceneString label{};
+            SpectraDynamicSceneString description{};
+            std::uint32_t kind{};
+            std::uint32_t required{};
+            SpectraDynamicSceneString default_value{};
+            SpectraDynamicSceneOpenOptionChoiceSpan choices{};
+        };
+
+        struct SpectraDynamicSceneOpenOptionSchemaSpan {
+            const SpectraDynamicSceneOpenOptionSchema* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneOpenInfo {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneString plugin_path{};
+            SpectraDynamicSceneOptionSpan options{};
         };
 
         struct SpectraDynamicSceneTransform {
-            float position[3];
-            float rotation[4];
-            float scale[3];
+            float position[3]{};
+            float rotation[4]{};
+            float scale[3]{};
         };
 
         struct SpectraDynamicSceneMaterial {
-            SpectraDynamicSceneString name;
-            SpectraDynamicSceneString model;
-            SpectraDynamicSceneString alpha_mode;
-            float base_color[4];
-            float emission_color[3];
-            float emission_strength;
-            float roughness;
-            float metallic;
-            float alpha_cutoff;
-            float volume_density_scale;
-            float volume_temperature_scale;
+            SpectraDynamicSceneString name{};
+            SpectraDynamicSceneString model{};
+            SpectraDynamicSceneString alpha_mode{};
+            float base_color[4]{};
+            float emission_color[3]{};
+            float emission_strength{};
+            float roughness{};
+            float metallic{};
+            float alpha_cutoff{};
+            float volume_density_scale{};
+            float volume_temperature_scale{};
         };
 
         struct SpectraDynamicSceneMaterialSpan {
-            const SpectraDynamicSceneMaterial* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneMaterial* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneLight {
-            SpectraDynamicSceneString name;
-            SpectraDynamicSceneString kind;
-            SpectraDynamicSceneTransform transform;
-            float color[3];
-            float intensity;
-            float cone_angle_degrees;
+            SpectraDynamicSceneString name{};
+            SpectraDynamicSceneString kind{};
+            SpectraDynamicSceneTransform transform{};
+            float color[3]{};
+            float intensity{};
+            float cone_angle_degrees{};
         };
 
         struct SpectraDynamicSceneLightSpan {
-            const SpectraDynamicSceneLight* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneLight* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneCameraImage {
+            const std::uint8_t* rgba8{};
+            std::uint64_t rgba8_size{};
+            std::uint64_t revision{};
+            std::uint32_t width{};
+            std::uint32_t height{};
+            float tint[4]{};
+        };
+
+        struct SpectraDynamicSceneCameraVisualization {
+            std::uint32_t enabled{};
+            float color[4]{};
+            float width{};
+            std::uint32_t width_mode{};
+            std::uint32_t depth_mode{};
+            float visual_near{};
+            float visual_far{};
+            std::uint32_t has_image{};
+            SpectraDynamicSceneCameraImage image{};
         };
 
         struct SpectraDynamicSceneCamera {
-            SpectraDynamicSceneString name;
-            SpectraDynamicSceneTransform transform;
-            float target[3];
-            float up[3];
-            float vertical_fov_degrees;
-            float near_plane;
-            float far_plane;
+            SpectraDynamicSceneString name{};
+            SpectraDynamicSceneString local_coordinate_system{};
+            SpectraDynamicSceneTransform transform{};
+            float target[3]{};
+            float up[3]{};
+            std::uint32_t projection{};
+            float vertical_fov_degrees{};
+            std::uint32_t image_width{};
+            std::uint32_t image_height{};
+            float fx{};
+            float fy{};
+            float cx{};
+            float cy{};
+            float near_plane{};
+            float far_plane{};
+            SpectraDynamicSceneCameraVisualization visualization{};
+        };
+
+        struct SpectraDynamicSceneCameraSpan {
+            const SpectraDynamicSceneCamera* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneMeshVertex {
-            float position[3];
-            float normal[3];
+            float position[3]{};
+            float normal[3]{};
         };
 
         struct SpectraDynamicSceneMeshVertexSpan {
-            const SpectraDynamicSceneMeshVertex* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneMeshVertex* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneUInt32Span {
-            const std::uint32_t* data;
-            std::uint64_t count;
+            const std::uint32_t* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneMesh {
-            SpectraDynamicSceneString name;
-            SpectraDynamicSceneMeshVertexSpan vertices;
-            SpectraDynamicSceneUInt32Span indices;
-            SpectraDynamicSceneString material_name;
-            SpectraDynamicSceneTransform transform;
+            SpectraDynamicSceneString name{};
+            SpectraDynamicSceneMeshVertexSpan vertices{};
+            SpectraDynamicSceneUInt32Span indices{};
+            SpectraDynamicSceneString material_name{};
+            SpectraDynamicSceneTransform transform{};
         };
 
         struct SpectraDynamicSceneMeshSpan {
-            const SpectraDynamicSceneMesh* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneMesh* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneSphere {
-            SpectraDynamicSceneString name;
-            float radius;
-            SpectraDynamicSceneString material_name;
-            SpectraDynamicSceneTransform transform;
+            SpectraDynamicSceneString name{};
+            float radius{};
+            SpectraDynamicSceneString material_name{};
+            SpectraDynamicSceneTransform transform{};
         };
 
         struct SpectraDynamicSceneSphereSpan {
-            const SpectraDynamicSceneSphere* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneSphere* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicScenePoint {
-            float position[3];
-            float normal[3];
-            float color[4];
-            float radius;
+            float position[3]{};
+            float normal[3]{};
+            float color[4]{};
+            float radius{};
         };
 
         struct SpectraDynamicScenePointSpan {
-            const SpectraDynamicScenePoint* data;
-            std::uint64_t count;
+            const SpectraDynamicScenePoint* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicScenePointCloud {
-            SpectraDynamicSceneString name;
-            SpectraDynamicScenePointSpan points;
-            SpectraDynamicSceneString material_name;
-            SpectraDynamicSceneTransform transform;
+            SpectraDynamicSceneString name{};
+            SpectraDynamicScenePointSpan points{};
+            SpectraDynamicSceneString material_name{};
+            SpectraDynamicSceneTransform transform{};
         };
 
         struct SpectraDynamicScenePointCloudSpan {
-            const SpectraDynamicScenePointCloud* data;
-            std::uint64_t count;
+            const SpectraDynamicScenePointCloud* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneFloatSpan {
-            const float* data;
-            std::uint64_t count;
+            const float* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneVolumeChannel {
-            SpectraDynamicSceneString name;
-            std::uint32_t dimensions[3];
-            SpectraDynamicSceneFloatSpan values;
+            SpectraDynamicSceneString name{};
+            std::uint32_t dimensions[3]{};
+            SpectraDynamicSceneFloatSpan values{};
         };
 
         struct SpectraDynamicSceneVolumeChannelSpan {
-            const SpectraDynamicSceneVolumeChannel* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneVolumeChannel* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneVolume {
-            SpectraDynamicSceneString name;
-            std::uint32_t dimensions[3];
-            float origin[3];
-            float voxel_size[3];
-            SpectraDynamicSceneVolumeChannelSpan channels;
-            SpectraDynamicSceneString material_name;
+            SpectraDynamicSceneString name{};
+            std::uint32_t dimensions[3]{};
+            float origin[3]{};
+            float voxel_size[3]{};
+            SpectraDynamicSceneVolumeChannelSpan channels{};
+            SpectraDynamicSceneString material_name{};
         };
 
         struct SpectraDynamicSceneVolumeSpan {
-            const SpectraDynamicSceneVolume* data;
-            std::uint64_t count;
+            const SpectraDynamicSceneVolume* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneViewportSegment {
+            float start[3]{};
+            float end[3]{};
+        };
+
+        struct SpectraDynamicSceneViewportSegmentSpan {
+            const SpectraDynamicSceneViewportSegment* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneColor {
+            float value[4]{};
+        };
+
+        struct SpectraDynamicSceneColorSpan {
+            const SpectraDynamicSceneColor* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneViewportSegmentSet {
+            SpectraDynamicSceneString name{};
+            SpectraDynamicSceneViewportSegmentSpan segments{};
+            SpectraDynamicSceneColorSpan colors{};
+            SpectraDynamicSceneFloatSpan widths{};
+            float width{};
+            std::uint32_t width_mode{};
+            std::uint32_t depth_mode{};
+            SpectraDynamicSceneTransform transform{};
+        };
+
+        struct SpectraDynamicSceneViewportSegmentSetSpan {
+            const SpectraDynamicSceneViewportSegmentSet* data{};
+            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneDocumentView {
-            std::uint64_t struct_size;
-            std::uint32_t has_camera;
-            SpectraDynamicSceneCamera camera;
-            SpectraDynamicSceneMaterialSpan materials;
-            SpectraDynamicSceneLightSpan lights;
-            SpectraDynamicSceneMeshSpan meshes;
-            SpectraDynamicSceneSphereSpan spheres;
-            SpectraDynamicScenePointCloudSpan point_clouds;
-            SpectraDynamicSceneVolumeSpan volumes;
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneString default_coordinate_system{};
+            SpectraDynamicSceneString active_camera_name{};
+            SpectraDynamicSceneCameraSpan cameras{};
+            SpectraDynamicSceneMaterialSpan materials{};
+            SpectraDynamicSceneLightSpan lights{};
+            SpectraDynamicSceneMeshSpan meshes{};
+            SpectraDynamicSceneSphereSpan spheres{};
+            SpectraDynamicScenePointCloudSpan point_clouds{};
+            SpectraDynamicSceneVolumeSpan volumes{};
+            SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
         };
 
         struct SpectraDynamicSceneFrameInfo {
-            double delta_seconds;
-            double time_seconds;
-            std::uint64_t frame_index;
+            double delta_seconds{};
+            double time_seconds{};
+            std::uint64_t frame_index{};
         };
 
         struct SpectraDynamicSceneFrameView {
-            std::uint64_t struct_size;
-            SpectraDynamicSceneMeshSpan meshes;
-            SpectraDynamicSceneSphereSpan spheres;
-            SpectraDynamicScenePointCloudSpan point_clouds;
-            SpectraDynamicSceneVolumeSpan volumes;
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneMeshSpan meshes{};
+            SpectraDynamicSceneSphereSpan spheres{};
+            SpectraDynamicScenePointCloudSpan point_clouds{};
+            SpectraDynamicSceneVolumeSpan volumes{};
+            SpectraDynamicSceneCameraSpan cameras{};
+            SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
         };
 
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(SpectraDynamicSceneInstance** instance);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(const SpectraDynamicSceneOpenInfo* open_info, SpectraDynamicSceneInstance** instance);
         typedef void (*SpectraDynamicSceneDestroyFn)(SpectraDynamicSceneInstance* instance);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneResetFn)(SpectraDynamicSceneInstance* instance);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
@@ -592,19 +718,23 @@ namespace spectra::rasterizer {
         typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
 
         struct SpectraDynamicScenePlugin {
-            std::uint32_t abi_version;
-            std::uint64_t struct_size;
-            SpectraDynamicSceneString id;
-            SpectraDynamicSceneString title;
-            SpectraDynamicSceneString pbrt_template_path;
-            double frames_per_second;
-            SpectraDynamicSceneCreateFn create;
-            SpectraDynamicSceneDestroyFn destroy;
-            SpectraDynamicSceneResetFn reset;
-            SpectraDynamicSceneStepFn step;
-            SpectraDynamicSceneDocumentFn document;
-            SpectraDynamicSceneFrameFn frame;
-            SpectraDynamicSceneLastErrorFn last_error;
+            std::uint32_t abi_version{};
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneString id{};
+            SpectraDynamicSceneString title{};
+            SpectraDynamicSceneString project_panel_title{};
+            SpectraDynamicSceneString open_action_label{};
+            SpectraDynamicSceneString open_action_description{};
+            SpectraDynamicSceneString pbrt_template_path{};
+            double frames_per_second{};
+            SpectraDynamicSceneOpenOptionSchemaSpan open_options{};
+            SpectraDynamicSceneCreateFn create{};
+            SpectraDynamicSceneDestroyFn destroy{};
+            SpectraDynamicSceneResetFn reset{};
+            SpectraDynamicSceneStepFn step{};
+            SpectraDynamicSceneDocumentFn document{};
+            SpectraDynamicSceneFrameFn frame{};
+            SpectraDynamicSceneLastErrorFn last_error{};
         };
 
         typedef const SpectraDynamicScenePlugin* (*SpectraDynamicScenePluginEntryFn)(void);
@@ -647,6 +777,10 @@ namespace spectra::rasterizer {
             return abi_span(span.data, span.count, context);
         }
 
+        [[nodiscard]] std::span<const SpectraDynamicSceneCamera> abi_span(const SpectraDynamicSceneCameraSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
         [[nodiscard]] std::span<const SpectraDynamicSceneMesh> abi_span(const SpectraDynamicSceneMeshSpan span, const std::string_view context) {
             return abi_span(span.data, span.count, context);
         }
@@ -660,6 +794,18 @@ namespace spectra::rasterizer {
         }
 
         [[nodiscard]] std::span<const SpectraDynamicSceneVolume> abi_span(const SpectraDynamicSceneVolumeSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
+        [[nodiscard]] std::span<const SpectraDynamicSceneViewportSegment> abi_span(const SpectraDynamicSceneViewportSegmentSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
+        [[nodiscard]] std::span<const SpectraDynamicSceneColor> abi_span(const SpectraDynamicSceneColorSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
+        [[nodiscard]] std::span<const SpectraDynamicSceneViewportSegmentSet> abi_span(const SpectraDynamicSceneViewportSegmentSetSpan span, const std::string_view context) {
             return abi_span(span.data, span.count, context);
         }
 
@@ -701,6 +847,22 @@ namespace spectra::rasterizer {
                 },
                 .scale = make_vector3(transform.scale, std::format("{} scale", context)),
             };
+        }
+
+        [[nodiscard]] scene::Scene::ViewportSegmentWidthMode viewport_segment_width_mode_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::ViewportSegmentWidthMode::Screen;
+            case 1u: return scene::Scene::ViewportSegmentWidthMode::World;
+            }
+            throw std::runtime_error(std::format("{} has invalid viewport segment width mode {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::ViewportSegmentDepthMode viewport_segment_depth_mode_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::ViewportSegmentDepthMode::DepthTested;
+            case 1u: return scene::Scene::ViewportSegmentDepthMode::AlwaysVisible;
+            }
+            throw std::runtime_error(std::format("{} has invalid viewport segment depth mode {}", context, value));
         }
 
         [[nodiscard]] scene::Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
@@ -757,16 +919,80 @@ namespace spectra::rasterizer {
             };
         }
 
-        [[nodiscard]] scene::Scene::Camera make_camera(const SpectraDynamicSceneCamera& camera) {
-            const std::string name = abi_string(camera.name, "Dynamic scene camera name", false);
-            return scene::Scene::Camera{
-                .name = name,
-                .transform = make_transform(camera.transform, std::format("Dynamic scene camera \"{}\"", name)),
-                .target = make_vector3(camera.target, std::format("Dynamic scene camera \"{}\" target", name)),
-                .up = make_vector3(camera.up, std::format("Dynamic scene camera \"{}\" up", name)),
-                .vertical_fov_degrees = finite_float(camera.vertical_fov_degrees, std::format("Dynamic scene camera \"{}\" vertical fov", name)),
+        [[nodiscard]] scene::CameraProjection camera_projection(const SpectraDynamicSceneCamera& camera, const std::string& name) {
+            scene::CameraProjection projection{
                 .near_plane = finite_float(camera.near_plane, std::format("Dynamic scene camera \"{}\" near plane", name)),
                 .far_plane = finite_float(camera.far_plane, std::format("Dynamic scene camera \"{}\" far plane", name)),
+            };
+            switch (camera.projection) {
+            case 0u:
+                projection.kind = scene::CameraProjectionKind::Perspective;
+                projection.vertical_fov_degrees = finite_float(camera.vertical_fov_degrees, std::format("Dynamic scene camera \"{}\" vertical fov", name));
+                return projection;
+            case 1u:
+                projection.kind = scene::CameraProjectionKind::Pinhole;
+                projection.image_width = camera.image_width;
+                projection.image_height = camera.image_height;
+                projection.fx = finite_float(camera.fx, std::format("Dynamic scene camera \"{}\" fx", name));
+                projection.fy = finite_float(camera.fy, std::format("Dynamic scene camera \"{}\" fy", name));
+                projection.cx = finite_float(camera.cx, std::format("Dynamic scene camera \"{}\" cx", name));
+                projection.cy = finite_float(camera.cy, std::format("Dynamic scene camera \"{}\" cy", name));
+                return projection;
+            }
+            throw std::runtime_error(std::format("Dynamic scene camera \"{}\" has invalid projection {}", name, camera.projection));
+        }
+
+        [[nodiscard]] scene::Scene::CameraImage make_camera_image(const SpectraDynamicSceneCamera& camera, const std::string& name) {
+            const auto& image = camera.visualization.image;
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Dynamic scene camera \"{}\" RGBA8 image dimensions must be non-zero", name));
+            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Dynamic scene camera \"{}\" RGBA8 image byte count must be width * height * 4", name));
+            scene::Scene::CameraImage result{
+                .width = image.width,
+                .height = image.height,
+                .rgba8 = image.rgba8,
+                .rgba8_size = image.rgba8_size,
+                .revision = image.revision,
+                .tint = make_vector4(image.tint, std::format("Dynamic scene camera \"{}\" image tint", name)),
+            };
+            static_cast<void>(abi_span(image.rgba8, image.rgba8_size, std::format("Dynamic scene camera \"{}\" RGBA8 image", name)));
+            return result;
+        }
+
+        [[nodiscard]] scene::Scene::CameraVisualization make_camera_visualization(const SpectraDynamicSceneCamera& camera, const std::string& name) {
+            if (camera.visualization.enabled == 0u) return scene::Scene::CameraVisualization{};
+            scene::Scene::CameraVisualization visualization{
+                .enabled = true,
+                .color = make_vector4(camera.visualization.color, std::format("Dynamic scene camera \"{}\" visualization color", name)),
+                .width = finite_float(camera.visualization.width, std::format("Dynamic scene camera \"{}\" visualization width", name)),
+                .width_mode = viewport_segment_width_mode_from_u32(camera.visualization.width_mode, std::format("Dynamic scene camera \"{}\" visualization", name)),
+                .depth_mode = viewport_segment_depth_mode_from_u32(camera.visualization.depth_mode, std::format("Dynamic scene camera \"{}\" visualization", name)),
+                .visual_near = finite_float(camera.visualization.visual_near, std::format("Dynamic scene camera \"{}\" visualization near", name)),
+                .visual_far = finite_float(camera.visualization.visual_far, std::format("Dynamic scene camera \"{}\" visualization far", name)),
+            };
+            if (camera.visualization.has_image != 0u) visualization.image = make_camera_image(camera, name);
+            return visualization;
+        }
+
+        [[nodiscard]] scene::Scene::Camera make_camera(const SpectraDynamicSceneCamera& camera) {
+            const std::string name = abi_string(camera.name, "Dynamic scene camera name", false);
+            const std::string local_coordinate_system_name = abi_string(camera.local_coordinate_system, std::format("Dynamic scene camera \"{}\" local coordinate system", name), false);
+            const scene::Transform transform = make_transform(camera.transform, std::format("Dynamic scene camera \"{}\"", name));
+            const scene::Vector3 target = make_vector3(camera.target, std::format("Dynamic scene camera \"{}\" target", name));
+            const scene::Vector3 up = make_vector3(camera.up, std::format("Dynamic scene camera \"{}\" up", name));
+            return scene::Scene::Camera{
+                .name = name,
+                .view = scene::CameraViewState{
+                    .pose = scene::CameraPose{
+                        .position = transform.position,
+                        .orientation = scene::normalized_quaternion(transform.rotation, std::format("Dynamic scene camera \"{}\" orientation", name)),
+                        .local_convention = scene::coordinate_system(local_coordinate_system_name).convention,
+                    },
+                    .focus = target,
+                    .navigation_up = scene::normalize(up, std::format("Dynamic scene camera \"{}\" up", name)),
+                    .projection = camera_projection(camera, name),
+                },
+                .visualization = make_camera_visualization(camera, name),
             };
         }
 
@@ -860,6 +1086,38 @@ namespace spectra::rasterizer {
             return result;
         }
 
+        [[nodiscard]] scene::Scene::ViewportSegmentSet make_viewport_segment_set(const SpectraDynamicSceneViewportSegmentSet& segment_set, const bool dynamic) {
+            const std::string name = abi_string(segment_set.name, "Dynamic scene viewport segment set name", false);
+            scene::Scene::ViewportSegmentSet result{
+                .name = name,
+                .width = finite_float(segment_set.width, std::format("Dynamic scene viewport segment set \"{}\" width", name)),
+                .width_mode = viewport_segment_width_mode_from_u32(segment_set.width_mode, std::format("Dynamic scene viewport segment set \"{}\"", name)),
+                .depth_mode = viewport_segment_depth_mode_from_u32(segment_set.depth_mode, std::format("Dynamic scene viewport segment set \"{}\"", name)),
+                .transform = make_transform(segment_set.transform, std::format("Dynamic scene viewport segment set \"{}\"", name)),
+                .dynamic = dynamic,
+            };
+
+            const std::span<const SpectraDynamicSceneViewportSegment> segments = abi_span(segment_set.segments, std::format("Dynamic scene viewport segment set \"{}\" segments", name));
+            result.segments.reserve(segments.size());
+            for (std::size_t index = 0u; index < segments.size(); ++index) {
+                result.segments.push_back(scene::Scene::ViewportSegment{
+                    .start = make_vector3(segments[index].start, std::format("Dynamic scene viewport segment set \"{}\" segment #{} start", name, index)),
+                    .end = make_vector3(segments[index].end, std::format("Dynamic scene viewport segment set \"{}\" segment #{} end", name, index)),
+                });
+            }
+
+            const std::span<const SpectraDynamicSceneColor> colors = abi_span(segment_set.colors, std::format("Dynamic scene viewport segment set \"{}\" colors", name));
+            if (!colors.empty() && colors.size() != result.segments.size()) throw std::runtime_error(std::format("Dynamic scene viewport segment set \"{}\" color count does not match segment count", name));
+            result.colors.reserve(colors.size());
+            for (std::size_t index = 0u; index < colors.size(); ++index) result.colors.push_back(make_vector4(colors[index].value, std::format("Dynamic scene viewport segment set \"{}\" color #{}", name, index)));
+
+            const std::span<const float> widths = abi_span(segment_set.widths.data, segment_set.widths.count, std::format("Dynamic scene viewport segment set \"{}\" widths", name));
+            if (!widths.empty() && widths.size() != result.segments.size()) throw std::runtime_error(std::format("Dynamic scene viewport segment set \"{}\" width count does not match segment count", name));
+            result.widths.reserve(widths.size());
+            for (std::size_t index = 0u; index < widths.size(); ++index) result.widths.push_back(finite_float(widths[index], std::format("Dynamic scene viewport segment set \"{}\" width #{}", name, index)));
+            return result;
+        }
+
         template <typename Item>
         void require_unique_name(std::set<std::string>& names, const Item& item, const std::string_view kind) {
             if (item.name.empty()) throw std::runtime_error(std::format("Dynamic scene {} name must not be empty", kind));
@@ -886,7 +1144,12 @@ namespace spectra::rasterizer {
 
         void append_document_view(scene::Scene::Document& document, const SpectraDynamicSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
             if (view.struct_size != sizeof(SpectraDynamicSceneDocumentView)) throw std::runtime_error("Dynamic scene document view ABI size mismatch");
-            if (view.has_camera != 0u) document.camera = make_camera(view.camera);
+            const std::string coordinate_system_name = abi_string(view.default_coordinate_system, "Dynamic scene document default coordinate system", true);
+            if (!coordinate_system_name.empty()) document.default_coordinate_system = scene::coordinate_system(coordinate_system_name);
+            const std::string active_camera_name = abi_string(view.active_camera_name, "Dynamic scene document active camera name", true);
+            if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
+            for (const SpectraDynamicSceneCamera& camera_view : abi_span(view.cameras, "Dynamic scene document cameras"))
+                document.cameras.push_back(make_camera(camera_view));
             for (const SpectraDynamicSceneMaterial& material_view : abi_span(view.materials, "Dynamic scene document materials")) {
                 scene::Scene::PreviewMaterial material = make_material(material_view);
                 require_unique_name(material_names, material, "material");
@@ -917,6 +1180,8 @@ namespace spectra::rasterizer {
                 require_material_reference(volume, material_names, "volume");
                 document.volumes.push_back(std::move(volume));
             }
+            for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(view.viewport_segment_sets, "Dynamic scene document viewport segment sets"))
+                document.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, false));
         }
 
         [[nodiscard]] scene::Scene::FrameSnapshot make_frame_snapshot(const SpectraDynamicSceneFrameView& view, const scene::Scene::FrameInfo& frame, const std::set<std::string>& material_names) {
@@ -942,7 +1207,153 @@ namespace spectra::rasterizer {
                 require_material_reference(volume, material_names, "volume");
                 snapshot.volumes.push_back(std::move(volume));
             }
+            for (const SpectraDynamicSceneCamera& camera_view : abi_span(view.cameras, "Dynamic scene frame cameras"))
+                snapshot.cameras.push_back(make_camera(camera_view));
+            for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(view.viewport_segment_sets, "Dynamic scene frame viewport segment sets"))
+                snapshot.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, true));
             return snapshot;
+        }
+
+        struct DynamicScenePluginOptionStorage {
+            std::string key{};
+            std::string value{};
+        };
+
+        struct DynamicScenePluginOpenRequestStorage {
+            std::filesystem::path plugin_path{};
+            std::vector<DynamicScenePluginOptionStorage> options{};
+            std::vector<SpectraDynamicSceneOption> option_views{};
+            std::string source_id{};
+        };
+
+        [[nodiscard]] SpectraDynamicSceneString abi_text(const std::string& value) {
+            return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
+        }
+
+        [[nodiscard]] bool parse_bool_default(const std::string_view value) {
+            if (value == "true") return true;
+            if (value == "false") return false;
+            throw std::runtime_error("Dynamic scene open option bool default must be true or false");
+        }
+
+        [[nodiscard]] float parse_float_default(const std::string_view value, const std::string_view context) {
+            float parsed{};
+            const char* const begin = value.data();
+            const char* const end = value.data() + value.size();
+            const std::from_chars_result result = std::from_chars(begin, end, parsed);
+            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(parsed)) throw std::runtime_error(std::format("{} must be a finite float", context));
+            return parsed;
+        }
+
+        [[nodiscard]] std::uint64_t parse_unsigned_integer_default(const std::string_view value, const std::string_view context) {
+            std::uint64_t parsed{};
+            const char* const begin = value.data();
+            const char* const end = value.data() + value.size();
+            const std::from_chars_result result = std::from_chars(begin, end, parsed);
+            if (result.ec != std::errc{} || result.ptr != end) throw std::runtime_error(std::format("{} must be an unsigned integer", context));
+            return parsed;
+        }
+
+        [[nodiscard]] std::filesystem::path normalized_dynamic_scene_plugin_path(const std::filesystem::path& plugin_path) {
+            if (plugin_path.empty()) throw std::runtime_error("Dynamic scene plugin path must not be empty");
+            const std::string path_text = plugin_path.string();
+            if (path_text.find('?') != std::string::npos) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; open the plugin path and configure it in the Project popover");
+            const std::filesystem::path absolute_path = std::filesystem::absolute(plugin_path).lexically_normal();
+            if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a dynamic scene plugin library, not a folder");
+            if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file does not exist", absolute_path.string()));
+            if (!is_dynamic_scene_plugin_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file extension is not supported on this platform", absolute_path.string()));
+            return absolute_path;
+        }
+
+        [[nodiscard]] std::uint64_t fnv1a64_append(std::uint64_t hash, const std::string_view value) {
+            for (const char character : value) {
+                hash ^= static_cast<unsigned char>(character);
+                hash *= 1099511628211ull;
+            }
+            return hash;
+        }
+
+        [[nodiscard]] std::string make_dynamic_scene_source_id(const std::filesystem::path& plugin_path, const std::vector<DynamicScenePluginOptionStorage>& options) {
+            std::vector<DynamicScenePluginOptionStorage> sorted_options = options;
+            std::ranges::sort(sorted_options, {}, &DynamicScenePluginOptionStorage::key);
+            std::uint64_t hash = 14695981039346656037ull;
+            hash = fnv1a64_append(hash, plugin_path.string());
+            for (const DynamicScenePluginOptionStorage& option : sorted_options) {
+                hash = fnv1a64_append(hash, "\n");
+                hash = fnv1a64_append(hash, option.key);
+                hash = fnv1a64_append(hash, "=");
+                hash = fnv1a64_append(hash, option.value);
+            }
+            return std::format("{}#dynamic-open-{:016x}", plugin_path.string(), hash);
+        }
+
+        [[nodiscard]] DynamicScenePluginOpenRequestStorage make_plugin_open_request_storage(DynamicSceneOpenRequest request) {
+            DynamicScenePluginOpenRequestStorage storage{
+                .plugin_path = normalized_dynamic_scene_plugin_path(request.plugin_path),
+            };
+            std::set<std::string> option_keys{};
+            storage.options.reserve(request.options.size());
+            for (DynamicSceneOpenOption& option : request.options) {
+                if (option.key.empty()) throw std::runtime_error("Dynamic scene open option key must not be empty");
+                if (!option_keys.insert(option.key).second) throw std::runtime_error(std::format("Dynamic scene open option '{}' is duplicated", option.key));
+                storage.options.push_back(DynamicScenePluginOptionStorage{
+                    .key = std::move(option.key),
+                    .value = std::move(option.value),
+                });
+            }
+            storage.source_id = make_dynamic_scene_source_id(storage.plugin_path, storage.options);
+            storage.option_views.reserve(storage.options.size());
+            for (const DynamicScenePluginOptionStorage& option : storage.options) {
+                storage.option_views.push_back(SpectraDynamicSceneOption{
+                    .key = abi_text(option.key),
+                    .value = abi_text(option.value),
+                });
+            }
+            return storage;
+        }
+
+        [[nodiscard]] DynamicSceneOpenOptionKind make_open_option_kind(const std::uint32_t kind, const std::string_view context) {
+            switch (kind) {
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_TEXT: return DynamicSceneOpenOptionKind::Text;
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_DIRECTORY_PATH: return DynamicSceneOpenOptionKind::DirectoryPath;
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_FILE_PATH: return DynamicSceneOpenOptionKind::FilePath;
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_CHOICE: return DynamicSceneOpenOptionKind::Choice;
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_BOOL: return DynamicSceneOpenOptionKind::Bool;
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_FLOAT: return DynamicSceneOpenOptionKind::Float;
+                case SPECTRA_DYNAMIC_SCENE_OPEN_OPTION_UNSIGNED_INTEGER: return DynamicSceneOpenOptionKind::UnsignedInteger;
+                default: throw std::runtime_error(std::format("{} has unknown kind {}", context, kind));
+            }
+        }
+
+        [[nodiscard]] DynamicSceneOpenOptionSchema make_open_option_schema(const SpectraDynamicSceneOpenOptionSchema& schema, const std::string_view context) {
+            DynamicSceneOpenOptionSchema converted{
+                .key = abi_string(schema.key, std::format("{} key", context), false),
+                .label = abi_string(schema.label, std::format("{} label", context), false),
+                .description = abi_string(schema.description, std::format("{} description", context), true),
+                .kind = make_open_option_kind(schema.kind, context),
+                .required = schema.required != 0u,
+                .default_value = abi_string(schema.default_value, std::format("{} default value", context), true),
+            };
+            if (schema.required != 0u && schema.required != 1u) throw std::runtime_error(std::format("{} required flag must be 0 or 1", context));
+            const std::span<const SpectraDynamicSceneOpenOptionChoice> choices = abi_span(schema.choices.data, schema.choices.count, std::format("{} choices", context));
+            if (converted.kind == DynamicSceneOpenOptionKind::Choice && choices.empty()) throw std::runtime_error(std::format("{} choice option must provide at least one choice", context));
+            if (converted.kind != DynamicSceneOpenOptionKind::Choice && !choices.empty()) throw std::runtime_error(std::format("{} non-choice option must not provide choices", context));
+            std::set<std::string> choice_values{};
+            converted.choices.reserve(choices.size());
+            for (std::size_t choice_index = 0u; choice_index < choices.size(); ++choice_index) {
+                const SpectraDynamicSceneOpenOptionChoice& choice = choices[choice_index];
+                DynamicSceneOpenOptionChoice converted_choice{
+                    .value = abi_string(choice.value, std::format("{} choice {} value", context, choice_index), false),
+                    .label = abi_string(choice.label, std::format("{} choice {} label", context, choice_index), false),
+                };
+                if (!choice_values.insert(converted_choice.value).second) throw std::runtime_error(std::format("{} choice value '{}' is duplicated", context, converted_choice.value));
+                converted.choices.push_back(std::move(converted_choice));
+            }
+            if (converted.kind == DynamicSceneOpenOptionKind::Choice && !converted.default_value.empty() && !choice_values.contains(converted.default_value)) throw std::runtime_error(std::format("{} default value '{}' is not one of its choices", context, converted.default_value));
+            if (converted.kind == DynamicSceneOpenOptionKind::Bool && !converted.default_value.empty()) static_cast<void>(parse_bool_default(converted.default_value));
+            if (converted.kind == DynamicSceneOpenOptionKind::Float && !converted.default_value.empty()) static_cast<void>(parse_float_default(converted.default_value, std::format("{} default value", context)));
+            if (converted.kind == DynamicSceneOpenOptionKind::UnsignedInteger && !converted.default_value.empty()) static_cast<void>(parse_unsigned_integer_default(converted.default_value, std::format("{} default value", context)));
+            return converted;
         }
 
         class NativeLibrary final {
@@ -995,11 +1406,11 @@ namespace spectra::rasterizer {
 
         class DynamicScenePluginLibrary final {
         public:
-            explicit DynamicScenePluginLibrary(std::filesystem::path path) : plugin_path(std::move(path)), plugin_directory(this->plugin_path.parent_path()), native(this->plugin_path) {
+            explicit DynamicScenePluginLibrary(DynamicScenePluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
                 void* entry_address = this->native.symbol("spectra_dynamic_scene_plugin");
                 const SpectraDynamicScenePluginEntryFn entry = reinterpret_cast<SpectraDynamicScenePluginEntryFn>(entry_address);
                 this->plugin = entry();
-                if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin entry returned null", this->plugin_path.string()));
+                if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin entry returned null", this->open_request.plugin_path.string()));
                 this->validate_descriptor();
             }
 
@@ -1017,8 +1428,41 @@ namespace spectra::rasterizer {
                 return abi_string(this->plugin->title, "Dynamic scene plugin title", false);
             }
 
-            [[nodiscard]] std::string source_uri() const {
-                return std::format("plugin://{}", this->plugin_path.string());
+            [[nodiscard]] std::string project_panel_title() const {
+                return abi_string(this->plugin->project_panel_title, "Dynamic scene plugin project panel title", false);
+            }
+
+            [[nodiscard]] std::string open_action_label() const {
+                return abi_string(this->plugin->open_action_label, "Dynamic scene plugin open action label", false);
+            }
+
+            [[nodiscard]] std::string open_action_description() const {
+                return abi_string(this->plugin->open_action_description, "Dynamic scene plugin open action description", true);
+            }
+
+            [[nodiscard]] std::string source_id() const {
+                return this->open_request.source_id;
+            }
+
+            [[nodiscard]] const std::filesystem::path& path() const {
+                return this->open_request.plugin_path;
+            }
+
+            [[nodiscard]] const std::filesystem::path& directory() const {
+                return this->plugin_directory;
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneOpenOptionSchema> open_options() const {
+                const std::span<const SpectraDynamicSceneOpenOptionSchema> schemas = abi_span(this->plugin->open_options.data, this->plugin->open_options.count, "Dynamic scene plugin open option schema");
+                std::set<std::string> schema_keys{};
+                std::vector<DynamicSceneOpenOptionSchema> converted{};
+                converted.reserve(schemas.size());
+                for (std::size_t schema_index = 0u; schema_index < schemas.size(); ++schema_index) {
+                    DynamicSceneOpenOptionSchema schema = make_open_option_schema(schemas[schema_index], std::format("Dynamic scene plugin open option schema {}", schema_index));
+                    if (!schema_keys.insert(schema.key).second) throw std::runtime_error(std::format("{}: dynamic scene plugin open option '{}' is duplicated", this->open_request.plugin_path.string(), schema.key));
+                    converted.push_back(std::move(schema));
+                }
+                return converted;
             }
 
             [[nodiscard]] double frames_per_second() const {
@@ -1032,7 +1476,7 @@ namespace spectra::rasterizer {
                         .revision = scene::Scene::Revision{1},
                         .name = this->id(),
                         .title = this->title(),
-                        .source = this->source_uri(),
+                        .source = this->source_id(),
                         .frames_per_second = this->frames_per_second(),
                         .timeline_enabled = true,
                     };
@@ -1046,7 +1490,7 @@ namespace spectra::rasterizer {
                 document.revision = scene::Scene::Revision{1};
                 document.name = this->id();
                 document.title = this->title();
-                document.source = this->source_uri();
+                document.source = this->source_id();
                 document.frames_per_second = this->frames_per_second();
                 document.timeline_enabled = true;
                 return document;
@@ -1062,7 +1506,16 @@ namespace spectra::rasterizer {
 
             [[nodiscard]] SpectraDynamicSceneInstance* create_instance() const {
                 SpectraDynamicSceneInstance* instance{};
-                this->check_result(this->plugin->create(&instance), nullptr, "Dynamic scene plugin create");
+                const std::string plugin_path_text = this->open_request.plugin_path.string();
+                const SpectraDynamicSceneOpenInfo open_info{
+                    .struct_size = sizeof(SpectraDynamicSceneOpenInfo),
+                    .plugin_path = abi_text(plugin_path_text),
+                    .options = SpectraDynamicSceneOptionSpan{
+                        .data = this->open_request.option_views.empty() ? nullptr : this->open_request.option_views.data(),
+                        .count = static_cast<std::uint64_t>(this->open_request.option_views.size()),
+                    },
+                };
+                this->check_result(this->plugin->create(&open_info, &instance), nullptr, "Dynamic scene plugin create");
                 if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin create returned a null instance");
                 return instance;
             }
@@ -1093,22 +1546,26 @@ namespace spectra::rasterizer {
 
         private:
             void validate_descriptor() const {
-                if (this->plugin->abi_version != plugin_abi_version) throw std::runtime_error(std::format("{}: dynamic scene plugin ABI version {} does not match host ABI version {}", this->plugin_path.string(), this->plugin->abi_version, plugin_abi_version));
-                if (this->plugin->struct_size != sizeof(SpectraDynamicScenePlugin)) throw std::runtime_error(std::format("{}: dynamic scene plugin descriptor size mismatch", this->plugin_path.string()));
+                if (this->plugin->abi_version != plugin_abi_version) throw std::runtime_error(std::format("{}: dynamic scene plugin ABI version {} does not match host ABI version {}", this->open_request.plugin_path.string(), this->plugin->abi_version, plugin_abi_version));
+                if (this->plugin->struct_size != sizeof(SpectraDynamicScenePlugin)) throw std::runtime_error(std::format("{}: dynamic scene plugin descriptor size mismatch", this->open_request.plugin_path.string()));
                 static_cast<void>(this->id());
                 static_cast<void>(this->title());
+                static_cast<void>(this->project_panel_title());
+                static_cast<void>(this->open_action_label());
+                static_cast<void>(this->open_action_description());
                 const double fps = this->frames_per_second();
-                if (fps <= 0.0) throw std::runtime_error(std::format("{}: dynamic scene plugin frame rate must be positive", this->plugin_path.string()));
-                if (this->plugin->create == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin create function is null", this->plugin_path.string()));
-                if (this->plugin->destroy == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin destroy function is null", this->plugin_path.string()));
-                if (this->plugin->reset == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin reset function is null", this->plugin_path.string()));
-                if (this->plugin->step == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin step function is null", this->plugin_path.string()));
-                if (this->plugin->document == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin document function is null", this->plugin_path.string()));
-                if (this->plugin->frame == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin frame function is null", this->plugin_path.string()));
-                if (this->plugin->last_error == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin last_error function is null", this->plugin_path.string()));
+                if (fps <= 0.0) throw std::runtime_error(std::format("{}: dynamic scene plugin frame rate must be positive", this->open_request.plugin_path.string()));
+                if (this->plugin->create == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin create function is null", this->open_request.plugin_path.string()));
+                if (this->plugin->destroy == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin destroy function is null", this->open_request.plugin_path.string()));
+                if (this->plugin->reset == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin reset function is null", this->open_request.plugin_path.string()));
+                if (this->plugin->step == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin step function is null", this->open_request.plugin_path.string()));
+                if (this->plugin->document == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin document function is null", this->open_request.plugin_path.string()));
+                if (this->plugin->frame == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin frame function is null", this->open_request.plugin_path.string()));
+                if (this->plugin->last_error == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin last_error function is null", this->open_request.plugin_path.string()));
+                static_cast<void>(this->open_options());
             }
 
-            std::filesystem::path plugin_path{};
+            DynamicScenePluginOpenRequestStorage open_request{};
             std::filesystem::path plugin_directory{};
             NativeLibrary native;
             const SpectraDynamicScenePlugin* plugin{};
@@ -1144,7 +1601,8 @@ namespace spectra::rasterizer {
                 std::set<std::string> material_names = collect_material_names(document);
                 std::set<std::string> light_names = collect_light_names(document);
                 append_document_view(document, this->plugin->document(this->instance), material_names, light_names);
-                if (!document.camera.has_value()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide a camera or PBRT template camera", this->plugin->id()));
+                if (document.active_camera_name.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide an active camera name", this->plugin->id()));
+                if (document.cameras.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide a camera or PBRT template camera", this->plugin->id()));
                 document.timeline_enabled = true;
                 document.frames_per_second = this->plugin->frames_per_second();
                 this->material_names = std::move(material_names);
@@ -1175,15 +1633,30 @@ namespace spectra::rasterizer {
 #endif
     }
 
-    DynamicScenePluginSource load_dynamic_scene_plugin(const std::filesystem::path& plugin_path) {
-        if (plugin_path.empty()) throw std::runtime_error("Drop a dynamic scene plugin library into the window to load it");
-        const std::filesystem::path absolute_path = std::filesystem::absolute(plugin_path).lexically_normal();
-        if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a dynamic scene plugin library, not a folder");
-        if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file does not exist", absolute_path.string()));
-        if (!is_dynamic_scene_plugin_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file extension is not supported on this platform", absolute_path.string()));
-        std::shared_ptr<DynamicScenePluginLibrary> plugin = std::make_shared<DynamicScenePluginLibrary>(absolute_path);
+    DynamicScenePluginInfo inspect_dynamic_scene_plugin(const std::filesystem::path& plugin_path) {
+        DynamicScenePluginOpenRequestStorage request{
+            .plugin_path = normalized_dynamic_scene_plugin_path(plugin_path),
+        };
+        request.source_id = make_dynamic_scene_source_id(request.plugin_path, request.options);
+        DynamicScenePluginLibrary plugin{std::move(request)};
+        return DynamicScenePluginInfo{
+            .id = plugin.id(),
+            .title = plugin.title(),
+            .project_panel_title = plugin.project_panel_title(),
+            .open_action_label = plugin.open_action_label(),
+            .open_action_description = plugin.open_action_description(),
+            .path = plugin.path(),
+            .open_options = plugin.open_options(),
+        };
+    }
+
+    DynamicScenePluginSource load_dynamic_scene_plugin(DynamicSceneOpenRequest request) {
+        DynamicScenePluginOpenRequestStorage open_request = make_plugin_open_request_storage(std::move(request));
+        const std::filesystem::path absolute_path = open_request.plugin_path;
+        const std::string source_id = open_request.source_id;
+        std::shared_ptr<DynamicScenePluginLibrary> plugin = std::make_shared<DynamicScenePluginLibrary>(std::move(open_request));
         return DynamicScenePluginSource{
-            .id = plugin->id(),
+            .id = source_id,
             .title = plugin->title(),
             .path = absolute_path,
             .create_source = [plugin = std::move(plugin)] {

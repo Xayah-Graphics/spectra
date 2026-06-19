@@ -31,7 +31,7 @@ namespace spectra {
         std::move_only_function<void()> draw{};
     };
 
-    export struct RendererPopoverTab {
+    export struct CommandPopover {
         std::string id{};
         std::string title{};
         std::string icon{};
@@ -95,15 +95,15 @@ namespace spectra {
         std::move_only_function<void()>{std::move(panel.draw)};
     };
 
-    export template <typename RendererPopoverTabContribution>
-    concept RendererPopoverTabLike = requires(RendererPopoverTabContribution tab) {
-        std::string{std::move(tab.id)};
-        std::string{std::move(tab.title)};
-        std::string{std::move(tab.icon)};
-        std::string{std::move(tab.owner_renderer)};
-        std::string{std::move(tab.shortcut_label)};
-        static_cast<ImGuiKey>(tab.shortcut_key);
-        std::move_only_function<void()>{std::move(tab.draw)};
+    export template <typename CommandPopoverContribution>
+    concept CommandPopoverLike = requires(CommandPopoverContribution popover) {
+        std::string{std::move(popover.id)};
+        std::string{std::move(popover.title)};
+        std::string{std::move(popover.icon)};
+        std::string{std::move(popover.owner_renderer)};
+        std::string{std::move(popover.shortcut_label)};
+        static_cast<ImGuiKey>(popover.shortcut_key);
+        std::move_only_function<void()>{std::move(popover.draw)};
     };
 
     export template <typename ToolbarActionContribution>
@@ -168,12 +168,14 @@ namespace spectra {
         template <typename PanelContribution>
             requires PanelLike<PanelContribution>
         void register_panel(PanelContribution panel);
-        template <typename RendererPopoverTabContribution>
-            requires RendererPopoverTabLike<RendererPopoverTabContribution>
-        void register_renderer_popover_tab(RendererPopoverTabContribution tab);
+        template <typename CommandPopoverContribution>
+            requires CommandPopoverLike<CommandPopoverContribution>
+        void register_command_popover(CommandPopoverContribution popover);
         template <typename ToolbarActionContribution>
             requires ToolbarActionLike<ToolbarActionContribution>
         void register_toolbar_action(ToolbarActionContribution action);
+        void open_command_popover(std::string id);
+        void close_command_popover(std::string id);
         void set_workspace_title_provider(std::move_only_function<WorkspaceTitle()> provider);
         template <typename FileDropHandlerContribution>
             requires FileDropHandlerLike<FileDropHandlerContribution>
@@ -245,13 +247,13 @@ namespace spectra {
 
         void store_renderer(RendererSlot renderer);
         void store_panel(Panel panel);
-        void store_renderer_popover_tab(RendererPopoverTab tab);
+        void store_command_popover(CommandPopover popover);
         void store_toolbar_action(ToolbarAction action);
         void store_file_drop_handler(FileDropHandler handler);
 
         [[nodiscard]] std::string resolve_contribution_owner(std::string owner_renderer) const;
         [[nodiscard]] bool contribution_belongs_to_active_renderer(std::string_view owner_renderer) const;
-        void sync_active_renderer_popover_tab();
+        void sync_active_command_popover();
         void activate_renderer(std::size_t renderer_index);
 
         void queue_file_drop(int path_count, const char** paths) noexcept;
@@ -259,7 +261,7 @@ namespace spectra {
         void process_command_bar_shortcuts();
         void draw_command_bar();
         void draw_dockspace();
-        void draw_renderer_popover();
+        void draw_command_popover();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
 
@@ -334,13 +336,12 @@ namespace spectra {
 
         struct {
             std::vector<Panel> panels{};
-            std::vector<RendererPopoverTab> renderer_popover_tabs{};
+            std::vector<CommandPopover> command_popovers{};
             std::vector<ToolbarAction> toolbar_actions{};
             std::move_only_function<WorkspaceTitle()> title_provider{};
             bool dock_layout_initialized{false};
-            bool renderer_popover_open{false};
-            std::string active_renderer_popover_tab_id{};
-            bool renderer_popover_tab_selection_requested{false};
+            bool command_popover_open{false};
+            std::string active_command_popover_id{};
         } workspace;
     };
 
@@ -368,17 +369,17 @@ namespace spectra {
         });
     }
 
-    template <typename RendererPopoverTabContribution>
-        requires RendererPopoverTabLike<RendererPopoverTabContribution>
-    void Spectra::register_renderer_popover_tab(RendererPopoverTabContribution tab) {
-        this->store_renderer_popover_tab(RendererPopoverTab{
-            .id             = std::string{std::move(tab.id)},
-            .title          = std::string{std::move(tab.title)},
-            .icon           = std::string{std::move(tab.icon)},
-            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(tab.owner_renderer)}),
-            .shortcut_label = std::string{std::move(tab.shortcut_label)},
-            .shortcut_key   = static_cast<ImGuiKey>(tab.shortcut_key),
-            .draw           = std::move(tab.draw),
+    template <typename CommandPopoverContribution>
+        requires CommandPopoverLike<CommandPopoverContribution>
+    void Spectra::register_command_popover(CommandPopoverContribution popover) {
+        this->store_command_popover(CommandPopover{
+            .id             = std::string{std::move(popover.id)},
+            .title          = std::string{std::move(popover.title)},
+            .icon           = std::string{std::move(popover.icon)},
+            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(popover.owner_renderer)}),
+            .shortcut_label = std::string{std::move(popover.shortcut_label)},
+            .shortcut_key   = static_cast<ImGuiKey>(popover.shortcut_key),
+            .draw           = std::move(popover.draw),
         });
     }
 
@@ -408,4 +409,5 @@ namespace spectra {
             .handle         = std::move(handler.handle),
         });
     }
+
 } // namespace spectra

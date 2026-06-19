@@ -46,7 +46,9 @@ You may also load PBRT scenes and dynamic scene plugins through the GUI.
 ./build/spectra_gui
 ```
 
-then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window.
+then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
+empty dynamic project first; the Project popover renders the generic form declared by the plugin descriptor and creates
+the dynamic scene only when the plugin-declared open action is pressed.
 
 
 ## Dynamic Scene Plugins Developer Guide
@@ -60,12 +62,13 @@ A dynamic scene plugin only needs to:
 2. Export `spectra_dynamic_scene_plugin()`.
 3. Declare the ABI structs exactly as documented below.
 
-The plugin owns all returned string and array views. Spectra copies view data immediately. Returned views must stay
-valid until the next ABI call on the same instance or until `destroy`.
+The plugin owns all returned string and array views. Non-image view data is copied into Spectra scene storage during
+conversion. Camera visual RGBA8 pointers are borrowed; the pointed image memory must stay valid for the plugin instance
+lifetime, and `revision` must increase when the pixel contents change.
 
 ### Binary Contract
 
-- ABI version: `1`.
+- ABI version: `10`.
 - Exported symbol: `spectra_dynamic_scene_plugin`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
@@ -75,221 +78,11 @@ valid until the next ABI call on the same instance or until `destroy`.
 
 ### Required ABI Declarations
 
-<details>
-<summary>Complete C ABI declarations</summary>
+Dynamic scene plugins must declare the documented C ABI in the producer project. Do not include Spectra headers, link
+Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. The plugin descriptor may expose a
+generic project/open metadata and an open-options schema. Spectra renders that schema in the Project popover and passes
+strict key/value options to `create` through `SpectraDynamicSceneOpenInfo`, together with the resolved plugin path.
 
-```cpp
-#include <stdint.h>
-
-#define SPECTRA_DYNAMIC_SCENE_ABI_VERSION 1u
-
-struct SpectraDynamicSceneInstance;
-
-enum SpectraDynamicSceneResult {
-    SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0,
-    SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1,
-};
-
-struct SpectraDynamicSceneString {
-    const char* data;
-    uint64_t size;
-};
-
-struct SpectraDynamicSceneTransform {
-    float position[3];
-    float rotation[4];
-    float scale[3];
-};
-
-struct SpectraDynamicSceneMaterial {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString model;
-    SpectraDynamicSceneString alpha_mode;
-    float base_color[4];
-    float emission_color[3];
-    float emission_strength;
-    float roughness;
-    float metallic;
-    float alpha_cutoff;
-    float volume_density_scale;
-    float volume_temperature_scale;
-};
-
-struct SpectraDynamicSceneMaterialSpan {
-    const SpectraDynamicSceneMaterial* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneLight {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneString kind;
-    SpectraDynamicSceneTransform transform;
-    float color[3];
-    float intensity;
-    float cone_angle_degrees;
-};
-
-struct SpectraDynamicSceneLightSpan {
-    const SpectraDynamicSceneLight* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneCamera {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneTransform transform;
-    float target[3];
-    float up[3];
-    float vertical_fov_degrees;
-    float near_plane;
-    float far_plane;
-};
-
-struct SpectraDynamicSceneMeshVertex {
-    float position[3];
-    float normal[3];
-};
-
-struct SpectraDynamicSceneMeshVertexSpan {
-    const SpectraDynamicSceneMeshVertex* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneUInt32Span {
-    const uint32_t* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneMesh {
-    SpectraDynamicSceneString name;
-    SpectraDynamicSceneMeshVertexSpan vertices;
-    SpectraDynamicSceneUInt32Span indices;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneMeshSpan {
-    const SpectraDynamicSceneMesh* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneSphere {
-    SpectraDynamicSceneString name;
-    float radius;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicSceneSphereSpan {
-    const SpectraDynamicSceneSphere* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicScenePoint {
-    float position[3];
-    float normal[3];
-    float color[4];
-    float radius;
-};
-
-struct SpectraDynamicScenePointSpan {
-    const SpectraDynamicScenePoint* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicScenePointCloud {
-    SpectraDynamicSceneString name;
-    SpectraDynamicScenePointSpan points;
-    SpectraDynamicSceneString material_name;
-    SpectraDynamicSceneTransform transform;
-};
-
-struct SpectraDynamicScenePointCloudSpan {
-    const SpectraDynamicScenePointCloud* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneFloatSpan {
-    const float* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneVolumeChannel {
-    SpectraDynamicSceneString name;
-    uint32_t dimensions[3];
-    SpectraDynamicSceneFloatSpan values;
-};
-
-struct SpectraDynamicSceneVolumeChannelSpan {
-    const SpectraDynamicSceneVolumeChannel* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneVolume {
-    SpectraDynamicSceneString name;
-    uint32_t dimensions[3];
-    float origin[3];
-    float voxel_size[3];
-    SpectraDynamicSceneVolumeChannelSpan channels;
-    SpectraDynamicSceneString material_name;
-};
-
-struct SpectraDynamicSceneVolumeSpan {
-    const SpectraDynamicSceneVolume* data;
-    uint64_t count;
-};
-
-struct SpectraDynamicSceneDocumentView {
-    uint64_t struct_size;
-    uint32_t has_camera;
-    SpectraDynamicSceneCamera camera;
-    SpectraDynamicSceneMaterialSpan materials;
-    SpectraDynamicSceneLightSpan lights;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-struct SpectraDynamicSceneFrameInfo {
-    double delta_seconds;
-    double time_seconds;
-    uint64_t frame_index;
-};
-
-struct SpectraDynamicSceneFrameView {
-    uint64_t struct_size;
-    SpectraDynamicSceneMeshSpan meshes;
-    SpectraDynamicSceneSphereSpan spheres;
-    SpectraDynamicScenePointCloudSpan point_clouds;
-    SpectraDynamicSceneVolumeSpan volumes;
-};
-
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(SpectraDynamicSceneInstance** instance);
-typedef void (*SpectraDynamicSceneDestroyFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneResetFn)(SpectraDynamicSceneInstance* instance);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
-typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
-typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
-
-struct SpectraDynamicScenePlugin {
-    uint32_t abi_version;
-    uint64_t struct_size;
-    SpectraDynamicSceneString id;
-    SpectraDynamicSceneString title;
-    SpectraDynamicSceneString pbrt_template_path;
-    double frames_per_second;
-    SpectraDynamicSceneCreateFn create;
-    SpectraDynamicSceneDestroyFn destroy;
-    SpectraDynamicSceneResetFn reset;
-    SpectraDynamicSceneStepFn step;
-    SpectraDynamicSceneDocumentFn document;
-    SpectraDynamicSceneFrameFn frame;
-    SpectraDynamicSceneLastErrorFn last_error;
-};
-```
-
-</details>
 
 ### Required Export
 
@@ -303,14 +96,15 @@ struct SpectraDynamicScenePlugin {
 extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to
-`SPECTRA_DYNAMIC_SCENE_ABI_VERSION`, set `struct_size` to `sizeof(SpectraDynamicScenePlugin)`, and provide every
-function pointer.
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `10`, set `struct_size` to
+`sizeof(SpectraDynamicScenePlugin)`, and provide every function pointer.
 
 ### Data Rules
 
 - `id`, `title`, material names, light names, camera name, primitive names, and material references must be non-empty.
 - `frames_per_second` must be finite and positive.
+- `default_coordinate_system` may be empty or one of `SpectraYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
+  Unknown names are errors.
 - Material `model` values: `lit_surface`, `unlit_surface`, `emissive_surface`, `volume`, `point_sprite`.
 - Material `alpha_mode` values: `opaque`, `masked`, `blend`.
 - Light `kind` values: `directional`, `point`, `spot`, `area`, `environment`.
@@ -318,7 +112,18 @@ function pointer.
 - Spheres require positive radius.
 - Point radii must be positive.
 - Volume dimensions must be positive, and each channel value count must equal `x * y * z`.
+- Viewport segment annotations and camera visualization are preview-only. They are loaded by the rasterizer and ignored
+  by the pathtracer/PBRT scene.
+- Viewport width modes: `0` screen-space pixels, `1` world-space units.
+- Viewport depth modes: `0` depth tested, `1` always visible.
+- Camera projection values: `0` perspective, `1` pinhole intrinsics.
+- Camera visual RGBA8 images are borrowed pointers with tightly packed `width * height * 4` bytes.
 - `pbrt_template_path` may be empty. If non-empty, it must be relative to the plugin library directory.
+- `project_panel_title` and `open_action_label` must be non-empty. `open_action_description` may be empty.
+- Open option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
+  `6` unsigned integer.
+- Open option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
+  options must not declare choices. Bool defaults must be `true` or `false`.
 
 ### Callback Rules
 
@@ -332,6 +137,9 @@ function pointer.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.
+
+Scene URI query strings such as `plugin.dll?dataset=...` are not supported. Open a plugin path directly, then configure
+and create the dynamic scene through the Project popover.
 
 ## License
 

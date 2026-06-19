@@ -40,7 +40,7 @@ namespace spectra::pathtracer {
 
         class Renderer final {
         public:
-            Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
+            Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             ~Renderer() noexcept;
 
             Renderer(const Renderer& other) = delete;
@@ -49,7 +49,7 @@ namespace spectra::pathtracer {
             Renderer& operator=(Renderer&& other) noexcept;
 
             [[nodiscard]] static std::string_view name();
-            void set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::Scene::CameraWorkspace> camera_workspace);
+            void set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             void attach(HostView host);
             void detach() noexcept;
             void before_imgui_shutdown() noexcept;

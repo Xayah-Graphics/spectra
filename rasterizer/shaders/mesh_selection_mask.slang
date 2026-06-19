@@ -1,8 +1,8 @@
 static const uint MaxViewportDirectLights = 8;
 
 struct CameraUniform {
-    row_major float4x4 viewProjection;
-    row_major float4x4 inverseViewProjection;
+    row_major float4x4 worldToClip;
+    row_major float4x4 clipToWorld;
     float3 cameraPosition;
     float _pad0;
     float3 environmentColor;
@@ -10,10 +10,12 @@ struct CameraUniform {
     float4 lightDirections[MaxViewportDirectLights];
     float4 lightColorIntensities[MaxViewportDirectLights];
     uint4 lightCounts;
-    float3 cameraRight;
+    float3 cameraForward;
     float _pad1;
-    float3 cameraUp;
+    float3 cameraRight;
     float _pad2;
+    float3 cameraUp;
+    float _pad3;
     float4 viewport;
 };
 
@@ -37,7 +39,7 @@ struct VertexInput {
 [shader("vertex")]
 float4 vertex_main(VertexInput input) : SV_Position {
     float4 world = mul(float4(input.position, 1.0), selection.model);
-    return mul(world, camera.viewProjection);
+    return mul(world, camera.worldToClip);
 }
 
 [shader("fragment")]

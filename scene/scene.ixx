@@ -1,6 +1,7 @@
 export module spectra.scene;
 
-export import :math;
+export import spectra.scene.math;
+export import spectra.scene.spatial;
 import std;
 
 namespace spectra::scene {
@@ -140,6 +141,7 @@ namespace spectra::scene {
         struct Info {
             std::string name{};
             std::string title{};
+            std::string coordinate_system{};
             std::string camera{};
             std::string sampler{};
             std::string integrator{};
@@ -212,58 +214,6 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
-        struct Camera {
-            std::string name{};
-            Transform transform{};
-            Vector3 target{};
-            Vector3 up{0.0f, 1.0f, 0.0f};
-            float vertical_fov_degrees{45.0f};
-            float near_plane{0.01f};
-            float far_plane{200.0f};
-            SourceLocation source{};
-        };
-
-        struct CameraState {
-            Vector3 eye{};
-            Vector3 target{};
-            Vector3 up{0.0f, 1.0f, 0.0f};
-            float vertical_fov_degrees{45.0f};
-        };
-
-        struct ViewportCameraDelta {
-            float x_pixels{};
-            float y_pixels{};
-        };
-
-        struct ViewportCameraSize {
-            float width{};
-            float height{};
-        };
-
-        struct CameraSnapshot {
-            Revision revision{};
-            CameraState state{};
-        };
-
-        class CameraWorkspace {
-        public:
-            CameraWorkspace() = default;
-
-            CameraWorkspace(const CameraWorkspace& other) = delete;
-            CameraWorkspace(CameraWorkspace&& other) = delete;
-            CameraWorkspace& operator=(const CameraWorkspace& other) = delete;
-            CameraWorkspace& operator=(CameraWorkspace&& other) = delete;
-            ~CameraWorkspace() = default;
-
-            void ensure_camera(std::string scene_id, CameraState state);
-            [[nodiscard]] CameraSnapshot snapshot(std::string_view scene_id) const;
-            [[nodiscard]] CameraSnapshot commit(std::string_view scene_id, CameraState state);
-
-        private:
-            mutable std::mutex mutex{};
-            std::map<std::string, CameraSnapshot> cameras{};
-        };
-
         struct Mesh {
             std::string name{};
             std::vector<Vector3> positions{};
@@ -314,14 +264,71 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
+        struct ViewportSegment {
+            Vector3 start{};
+            Vector3 end{};
+        };
+
+        enum class ViewportSegmentWidthMode : std::uint32_t {
+            Screen = 0u,
+            World  = 1u,
+        };
+
+        enum class ViewportSegmentDepthMode : std::uint32_t {
+            DepthTested   = 0u,
+            AlwaysVisible = 1u,
+        };
+
+        struct CameraImage {
+            std::uint32_t width{};
+            std::uint32_t height{};
+            const std::uint8_t* rgba8{};
+            std::uint64_t rgba8_size{};
+            std::uint64_t revision{};
+            Vector4 tint{1.0f, 1.0f, 1.0f, 1.0f};
+        };
+
+        struct CameraVisualization {
+            bool enabled{false};
+            Vector4 color{0.0f, 0.75f, 1.0f, 0.85f};
+            float width{2.0f};
+            ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
+            ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
+            float visual_near{0.05f};
+            float visual_far{1.0f};
+            std::optional<CameraImage> image{};
+        };
+
+        struct Camera {
+            std::string name{};
+            CameraViewState view{};
+            CameraVisualization visualization{};
+            SourceLocation source{};
+        };
+
+        struct ViewportSegmentSet {
+            std::string name{};
+            std::vector<ViewportSegment> segments{};
+            std::vector<Vector4> colors{};
+            std::vector<float> widths{};
+            float width{2.0f};
+            ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
+            ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
+            Transform transform{};
+            bool dynamic{true};
+            SourceLocation source{};
+        };
+
         struct Document {
             Revision revision{};
             std::string name{};
             std::string title{};
             std::string source{};
+            CoordinateSystem default_coordinate_system{};
             double frames_per_second{24.0};
             bool timeline_enabled{true};
-            std::optional<Camera> camera{};
+            std::vector<Camera> cameras{};
+            std::string active_camera_name{};
             std::vector<PreviewMaterial> materials{};
             std::vector<Texture> textures{};
             std::vector<PreviewLight> lights{};
@@ -329,6 +336,7 @@ namespace spectra::scene {
             std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
+            std::vector<ViewportSegmentSet> viewport_segment_sets{};
         };
 
         enum class TimelineMode {
@@ -348,6 +356,8 @@ namespace spectra::scene {
             std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
+            std::vector<Camera> cameras{};
+            std::vector<ViewportSegmentSet> viewport_segment_sets{};
         };
 
         struct Timeline {
@@ -367,6 +377,8 @@ namespace spectra::scene {
             std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
+            std::vector<Camera> cameras{};
+            std::vector<ViewportSegmentSet> viewport_segment_sets{};
         };
 
         class Builder {
@@ -439,10 +451,6 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
-        [[nodiscard]] static float viewport_drag_zoom_steps(ViewportCameraDelta delta);
-        [[nodiscard]] static CameraState orbit_viewport_camera(CameraState state, ViewportCameraDelta delta);
-        [[nodiscard]] static CameraState pan_viewport_camera(CameraState state, ViewportCameraDelta delta, ViewportCameraSize viewport);
-        [[nodiscard]] static CameraState zoom_viewport_camera(CameraState state, float steps);
 
     private:
         [[nodiscard]] const Document& preview_document() const;
