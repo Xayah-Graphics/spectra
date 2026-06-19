@@ -56,6 +56,8 @@ plugin-declared project actions, status metrics, and logs.
 
 Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
 link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
+Inside Spectra, dynamic plugin/project lifetime is owned by `spectra.scene_runtime`; the rasterizer only supplies the
+Vulkan-backed host-service implementation and preview draw passes.
 
 A dynamic scene plugin only needs to:
 
@@ -117,9 +119,9 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 - Spheres require positive radius.
 - Point radii must be positive.
 - Volume dimensions must be positive, and each channel value count must equal `x * y * z`.
-- Viewport segment annotations and camera visualization are preview-only. They are loaded by the rasterizer and ignored
+- Viewport segment annotations and camera visualization are preview-only. They are consumed by the rasterizer and ignored
   by the pathtracer/PBRT scene.
-- Viewport voxel grids are preview-only sparse voxel annotations. They are loaded by the rasterizer and ignored by the
+- Viewport voxel grids are preview-only sparse voxel annotations. They are consumed by the rasterizer and ignored by the
   pathtracer/PBRT scene. `dimensions` and positive `voxel_size` describe the logical grid; `buffer_id` names a
   host-service GPU buffer. `source_kind` values are `0` compacted `uint32_t` index list and `1` dense occupancy
   bitfield. `index_encoding` values are `0` row-major linear `x + dimX * (y + dimY * z)` and `1` Morton/Z-order.

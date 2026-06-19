@@ -6,7 +6,7 @@ import std;
 import spectra;
 import spectra.pathtracer.renderer;
 import spectra.rasterizer.renderer;
-import spectra.rasterizer.scene_runtime;
+import spectra.scene_runtime;
 import spectra.scene;
 import xayah.util.xcli;
 
@@ -50,7 +50,7 @@ namespace {
     }
 
     struct DynamicSceneOpenOptionEditor {
-        spectra::rasterizer::DynamicSceneOpenOptionSchema schema{};
+        spectra::scene_runtime::DynamicSceneOpenOptionSchema schema{};
         std::string text_value{};
         std::vector<char> text_buffer{};
         bool bool_value{};
@@ -60,7 +60,7 @@ namespace {
     };
 
     struct DynamicSceneProjectActionEditor {
-        spectra::rasterizer::DynamicSceneProjectAction action{};
+        spectra::scene_runtime::DynamicSceneProjectAction action{};
         std::vector<DynamicSceneOpenOptionEditor> editors{};
     };
 
@@ -73,7 +73,7 @@ namespace {
 
     struct DynamicSceneProjectState {
         DynamicSceneProjectPhase phase{DynamicSceneProjectPhase::None};
-        spectra::rasterizer::DynamicScenePluginInfo plugin{};
+        spectra::scene_runtime::DynamicScenePluginInfo plugin{};
         std::vector<DynamicSceneOpenOptionEditor> editors{};
         std::vector<DynamicSceneProjectActionEditor> action_editors{};
         std::string error{};
@@ -130,21 +130,21 @@ namespace {
         throw std::runtime_error(std::format("{} must be true or false", context));
     }
 
-    [[nodiscard]] bool choice_contains_value(const spectra::rasterizer::DynamicSceneOpenOptionSchema& schema, const std::string& value) {
-        return std::ranges::any_of(schema.choices, [&value](const spectra::rasterizer::DynamicSceneOpenOptionChoice& choice) { return choice.value == value; });
+    [[nodiscard]] bool choice_contains_value(const spectra::scene_runtime::DynamicSceneOpenOptionSchema& schema, const std::string& value) {
+        return std::ranges::any_of(schema.choices, [&value](const spectra::scene_runtime::DynamicSceneOpenOptionChoice& choice) { return choice.value == value; });
     }
 
-    [[nodiscard]] DynamicSceneOpenOptionEditor make_open_option_editor(spectra::rasterizer::DynamicSceneOpenOptionSchema schema) {
+    [[nodiscard]] DynamicSceneOpenOptionEditor make_open_option_editor(spectra::scene_runtime::DynamicSceneOpenOptionSchema schema) {
         DynamicSceneOpenOptionEditor editor{.schema = std::move(schema)};
         editor.enabled = editor.schema.required || !editor.schema.default_value.empty();
         switch (editor.schema.kind) {
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::Bool:
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::Bool:
                 editor.bool_value = editor.schema.default_value.empty() ? false : parse_bool_text(editor.schema.default_value, std::format("Dynamic scene open option '{}'", editor.schema.key));
                 break;
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::Float:
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::Float:
                 editor.float_value = editor.schema.default_value.empty() ? 0.0f : parse_float_text(editor.schema.default_value, std::format("Dynamic scene open option '{}'", editor.schema.key));
                 break;
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::UnsignedInteger:
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::UnsignedInteger:
                 editor.unsigned_value = editor.schema.default_value.empty() ? 0u : parse_unsigned_integer_text(editor.schema.default_value, std::format("Dynamic scene open option '{}'", editor.schema.key));
                 break;
             default:
@@ -155,37 +155,37 @@ namespace {
         return editor;
     }
 
-    [[nodiscard]] DynamicSceneProjectActionEditor make_project_action_editor(spectra::rasterizer::DynamicSceneProjectAction action) {
+    [[nodiscard]] DynamicSceneProjectActionEditor make_project_action_editor(spectra::scene_runtime::DynamicSceneProjectAction action) {
         DynamicSceneProjectActionEditor editor{.action = std::move(action)};
         editor.editors.reserve(editor.action.options.size());
-        for (const spectra::rasterizer::DynamicSceneOpenOptionSchema& schema : editor.action.options) editor.editors.push_back(make_open_option_editor(schema));
+        for (const spectra::scene_runtime::DynamicSceneOpenOptionSchema& schema : editor.action.options) editor.editors.push_back(make_open_option_editor(schema));
         return editor;
     }
 
-    [[nodiscard]] std::vector<spectra::rasterizer::DynamicSceneOpenOption> collect_open_options(const std::span<const DynamicSceneOpenOptionEditor> editors) {
-        std::vector<spectra::rasterizer::DynamicSceneOpenOption> options{};
+    [[nodiscard]] std::vector<spectra::scene_runtime::DynamicSceneOpenOption> collect_open_options(const std::span<const DynamicSceneOpenOptionEditor> editors) {
+        std::vector<spectra::scene_runtime::DynamicSceneOpenOption> options{};
         options.reserve(editors.size());
         for (const DynamicSceneOpenOptionEditor& editor : editors) {
             if (!editor.schema.required && !editor.enabled) continue;
             std::string value{};
             switch (editor.schema.kind) {
-                case spectra::rasterizer::DynamicSceneOpenOptionKind::Bool:
+                case spectra::scene_runtime::DynamicSceneOpenOptionKind::Bool:
                     value = editor.bool_value ? "true" : "false";
                     break;
-                case spectra::rasterizer::DynamicSceneOpenOptionKind::Float:
+                case spectra::scene_runtime::DynamicSceneOpenOptionKind::Float:
                     value = std::format("{:.9g}", editor.float_value);
                     break;
-                case spectra::rasterizer::DynamicSceneOpenOptionKind::UnsignedInteger:
+                case spectra::scene_runtime::DynamicSceneOpenOptionKind::UnsignedInteger:
                     value = std::format("{}", editor.unsigned_value);
                     break;
                 default:
-                    value = editor.schema.kind == spectra::rasterizer::DynamicSceneOpenOptionKind::Choice ? editor.text_value : text_buffer_value(editor.text_buffer);
+                    value = editor.schema.kind == spectra::scene_runtime::DynamicSceneOpenOptionKind::Choice ? editor.text_value : text_buffer_value(editor.text_buffer);
                     break;
             }
             if (editor.schema.required && value.empty()) throw std::runtime_error(std::format("{} is required", editor.schema.label));
-            if (editor.schema.kind == spectra::rasterizer::DynamicSceneOpenOptionKind::Choice && !value.empty() && !choice_contains_value(editor.schema, value)) throw std::runtime_error(std::format("{} must be one of the declared choices", editor.schema.label));
-            if (!value.empty() || editor.schema.required || editor.schema.kind == spectra::rasterizer::DynamicSceneOpenOptionKind::Bool || editor.schema.kind == spectra::rasterizer::DynamicSceneOpenOptionKind::Float || editor.schema.kind == spectra::rasterizer::DynamicSceneOpenOptionKind::UnsignedInteger) {
-                options.push_back(spectra::rasterizer::DynamicSceneOpenOption{
+            if (editor.schema.kind == spectra::scene_runtime::DynamicSceneOpenOptionKind::Choice && !value.empty() && !choice_contains_value(editor.schema, value)) throw std::runtime_error(std::format("{} must be one of the declared choices", editor.schema.label));
+            if (!value.empty() || editor.schema.required || editor.schema.kind == spectra::scene_runtime::DynamicSceneOpenOptionKind::Bool || editor.schema.kind == spectra::scene_runtime::DynamicSceneOpenOptionKind::Float || editor.schema.kind == spectra::scene_runtime::DynamicSceneOpenOptionKind::UnsignedInteger) {
+                options.push_back(spectra::scene_runtime::DynamicSceneOpenOption{
                     .key = editor.schema.key,
                     .value = std::move(value),
                 });
@@ -206,7 +206,7 @@ namespace {
         return false;
     }
 
-    [[nodiscard]] std::string activate_pbrt_scene_path(spectra::rasterizer::SceneController& controller, const std::filesystem::path& scene_path) {
+    [[nodiscard]] std::string activate_pbrt_scene_path(spectra::scene_runtime::SceneController& controller, const std::filesystem::path& scene_path) {
         if (scene_path.empty()) throw std::runtime_error("Drop a PBRT scene file into the window to load it");
         const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
         if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a PBRT scene file, not a folder");
@@ -224,9 +224,9 @@ namespace {
         std::string title{};
     };
 
-    [[nodiscard]] DynamicSceneActivationResult activate_dynamic_scene_plugin(spectra::rasterizer::SceneController& controller, spectra::rasterizer::DynamicSceneOpenRequest request) {
+    [[nodiscard]] DynamicSceneActivationResult activate_dynamic_scene_plugin(spectra::scene_runtime::SceneController& controller, spectra::scene_runtime::DynamicSceneOpenRequest request) {
         if (request.host_services == nullptr) request.host_services = controller.dynamic_host_services();
-        spectra::rasterizer::DynamicScenePluginSource plugin = spectra::rasterizer::load_dynamic_scene_plugin(std::move(request));
+        spectra::scene_runtime::DynamicScenePluginSource plugin = spectra::scene_runtime::load_dynamic_scene_plugin(std::move(request));
         const std::string id = plugin.id;
         const std::string title = plugin.title;
         const bool activated = controller.activate_dynamic_scene(std::move(plugin.id), std::move(plugin.title), std::move(plugin.create_source));
@@ -237,7 +237,7 @@ namespace {
         };
     }
 
-    [[nodiscard]] std::string activate_scene_path(spectra::rasterizer::SceneController& controller, const std::filesystem::path& scene_path) {
+    [[nodiscard]] std::string activate_scene_path(spectra::scene_runtime::SceneController& controller, const std::filesystem::path& scene_path) {
         if (is_pbrt_scene_file(scene_path)) return activate_pbrt_scene_path(controller, scene_path);
         throw std::runtime_error(std::format("{}: drop a .pbrt/.pbrt.gz scene or a dynamic scene plugin library", scene_path.string()));
     }
@@ -246,29 +246,29 @@ namespace {
         project = DynamicSceneProjectState{};
     }
 
-    void begin_dynamic_scene_project(DynamicSceneProjectState& project, spectra::rasterizer::DynamicScenePluginInfo plugin) {
+    void begin_dynamic_scene_project(DynamicSceneProjectState& project, spectra::scene_runtime::DynamicScenePluginInfo plugin) {
         project.plugin = std::move(plugin);
         project.editors.clear();
         project.editors.reserve(project.plugin.open_options.size());
-        for (spectra::rasterizer::DynamicSceneOpenOptionSchema& schema : project.plugin.open_options) project.editors.push_back(make_open_option_editor(std::move(schema)));
+        for (spectra::scene_runtime::DynamicSceneOpenOptionSchema& schema : project.plugin.open_options) project.editors.push_back(make_open_option_editor(std::move(schema)));
         project.action_editors.clear();
         project.action_editors.reserve(project.plugin.project_actions.size());
-        for (const spectra::rasterizer::DynamicSceneProjectAction& action : project.plugin.project_actions) project.action_editors.push_back(make_project_action_editor(action));
+        for (const spectra::scene_runtime::DynamicSceneProjectAction& action : project.plugin.project_actions) project.action_editors.push_back(make_project_action_editor(action));
         project.error.clear();
         project.active_title.clear();
         project.active_id.clear();
         project.phase = DynamicSceneProjectPhase::PluginLoaded;
     }
 
-    [[nodiscard]] std::string open_dynamic_scene_project(spectra::rasterizer::SceneController& controller, DynamicSceneProjectState& project, const std::filesystem::path& plugin_path) {
-        spectra::rasterizer::DynamicScenePluginInfo plugin = spectra::rasterizer::inspect_dynamic_scene_plugin(plugin_path);
+    [[nodiscard]] std::string open_dynamic_scene_project(spectra::scene_runtime::SceneController& controller, DynamicSceneProjectState& project, const std::filesystem::path& plugin_path) {
+        spectra::scene_runtime::DynamicScenePluginInfo plugin = spectra::scene_runtime::inspect_dynamic_scene_plugin(plugin_path);
         const std::string title = plugin.title;
         controller.activate_empty_workspace();
         begin_dynamic_scene_project(project, std::move(plugin));
         return title;
     }
 
-    [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project, const std::span<const std::filesystem::path> paths) {
+    [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project, const std::span<const std::filesystem::path> paths) {
         if (paths.empty()) {
             set_scene_status(state, "Drop a PBRT scene or dynamic scene plugin to load it", true);
             return true;
@@ -279,7 +279,7 @@ namespace {
         }
         try {
             const std::filesystem::path& scene_path = paths.front();
-            if (spectra::rasterizer::is_dynamic_scene_plugin_file(scene_path)) {
+            if (spectra::scene_runtime::is_dynamic_scene_plugin_file(scene_path)) {
                 const std::string title = open_dynamic_scene_project(controller, project, scene_path);
                 set_scene_status(state, std::format("Opened dynamic project {}", title), false);
                 application.open_command_popover("scene.dynamic-project");
@@ -307,10 +307,10 @@ namespace {
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::BeginDisabled(!editor.enabled);
         switch (editor.schema.kind) {
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::Choice: {
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::Choice: {
                 const char* preview = editor.text_value.empty() ? "Select..." : editor.text_value.c_str();
                 if (ImGui::BeginCombo("##value", preview)) {
-                    for (const spectra::rasterizer::DynamicSceneOpenOptionChoice& choice : editor.schema.choices) {
+                    for (const spectra::scene_runtime::DynamicSceneOpenOptionChoice& choice : editor.schema.choices) {
                         const bool selected = editor.text_value == choice.value;
                         if (ImGui::Selectable(choice.label.c_str(), selected)) editor.text_value = choice.value;
                         if (selected) ImGui::SetItemDefaultFocus();
@@ -319,13 +319,13 @@ namespace {
                 }
                 break;
             }
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::Bool:
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::Bool:
                 ImGui::Checkbox("##value", &editor.bool_value);
                 break;
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::Float:
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::Float:
                 ImGui::InputFloat("##value", &editor.float_value, 0.0f, 0.0f, "%.6g");
                 break;
-            case spectra::rasterizer::DynamicSceneOpenOptionKind::UnsignedInteger:
+            case spectra::scene_runtime::DynamicSceneOpenOptionKind::UnsignedInteger:
                 ImGui::InputScalar("##value", ImGuiDataType_U64, &editor.unsigned_value);
                 break;
             default:
@@ -346,7 +346,7 @@ namespace {
         throw std::runtime_error("Unknown dynamic scene project phase");
     }
 
-    [[nodiscard]] bool project_action_enabled(const spectra::rasterizer::DynamicSceneProjectStatus& status, const std::string& action_id) {
+    [[nodiscard]] bool project_action_enabled(const spectra::scene_runtime::DynamicSceneProjectStatus& status, const std::string& action_id) {
         return std::ranges::any_of(status.enabled_action_ids, [&action_id](const std::string& enabled_action_id) { return enabled_action_id == action_id; });
     }
 
@@ -358,14 +358,14 @@ namespace {
         return ImVec4{0.68f, 0.73f, 0.80f, 1.0f};
     }
 
-    void draw_dynamic_project_status(const spectra::rasterizer::DynamicSceneProjectStatus& status) {
+    void draw_dynamic_project_status(const spectra::scene_runtime::DynamicSceneProjectStatus& status) {
         ImGui::TextDisabled("%s", "Project Status");
         ImGui::TextUnformatted(status.phase.c_str());
         ImGui::TextWrapped("%s", status.headline.c_str());
         if (!status.detail.empty()) ImGui::TextWrapped("%s", status.detail.c_str());
         if (!status.metrics.empty()) {
             ImGui::Spacing();
-            for (const spectra::rasterizer::DynamicSceneProjectMetric& metric : status.metrics) {
+            for (const spectra::scene_runtime::DynamicSceneProjectMetric& metric : status.metrics) {
                 ImGui::TextDisabled("%s", metric.label.c_str());
                 ImGui::SameLine();
                 ImGui::TextWrapped("%s", metric.value.c_str());
@@ -373,13 +373,13 @@ namespace {
         }
     }
 
-    void draw_dynamic_project_logs(const std::span<const spectra::rasterizer::DynamicSceneProjectLogEntry> logs) {
+    void draw_dynamic_project_logs(const std::span<const spectra::scene_runtime::DynamicSceneProjectLogEntry> logs) {
         ImGui::TextDisabled("%s", "Log");
         ImGui::BeginChild("DynamicProjectLogs", ImVec2{-1.0f, 180.0f}, true);
         if (logs.empty()) {
             ImGui::TextDisabled("%s", "No log entries");
         } else {
-            for (const spectra::rasterizer::DynamicSceneProjectLogEntry& entry : logs) {
+            for (const spectra::scene_runtime::DynamicSceneProjectLogEntry& entry : logs) {
                 const std::string line = std::format("{:>5} {:<9} {}", entry.sequence, entry.level, entry.message);
                 ImGui::TextColored(project_log_level_color(entry.level), "%s", line.c_str());
             }
@@ -388,7 +388,7 @@ namespace {
         ImGui::EndChild();
     }
 
-    void draw_dynamic_project_action_editor(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project, DynamicSceneProjectActionEditor& editor, const spectra::rasterizer::DynamicSceneProjectStatus& status) {
+    void draw_dynamic_project_action_editor(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project, DynamicSceneProjectActionEditor& editor, const spectra::scene_runtime::DynamicSceneProjectStatus& status) {
         ImGui::PushID(editor.action.id.c_str());
         const std::string header_label = std::format("{}##header", editor.action.label);
         const bool opened = ImGui::CollapsingHeader(header_label.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
@@ -406,7 +406,7 @@ namespace {
             if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", "Action disabled by project status");
             if (clicked) {
                 try {
-                    const std::vector<spectra::rasterizer::DynamicSceneOpenOption> options = collect_open_options(editor.editors);
+                    const std::vector<spectra::scene_runtime::DynamicSceneOpenOption> options = collect_open_options(editor.editors);
                     controller.execute_active_dynamic_project_action(editor.action.id, options);
                     project.phase = DynamicSceneProjectPhase::Active;
                     project.error.clear();
@@ -421,14 +421,14 @@ namespace {
         ImGui::PopID();
     }
 
-    void draw_dynamic_scene_project_panel(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project) {
+    void draw_dynamic_scene_project_panel(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project) {
         if (!dynamic_scene_project_loaded(project)) {
             ImGui::TextDisabled("%s", "No dynamic project");
             return;
         }
 
-        std::optional<spectra::rasterizer::DynamicSceneProjectStatus> active_status{};
-        std::vector<spectra::rasterizer::DynamicSceneProjectLogEntry> active_logs{};
+        std::optional<spectra::scene_runtime::DynamicSceneProjectStatus> active_status{};
+        std::vector<spectra::scene_runtime::DynamicSceneProjectLogEntry> active_logs{};
         if (project.phase == DynamicSceneProjectPhase::Active || project.phase == DynamicSceneProjectPhase::Error) {
             try {
                 if (controller.has_active_dynamic_project()) {
@@ -464,7 +464,7 @@ namespace {
             ImGui::BeginDisabled(open_disabled);
             if (ImGui::Button(project.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) {
                 try {
-                    spectra::rasterizer::DynamicSceneOpenRequest request{
+                    spectra::scene_runtime::DynamicSceneOpenRequest request{
                         .plugin_path = project.plugin.path,
                         .options = collect_open_options(project.editors),
                     };
@@ -516,18 +516,18 @@ namespace {
         }
     }
 
-    [[nodiscard]] std::string scene_workspace_tooltip(const spectra::rasterizer::SceneEntry* selected_entry, const bool pending_switch) {
+    [[nodiscard]] std::string scene_workspace_tooltip(const spectra::scene_runtime::SceneEntry* selected_entry, const bool pending_switch) {
         if (selected_entry == nullptr) return "Empty Project\nDrop a PBRT scene or dynamic scene plugin into the window to load it";
         return std::format(
             "{}\n{}{}\nDrop a PBRT scene or dynamic scene plugin into the window to replace it",
             selected_entry->id,
-            selected_entry->kind == spectra::rasterizer::SceneEntryKind::Static ? "Static" : "Dynamic",
+            selected_entry->kind == spectra::scene_runtime::SceneEntryKind::Static ? "Static" : "Dynamic",
             pending_switch ? "\nSwitching on next frame" : "");
     }
 
-    [[nodiscard]] spectra::WorkspaceTitle make_scene_workspace_title(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state) {
+    [[nodiscard]] spectra::WorkspaceTitle make_scene_workspace_title(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state) {
         const std::optional<std::size_t> selected_index = controller.has_selected_entry() ? std::optional<std::size_t>{controller.selected_index()} : std::nullopt;
-        const spectra::rasterizer::SceneEntry* selected_entry = selected_index.has_value() ? &controller.entry(*selected_index) : nullptr;
+        const spectra::scene_runtime::SceneEntry* selected_entry = selected_index.has_value() ? &controller.entry(*selected_index) : nullptr;
         spectra::WorkspaceTitle title{
             .detail  = selected_entry != nullptr ? selected_entry->title : "Untitled",
             .tooltip = scene_workspace_tooltip(selected_entry, controller.pending_switch()),
@@ -541,7 +541,7 @@ namespace {
 
     class PathtracerRendererAdapter final {
     public:
-        PathtracerRendererAdapter(std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
+        PathtracerRendererAdapter(std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
             if (this->scene_controller == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
             this->active_workspace = this->scene_controller->active_workspace();
@@ -602,7 +602,7 @@ namespace {
             this->active_workspace = std::move(current_workspace);
         }
 
-        std::shared_ptr<spectra::rasterizer::SceneController> scene_controller{};
+        std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller{};
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
         std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::pathtracer::Renderer> renderer{};
@@ -610,7 +610,7 @@ namespace {
 
     class RasterizerRendererAdapter final {
     public:
-        RasterizerRendererAdapter(std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host_services(std::move(dynamic_host_services)) {
+        RasterizerRendererAdapter(std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host_services(std::move(dynamic_host_services)) {
             if (this->scene_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
             if (this->dynamic_host_services == nullptr) throw std::runtime_error("Rasterizer adapter requires dynamic scene host services");
@@ -675,9 +675,9 @@ namespace {
             this->active_workspace = std::move(current_workspace);
         }
 
-        std::shared_ptr<spectra::rasterizer::SceneController> scene_controller{};
+        std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller{};
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
-        std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services{};
+        std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services{};
         std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::rasterizer::Renderer> renderer{};
     };
@@ -713,16 +713,16 @@ namespace {
         return std::make_shared<spectra::scene::Scene>(std::move(document));
     }
 
-    [[nodiscard]] std::optional<spectra::rasterizer::DynamicScenePluginInfo> load_cli_scene(spectra::rasterizer::SceneController& controller, const std::string& scene_id) {
+    [[nodiscard]] std::optional<spectra::scene_runtime::DynamicScenePluginInfo> load_cli_scene(spectra::scene_runtime::SceneController& controller, const std::string& scene_id) {
         if (const std::size_t query_begin = scene_id.find('?'); query_begin != std::string::npos) {
             const std::string plugin_path_text = scene_id.substr(0u, query_begin);
-            if (!plugin_path_text.empty() && spectra::rasterizer::is_dynamic_scene_plugin_file(std::filesystem::path{plugin_path_text})) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; pass the plugin path without query and configure it in the Project popover");
+            if (!plugin_path_text.empty() && spectra::scene_runtime::is_dynamic_scene_plugin_file(std::filesystem::path{plugin_path_text})) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; pass the plugin path without query and configure it in the Project popover");
         }
         const std::filesystem::path requested_path{scene_id};
-        if ((is_pbrt_scene_file(requested_path) || spectra::rasterizer::is_dynamic_scene_plugin_file(requested_path)) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
-        if (spectra::rasterizer::is_dynamic_scene_plugin_file(requested_path)) {
+        if ((is_pbrt_scene_file(requested_path) || spectra::scene_runtime::is_dynamic_scene_plugin_file(requested_path)) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
+        if (spectra::scene_runtime::is_dynamic_scene_plugin_file(requested_path)) {
             controller.activate_empty_workspace();
-            return spectra::rasterizer::inspect_dynamic_scene_plugin(requested_path);
+            return spectra::scene_runtime::inspect_dynamic_scene_plugin(requested_path);
         }
         if (std::filesystem::is_regular_file(requested_path)) {
             static_cast<void>(activate_scene_path(controller, requested_path));
@@ -734,7 +734,7 @@ namespace {
         return std::nullopt;
     }
 
-    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::rasterizer::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services, std::optional<spectra::rasterizer::DynamicScenePluginInfo> initial_dynamic_scene_plugin) {
+    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services, std::optional<spectra::scene_runtime::DynamicScenePluginInfo> initial_dynamic_scene_plugin) {
         if (scene_controller == nullptr) throw std::runtime_error("Renderer registration requires a scene controller");
         if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
         if (dynamic_host_services == nullptr) throw std::runtime_error("Renderer registration requires dynamic scene host services");
@@ -747,11 +747,11 @@ namespace {
         }
         application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, std::move(dynamic_host_services)});
         application.register_renderer(PathtracerRendererAdapter{scene_controller, std::move(camera_workspace)});
-        std::shared_ptr<spectra::rasterizer::SceneController> drop_scene_controller = scene_controller;
+        std::shared_ptr<spectra::scene_runtime::SceneController> drop_scene_controller = scene_controller;
         std::shared_ptr<SceneWorkspaceStatusState> drop_scene_status_state = scene_status_state;
         std::shared_ptr<DynamicSceneProjectState> drop_dynamic_scene_project = dynamic_scene_project;
         spectra::Spectra* drop_application = &application;
-        std::shared_ptr<spectra::rasterizer::SceneController> project_scene_controller = scene_controller;
+        std::shared_ptr<spectra::scene_runtime::SceneController> project_scene_controller = scene_controller;
         std::shared_ptr<SceneWorkspaceStatusState> project_scene_status_state = scene_status_state;
         std::shared_ptr<DynamicSceneProjectState> panel_dynamic_scene_project = dynamic_scene_project;
         application.set_workspace_title_provider([scene_controller = std::move(scene_controller), scene_status_state = std::move(scene_status_state)] { return make_scene_workspace_title(*scene_controller, *scene_status_state); });
@@ -802,10 +802,10 @@ int main(const int argc, const char* const* const argv) {
             return 2;
         }
 
-        spectra::rasterizer::SceneRegistry scene_registry{};
-        std::shared_ptr<spectra::rasterizer::DynamicSceneHostServiceRouter> dynamic_host_services = std::make_shared<spectra::rasterizer::DynamicSceneHostServiceRouter>();
-        std::shared_ptr<spectra::rasterizer::SceneController> scene_controller = std::make_shared<spectra::rasterizer::SceneController>(std::move(scene_registry), make_empty_project_scene(), dynamic_host_services);
-        std::optional<spectra::rasterizer::DynamicScenePluginInfo> initial_dynamic_scene_plugin{};
+        spectra::scene_runtime::SceneRegistry scene_registry{};
+        std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services = std::make_shared<spectra::scene_runtime::DynamicSceneHostServiceRouter>();
+        std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller = std::make_shared<spectra::scene_runtime::SceneController>(std::move(scene_registry), make_empty_project_scene(), dynamic_host_services);
+        std::optional<spectra::scene_runtime::DynamicScenePluginInfo> initial_dynamic_scene_plugin{};
         if (scene_id.has_value()) initial_dynamic_scene_plugin = load_cli_scene(*scene_controller, *scene_id);
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::CameraWorkspace>();
 

@@ -9,12 +9,12 @@ module;
 #include <dlfcn.h>
 #endif
 
-module spectra.rasterizer.scene_runtime;
+module spectra.scene_runtime;
 
 import std;
 import spectra.scene;
 
-namespace spectra::rasterizer {
+namespace spectra::scene_runtime {
     namespace {
         void commit_scene_frame(scene::Scene& workspace, scene::Scene::FrameSnapshot frame) {
             scene::Scene::Edit edit{};
@@ -2244,4 +2244,4 @@ namespace spectra::rasterizer {
             },
         };
     }
-} // namespace spectra::rasterizer
+} // namespace spectra::scene_runtime

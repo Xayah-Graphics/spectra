@@ -129,6 +129,23 @@ target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTR
 target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB vendor::lodepng)
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
+
+# ============================================================================
+# Scene Runtime
+# ============================================================================
+add_library(spectra_scene_runtime)
+add_library(spectra::scene_runtime ALIAS spectra_scene_runtime)
+target_sources(
+        spectra_scene_runtime
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        scene_runtime/scene_runtime.ixx
+        PRIVATE
+        scene_runtime/scene_runtime.cpp
+)
+target_link_libraries(spectra_scene_runtime PUBLIC spectra::scene PRIVATE ${CMAKE_DL_LIBS})
+set_property(TARGET spectra_scene_runtime PROPERTY CXX_MODULE_STD ON)
+
 # ============================================================================
 # Pathtracer Configuration
 # ============================================================================
@@ -587,17 +604,15 @@ target_sources(
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         rasterizer/host.ixx
         rasterizer/renderer.ixx
-        rasterizer/scene_runtime.ixx
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         rasterizer/math.ixx
         PRIVATE
         rasterizer/renderer.cpp
-        rasterizer/scene_runtime.cpp
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene spectra::scene_runtime)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 
@@ -615,6 +630,7 @@ target_link_libraries(
         PRIVATE
         spectra::core
         spectra::scene
+        spectra::scene_runtime
         spectra::pathtracer
         spectra::rasterizer
         xayah-util-xcli

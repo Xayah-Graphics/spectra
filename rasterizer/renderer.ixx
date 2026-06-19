@@ -12,7 +12,7 @@ module;
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
-export import spectra.rasterizer.scene_runtime;
+export import spectra.scene_runtime;
 export import spectra.scene;
 
 import std;
@@ -22,7 +22,7 @@ namespace spectra::rasterizer {
     public:
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
-        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<DynamicSceneHostServiceRouter> dynamic_host_services);
+        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -348,7 +348,7 @@ namespace spectra::rasterizer {
         void destroy_device_buffer(DeviceGpuBuffer& buffer) noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
         void ensure_device_buffer(DeviceGpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
-        [[nodiscard]] DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request);
+        [[nodiscard]] scene_runtime::DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request);
         void release_viewport_voxel_buffer(std::uint64_t resource_id);
         void ensure_viewport_voxel_buffer_descriptor(ExternalViewportVoxelBuffer& resource);
         void ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command);
@@ -502,7 +502,7 @@ namespace spectra::rasterizer {
             std::shared_ptr<scene::Scene> workspace{};
             std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
             scene::CameraRevision observed_camera_revision{};
-            std::shared_ptr<DynamicSceneHostServiceRouter> dynamic_host_services{};
+            std::shared_ptr<scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services{};
         } scene;
 
         struct {

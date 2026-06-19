@@ -1,9 +1,9 @@
-export module spectra.rasterizer.scene_runtime;
+export module spectra.scene_runtime;
 
 export import spectra.scene;
 import std;
 
-namespace spectra::rasterizer {
+namespace spectra::scene_runtime {
     export enum class SceneEntryKind {
         Static,
         Dynamic,
@@ -282,4 +282,4 @@ namespace spectra::rasterizer {
     export [[nodiscard]] bool is_dynamic_scene_plugin_file(const std::filesystem::path& path);
     export [[nodiscard]] DynamicScenePluginInfo inspect_dynamic_scene_plugin(const std::filesystem::path& plugin_path);
     export [[nodiscard]] DynamicScenePluginSource load_dynamic_scene_plugin(DynamicSceneOpenRequest request);
-} // namespace spectra::rasterizer
+} // namespace spectra::scene_runtime
