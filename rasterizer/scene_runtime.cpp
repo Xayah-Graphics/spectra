@@ -146,6 +146,22 @@ namespace spectra::rasterizer {
         return this->activation_error_message;
     }
 
+    bool SceneController::has_active_dynamic_project() {
+        if (!this->selected_entry_index.has_value()) return false;
+        const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
+        if (source.kind != SceneEntryKind::Dynamic) return false;
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        return slot.source != nullptr;
+    }
+
+    DynamicSceneProjectStatus SceneController::active_dynamic_project_status() {
+        return this->active_dynamic_project_source().project_status();
+    }
+
+    std::vector<DynamicSceneProjectLogEntry> SceneController::active_dynamic_project_logs() {
+        return this->active_dynamic_project_source().project_logs();
+    }
+
     void SceneController::activate_empty_workspace() {
         this->selected_entry_index.reset();
         this->pending_selected_entry_index.reset();
@@ -247,6 +263,14 @@ namespace spectra::rasterizer {
         return true;
     }
 
+    void SceneController::update_active_project(const double delta_seconds) {
+        if (!this->selected_entry_index.has_value()) return;
+        const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
+        if (source.kind != SceneEntryKind::Dynamic) return;
+        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Dynamic project delta time is invalid");
+        this->active_dynamic_project_source().update_project(static_cast<float>(delta_seconds));
+    }
+
     void SceneController::update_active_scene(const double delta_seconds) {
         if (!this->selected_entry_index.has_value()) return;
         const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
@@ -307,6 +331,11 @@ namespace spectra::rasterizer {
             return;
         }
         commit_scene_frame(*slot.workspace, std::move(snapshot));
+    }
+
+    void SceneController::execute_active_dynamic_project_action(const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) {
+        if (action_id.empty()) throw std::runtime_error("Dynamic project action id must not be empty");
+        this->active_dynamic_project_source().execute_project_action(action_id, options);
     }
 
     void SceneController::sync_slot_count() {
@@ -377,6 +406,15 @@ namespace spectra::rasterizer {
         return slot;
     }
 
+    DynamicSceneSourceInstance& SceneController::active_dynamic_project_source() {
+        if (!this->selected_entry_index.has_value()) throw std::runtime_error("No active dynamic project");
+        const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
+        if (source.kind != SceneEntryKind::Dynamic) throw std::runtime_error("Active scene is not a dynamic project");
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        if (slot.source == nullptr) throw std::runtime_error("Active dynamic project has no source instance");
+        return *slot.source;
+    }
+
     scene::Scene::Document SceneController::create_dynamic_slot(const std::size_t index, SceneSlot* slot) {
         if (slot == nullptr) throw std::runtime_error("Dynamic scene slot pointer must not be null");
         slot->source = this->registry.create_dynamic_source(index);
@@ -401,7 +439,11 @@ namespace spectra::rasterizer {
     }
 
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 10u;
+        constexpr std::uint32_t plugin_abi_version = 12u;
+        constexpr std::string_view scene_api_name = "spectra.dynamic_scene.scene";
+        constexpr std::string_view project_api_name = "spectra.dynamic_scene.project";
+        constexpr std::uint32_t scene_api_version = 1u;
+        constexpr std::uint32_t project_api_version = 1u;
 
         typedef void SpectraDynamicSceneInstance;
 
@@ -458,6 +500,59 @@ namespace spectra::rasterizer {
         struct SpectraDynamicSceneOpenOptionSchemaSpan {
             const SpectraDynamicSceneOpenOptionSchema* data{};
             std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneStringSpan {
+            const SpectraDynamicSceneString* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneProjectAction {
+            SpectraDynamicSceneString id{};
+            SpectraDynamicSceneString label{};
+            SpectraDynamicSceneString description{};
+            SpectraDynamicSceneOpenOptionSchemaSpan options{};
+        };
+
+        struct SpectraDynamicSceneProjectActionSpan {
+            const SpectraDynamicSceneProjectAction* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneProjectMetric {
+            SpectraDynamicSceneString key{};
+            SpectraDynamicSceneString label{};
+            SpectraDynamicSceneString value{};
+        };
+
+        struct SpectraDynamicSceneProjectMetricSpan {
+            const SpectraDynamicSceneProjectMetric* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneProjectStatusView {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneString phase{};
+            SpectraDynamicSceneString headline{};
+            SpectraDynamicSceneString detail{};
+            SpectraDynamicSceneProjectMetricSpan metrics{};
+            SpectraDynamicSceneStringSpan enabled_action_ids{};
+        };
+
+        struct SpectraDynamicSceneProjectLogEntry {
+            std::uint64_t sequence{};
+            SpectraDynamicSceneString level{};
+            SpectraDynamicSceneString message{};
+        };
+
+        struct SpectraDynamicSceneProjectLogEntrySpan {
+            const SpectraDynamicSceneProjectLogEntry* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneProjectLogView {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneProjectLogEntrySpan entries{};
         };
 
         struct SpectraDynamicSceneOpenInfo {
@@ -715,7 +810,34 @@ namespace spectra::rasterizer {
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectUpdateFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectActionFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneString action_id, SpectraDynamicSceneOptionSpan options);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectStatusFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneProjectStatusView* status);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectLogsFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneProjectLogView* logs);
         typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneGetApiFn)(SpectraDynamicSceneString api_name, std::uint32_t api_version, const void** api);
+
+        struct SpectraDynamicSceneSceneApi {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneString pbrt_template_path{};
+            double frames_per_second{};
+            SpectraDynamicSceneCreateFn create{};
+            SpectraDynamicSceneDestroyFn destroy{};
+            SpectraDynamicSceneResetFn reset{};
+            SpectraDynamicSceneStepFn step{};
+            SpectraDynamicSceneDocumentFn document{};
+            SpectraDynamicSceneFrameFn frame{};
+            SpectraDynamicSceneLastErrorFn last_error{};
+        };
+
+        struct SpectraDynamicSceneProjectApi {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneProjectActionSpan project_actions{};
+            SpectraDynamicSceneProjectUpdateFn project_update{};
+            SpectraDynamicSceneProjectActionFn project_action{};
+            SpectraDynamicSceneProjectStatusFn project_status{};
+            SpectraDynamicSceneProjectLogsFn project_logs{};
+        };
 
         struct SpectraDynamicScenePlugin {
             std::uint32_t abi_version{};
@@ -725,16 +847,8 @@ namespace spectra::rasterizer {
             SpectraDynamicSceneString project_panel_title{};
             SpectraDynamicSceneString open_action_label{};
             SpectraDynamicSceneString open_action_description{};
-            SpectraDynamicSceneString pbrt_template_path{};
-            double frames_per_second{};
             SpectraDynamicSceneOpenOptionSchemaSpan open_options{};
-            SpectraDynamicSceneCreateFn create{};
-            SpectraDynamicSceneDestroyFn destroy{};
-            SpectraDynamicSceneResetFn reset{};
-            SpectraDynamicSceneStepFn step{};
-            SpectraDynamicSceneDocumentFn document{};
-            SpectraDynamicSceneFrameFn frame{};
-            SpectraDynamicSceneLastErrorFn last_error{};
+            SpectraDynamicSceneGetApiFn get_api{};
         };
 
         typedef const SpectraDynamicScenePlugin* (*SpectraDynamicScenePluginEntryFn)(void);
@@ -1230,6 +1344,10 @@ namespace spectra::rasterizer {
             return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
         }
 
+        [[nodiscard]] SpectraDynamicSceneString abi_text(const std::string_view value) {
+            return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
+        }
+
         [[nodiscard]] bool parse_bool_default(const std::string_view value) {
             if (value == "true") return true;
             if (value == "false") return false;
@@ -1356,6 +1474,88 @@ namespace spectra::rasterizer {
             return converted;
         }
 
+        [[nodiscard]] std::vector<DynamicSceneOpenOptionSchema> make_open_option_schemas(const SpectraDynamicSceneOpenOptionSchemaSpan schemas, const std::string_view context) {
+            const std::span<const SpectraDynamicSceneOpenOptionSchema> schema_span = abi_span(schemas.data, schemas.count, context);
+            std::set<std::string> schema_keys{};
+            std::vector<DynamicSceneOpenOptionSchema> converted{};
+            converted.reserve(schema_span.size());
+            for (std::size_t schema_index = 0u; schema_index < schema_span.size(); ++schema_index) {
+                DynamicSceneOpenOptionSchema schema = make_open_option_schema(schema_span[schema_index], std::format("{} {}", context, schema_index));
+                if (!schema_keys.insert(schema.key).second) throw std::runtime_error(std::format("{} option '{}' is duplicated", context, schema.key));
+                converted.push_back(std::move(schema));
+            }
+            return converted;
+        }
+
+        [[nodiscard]] DynamicSceneProjectAction make_project_action(const SpectraDynamicSceneProjectAction& action, const std::string_view context) {
+            return DynamicSceneProjectAction{
+                .id = abi_string(action.id, std::format("{} id", context), false),
+                .label = abi_string(action.label, std::format("{} label", context), false),
+                .description = abi_string(action.description, std::format("{} description", context), true),
+                .options = make_open_option_schemas(action.options, std::format("{} option schema", context)),
+            };
+        }
+
+        [[nodiscard]] std::vector<DynamicSceneProjectAction> make_project_actions(const SpectraDynamicSceneProjectActionSpan actions, const std::string_view context) {
+            const std::span<const SpectraDynamicSceneProjectAction> action_span = abi_span(actions.data, actions.count, context);
+            std::set<std::string> action_ids{};
+            std::vector<DynamicSceneProjectAction> converted{};
+            converted.reserve(action_span.size());
+            for (std::size_t action_index = 0u; action_index < action_span.size(); ++action_index) {
+                DynamicSceneProjectAction action = make_project_action(action_span[action_index], std::format("{} {}", context, action_index));
+                if (!action_ids.insert(action.id).second) throw std::runtime_error(std::format("{} action '{}' is duplicated", context, action.id));
+                converted.push_back(std::move(action));
+            }
+            return converted;
+        }
+
+        [[nodiscard]] DynamicSceneProjectStatus make_project_status(const SpectraDynamicSceneProjectStatusView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneProjectStatusView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            DynamicSceneProjectStatus status{
+                .phase = abi_string(view.phase, std::format("{} phase", context), false),
+                .headline = abi_string(view.headline, std::format("{} headline", context), false),
+                .detail = abi_string(view.detail, std::format("{} detail", context), true),
+            };
+            const std::span<const SpectraDynamicSceneProjectMetric> metrics = abi_span(view.metrics.data, view.metrics.count, std::format("{} metrics", context));
+            std::set<std::string> metric_keys{};
+            status.metrics.reserve(metrics.size());
+            for (std::size_t metric_index = 0u; metric_index < metrics.size(); ++metric_index) {
+                const SpectraDynamicSceneProjectMetric& metric = metrics[metric_index];
+                DynamicSceneProjectMetric converted{
+                    .key = abi_string(metric.key, std::format("{} metric {} key", context, metric_index), false),
+                    .label = abi_string(metric.label, std::format("{} metric {} label", context, metric_index), false),
+                    .value = abi_string(metric.value, std::format("{} metric {} value", context, metric_index), false),
+                };
+                if (!metric_keys.insert(converted.key).second) throw std::runtime_error(std::format("{} metric '{}' is duplicated", context, converted.key));
+                status.metrics.push_back(std::move(converted));
+            }
+            const std::span<const SpectraDynamicSceneString> enabled_action_ids = abi_span(view.enabled_action_ids.data, view.enabled_action_ids.count, std::format("{} enabled action ids", context));
+            std::set<std::string> enabled_ids{};
+            status.enabled_action_ids.reserve(enabled_action_ids.size());
+            for (std::size_t enabled_index = 0u; enabled_index < enabled_action_ids.size(); ++enabled_index) {
+                std::string action_id = abi_string(enabled_action_ids[enabled_index], std::format("{} enabled action id {}", context, enabled_index), false);
+                if (!enabled_ids.insert(action_id).second) throw std::runtime_error(std::format("{} enabled action id '{}' is duplicated", context, action_id));
+                status.enabled_action_ids.push_back(std::move(action_id));
+            }
+            return status;
+        }
+
+        [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> make_project_logs(const SpectraDynamicSceneProjectLogView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneProjectLogView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            const std::span<const SpectraDynamicSceneProjectLogEntry> entries = abi_span(view.entries.data, view.entries.count, std::format("{} entries", context));
+            std::vector<DynamicSceneProjectLogEntry> converted{};
+            converted.reserve(entries.size());
+            for (std::size_t entry_index = 0u; entry_index < entries.size(); ++entry_index) {
+                const SpectraDynamicSceneProjectLogEntry& entry = entries[entry_index];
+                converted.push_back(DynamicSceneProjectLogEntry{
+                    .sequence = entry.sequence,
+                    .level = abi_string(entry.level, std::format("{} entry {} level", context, entry_index), false),
+                    .message = abi_string(entry.message, std::format("{} entry {} message", context, entry_index), false),
+                });
+            }
+            return converted;
+        }
+
         class NativeLibrary final {
         public:
             explicit NativeLibrary(std::filesystem::path path) : path(std::move(path)) {
@@ -1411,7 +1611,11 @@ namespace spectra::rasterizer {
                 const SpectraDynamicScenePluginEntryFn entry = reinterpret_cast<SpectraDynamicScenePluginEntryFn>(entry_address);
                 this->plugin = entry();
                 if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin entry returned null", this->open_request.plugin_path.string()));
-                this->validate_descriptor();
+                this->validate_plugin_descriptor();
+                this->scene_api = this->required_api<SpectraDynamicSceneSceneApi>(scene_api_name, scene_api_version);
+                this->project_api = this->optional_api<SpectraDynamicSceneProjectApi>(project_api_name, project_api_version);
+                this->validate_scene_api();
+                this->validate_project_api();
             }
 
             DynamicScenePluginLibrary(const DynamicScenePluginLibrary& other) = delete;
@@ -1453,24 +1657,20 @@ namespace spectra::rasterizer {
             }
 
             [[nodiscard]] std::vector<DynamicSceneOpenOptionSchema> open_options() const {
-                const std::span<const SpectraDynamicSceneOpenOptionSchema> schemas = abi_span(this->plugin->open_options.data, this->plugin->open_options.count, "Dynamic scene plugin open option schema");
-                std::set<std::string> schema_keys{};
-                std::vector<DynamicSceneOpenOptionSchema> converted{};
-                converted.reserve(schemas.size());
-                for (std::size_t schema_index = 0u; schema_index < schemas.size(); ++schema_index) {
-                    DynamicSceneOpenOptionSchema schema = make_open_option_schema(schemas[schema_index], std::format("Dynamic scene plugin open option schema {}", schema_index));
-                    if (!schema_keys.insert(schema.key).second) throw std::runtime_error(std::format("{}: dynamic scene plugin open option '{}' is duplicated", this->open_request.plugin_path.string(), schema.key));
-                    converted.push_back(std::move(schema));
-                }
-                return converted;
+                return make_open_option_schemas(this->plugin->open_options, "Dynamic scene plugin open option schema");
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneProjectAction> project_actions() const {
+                if (this->project_api == nullptr) return {};
+                return make_project_actions(this->project_api->project_actions, "Dynamic scene plugin project action");
             }
 
             [[nodiscard]] double frames_per_second() const {
-                return finite_double(this->plugin->frames_per_second, "Dynamic scene plugin frame rate");
+                return finite_double(this->scene_api->frames_per_second, "Dynamic scene plugin frame rate");
             }
 
             [[nodiscard]] scene::Scene::Document make_base_document() const {
-                const std::string template_path_text = abi_string(this->plugin->pbrt_template_path, "Dynamic scene plugin PBRT template path", true);
+                const std::string template_path_text = abi_string(this->scene_api->pbrt_template_path, "Dynamic scene plugin PBRT template path", true);
                 if (template_path_text.empty()) {
                     return scene::Scene::Document{
                         .revision = scene::Scene::Revision{1},
@@ -1499,7 +1699,7 @@ namespace spectra::rasterizer {
             void check_result(const SpectraDynamicSceneResult result, SpectraDynamicSceneInstance* instance, const std::string_view action) const {
                 if (result == SPECTRA_DYNAMIC_SCENE_RESULT_OK) return;
                 if (result != SPECTRA_DYNAMIC_SCENE_RESULT_ERROR) throw std::runtime_error(std::format("{} returned an unknown result code {}", action, static_cast<int>(result)));
-                std::string error = abi_string(this->plugin->last_error(instance), std::format("{} error message", action), true);
+                std::string error = abi_string(this->scene_api->last_error(instance), std::format("{} error message", action), true);
                 if (error.empty()) error = "unknown plugin error";
                 throw std::runtime_error(std::format("{} failed: {}", action, error));
             }
@@ -1515,37 +1715,121 @@ namespace spectra::rasterizer {
                         .count = static_cast<std::uint64_t>(this->open_request.option_views.size()),
                     },
                 };
-                this->check_result(this->plugin->create(&open_info, &instance), nullptr, "Dynamic scene plugin create");
+                this->check_result(this->scene_api->create(&open_info, &instance), nullptr, "Dynamic scene plugin create");
                 if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin create returned a null instance");
                 return instance;
             }
 
             void destroy_instance(SpectraDynamicSceneInstance* instance) const noexcept {
-                if (instance != nullptr) this->plugin->destroy(instance);
+                if (instance != nullptr) this->scene_api->destroy(instance);
             }
 
             void reset(SpectraDynamicSceneInstance* instance) const {
-                this->check_result(this->plugin->reset(instance), instance, "Dynamic scene plugin reset");
+                this->check_result(this->scene_api->reset(instance), instance, "Dynamic scene plugin reset");
             }
 
             void step(SpectraDynamicSceneInstance* instance, const float delta_seconds) const {
-                this->check_result(this->plugin->step(instance, delta_seconds), instance, "Dynamic scene plugin step");
+                this->check_result(this->scene_api->step(instance, delta_seconds), instance, "Dynamic scene plugin step");
+            }
+
+            void update_project(SpectraDynamicSceneInstance* instance, const float delta_seconds) const {
+                if (this->project_api == nullptr) return;
+                this->check_result(this->project_api->project_update(instance, delta_seconds), instance, "Dynamic scene plugin project update");
+            }
+
+            void project_action(SpectraDynamicSceneInstance* instance, const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) const {
+                if (this->project_api == nullptr) throw std::runtime_error("Dynamic scene plugin does not expose a project API");
+                if (action_id.empty()) throw std::runtime_error("Dynamic scene plugin project action id must not be empty");
+                std::vector<DynamicScenePluginOptionStorage> option_storage{};
+                std::vector<SpectraDynamicSceneOption> option_views{};
+                std::set<std::string> option_keys{};
+                option_storage.reserve(options.size());
+                option_views.reserve(options.size());
+                for (const DynamicSceneOpenOption& option : options) {
+                    if (option.key.empty()) throw std::runtime_error("Dynamic scene project action option key must not be empty");
+                    if (!option_keys.insert(option.key).second) throw std::runtime_error(std::format("Dynamic scene project action option '{}' is duplicated", option.key));
+                    option_storage.push_back(DynamicScenePluginOptionStorage{
+                        .key = option.key,
+                        .value = option.value,
+                    });
+                }
+                for (const DynamicScenePluginOptionStorage& option : option_storage) {
+                    option_views.push_back(SpectraDynamicSceneOption{
+                        .key = abi_text(option.key),
+                        .value = abi_text(option.value),
+                    });
+                }
+                this->check_result(
+                    this->project_api->project_action(
+                        instance,
+                        abi_text(action_id),
+                        SpectraDynamicSceneOptionSpan{
+                            .data = option_views.empty() ? nullptr : option_views.data(),
+                            .count = static_cast<std::uint64_t>(option_views.size()),
+                        }),
+                    instance,
+                    std::format("Dynamic scene plugin project action '{}'", action_id));
+            }
+
+            [[nodiscard]] DynamicSceneProjectStatus project_status(SpectraDynamicSceneInstance* instance) const {
+                if (this->project_api == nullptr) {
+                    return DynamicSceneProjectStatus{
+                        .phase = "Active",
+                        .headline = "Dynamic scene active",
+                    };
+                }
+                SpectraDynamicSceneProjectStatusView view{};
+                this->check_result(this->project_api->project_status(instance, &view), instance, "Dynamic scene plugin project status");
+                DynamicSceneProjectStatus status = make_project_status(view, "Dynamic scene plugin project status");
+                std::set<std::string> action_ids{};
+                for (const DynamicSceneProjectAction& action : this->project_actions()) action_ids.insert(action.id);
+                for (const std::string& enabled_action_id : status.enabled_action_ids)
+                    if (!action_ids.contains(enabled_action_id)) throw std::runtime_error(std::format("Dynamic scene plugin project status enabled unknown action '{}'", enabled_action_id));
+                return status;
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> project_logs(SpectraDynamicSceneInstance* instance) const {
+                if (this->project_api == nullptr) return {};
+                SpectraDynamicSceneProjectLogView view{};
+                this->check_result(this->project_api->project_logs(instance, &view), instance, "Dynamic scene plugin project logs");
+                return make_project_logs(view, "Dynamic scene plugin project logs");
             }
 
             [[nodiscard]] SpectraDynamicSceneDocumentView document(SpectraDynamicSceneInstance* instance) const {
                 SpectraDynamicSceneDocumentView view{};
-                this->check_result(this->plugin->document(instance, &view), instance, "Dynamic scene plugin document");
+                this->check_result(this->scene_api->document(instance, &view), instance, "Dynamic scene plugin document");
                 return view;
             }
 
             [[nodiscard]] SpectraDynamicSceneFrameView frame(SpectraDynamicSceneInstance* instance, const scene::Scene::FrameInfo& frame_info) const {
                 SpectraDynamicSceneFrameView view{};
-                this->check_result(this->plugin->frame(instance, SpectraDynamicSceneFrameInfo{.delta_seconds = frame_info.delta_seconds, .time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Dynamic scene plugin frame");
+                this->check_result(this->scene_api->frame(instance, SpectraDynamicSceneFrameInfo{.delta_seconds = frame_info.delta_seconds, .time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Dynamic scene plugin frame");
                 return view;
             }
 
         private:
-            void validate_descriptor() const {
+            template <typename Api>
+            [[nodiscard]] const Api* api(std::string_view name, const std::uint32_t version) const {
+                const void* api_pointer{};
+                const SpectraDynamicSceneResult result = this->plugin->get_api(abi_text(name), version, &api_pointer);
+                if (result == SPECTRA_DYNAMIC_SCENE_RESULT_OK) return static_cast<const Api*>(api_pointer);
+                if (result != SPECTRA_DYNAMIC_SCENE_RESULT_ERROR) throw std::runtime_error(std::format("{}: dynamic scene plugin get_api returned an unknown result code {}", this->open_request.plugin_path.string(), static_cast<int>(result)));
+                throw std::runtime_error(std::format("{}: dynamic scene plugin get_api({}, {}) failed", this->open_request.plugin_path.string(), name, version));
+            }
+
+            template <typename Api>
+            [[nodiscard]] const Api* required_api(std::string_view name, const std::uint32_t version) const {
+                const Api* loaded_api = this->api<Api>(name, version);
+                if (loaded_api == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin does not expose required API {} v{}", this->open_request.plugin_path.string(), name, version));
+                return loaded_api;
+            }
+
+            template <typename Api>
+            [[nodiscard]] const Api* optional_api(std::string_view name, const std::uint32_t version) const {
+                return this->api<Api>(name, version);
+            }
+
+            void validate_plugin_descriptor() const {
                 if (this->plugin->abi_version != plugin_abi_version) throw std::runtime_error(std::format("{}: dynamic scene plugin ABI version {} does not match host ABI version {}", this->open_request.plugin_path.string(), this->plugin->abi_version, plugin_abi_version));
                 if (this->plugin->struct_size != sizeof(SpectraDynamicScenePlugin)) throw std::runtime_error(std::format("{}: dynamic scene plugin descriptor size mismatch", this->open_request.plugin_path.string()));
                 static_cast<void>(this->id());
@@ -1553,22 +1837,39 @@ namespace spectra::rasterizer {
                 static_cast<void>(this->project_panel_title());
                 static_cast<void>(this->open_action_label());
                 static_cast<void>(this->open_action_description());
+                if (this->plugin->get_api == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin get_api function is null", this->open_request.plugin_path.string()));
+                static_cast<void>(this->open_options());
+            }
+
+            void validate_scene_api() const {
+                if (this->scene_api->struct_size != sizeof(SpectraDynamicSceneSceneApi)) throw std::runtime_error(std::format("{}: dynamic scene scene API descriptor size mismatch", this->open_request.plugin_path.string()));
                 const double fps = this->frames_per_second();
                 if (fps <= 0.0) throw std::runtime_error(std::format("{}: dynamic scene plugin frame rate must be positive", this->open_request.plugin_path.string()));
-                if (this->plugin->create == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin create function is null", this->open_request.plugin_path.string()));
-                if (this->plugin->destroy == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin destroy function is null", this->open_request.plugin_path.string()));
-                if (this->plugin->reset == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin reset function is null", this->open_request.plugin_path.string()));
-                if (this->plugin->step == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin step function is null", this->open_request.plugin_path.string()));
-                if (this->plugin->document == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin document function is null", this->open_request.plugin_path.string()));
-                if (this->plugin->frame == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin frame function is null", this->open_request.plugin_path.string()));
-                if (this->plugin->last_error == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin last_error function is null", this->open_request.plugin_path.string()));
-                static_cast<void>(this->open_options());
+                if (this->scene_api->create == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API create function is null", this->open_request.plugin_path.string()));
+                if (this->scene_api->destroy == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API destroy function is null", this->open_request.plugin_path.string()));
+                if (this->scene_api->reset == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API reset function is null", this->open_request.plugin_path.string()));
+                if (this->scene_api->step == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API step function is null", this->open_request.plugin_path.string()));
+                if (this->scene_api->document == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API document function is null", this->open_request.plugin_path.string()));
+                if (this->scene_api->frame == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API frame function is null", this->open_request.plugin_path.string()));
+                if (this->scene_api->last_error == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API last_error function is null", this->open_request.plugin_path.string()));
+            }
+
+            void validate_project_api() const {
+                if (this->project_api == nullptr) return;
+                if (this->project_api->struct_size != sizeof(SpectraDynamicSceneProjectApi)) throw std::runtime_error(std::format("{}: dynamic scene project API descriptor size mismatch", this->open_request.plugin_path.string()));
+                if (this->project_api->project_update == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_update function is null", this->open_request.plugin_path.string()));
+                if (this->project_api->project_action == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_action function is null", this->open_request.plugin_path.string()));
+                if (this->project_api->project_status == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_status function is null", this->open_request.plugin_path.string()));
+                if (this->project_api->project_logs == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_logs function is null", this->open_request.plugin_path.string()));
+                static_cast<void>(this->project_actions());
             }
 
             DynamicScenePluginOpenRequestStorage open_request{};
             std::filesystem::path plugin_directory{};
             NativeLibrary native;
             const SpectraDynamicScenePlugin* plugin{};
+            const SpectraDynamicSceneSceneApi* scene_api{};
+            const SpectraDynamicSceneProjectApi* project_api{};
         };
 
         class DynamicScenePluginSourceInstance final : public DynamicSceneSourceInstance {
@@ -1594,6 +1895,22 @@ namespace spectra::rasterizer {
 
             void step(const float delta_seconds) override {
                 this->plugin->step(this->instance, delta_seconds);
+            }
+
+            void update_project(const float delta_seconds) override {
+                this->plugin->update_project(this->instance, delta_seconds);
+            }
+
+            void execute_project_action(const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) override {
+                this->plugin->project_action(this->instance, action_id, options);
+            }
+
+            [[nodiscard]] DynamicSceneProjectStatus project_status() const override {
+                return this->plugin->project_status(this->instance);
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> project_logs() const override {
+                return this->plugin->project_logs(this->instance);
             }
 
             [[nodiscard]] scene::Scene::Document create_scene_document() const override {
@@ -1647,6 +1964,7 @@ namespace spectra::rasterizer {
             .open_action_description = plugin.open_action_description(),
             .path = plugin.path(),
             .open_options = plugin.open_options(),
+            .project_actions = plugin.project_actions(),
         };
     }
 

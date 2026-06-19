@@ -9,6 +9,68 @@ namespace spectra::rasterizer {
         Dynamic,
     };
 
+    export enum class DynamicSceneOpenOptionKind {
+        Text,
+        DirectoryPath,
+        FilePath,
+        Choice,
+        Bool,
+        Float,
+        UnsignedInteger,
+    };
+
+    export struct DynamicSceneOpenOptionChoice {
+        std::string value{};
+        std::string label{};
+    };
+
+    export struct DynamicSceneOpenOptionSchema {
+        std::string key{};
+        std::string label{};
+        std::string description{};
+        DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Text};
+        bool required{};
+        std::string default_value{};
+        std::vector<DynamicSceneOpenOptionChoice> choices{};
+    };
+
+    export struct DynamicSceneOpenOption {
+        std::string key{};
+        std::string value{};
+    };
+
+    export struct DynamicSceneOpenRequest {
+        std::filesystem::path plugin_path{};
+        std::vector<DynamicSceneOpenOption> options{};
+    };
+
+    export struct DynamicSceneProjectAction {
+        std::string id{};
+        std::string label{};
+        std::string description{};
+        std::vector<DynamicSceneOpenOptionSchema> options{};
+    };
+
+    export struct DynamicSceneProjectMetric {
+        std::string key{};
+        std::string label{};
+        std::string value{};
+    };
+
+    export struct DynamicSceneProjectStatus {
+        std::string phase{};
+        std::string headline{};
+        std::string detail{};
+        std::vector<DynamicSceneProjectMetric> metrics{};
+        std::vector<std::string> enabled_action_ids{};
+    };
+
+    export struct DynamicSceneProjectLogEntry {
+        std::uint64_t sequence{};
+        std::string level{};
+        std::string message{};
+    };
+
     export class DynamicSceneSourceInstance {
     public:
         DynamicSceneSourceInstance() = default;
@@ -21,6 +83,10 @@ namespace spectra::rasterizer {
 
         virtual void reset() = 0;
         virtual void step(float delta_seconds) = 0;
+        virtual void update_project(float delta_seconds) = 0;
+        virtual void execute_project_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options) = 0;
+        [[nodiscard]] virtual DynamicSceneProjectStatus project_status() const = 0;
+        [[nodiscard]] virtual std::vector<DynamicSceneProjectLogEntry> project_logs() const = 0;
         [[nodiscard]] virtual scene::Scene::Document create_scene_document() const = 0;
         [[nodiscard]] virtual scene::Scene::FrameSnapshot create_scene_frame(const scene::Scene::FrameInfo& frame) const = 0;
     };
@@ -44,6 +110,24 @@ namespace spectra::rasterizer {
 
         friend class SceneRegistry;
         friend class SceneController;
+    };
+
+    export struct DynamicScenePluginSource {
+        std::string id{};
+        std::string title{};
+        std::filesystem::path path{};
+        std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_source{};
+    };
+
+    export struct DynamicScenePluginInfo {
+        std::string id{};
+        std::string title{};
+        std::string project_panel_title{};
+        std::string open_action_label{};
+        std::string open_action_description{};
+        std::filesystem::path path{};
+        std::vector<DynamicSceneOpenOptionSchema> open_options{};
+        std::vector<DynamicSceneProjectAction> project_actions{};
     };
 
     export class SceneRegistry final {
@@ -89,12 +173,17 @@ namespace spectra::rasterizer {
         [[nodiscard]] bool pending_switch() const;
         [[nodiscard]] bool has_activation_error() const;
         [[nodiscard]] const std::string& activation_error() const;
+        [[nodiscard]] bool has_active_dynamic_project();
+        [[nodiscard]] DynamicSceneProjectStatus active_dynamic_project_status();
+        [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> active_dynamic_project_logs();
         void activate_empty_workspace();
         void request_activate(std::size_t index);
         [[nodiscard]] bool activate_static_scene(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> load_scene);
         [[nodiscard]] bool activate_dynamic_scene(std::string id, std::string title, std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_source);
         [[nodiscard]] bool apply_pending_scene();
+        void update_active_project(double delta_seconds);
         void update_active_scene(double delta_seconds);
+        void execute_active_dynamic_project_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options);
 
     private:
         struct SceneSlot {
@@ -113,6 +202,7 @@ namespace spectra::rasterizer {
         void set_dynamic_slot(std::size_t index, std::unique_ptr<DynamicSceneSourceInstance> source, std::shared_ptr<scene::Scene> workspace);
         void clear_activation_error();
         [[nodiscard]] SceneSlot& ensure_slot(std::size_t index);
+        [[nodiscard]] DynamicSceneSourceInstance& active_dynamic_project_source();
         [[nodiscard]] scene::Scene::Document create_dynamic_slot(std::size_t index, SceneSlot* slot);
         void reset_dynamic_scene(SceneSlot& slot, scene::Scene::Timeline timeline);
 
@@ -122,58 +212,6 @@ namespace spectra::rasterizer {
         std::optional<std::size_t> selected_entry_index{};
         std::optional<std::size_t> pending_selected_entry_index{};
         std::string activation_error_message{};
-    };
-
-    export struct DynamicScenePluginSource {
-        std::string id{};
-        std::string title{};
-        std::filesystem::path path{};
-        std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_source{};
-    };
-
-    export enum class DynamicSceneOpenOptionKind {
-        Text,
-        DirectoryPath,
-        FilePath,
-        Choice,
-        Bool,
-        Float,
-        UnsignedInteger,
-    };
-
-    export struct DynamicSceneOpenOptionChoice {
-        std::string value{};
-        std::string label{};
-    };
-
-    export struct DynamicSceneOpenOptionSchema {
-        std::string key{};
-        std::string label{};
-        std::string description{};
-        DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Text};
-        bool required{};
-        std::string default_value{};
-        std::vector<DynamicSceneOpenOptionChoice> choices{};
-    };
-
-    export struct DynamicScenePluginInfo {
-        std::string id{};
-        std::string title{};
-        std::string project_panel_title{};
-        std::string open_action_label{};
-        std::string open_action_description{};
-        std::filesystem::path path{};
-        std::vector<DynamicSceneOpenOptionSchema> open_options{};
-    };
-
-    export struct DynamicSceneOpenOption {
-        std::string key{};
-        std::string value{};
-    };
-
-    export struct DynamicSceneOpenRequest {
-        std::filesystem::path plugin_path{};
-        std::vector<DynamicSceneOpenOption> options{};
     };
 
     export [[nodiscard]] bool is_dynamic_scene_plugin_file(const std::filesystem::path& path);

@@ -48,7 +48,8 @@ You may also load PBRT scenes and dynamic scene plugins through the GUI.
 
 then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
 empty dynamic project first; the Project popover renders the generic form declared by the plugin descriptor and creates
-the dynamic scene only when the plugin-declared open action is pressed.
+the dynamic scene only when the plugin-declared open action is pressed. After creation, the same popover displays
+plugin-declared project actions, status metrics, and logs.
 
 
 ## Dynamic Scene Plugins Developer Guide
@@ -68,7 +69,7 @@ lifetime, and `revision` must increase when the pixel contents change.
 
 ### Binary Contract
 
-- ABI version: `10`.
+- ABI version: `12`.
 - Exported symbol: `spectra_dynamic_scene_plugin`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
@@ -79,10 +80,10 @@ lifetime, and `revision` must increase when the pixel contents change.
 ### Required ABI Declarations
 
 Dynamic scene plugins must declare the documented C ABI in the producer project. Do not include Spectra headers, link
-Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. The plugin descriptor may expose a
-generic project/open metadata and an open-options schema. Spectra renders that schema in the Project popover and passes
-strict key/value options to `create` through `SpectraDynamicSceneOpenInfo`, together with the resolved plugin path.
-
+Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. The plugin descriptor exposes generic
+project/open metadata, an open-options schema, and `get_api`. Spectra renders the open schema in the Project popover,
+loads the required scene capability table through `get_api("spectra.dynamic_scene.scene", 1)`, and loads the optional
+project-control table through `get_api("spectra.dynamic_scene.project", 1)`.
 
 ### Required Export
 
@@ -96,8 +97,9 @@ strict key/value options to `create` through `SpectraDynamicSceneOpenInfo`, toge
 extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `10`, set `struct_size` to
-`sizeof(SpectraDynamicScenePlugin)`, and provide every function pointer.
+The returned descriptor and every capability table returned by `get_api` must stay valid while the library is loaded.
+Set `abi_version` to `12`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
+unsupported optional APIs. The scene API is required; missing it is an error.
 
 ### Data Rules
 
@@ -120,20 +122,37 @@ The returned descriptor must stay valid while the library is loaded. Set `abi_ve
 - Camera visual RGBA8 images are borrowed pointers with tightly packed `width * height * 4` bytes.
 - `pbrt_template_path` may be empty. If non-empty, it must be relative to the plugin library directory.
 - `project_panel_title` and `open_action_label` must be non-empty. `open_action_description` may be empty.
+- The project API is optional. If present, `project_actions` may be empty, but every declared action id and label must be
+  non-empty and unique. Action option schemas use the same option kind and validation rules as open options.
+- If the project API is present, `project_status` phase, headline, metric keys/labels/values, enabled action ids, log
+  levels, and log messages must be non-empty. Enabled action ids must refer to declared project actions.
 - Open option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
   `6` unsigned integer.
 - Open option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
   options must not declare choices. Bool defaults must be `true` or `false`.
 
+### Capability Tables
+
+- `get_api("spectra.dynamic_scene.scene", 1, &api)` must return a non-null `SpectraDynamicSceneSceneApi`.
+- `get_api("spectra.dynamic_scene.project", 1, &api)` may return null if the plugin has no project controls.
+- Unknown capability names or unsupported capability versions return `OK` with `*api = nullptr`.
+
 ### Callback Rules
 
-- `create` returns a plugin-owned instance pointer.
-- `destroy` releases that instance.
-- `reset` resets simulation state and rebuilds internal visualization buffers.
-- `step` advances simulation state by `delta_seconds`.
-- `document` returns static scene data: materials, lights, camera, and static primitives.
-- `frame` returns dynamic primitives for the requested frame cursor.
-- `last_error` returns the most recent instance-local error string; it may be empty.
+- Scene API `create` returns a plugin-owned instance pointer.
+- Scene API `destroy` releases that instance.
+- Scene API `reset` resets simulation state and rebuilds internal visualization buffers.
+- Scene API `step` advances simulation state by `delta_seconds`.
+- Scene API `document` returns static scene data: materials, lights, camera, and static primitives.
+- Scene API `frame` returns dynamic primitives for the requested frame cursor.
+- Scene API `last_error` returns the most recent instance-local error string; it may be empty. Project API callbacks use
+  the same instance error channel.
+- Project API `project_update` advances plugin-owned project work once per GUI frame. It is independent from scene
+  timeline `step` and should keep long-running work chunked enough for interactive UI.
+- Project API `project_action` executes one plugin-declared action with strict key/value options.
+- Project API `project_status` returns the current plugin-defined phase, headline, detail, metrics, and currently
+  enabled actions.
+- Project API `project_logs` returns a plugin-owned log snapshot. Spectra copies log entries for display.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.

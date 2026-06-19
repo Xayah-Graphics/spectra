@@ -59,6 +59,11 @@ namespace {
         bool enabled{true};
     };
 
+    struct DynamicSceneProjectActionEditor {
+        spectra::rasterizer::DynamicSceneProjectAction action{};
+        std::vector<DynamicSceneOpenOptionEditor> editors{};
+    };
+
     enum class DynamicSceneProjectPhase {
         None,
         PluginLoaded,
@@ -70,6 +75,7 @@ namespace {
         DynamicSceneProjectPhase phase{DynamicSceneProjectPhase::None};
         spectra::rasterizer::DynamicScenePluginInfo plugin{};
         std::vector<DynamicSceneOpenOptionEditor> editors{};
+        std::vector<DynamicSceneProjectActionEditor> action_editors{};
         std::string error{};
         std::string active_title{};
         std::string active_id{};
@@ -146,6 +152,13 @@ namespace {
                 set_text_buffer(editor.text_buffer, editor.text_value);
                 break;
         }
+        return editor;
+    }
+
+    [[nodiscard]] DynamicSceneProjectActionEditor make_project_action_editor(spectra::rasterizer::DynamicSceneProjectAction action) {
+        DynamicSceneProjectActionEditor editor{.action = std::move(action)};
+        editor.editors.reserve(editor.action.options.size());
+        for (const spectra::rasterizer::DynamicSceneOpenOptionSchema& schema : editor.action.options) editor.editors.push_back(make_open_option_editor(schema));
         return editor;
     }
 
@@ -237,6 +250,9 @@ namespace {
         project.editors.clear();
         project.editors.reserve(project.plugin.open_options.size());
         for (spectra::rasterizer::DynamicSceneOpenOptionSchema& schema : project.plugin.open_options) project.editors.push_back(make_open_option_editor(std::move(schema)));
+        project.action_editors.clear();
+        project.action_editors.reserve(project.plugin.project_actions.size());
+        for (const spectra::rasterizer::DynamicSceneProjectAction& action : project.plugin.project_actions) project.action_editors.push_back(make_project_action_editor(action));
         project.error.clear();
         project.active_title.clear();
         project.active_id.clear();
@@ -329,10 +345,99 @@ namespace {
         throw std::runtime_error("Unknown dynamic scene project phase");
     }
 
+    [[nodiscard]] bool project_action_enabled(const spectra::rasterizer::DynamicSceneProjectStatus& status, const std::string& action_id) {
+        return std::ranges::any_of(status.enabled_action_ids, [&action_id](const std::string& enabled_action_id) { return enabled_action_id == action_id; });
+    }
+
+    [[nodiscard]] ImVec4 project_log_level_color(const std::string& level) {
+        if (level == "ERROR") return ImVec4{1.0f, 0.42f, 0.36f, 1.0f};
+        if (level == "WARN") return ImVec4{1.0f, 0.78f, 0.32f, 1.0f};
+        if (level == "OPTIMIZE") return ImVec4{0.45f, 0.9f, 0.58f, 1.0f};
+        if (level == "START") return ImVec4{0.45f, 0.78f, 1.0f, 1.0f};
+        return ImVec4{0.68f, 0.73f, 0.80f, 1.0f};
+    }
+
+    void draw_dynamic_project_status(const spectra::rasterizer::DynamicSceneProjectStatus& status) {
+        ImGui::TextDisabled("%s", "Project Status");
+        ImGui::TextUnformatted(status.phase.c_str());
+        ImGui::TextWrapped("%s", status.headline.c_str());
+        if (!status.detail.empty()) ImGui::TextWrapped("%s", status.detail.c_str());
+        if (!status.metrics.empty()) {
+            ImGui::Spacing();
+            for (const spectra::rasterizer::DynamicSceneProjectMetric& metric : status.metrics) {
+                ImGui::TextDisabled("%s", metric.label.c_str());
+                ImGui::SameLine();
+                ImGui::TextWrapped("%s", metric.value.c_str());
+            }
+        }
+    }
+
+    void draw_dynamic_project_logs(const std::span<const spectra::rasterizer::DynamicSceneProjectLogEntry> logs) {
+        ImGui::TextDisabled("%s", "Log");
+        ImGui::BeginChild("DynamicProjectLogs", ImVec2{-1.0f, 180.0f}, true);
+        if (logs.empty()) {
+            ImGui::TextDisabled("%s", "No log entries");
+        } else {
+            for (const spectra::rasterizer::DynamicSceneProjectLogEntry& entry : logs) {
+                const std::string line = std::format("{:>5} {:<9} {}", entry.sequence, entry.level, entry.message);
+                ImGui::TextColored(project_log_level_color(entry.level), "%s", line.c_str());
+            }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+    }
+
+    void draw_dynamic_project_action_editor(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project, DynamicSceneProjectActionEditor& editor, const spectra::rasterizer::DynamicSceneProjectStatus& status) {
+        ImGui::PushID(editor.action.id.c_str());
+        const std::string header_label = std::format("{}##header", editor.action.label);
+        const bool opened = ImGui::CollapsingHeader(header_label.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        if (opened) {
+            if (!editor.action.description.empty()) ImGui::TextWrapped("%s", editor.action.description.c_str());
+            for (DynamicSceneOpenOptionEditor& option_editor : editor.editors) {
+                draw_open_option_editor(option_editor);
+                ImGui::Spacing();
+            }
+            const bool enabled = project_action_enabled(status, editor.action.id);
+            ImGui::BeginDisabled(!enabled);
+            const std::string button_label = std::format("{}##execute", editor.action.label);
+            const bool clicked = ImGui::Button(button_label.c_str(), ImVec2{-1.0f, 0.0f});
+            ImGui::EndDisabled();
+            if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", "Action disabled by project status");
+            if (clicked) {
+                try {
+                    const std::vector<spectra::rasterizer::DynamicSceneOpenOption> options = collect_open_options(editor.editors);
+                    controller.execute_active_dynamic_project_action(editor.action.id, options);
+                    project.phase = DynamicSceneProjectPhase::Active;
+                    project.error.clear();
+                    set_scene_status(state, std::format("Executed {}", editor.action.label), false);
+                } catch (const std::exception& error) {
+                    project.phase = DynamicSceneProjectPhase::Error;
+                    project.error = error.what();
+                    set_scene_status(state, project.error, true);
+                }
+            }
+        }
+        ImGui::PopID();
+    }
+
     void draw_dynamic_scene_project_panel(spectra::rasterizer::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneProjectState& project) {
         if (!dynamic_scene_project_loaded(project)) {
             ImGui::TextDisabled("%s", "No dynamic project");
             return;
+        }
+
+        std::optional<spectra::rasterizer::DynamicSceneProjectStatus> active_status{};
+        std::vector<spectra::rasterizer::DynamicSceneProjectLogEntry> active_logs{};
+        if (project.phase == DynamicSceneProjectPhase::Active || project.phase == DynamicSceneProjectPhase::Error) {
+            try {
+                if (controller.has_active_dynamic_project()) {
+                    active_status = controller.active_dynamic_project_status();
+                    active_logs = controller.active_dynamic_project_logs();
+                }
+            } catch (const std::exception& error) {
+                project.phase = DynamicSceneProjectPhase::Error;
+                project.error = error.what();
+            }
         }
 
         ImGui::TextUnformatted(project.plugin.project_panel_title.c_str());
@@ -348,37 +453,61 @@ namespace {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        for (DynamicSceneOpenOptionEditor& editor : project.editors) {
-            draw_open_option_editor(editor);
-            ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("Dataset", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (DynamicSceneOpenOptionEditor& editor : project.editors) {
+                draw_open_option_editor(editor);
+                ImGui::Spacing();
+            }
+            const bool open_disabled = active_status.has_value() && active_status->phase == "Running";
+            ImGui::BeginDisabled(open_disabled);
+            if (ImGui::Button(project.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) {
+                try {
+                    spectra::rasterizer::DynamicSceneOpenRequest request{
+                        .plugin_path = project.plugin.path,
+                        .options = collect_open_options(project.editors),
+                    };
+                    const DynamicSceneActivationResult result = activate_dynamic_scene_plugin(controller, std::move(request));
+                    project.phase = DynamicSceneProjectPhase::Active;
+                    project.active_id = result.id;
+                    project.active_title = result.title;
+                    project.error.clear();
+                    set_scene_status(state, std::format("Loaded {}", result.title), false);
+                } catch (const std::exception& error) {
+                    project.phase = DynamicSceneProjectPhase::Error;
+                    project.error = error.what();
+                    project.active_title.clear();
+                    project.active_id.clear();
+                    controller.activate_empty_workspace();
+                    set_scene_status(state, project.error, true);
+                }
+            }
+            ImGui::EndDisabled();
+            if (open_disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", "Project is running");
+            else if (!project.plugin.open_action_description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", project.plugin.open_action_description.c_str());
         }
+
+        if (active_status.has_value()) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            draw_dynamic_project_status(*active_status);
+            if (!project.action_editors.empty()) {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", "Actions");
+                for (DynamicSceneProjectActionEditor& editor : project.action_editors) draw_dynamic_project_action_editor(controller, state, project, editor, *active_status);
+            }
+            ImGui::Spacing();
+            draw_dynamic_project_logs(active_logs);
+        }
+
         if (!project.error.empty()) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", project.error.c_str());
         }
         ImGui::Spacing();
-        if (ImGui::Button(project.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) {
-            try {
-                spectra::rasterizer::DynamicSceneOpenRequest request{
-                    .plugin_path = project.plugin.path,
-                    .options = collect_open_options(project.editors),
-                };
-                const DynamicSceneActivationResult result = activate_dynamic_scene_plugin(controller, std::move(request));
-                project.phase = DynamicSceneProjectPhase::Active;
-                project.active_id = result.id;
-                project.active_title = result.title;
-                project.error.clear();
-                set_scene_status(state, std::format("Loaded {}", result.title), false);
-            } catch (const std::exception& error) {
-                project.phase = DynamicSceneProjectPhase::Error;
-                project.error = error.what();
-                project.active_title.clear();
-                project.active_id.clear();
-                controller.activate_empty_workspace();
-                set_scene_status(state, project.error, true);
-            }
-        }
-        if (!project.plugin.open_action_description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", project.plugin.open_action_description.c_str());
         if (ImGui::Button("Close Project", ImVec2{-1.0f, 0.0f})) {
             clear_dynamic_scene_project(project);
             controller.activate_empty_workspace();
@@ -447,6 +576,7 @@ namespace {
         [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
             static_cast<void>(this->scene_controller->apply_pending_scene());
             this->sync_scene_workspace();
+            this->scene_controller->update_active_project(frame.delta_seconds);
             const spectra::pathtracer::FrameContext frame_context{
                 .frame_index = frame.frame_slot_index,
                 .image_index = frame.image_index,
@@ -515,6 +645,7 @@ namespace {
         [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
             static_cast<void>(this->scene_controller->apply_pending_scene());
             this->sync_scene_workspace();
+            this->scene_controller->update_active_project(frame.delta_seconds);
             this->scene_controller->update_active_scene(frame.delta_seconds);
             const spectra::rasterizer::FrameContext rasterizer_frame{
                 .frame_index   = frame.frame_slot_index,
