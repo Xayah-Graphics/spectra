@@ -680,7 +680,7 @@ namespace spectra::scene_runtime {
     }
 
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 23u;
+        constexpr std::uint32_t plugin_abi_version = 24u;
         constexpr std::string_view scene_api_name = "spectra.dynamic_scene.scene";
         constexpr std::string_view controls_api_name = "spectra.dynamic_scene.controls";
         constexpr std::uint32_t scene_api_version = 1u;
@@ -1100,6 +1100,7 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneString name{};
             std::uint32_t dimensions[3]{};
             SpectraDynamicSceneFloatSpan values{};
+            std::uint32_t format{};
             std::uint32_t source_kind{};
             std::uint32_t index_encoding{};
             std::uint64_t buffer_id{};
@@ -1487,6 +1488,22 @@ namespace spectra::scene_runtime {
             throw std::runtime_error(std::format("{} has invalid volume channel index encoding {}", context, value));
         }
 
+        [[nodiscard]] scene::Scene::VolumeChannelFormat volume_channel_format_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::VolumeChannelFormat::Float32;
+            case 1u: return scene::Scene::VolumeChannelFormat::Float32x3;
+            }
+            throw std::runtime_error(std::format("{} has invalid volume channel format {}", context, value));
+        }
+
+        [[nodiscard]] std::uint32_t volume_channel_component_count(const scene::Scene::VolumeChannelFormat format) {
+            switch (format) {
+            case scene::Scene::VolumeChannelFormat::Float32: return 1u;
+            case scene::Scene::VolumeChannelFormat::Float32x3: return 3u;
+            }
+            throw std::runtime_error("Unknown dynamic scene volume channel format");
+        }
+
         [[nodiscard]] scene::Scene::SceneEntityKind scene_entity_kind_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
             case 0u: return scene::Scene::SceneEntityKind::Mesh;
@@ -1678,24 +1695,32 @@ namespace spectra::scene_runtime {
             if (result.dimensions[0] == 0u || result.dimensions[1] == 0u || result.dimensions[2] == 0u) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" dimensions must be positive", name));
             const std::span<const SpectraDynamicSceneVolumeChannel> channels = abi_span(volume.channels.data, volume.channels.count, std::format("Dynamic scene volume \"{}\" channels", name));
             for (const SpectraDynamicSceneVolumeChannel& channel : channels) {
+                const std::string channel_name = abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false);
                 scene::Scene::VolumeChannel converted{
-                    .name = abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false),
+                    .name = channel_name,
                     .dimensions = {channel.dimensions[0], channel.dimensions[1], channel.dimensions[2]},
-                    .source_kind = volume_channel_source_kind_from_u32(channel.source_kind, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false))),
-                    .index_encoding = volume_channel_index_encoding_from_u32(channel.index_encoding, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false))),
+                    .format = volume_channel_format_from_u32(channel.format, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, channel_name)),
+                    .source_kind = volume_channel_source_kind_from_u32(channel.source_kind, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, channel_name)),
+                    .index_encoding = volume_channel_index_encoding_from_u32(channel.index_encoding, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, channel_name)),
                     .buffer_id = channel.buffer_id,
                     .external_device_pointer = channel.external_device_pointer,
                     .source_byte_size = channel.source_byte_size,
                     .revision = channel.revision,
                 };
                 if (converted.dimensions != result.dimensions) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" dimensions do not match", name, converted.name));
-                const std::uint64_t expected_count = static_cast<std::uint64_t>(converted.dimensions[0]) * static_cast<std::uint64_t>(converted.dimensions[1]) * static_cast<std::uint64_t>(converted.dimensions[2]);
+                const std::uint64_t cell_count = static_cast<std::uint64_t>(converted.dimensions[0]) * static_cast<std::uint64_t>(converted.dimensions[1]) * static_cast<std::uint64_t>(converted.dimensions[2]);
+                const std::uint32_t component_count = volume_channel_component_count(converted.format);
+                if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value count exceeds uint64 range", name, converted.name));
+                const std::uint64_t expected_count = cell_count * component_count;
                 const std::span<const float> values = abi_span(channel.values.data, channel.values.count, std::format("Dynamic scene volume \"{}\" channel \"{}\" values", name, converted.name));
                 if (converted.source_kind == scene::Scene::VolumeChannelSourceKind::Values) {
                     if (expected_count != values.size()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value count does not match dimensions", name, converted.name));
                     converted.values.assign(values.begin(), values.end());
                     for (std::size_t index = 0u; index < converted.values.size(); ++index)
                         if (!std::isfinite(converted.values[index])) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value #{} must be finite", name, converted.name, index));
+                    if (converted.name == "color")
+                        for (std::size_t index = 0u; index < converted.values.size(); ++index)
+                            if (converted.values[index] < 0.0f) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" color channel value #{} must be non-negative", name, index));
                 } else {
                     if (!values.empty()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" external GPU source must not provide CPU values", name, converted.name));
                     if (expected_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" byte count exceeds uint64 range", name, converted.name));

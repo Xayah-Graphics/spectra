@@ -258,10 +258,16 @@ namespace spectra::scene {
             Morton3D = 1u,
         };
 
+        enum class VolumeChannelFormat : std::uint32_t {
+            Float32   = 0u,
+            Float32x3 = 1u,
+        };
+
         struct VolumeChannel {
             std::string name{};
             std::array<std::uint32_t, 3> dimensions{};
             std::vector<float> values{};
+            VolumeChannelFormat format{VolumeChannelFormat::Float32};
             VolumeChannelSourceKind source_kind{VolumeChannelSourceKind::Values};
             VolumeChannelIndexEncoding index_encoding{VolumeChannelIndexEncoding::Linear};
             std::uint64_t buffer_id{};

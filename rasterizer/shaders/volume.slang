@@ -31,6 +31,7 @@ struct VolumePushConstants {
 [[vk::binding(1, 0)]] Texture3D<float> densityTexture;
 [[vk::binding(2, 0)]] Texture3D<float> temperatureTexture;
 [[vk::binding(3, 0)]] SamplerState volumeSampler;
+[[vk::binding(4, 0)]] Texture3D<float4> colorTexture;
 [[vk::push_constant]] ConstantBuffer<VolumePushConstants> volume;
 
 struct VertexOutput {
@@ -124,6 +125,7 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
     float3 origin = volume.originDensityScale.xyz;
     float densityScale = volume.originDensityScale.w;
     float temperatureScale = volume.material.x;
+    bool hasColor = volume.material.y > 0.5;
     float3 extent = volume.extentStepScale.xyz;
     float stepScale = volume.extentStepScale.w;
     float3 cameraLocal = (camera.cameraPosition.xyz - origin) / extent;
@@ -143,7 +145,8 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
         float density = max(densityTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0) * densityScale;
         float temperature = max(temperatureTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0);
         float alpha = saturate(1.0 - exp(-density * stepWorldLength));
-        float3 smokeColor = volume.base_color.rgb + volume.emission.rgb * saturate(temperature * temperatureScale);
+        float3 channelColor = hasColor ? max(colorTexture.SampleLevel(volumeSampler, samplePosition, 0.0).rgb, float3(0.0, 0.0, 0.0)) : float3(1.0, 1.0, 1.0);
+        float3 smokeColor = volume.base_color.rgb * channelColor + volume.emission.rgb * saturate(temperature * temperatureScale);
         float contribution = (1.0 - accumulated.a) * alpha;
         accumulated.rgb += smokeColor * contribution;
         accumulated.a += contribution;

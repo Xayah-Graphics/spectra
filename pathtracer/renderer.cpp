@@ -995,29 +995,49 @@ namespace spectra::pathtracer {
         return part1by2(x) | (part1by2(y) << 1u) | (part1by2(z) << 2u);
     }
 
+    [[nodiscard]] std::uint32_t volume_channel_component_count(const scene::Scene::VolumeChannelFormat format) {
+        switch (format) {
+        case scene::Scene::VolumeChannelFormat::Float32: return 1u;
+        case scene::Scene::VolumeChannelFormat::Float32x3: return 3u;
+        }
+        throw std::runtime_error("Unknown pathtracer volume channel format");
+    }
+
     [[nodiscard]] std::vector<float> linearize_volume_snapshot_values(const std::vector<float>& raw_values, const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) {
         const std::uint64_t cell_count = checked_volume_cell_count(volume);
+        const std::uint32_t component_count = volume_channel_component_count(channel.format);
+        if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" value count overflows uint64", volume.name, channel.name));
+        const std::uint64_t value_count = cell_count * component_count;
         const auto canonical_value = [&channel](const float value) {
             if (channel.name == "density") return std::max(0.0f, value);
             return value;
         };
-        if (cell_count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("Pathtracer volume \"{}\" cell count exceeds host vector range", volume.name));
+        if (value_count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" value count exceeds host vector range", volume.name, channel.name));
         if (channel.index_encoding == scene::Scene::VolumeChannelIndexEncoding::Linear) {
-            if (raw_values.size() < cell_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" linear snapshot is too small", volume.name, channel.name));
+            if (raw_values.size() < value_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" linear snapshot is too small", volume.name, channel.name));
             std::vector<float> values{};
-            values.reserve(static_cast<std::size_t>(cell_count));
-            for (std::uint64_t index = 0u; index < cell_count; ++index) values.push_back(canonical_value(raw_values.at(static_cast<std::size_t>(index))));
+            values.reserve(static_cast<std::size_t>(value_count));
+            for (std::uint64_t index = 0u; index < value_count; ++index) {
+                const float value = canonical_value(raw_values.at(static_cast<std::size_t>(index)));
+                if (channel.name == "color" && value < 0.0f) throw std::runtime_error(std::format("Pathtracer volume \"{}\" color channel contains a negative snapshot value", volume.name));
+                values.push_back(value);
+            }
             return values;
         }
         if (volume.dimensions[0] > 1024u || volume.dimensions[1] > 1024u || volume.dimensions[2] > 1024u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" Morton3D snapshot dimensions exceed 10-bit Morton encoding range", volume.name));
-        std::vector<float> values(static_cast<std::size_t>(cell_count));
+        std::vector<float> values(static_cast<std::size_t>(value_count));
         for (std::uint32_t z = 0u; z < volume.dimensions[2]; ++z) {
             for (std::uint32_t y = 0u; y < volume.dimensions[1]; ++y) {
                 for (std::uint32_t x = 0u; x < volume.dimensions[0]; ++x) {
                     const std::uint32_t source_index = encode_morton3d(x, y, z);
-                    if (source_index >= raw_values.size()) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" Morton3D snapshot is too small for source index {}", volume.name, channel.name, source_index));
+                    const std::uint64_t source_value_index = static_cast<std::uint64_t>(source_index) * component_count;
+                    if (source_value_index + component_count > raw_values.size()) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" Morton3D snapshot is too small for source index {}", volume.name, channel.name, source_index));
                     const std::uint64_t linear_index = static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(volume.dimensions[0]) * (static_cast<std::uint64_t>(y) + static_cast<std::uint64_t>(volume.dimensions[1]) * static_cast<std::uint64_t>(z));
-                    values.at(static_cast<std::size_t>(linear_index)) = canonical_value(raw_values.at(source_index));
+                    for (std::uint32_t component = 0u; component < component_count; ++component) {
+                        const float value = canonical_value(raw_values.at(static_cast<std::size_t>(source_value_index + component)));
+                        if (channel.name == "color" && value < 0.0f) throw std::runtime_error(std::format("Pathtracer volume \"{}\" color channel contains a negative snapshot value", volume.name));
+                        values.at(static_cast<std::size_t>(linear_index * component_count + component)) = value;
+                    }
                 }
             }
         }
@@ -1393,8 +1413,11 @@ namespace spectra::pathtracer {
         if (channel.source_byte_size == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source has no byte size", volume.name, channel.name));
         if (channel.source_byte_size % sizeof(float) != 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source byte size is not float aligned", volume.name, channel.name));
         const std::uint64_t cell_count = checked_volume_cell_count(volume);
-        if (cell_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" byte count overflows uint64", volume.name, channel.name));
-        if (channel.source_byte_size < cell_count * sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source is smaller than the volume dimensions", volume.name, channel.name));
+        const std::uint32_t component_count = volume_channel_component_count(channel.format);
+        if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" value count overflows uint64", volume.name, channel.name));
+        const std::uint64_t value_count = cell_count * component_count;
+        if (value_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" byte count overflows uint64", volume.name, channel.name));
+        if (channel.source_byte_size < value_count * sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source is smaller than the volume dimensions and format", volume.name, channel.name));
         if (channel.external_device_pointer == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source has no borrowed device pointer for static snapshot", volume.name, channel.name));
         const std::uint64_t source_value_count = channel.source_byte_size / sizeof(float);
         if (source_value_count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" source value count exceeds host vector range", volume.name, channel.name));

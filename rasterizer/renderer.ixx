@@ -71,6 +71,7 @@ namespace spectra::rasterizer {
             vk::raii::DeviceMemory memory{nullptr};
             vk::raii::ImageView view{nullptr};
             vk::Extent3D extent{};
+            vk::Format format{};
             vk::ImageLayout layout{vk::ImageLayout::eUndefined};
         };
 
@@ -326,12 +327,17 @@ namespace spectra::rasterizer {
         struct FrameVolumeResources {
             GpuBuffer densityStagingBuffer{};
             GpuBuffer temperatureStagingBuffer{};
+            GpuBuffer colorStagingBuffer{};
             GpuImage3D densityImage{};
             GpuImage3D temperatureImage{};
+            GpuImage3D colorImage{};
             vk::raii::DescriptorSets externalDensityUploadDescriptorSets{nullptr};
+            vk::raii::DescriptorSets externalColorUploadDescriptorSets{nullptr};
             scene::Scene::Revision uploadedRevision{};
             bool uploadPending{};
             bool externalDensityUploadPending{};
+            bool externalColorUploadPending{};
+            bool hasColorChannel{};
             bool descriptorValid{};
             VolumeDrawCommand drawCommand{};
         };
@@ -368,7 +374,7 @@ namespace spectra::rasterizer {
         void disconnect_dynamic_scene_host_services() noexcept;
         void create_image_2d(GpuImage2D& image, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect);
         void destroy_image_2d(GpuImage2D& image) noexcept;
-        void create_volume_image(GpuImage3D& image, vk::Extent3D extent);
+        void create_volume_image(GpuImage3D& image, vk::Extent3D extent, vk::Format format);
         void destroy_volume_image(GpuImage3D& image) noexcept;
         void destroy_camera_resources() noexcept;
         void destroy_mesh_resources() noexcept;
@@ -626,6 +632,7 @@ namespace spectra::rasterizer {
             vk::raii::PipelineLayout upload_pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
             vk::raii::Pipeline upload_pipeline{nullptr};
+            vk::raii::Pipeline color_upload_pipeline{nullptr};
             std::vector<FrameVolumeResources> frame_volumes{};
         } volume_pass;
 

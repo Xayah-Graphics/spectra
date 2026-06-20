@@ -1436,14 +1436,14 @@ namespace spectra::rasterizer {
         image.layout = vk::ImageLayout::eUndefined;
     }
 
-    void Renderer::create_volume_image(GpuImage3D& image, const vk::Extent3D extent) {
+    void Renderer::create_volume_image(GpuImage3D& image, const vk::Extent3D extent, const vk::Format format) {
         if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer volume image without Vulkan handles");
         if (extent.width == 0 || extent.height == 0 || extent.depth == 0) throw std::runtime_error("Cannot create Spectra rasterizer volume image with zero dimensions");
         this->destroy_volume_image(image);
         const vk::ImageCreateInfo image_create_info{
             {},
             vk::ImageType::e3D,
-            vk::Format::eR32Sfloat,
+            format,
             extent,
             1,
             1,
@@ -1461,9 +1461,10 @@ namespace spectra::rasterizer {
         const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
         image.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
         image.image.bindMemory(*image.memory, 0);
-        const vk::ImageViewCreateInfo image_view_create_info{{}, *image.image, vk::ImageViewType::e3D, vk::Format::eR32Sfloat, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        const vk::ImageViewCreateInfo image_view_create_info{{}, *image.image, vk::ImageViewType::e3D, format, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         image.view   = vk::raii::ImageView{*this->host.device, image_view_create_info};
         image.extent = extent;
+        image.format = format;
         image.layout = vk::ImageLayout::eUndefined;
     }
 
@@ -1472,6 +1473,7 @@ namespace spectra::rasterizer {
         image.image  = nullptr;
         image.memory = nullptr;
         image.extent = vk::Extent3D{};
+        image.format = vk::Format{};
         image.layout = vk::ImageLayout::eUndefined;
     }
 
@@ -1601,17 +1603,23 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::destroy_volume_resources() noexcept {
-        if (this->volume_pass.frame_count == 0 && !*this->volume_pass.descriptor_set_layout && !*this->volume_pass.upload_descriptor_set_layout && !*this->volume_pass.descriptor_pool && this->volume_pass.descriptor_sets.size() == 0 && !*this->volume_pass.sampler && !*this->volume_pass.pipeline_layout && !*this->volume_pass.upload_pipeline_layout && !*this->volume_pass.pipeline && !*this->volume_pass.upload_pipeline && this->volume_pass.frame_volumes.empty()) return;
+        if (this->volume_pass.frame_count == 0 && !*this->volume_pass.descriptor_set_layout && !*this->volume_pass.upload_descriptor_set_layout && !*this->volume_pass.descriptor_pool && this->volume_pass.descriptor_sets.size() == 0 && !*this->volume_pass.sampler && !*this->volume_pass.pipeline_layout && !*this->volume_pass.upload_pipeline_layout && !*this->volume_pass.pipeline && !*this->volume_pass.upload_pipeline && !*this->volume_pass.color_upload_pipeline && this->volume_pass.frame_volumes.empty()) return;
         this->wait_device_idle_for_cleanup();
         for (FrameVolumeResources& frame_volume : this->volume_pass.frame_volumes) {
             this->destroy_host_buffer(frame_volume.densityStagingBuffer);
             this->destroy_host_buffer(frame_volume.temperatureStagingBuffer);
+            this->destroy_host_buffer(frame_volume.colorStagingBuffer);
             this->destroy_volume_image(frame_volume.densityImage);
             this->destroy_volume_image(frame_volume.temperatureImage);
+            this->destroy_volume_image(frame_volume.colorImage);
             frame_volume.externalDensityUploadDescriptorSets = nullptr;
+            frame_volume.externalColorUploadDescriptorSets = nullptr;
             frame_volume.externalDensityUploadPending = false;
+            frame_volume.externalColorUploadPending = false;
+            frame_volume.hasColorChannel = false;
         }
         this->volume_pass.frame_volumes.clear();
+        this->volume_pass.color_upload_pipeline        = nullptr;
         this->volume_pass.upload_pipeline              = nullptr;
         this->volume_pass.pipeline                     = nullptr;
         this->volume_pass.upload_pipeline_layout       = nullptr;
@@ -2175,6 +2183,7 @@ namespace spectra::rasterizer {
             vk::DescriptorSetLayoutBinding{1u, vk::DescriptorType::eSampledImage, 1u, vk::ShaderStageFlagBits::eFragment},
             vk::DescriptorSetLayoutBinding{2u, vk::DescriptorType::eSampledImage, 1u, vk::ShaderStageFlagBits::eFragment},
             vk::DescriptorSetLayoutBinding{3u, vk::DescriptorType::eSampler, 1u, vk::ShaderStageFlagBits::eFragment},
+            vk::DescriptorSetLayoutBinding{4u, vk::DescriptorType::eSampledImage, 1u, vk::ShaderStageFlagBits::eFragment},
         };
         const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(descriptor_bindings.size()), descriptor_bindings.data()};
         this->volume_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, descriptor_set_layout_create_info};
@@ -2186,12 +2195,12 @@ namespace spectra::rasterizer {
         this->volume_pass.upload_descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, upload_descriptor_set_layout_create_info};
         const std::array descriptor_pool_sizes{
             vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, this->host.frame_count},
-            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, this->host.frame_count * 2u},
+            vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, this->host.frame_count * 3u},
             vk::DescriptorPoolSize{vk::DescriptorType::eSampler, this->host.frame_count},
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, this->host.frame_count},
-            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, this->host.frame_count},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, this->host.frame_count * 2u},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, this->host.frame_count * 2u},
         };
-        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->host.frame_count * 2u, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->host.frame_count * 3u, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
         this->volume_pass.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
         const vk::DescriptorSetLayout descriptor_set_layout = *this->volume_pass.descriptor_set_layout;
         std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(this->host.frame_count, descriptor_set_layout);
@@ -2237,6 +2246,11 @@ namespace spectra::rasterizer {
         const vk::PipelineShaderStageCreateInfo upload_shader_stage{{}, vk::ShaderStageFlagBits::eCompute, *upload_shader, "main"};
         const vk::ComputePipelineCreateInfo upload_pipeline_create_info{{}, upload_shader_stage, *this->volume_pass.upload_pipeline_layout};
         this->volume_pass.upload_pipeline = vk::raii::Pipeline{*this->host.device, nullptr, upload_pipeline_create_info};
+        const vk::ShaderModuleCreateInfo color_upload_shader_create_info{{}, spectra_rasterizer_volume_color_upload_compute_spv_sizeInBytes, spectra_rasterizer_volume_color_upload_compute_spv};
+        const vk::raii::ShaderModule color_upload_shader{*this->host.device, color_upload_shader_create_info};
+        const vk::PipelineShaderStageCreateInfo color_upload_shader_stage{{}, vk::ShaderStageFlagBits::eCompute, *color_upload_shader, "main"};
+        const vk::ComputePipelineCreateInfo color_upload_pipeline_create_info{{}, color_upload_shader_stage, *this->volume_pass.upload_pipeline_layout};
+        this->volume_pass.color_upload_pipeline = vk::raii::Pipeline{*this->host.device, nullptr, color_upload_pipeline_create_info};
         const std::array shader_stages{
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
@@ -3319,7 +3333,10 @@ namespace spectra::rasterizer {
             frame_volume.uploadedRevision = scene_revision;
             frame_volume.uploadPending    = false;
             frame_volume.externalDensityUploadDescriptorSets = nullptr;
+            frame_volume.externalColorUploadDescriptorSets = nullptr;
             frame_volume.externalDensityUploadPending = false;
+            frame_volume.externalColorUploadPending = false;
+            frame_volume.hasColorChannel = false;
             frame_volume.descriptorValid  = false;
             frame_volume.drawCommand      = VolumeDrawCommand{};
             return;
@@ -3332,18 +3349,33 @@ namespace spectra::rasterizer {
         if (!finite_scene_vector(volume.voxel_size) || volume.voxel_size.x <= 0.0f || volume.voxel_size.y <= 0.0f || volume.voxel_size.z <= 0.0f) throw std::runtime_error(std::format("Rasterizer volume \"{}\" voxel size must be finite and positive", volume.name));
         const scene::Scene::VolumeChannel& density_channel = this->require_volume_channel(volume, "density");
         const scene::Scene::VolumeChannel* temperature_channel = this->find_volume_channel(volume, "temperature");
+        const scene::Scene::VolumeChannel* color_channel = this->find_volume_channel(volume, "color");
         if (density_channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel dimensions must match the volume dimensions", volume.name));
         if (temperature_channel != nullptr && temperature_channel->dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel dimensions must match the volume dimensions", volume.name));
+        if (color_channel != nullptr && color_channel->dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color channel dimensions must match the volume dimensions", volume.name));
+        if (density_channel.format != scene::Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel must use Float32 format", volume.name));
+        if (temperature_channel != nullptr && temperature_channel->format != scene::Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel must use Float32 format", volume.name));
+        if (color_channel != nullptr && color_channel->format != scene::Scene::VolumeChannelFormat::Float32x3) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color channel must use Float32x3 format", volume.name));
 
         const std::uint64_t cell_count = static_cast<std::uint64_t>(volume.dimensions[0]) * static_cast<std::uint64_t>(volume.dimensions[1]) * static_cast<std::uint64_t>(volume.dimensions[2]);
         if (cell_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Rasterizer volume \"{}\" byte count exceeds uint64 range", volume.name));
         const vk::DeviceSize channel_bytes = static_cast<vk::DeviceSize>(cell_count * sizeof(float));
-        if (temperature_channel != nullptr && temperature_channel->source_kind != scene::Scene::VolumeChannelSourceKind::Values) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel uses an external GPU source; only density supports external GPU volume upload", volume.name));
+        if (cell_count > std::numeric_limits<std::uint64_t>::max() / (4u * sizeof(float))) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color staging byte count exceeds uint64 range", volume.name));
+        const vk::DeviceSize color_source_bytes = static_cast<vk::DeviceSize>(cell_count * 3u * sizeof(float));
+        const vk::DeviceSize color_image_bytes = static_cast<vk::DeviceSize>(cell_count * 4u * sizeof(float));
+        if (temperature_channel != nullptr && temperature_channel->source_kind != scene::Scene::VolumeChannelSourceKind::Values) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel uses an external GPU source; only density and color support external GPU volume upload", volume.name));
 
         const vk::Extent3D image_extent{volume.dimensions[0], volume.dimensions[1], volume.dimensions[2]};
-        if (!*frame_volume.densityImage.image || frame_volume.densityImage.extent != image_extent) {
-            this->create_volume_image(frame_volume.densityImage, image_extent);
-            this->create_volume_image(frame_volume.temperatureImage, image_extent);
+        if (!*frame_volume.densityImage.image || frame_volume.densityImage.extent != image_extent || frame_volume.densityImage.format != vk::Format::eR32Sfloat) {
+            this->create_volume_image(frame_volume.densityImage, image_extent, vk::Format::eR32Sfloat);
+            frame_volume.descriptorValid = false;
+        }
+        if (!*frame_volume.temperatureImage.image || frame_volume.temperatureImage.extent != image_extent || frame_volume.temperatureImage.format != vk::Format::eR32Sfloat) {
+            this->create_volume_image(frame_volume.temperatureImage, image_extent, vk::Format::eR32Sfloat);
+            frame_volume.descriptorValid = false;
+        }
+        if (!*frame_volume.colorImage.image || frame_volume.colorImage.extent != image_extent || frame_volume.colorImage.format != vk::Format::eR32G32B32A32Sfloat) {
+            this->create_volume_image(frame_volume.colorImage, image_extent, vk::Format::eR32G32B32A32Sfloat);
             frame_volume.descriptorValid = false;
         }
         if (density_channel.source_kind == scene::Scene::VolumeChannelSourceKind::Values) {
@@ -3376,16 +3408,66 @@ namespace spectra::rasterizer {
         if (temperature_channel != nullptr) std::memcpy(frame_volume.temperatureStagingBuffer.mapped, temperature_channel->values.data(), static_cast<std::size_t>(channel_bytes));
         else std::memset(frame_volume.temperatureStagingBuffer.mapped, 0, static_cast<std::size_t>(channel_bytes));
 
+        if (color_channel != nullptr && color_channel->source_kind == scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer) {
+            if (!*this->volume_pass.upload_descriptor_set_layout || !*this->volume_pass.descriptor_pool) throw std::runtime_error("Spectra rasterizer volume color external upload descriptors are not initialized");
+            const ExternalStorageBuffer& source = this->external_storage_buffer(color_channel->buffer_id, std::format("Rasterizer volume \"{}\" color channel", volume.name));
+            if (color_channel->source_byte_size > source.byte_size) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color channel byte size {} exceeds external GPU buffer {} byte size {}", volume.name, color_channel->source_byte_size, color_channel->buffer_id, source.byte_size));
+            if (color_channel->source_byte_size < color_source_bytes) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color channel external GPU byte size is too small", volume.name));
+            this->destroy_host_buffer(frame_volume.colorStagingBuffer);
+            if (frame_volume.externalColorUploadDescriptorSets.size() != 1u) {
+                const vk::DescriptorSetLayout upload_descriptor_set_layout = *this->volume_pass.upload_descriptor_set_layout;
+                const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->volume_pass.descriptor_pool, 1u, &upload_descriptor_set_layout};
+                frame_volume.externalColorUploadDescriptorSets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+                if (frame_volume.externalColorUploadDescriptorSets.size() != 1u) throw std::runtime_error("Failed to allocate Spectra rasterizer volume external color upload descriptor set");
+            }
+            const vk::DescriptorBufferInfo source_buffer_info{*source.buffer.buffer, 0u, static_cast<vk::DeviceSize>(color_channel->source_byte_size)};
+            const vk::DescriptorImageInfo color_image_info{{}, *frame_volume.colorImage.view, vk::ImageLayout::eGeneral};
+            const std::array upload_descriptor_writes{
+                vk::WriteDescriptorSet{*frame_volume.externalColorUploadDescriptorSets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &source_buffer_info, nullptr},
+                vk::WriteDescriptorSet{*frame_volume.externalColorUploadDescriptorSets.at(0), 1u, 0u, 1u, vk::DescriptorType::eStorageImage, &color_image_info, nullptr, nullptr},
+            };
+            this->host.device->updateDescriptorSets(upload_descriptor_writes, {});
+            frame_volume.externalColorUploadPending = true;
+        } else {
+            this->ensure_host_buffer(frame_volume.colorStagingBuffer, color_image_bytes, vk::BufferUsageFlagBits::eTransferSrc);
+            float* color_staging = static_cast<float*>(frame_volume.colorStagingBuffer.mapped);
+            if (color_channel == nullptr) {
+                for (std::uint64_t index = 0u; index < cell_count; ++index) {
+                    color_staging[index * 4u + 0u] = 1.0f;
+                    color_staging[index * 4u + 1u] = 1.0f;
+                    color_staging[index * 4u + 2u] = 1.0f;
+                    color_staging[index * 4u + 3u] = 1.0f;
+                }
+            } else {
+                if (color_channel->values.size() != cell_count * 3u) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color channel value count does not match dimensions", volume.name));
+                for (std::uint64_t index = 0u; index < cell_count; ++index) {
+                    const float red = color_channel->values.at(static_cast<std::size_t>(index * 3u + 0u));
+                    const float green = color_channel->values.at(static_cast<std::size_t>(index * 3u + 1u));
+                    const float blue = color_channel->values.at(static_cast<std::size_t>(index * 3u + 2u));
+                    if (!std::isfinite(red) || !std::isfinite(green) || !std::isfinite(blue) || red < 0.0f || green < 0.0f || blue < 0.0f) throw std::runtime_error(std::format("Rasterizer volume \"{}\" color channel contains an invalid value", volume.name));
+                    color_staging[index * 4u + 0u] = red;
+                    color_staging[index * 4u + 1u] = green;
+                    color_staging[index * 4u + 2u] = blue;
+                    color_staging[index * 4u + 3u] = 1.0f;
+                }
+            }
+            frame_volume.externalColorUploadDescriptorSets = nullptr;
+            frame_volume.externalColorUploadPending = false;
+        }
+        frame_volume.hasColorChannel = color_channel != nullptr;
+
         if (!frame_volume.descriptorValid) {
             const vk::DescriptorBufferInfo camera_buffer_info{*this->camera.uniform_buffers.at(frame_index).buffer, 0, sizeof(CameraUniformData)};
             const vk::DescriptorImageInfo density_image_info{{}, *frame_volume.densityImage.view, vk::ImageLayout::eShaderReadOnlyOptimal};
             const vk::DescriptorImageInfo temperature_image_info{{}, *frame_volume.temperatureImage.view, vk::ImageLayout::eShaderReadOnlyOptimal};
+            const vk::DescriptorImageInfo color_image_info{{}, *frame_volume.colorImage.view, vk::ImageLayout::eShaderReadOnlyOptimal};
             const vk::DescriptorImageInfo sampler_info{*this->volume_pass.sampler, {}, vk::ImageLayout::eUndefined};
             const std::array descriptor_writes{
                 vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 0u, 0u, 1u, vk::DescriptorType::eUniformBuffer, nullptr, &camera_buffer_info, nullptr},
                 vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 1u, 0u, 1u, vk::DescriptorType::eSampledImage, &density_image_info, nullptr, nullptr},
                 vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 2u, 0u, 1u, vk::DescriptorType::eSampledImage, &temperature_image_info, nullptr, nullptr},
                 vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 3u, 0u, 1u, vk::DescriptorType::eSampler, &sampler_info, nullptr, nullptr},
+                vk::WriteDescriptorSet{*this->volume_pass.descriptor_sets.at(frame_index), 4u, 0u, 1u, vk::DescriptorType::eSampledImage, &color_image_info, nullptr, nullptr},
             };
             this->host.device->updateDescriptorSets(descriptor_writes, {});
             frame_volume.descriptorValid = true;
@@ -3429,7 +3511,7 @@ namespace spectra::rasterizer {
 
     void Renderer::record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume) {
         if (!frame_volume.uploadPending) return;
-        if (!*frame_volume.densityImage.image || !*frame_volume.temperatureImage.image) throw std::runtime_error("Spectra rasterizer volume upload is missing GPU images");
+        if (!*frame_volume.densityImage.image || !*frame_volume.temperatureImage.image || !*frame_volume.colorImage.image) throw std::runtime_error("Spectra rasterizer volume upload is missing GPU images");
         if (!*frame_volume.temperatureStagingBuffer.buffer) throw std::runtime_error("Spectra rasterizer volume upload is missing temperature staging buffer");
         if (frame_volume.externalDensityUploadPending) {
             if (frame_volume.externalDensityUploadDescriptorSets.size() != 1u) throw std::runtime_error("Spectra rasterizer volume external upload is missing descriptor set");
@@ -3457,6 +3539,32 @@ namespace spectra::rasterizer {
             transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
             frame_volume.densityImage.layout = vk::ImageLayout::eTransferDstOptimal;
         }
+        if (frame_volume.externalColorUploadPending) {
+            if (frame_volume.externalColorUploadDescriptorSets.size() != 1u) throw std::runtime_error("Spectra rasterizer volume external color upload is missing descriptor set");
+            if (!*this->volume_pass.color_upload_pipeline || !*this->volume_pass.upload_pipeline_layout) throw std::runtime_error("Spectra rasterizer volume external color upload pipeline is not initialized");
+            const scene::Scene::VolumeGrid& volume = frame_volume.drawCommand.volume;
+            const scene::Scene::VolumeChannel& color_channel = this->require_volume_channel(volume, "color");
+            transition_image_layout(command_buffer, *frame_volume.colorImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.colorImage.layout, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite);
+            frame_volume.colorImage.layout = vk::ImageLayout::eGeneral;
+            const VolumeUploadPushConstantsData push_constants{
+                .dimensions = {
+                    volume.dimensions[0],
+                    volume.dimensions[1],
+                    volume.dimensions[2],
+                    color_channel.index_encoding == scene::Scene::VolumeChannelIndexEncoding::Morton3D ? 1u : 0u,
+                },
+            };
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *this->volume_pass.color_upload_pipeline);
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *this->volume_pass.upload_pipeline_layout, 0u, *frame_volume.externalColorUploadDescriptorSets.at(0), {});
+            command_buffer.pushConstants(*this->volume_pass.upload_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0u, sizeof(VolumeUploadPushConstantsData), &push_constants);
+            command_buffer.dispatch((volume.dimensions[0] + 7u) / 8u, (volume.dimensions[1] + 7u) / 8u, (volume.dimensions[2] + 3u) / 4u);
+            transition_image_layout(command_buffer, *frame_volume.colorImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.colorImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            frame_volume.colorImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        } else {
+            if (!*frame_volume.colorStagingBuffer.buffer) throw std::runtime_error("Spectra rasterizer volume upload is missing color staging buffer");
+            transition_image_layout(command_buffer, *frame_volume.colorImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.colorImage.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+            frame_volume.colorImage.layout = vk::ImageLayout::eTransferDstOptimal;
+        }
         transition_image_layout(command_buffer, *frame_volume.temperatureImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.temperatureImage.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
         frame_volume.temperatureImage.layout = vk::ImageLayout::eTransferDstOptimal;
 
@@ -3471,6 +3579,7 @@ namespace spectra::rasterizer {
         const std::array regions{region};
         if (!frame_volume.externalDensityUploadPending) command_buffer.copyBufferToImage(*frame_volume.densityStagingBuffer.buffer, *frame_volume.densityImage.image, vk::ImageLayout::eTransferDstOptimal, regions);
         command_buffer.copyBufferToImage(*frame_volume.temperatureStagingBuffer.buffer, *frame_volume.temperatureImage.image, vk::ImageLayout::eTransferDstOptimal, regions);
+        if (!frame_volume.externalColorUploadPending) command_buffer.copyBufferToImage(*frame_volume.colorStagingBuffer.buffer, *frame_volume.colorImage.image, vk::ImageLayout::eTransferDstOptimal, regions);
 
         if (!frame_volume.externalDensityUploadPending) {
             transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
@@ -3478,8 +3587,13 @@ namespace spectra::rasterizer {
         }
         transition_image_layout(command_buffer, *frame_volume.temperatureImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.temperatureImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
         frame_volume.temperatureImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        if (!frame_volume.externalColorUploadPending) {
+            transition_image_layout(command_buffer, *frame_volume.colorImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.colorImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            frame_volume.colorImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
         frame_volume.uploadPending = false;
         frame_volume.externalDensityUploadPending = false;
+        frame_volume.externalColorUploadPending = false;
     }
 
     std::string Renderer::active_scene_id() const {
@@ -3907,7 +4021,7 @@ namespace spectra::rasterizer {
             .extentStepScale    = {volume.voxel_size.x * static_cast<float>(volume.dimensions[0]), volume.voxel_size.y * static_cast<float>(volume.dimensions[1]), volume.voxel_size.z * static_cast<float>(volume.dimensions[2]), 1.0f},
             .base_color          = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
             .emission           = {material.emission_color.x * material.emission_strength, material.emission_color.y * material.emission_strength, material.emission_color.z * material.emission_strength, 0.0f},
-            .material           = {material.volume_temperature_scale, 0.0f, 0.0f, 0.0f},
+            .material           = {material.volume_temperature_scale, frame_volume.hasColorChannel ? 1.0f : 0.0f, 0.0f, 0.0f},
         };
         command_buffer.pushConstants(*this->volume_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
         command_buffer.draw(36u, 1u, 0u, 0u);

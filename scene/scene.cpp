@@ -188,6 +188,40 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} has an unsupported volume channel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
         }
 
+        void validate_volume_channel_format(const Scene::VolumeChannelFormat format, const std::string_view context) {
+            switch (format) {
+            case Scene::VolumeChannelFormat::Float32: return;
+            case Scene::VolumeChannelFormat::Float32x3: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported volume channel format value {}", context, static_cast<std::uint32_t>(format)));
+        }
+
+        [[nodiscard]] std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
+            switch (format) {
+            case Scene::VolumeChannelFormat::Float32: return 1u;
+            case Scene::VolumeChannelFormat::Float32x3: return 3u;
+            }
+            throw std::runtime_error("Unknown Spectra volume channel format");
+        }
+
+        [[nodiscard]] std::uint64_t checked_volume_cell_count(const Scene::VolumeGrid& volume) {
+            const std::uint64_t dim_x = volume.dimensions[0];
+            const std::uint64_t dim_y = volume.dimensions[1];
+            const std::uint64_t dim_z = volume.dimensions[2];
+            if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(std::format("Volume \"{}\" dimensions must be positive", volume.name));
+            if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(std::format("Volume \"{}\" cell count exceeds uint64 range", volume.name));
+            const std::uint64_t slice = dim_x * dim_y;
+            if (slice > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(std::format("Volume \"{}\" cell count exceeds uint64 range", volume.name));
+            return slice * dim_z;
+        }
+
+        [[nodiscard]] std::uint64_t checked_volume_channel_value_count(const Scene::VolumeGrid& volume, const Scene::VolumeChannel& channel) {
+            const std::uint64_t cell_count = checked_volume_cell_count(volume);
+            const std::uint32_t component_count = volume_channel_component_count(channel.format);
+            if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" value count exceeds uint64 range", volume.name, channel.name));
+            return cell_count * component_count;
+        }
+
         [[nodiscard]] std::uint64_t checked_viewport_voxel_grid_cell_count(const Scene::ViewportVoxelGrid& voxel_grid) {
             const std::uint64_t dim_x = voxel_grid.dimensions[0];
             const std::uint64_t dim_y = voxel_grid.dimensions[1];
@@ -343,14 +377,21 @@ namespace spectra::scene {
 
         void validate_volume_channel(const Scene::VolumeChannel& channel, const Scene::VolumeGrid& volume) {
             if (channel.name.empty()) throw std::runtime_error(std::format("Volume \"{}\" contains an unnamed channel", volume.name));
+            validate_volume_channel_format(channel.format, std::format("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
             validate_volume_channel_source_kind(channel.source_kind, std::format("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
             validate_volume_channel_index_encoding(channel.index_encoding, std::format("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
             if (channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" dimensions do not match", volume.name, channel.name));
-            const std::uint64_t value_count = static_cast<std::uint64_t>(channel.dimensions[0]) * static_cast<std::uint64_t>(channel.dimensions[1]) * static_cast<std::uint64_t>(channel.dimensions[2]);
+            if (channel.name == "density" && channel.format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Volume \"{}\" density channel must use Float32 format", volume.name));
+            if (channel.name == "temperature" && channel.format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Volume \"{}\" temperature channel must use Float32 format", volume.name));
+            if (channel.name == "color" && channel.format != Scene::VolumeChannelFormat::Float32x3) throw std::runtime_error(std::format("Volume \"{}\" color channel must use Float32x3 format", volume.name));
+            const std::uint64_t value_count = checked_volume_channel_value_count(volume, channel);
             if (channel.source_kind == Scene::VolumeChannelSourceKind::Values) {
                 if (channel.values.size() != value_count) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" value count does not match dimensions", volume.name, channel.name));
                 for (const float value : channel.values)
                     if (!std::isfinite(value)) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
+                if (channel.name == "color")
+                    for (const float value : channel.values)
+                        if (value < 0.0f) throw std::runtime_error(std::format("Volume \"{}\" color channel contains a negative value", volume.name));
                 if (channel.buffer_id != 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU buffer id", volume.name, channel.name));
                 if (channel.external_device_pointer != 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" CPU source must not provide an external device pointer", volume.name, channel.name));
                 if (channel.source_byte_size != 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU byte size", volume.name, channel.name));
@@ -568,6 +609,10 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::Parameter rgb_parameter(std::string name, const Vector3 value, const Scene::SourceLocation& source) {
             return Scene::Parameter{.type = "rgb", .name = std::move(name), .values = std::vector<float>{value.x, value.y, value.z}, .source = source};
+        }
+
+        [[nodiscard]] Scene::Parameter rgb_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
+            return Scene::Parameter{.type = "rgb", .name = std::move(name), .values = std::move(values), .source = source};
         }
 
         [[nodiscard]] Scene::Parameter point3_parameter(std::string name, std::vector<float> values, const Scene::SourceLocation& source) {
@@ -941,20 +986,45 @@ namespace spectra::scene {
             const Scene::VolumeChannel* density = find_volume_channel(volume, "density");
             if (density == nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" requires a density channel for canonical path tracing", volume.name));
             const Scene::VolumeChannel* temperature = find_volume_channel(volume, "temperature");
-            const std::uint64_t value_count = static_cast<std::uint64_t>(volume.dimensions[0]) * static_cast<std::uint64_t>(volume.dimensions[1]) * static_cast<std::uint64_t>(volume.dimensions[2]);
+            const Scene::VolumeChannel* color = find_volume_channel(volume, "color");
+            if (density->format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Preview volume \"{}\" density channel must use Float32 format", volume.name));
+            if (temperature != nullptr && temperature->format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Preview volume \"{}\" temperature channel must use Float32 format", volume.name));
+            if (color != nullptr && color->format != Scene::VolumeChannelFormat::Float32x3) throw std::runtime_error(std::format("Preview volume \"{}\" color channel must use Float32x3 format", volume.name));
+            if (color != nullptr && temperature != nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" cannot build a colored rgbgrid medium with a temperature channel", volume.name));
+            const std::uint64_t value_count = checked_volume_cell_count(volume);
             std::vector<float> density_values = materialize_pathtracer_volume_channel(volume, *density, value_count, external_volume_materializer);
             log_volume_pathtracer_stats(volume, *material, density_values);
+            const std::string medium_type = color == nullptr ? "uniformgrid" : "rgbgrid";
             std::vector<Scene::Parameter> parameters{
-                string_parameter("type", {"uniformgrid"}, volume.source),
+                string_parameter("type", {medium_type}, volume.source),
                 integer_parameter("nx", {static_cast<int>(volume.dimensions[0])}, volume.source),
                 integer_parameter("ny", {static_cast<int>(volume.dimensions[1])}, volume.source),
                 integer_parameter("nz", {static_cast<int>(volume.dimensions[2])}, volume.source),
-                float_parameter("density", std::move(density_values), volume.source),
                 float_parameter("scale", {material->volume_density_scale}, volume.source),
-                float_parameter("temperaturescale", {material->volume_temperature_scale}, volume.source),
-                rgb_parameter("sigma_a", Vector3{0.08f, 0.08f, 0.08f}, volume.source),
-                rgb_parameter("sigma_s", Vector3{0.92f, 0.92f, 0.92f}, volume.source),
             };
+            if (color == nullptr) {
+                parameters.push_back(float_parameter("density", std::move(density_values), volume.source));
+                parameters.push_back(float_parameter("temperaturescale", {material->volume_temperature_scale}, volume.source));
+                parameters.push_back(rgb_parameter("sigma_a", Vector3{0.08f, 0.08f, 0.08f}, volume.source));
+                parameters.push_back(rgb_parameter("sigma_s", Vector3{0.92f, 0.92f, 0.92f}, volume.source));
+            } else {
+                if (value_count > std::numeric_limits<std::uint64_t>::max() / 3u) throw std::runtime_error(std::format("Preview volume \"{}\" color value count exceeds uint64 range", volume.name));
+                const std::uint64_t color_value_count = value_count * 3u;
+                std::vector<float> color_values = materialize_pathtracer_volume_channel(volume, *color, color_value_count, external_volume_materializer);
+                std::vector<float> sigma_a(color_values.size(), 0.0f);
+                std::vector<float> sigma_s{};
+                sigma_s.reserve(color_values.size());
+                for (std::uint64_t index = 0u; index < value_count; ++index) {
+                    const float density_value = std::max(0.0f, density_values.at(static_cast<std::size_t>(index)));
+                    for (std::uint32_t component = 0u; component < 3u; ++component) {
+                        const float color_value = color_values.at(static_cast<std::size_t>(index * 3u + component));
+                        if (color_value < 0.0f) throw std::runtime_error(std::format("Preview volume \"{}\" color channel contains a negative value", volume.name));
+                        sigma_s.push_back(density_value * color_value);
+                    }
+                }
+                parameters.push_back(rgb_parameter("sigma_a", std::move(sigma_a), volume.source));
+                parameters.push_back(rgb_parameter("sigma_s", std::move(sigma_s), volume.source));
+            }
             if (temperature != nullptr) {
                 std::vector<float> temperature_values = materialize_pathtracer_volume_channel(volume, *temperature, value_count, external_volume_materializer);
                 parameters.push_back(float_parameter("temperature", std::move(temperature_values), volume.source));
@@ -962,7 +1032,7 @@ namespace spectra::scene {
             const std::string medium_name = std::format("{}.__medium", volume.name);
             scene.media.push_back(Scene::Medium{
                 .name = medium_name,
-                .entity = Scene::Entity{.type = "uniformgrid", .parameters = std::move(parameters), .source = volume.source},
+                .entity = Scene::Entity{.type = medium_type, .parameters = std::move(parameters), .source = volume.source},
             });
 
             const Vector3 p0 = volume.origin;
@@ -1239,7 +1309,7 @@ namespace spectra::scene {
         }
 
         void write_pbrt_named_medium(std::ostream& output, const Scene::Medium& medium) {
-            static const std::set<std::string_view> supported_media{"homogeneous", "uniformgrid"};
+            static const std::set<std::string_view> supported_media{"homogeneous", "uniformgrid", "rgbgrid"};
             require_pbrt_export_entity_type(medium.entity, supported_media, "medium");
             output << "AttributeBegin\n";
             write_pbrt_transform(output, medium.transform, medium.entity.source, std::format("PBRT export medium \"{}\"", medium.name), 4u);
