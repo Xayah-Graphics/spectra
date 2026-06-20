@@ -111,6 +111,10 @@ float2 intersect_unit_box(float3 rayOrigin, float3 rayDirection) {
     return float2(enterT, exitT);
 }
 
+float world_step_length(float3 localRayDirection, float3 extent, float localStepLength) {
+    return length(localRayDirection * extent) * localStepLength;
+}
+
 [shader("fragment")]
 uint fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_Target {
     if (!isFrontFace) discard;
@@ -124,12 +128,13 @@ uint fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_T
     float startT = max(interval.x, 0.0);
     float endT = interval.y;
     float stepLength = max((endT - startT) / 96.0, 0.001);
+    float stepWorldLength = world_step_length(rayDirection, extent, stepLength);
     float accumulatedAlpha = 0.0;
     for (int stepIndex = 0; stepIndex < 128; ++stepIndex) {
         float t = startT + (float(stepIndex) + 0.5) * stepLength;
         if (t > endT || accumulatedAlpha > 0.55) break;
         float density = max(densityTexture.SampleLevel(volumeSampler, cameraLocal + rayDirection * t, 0.0), 0.0) * densityScale;
-        float alpha = saturate(1.0 - exp(-density));
+        float alpha = saturate(1.0 - exp(-density * stepWorldLength));
         accumulatedAlpha += (1.0 - accumulatedAlpha) * alpha;
     }
     if (accumulatedAlpha <= 0.025) discard;

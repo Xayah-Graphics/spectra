@@ -39,6 +39,14 @@ namespace spectra::rasterizer {
         std::move_only_function<void()> draw{};
     };
 
+    export struct ViewportOverlay {
+        std::string id{};
+        std::string title{};
+        std::string owner_renderer{};
+        std::int32_t priority{};
+        std::move_only_function<void(ImVec2, ImVec2)> draw{};
+    };
+
     export struct ToolbarAction {
         std::string id{};
         std::string title{};
@@ -65,20 +73,22 @@ namespace spectra::rasterizer {
     };
 
     export template <typename HostType>
-    concept Host = requires(HostType& host, Panel panel, CommandPopover popover, ToolbarAction action) {
+    concept Host = requires(HostType& host, Panel panel, CommandPopover popover, ViewportOverlay overlay, ToolbarAction action, ImVec2 viewport_position, ImVec2 viewport_size) {
         { host.physical_device() } -> std::same_as<const vk::raii::PhysicalDevice&>;
         { host.device() } -> std::same_as<const vk::raii::Device&>;
         { host.frame_count() } -> std::same_as<std::uint32_t>;
         { host.swapchain_extent() } -> std::same_as<vk::Extent2D>;
         { host.register_panel(std::move(panel)) } -> std::same_as<void>;
         { host.register_command_popover(std::move(popover)) } -> std::same_as<void>;
+        { host.register_viewport_overlay(std::move(overlay)) } -> std::same_as<void>;
         { host.register_toolbar_action(std::move(action)) } -> std::same_as<void>;
+        { host.draw_viewport_overlays(viewport_position, viewport_size) } -> std::same_as<void>;
     };
 
     export class HostView {
     public:
         template <Host HostType>
-        explicit HostView(HostType& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](Panel panel) { host.register_panel(std::move(panel)); }), registerCommandPopoverCallback([&host](CommandPopover popover) { host.register_command_popover(std::move(popover)); }), registerToolbarActionCallback([&host](ToolbarAction action) { host.register_toolbar_action(std::move(action)); }) {}
+        explicit HostView(HostType& host) : physicalDeviceCallback([&host]() -> const vk::raii::PhysicalDevice& { return host.physical_device(); }), deviceCallback([&host]() -> const vk::raii::Device& { return host.device(); }), frameCountCallback([&host]() -> std::uint32_t { return host.frame_count(); }), swapchainExtentCallback([&host]() -> vk::Extent2D { return host.swapchain_extent(); }), registerPanelCallback([&host](Panel panel) { host.register_panel(std::move(panel)); }), registerCommandPopoverCallback([&host](CommandPopover popover) { host.register_command_popover(std::move(popover)); }), registerViewportOverlayCallback([&host](ViewportOverlay overlay) { host.register_viewport_overlay(std::move(overlay)); }), registerToolbarActionCallback([&host](ToolbarAction action) { host.register_toolbar_action(std::move(action)); }), drawViewportOverlaysCallback([&host](const ImVec2 viewport_position, const ImVec2 viewport_size) { host.draw_viewport_overlays(viewport_position, viewport_size); }) {}
 
         HostView(const HostView& other)                = delete;
         HostView(HostView&& other) noexcept            = default;
@@ -110,8 +120,16 @@ namespace spectra::rasterizer {
             this->registerCommandPopoverCallback(std::move(popover));
         }
 
+        void register_viewport_overlay(ViewportOverlay overlay) {
+            this->registerViewportOverlayCallback(std::move(overlay));
+        }
+
         void register_toolbar_action(ToolbarAction action) {
             this->registerToolbarActionCallback(std::move(action));
+        }
+
+        [[nodiscard]] std::move_only_function<void(ImVec2, ImVec2)> take_viewport_overlay_draw_callback() {
+            return std::move(this->drawViewportOverlaysCallback);
         }
 
     private:
@@ -121,6 +139,8 @@ namespace spectra::rasterizer {
         std::move_only_function<vk::Extent2D()> swapchainExtentCallback{};
         std::move_only_function<void(Panel)> registerPanelCallback{};
         std::move_only_function<void(CommandPopover)> registerCommandPopoverCallback{};
+        std::move_only_function<void(ViewportOverlay)> registerViewportOverlayCallback{};
         std::move_only_function<void(ToolbarAction)> registerToolbarActionCallback{};
+        std::move_only_function<void(ImVec2, ImVec2)> drawViewportOverlaysCallback{};
     };
 } // namespace spectra::rasterizer

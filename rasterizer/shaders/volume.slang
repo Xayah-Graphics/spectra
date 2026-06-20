@@ -114,6 +114,10 @@ float2 intersect_unit_box(float3 rayOrigin, float3 rayDirection) {
     return float2(enterT, exitT);
 }
 
+float world_step_length(float3 localRayDirection, float3 extent, float localStepLength) {
+    return length(localRayDirection * extent) * localStepLength;
+}
+
 [shader("fragment")]
 float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_Target {
     if (!isFrontFace) discard;
@@ -130,6 +134,7 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
     float startT = max(interval.x, 0.0);
     float endT = interval.y;
     float stepLength = max((endT - startT) / 96.0 * stepScale, 0.001);
+    float stepWorldLength = world_step_length(rayDirection, extent, stepLength);
     float4 accumulated = float4(0.0, 0.0, 0.0, 0.0);
     for (int stepIndex = 0; stepIndex < 160; ++stepIndex) {
         float t = startT + (float(stepIndex) + 0.5) * stepLength;
@@ -137,7 +142,7 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
         float3 samplePosition = cameraLocal + rayDirection * t;
         float density = max(densityTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0) * densityScale;
         float temperature = max(temperatureTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0);
-        float alpha = saturate(1.0 - exp(-density));
+        float alpha = saturate(1.0 - exp(-density * stepWorldLength));
         float3 smokeColor = volume.base_color.rgb + volume.emission.rgb * saturate(temperature * temperatureScale);
         float contribution = (1.0 - accumulated.a) * alpha;
         accumulated.rgb += smokeColor * contribution;

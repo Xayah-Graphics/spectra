@@ -38,6 +38,33 @@ namespace spectra::scene_runtime {
             if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
             if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
         }
+
+        void commit_scene_document_and_frame(scene::Scene& workspace, scene::Scene::Document document, scene::Scene::FrameSnapshot frame) {
+            scene::Scene::Edit edit{};
+            edit.replace_document(std::move(document));
+            edit.replace_frame(std::move(frame));
+            const scene::Scene::DirtyFlags dirty = workspace.commit(std::move(edit));
+            if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Document)) throw std::runtime_error("Scene document commit did not mark the document dirty");
+            if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+        }
+
+        [[nodiscard]] bool resolved_frame_has_renderable_entity(const scene::Scene::ResolvedFrame& frame) {
+            return !frame.meshes.empty() || !frame.spheres.empty() || !frame.point_clouds.empty() || !frame.volumes.empty();
+        }
+
+        void validate_dynamic_scene_renderable_entities(scene::Scene& workspace, const std::string_view context) {
+            const scene::Scene::ResolvedFrame frame = workspace.resolved_frame();
+            if (!resolved_frame_has_renderable_entity(frame)) throw std::runtime_error(std::format("{} must contain at least one renderable Mesh, Sphere, PointCloud, or VolumeGrid entity", context));
+        }
+
+        [[nodiscard]] DynamicSceneControlTimelineMode dynamic_control_timeline_mode(const scene::Scene::TimelineMode mode) {
+            switch (mode) {
+                case scene::Scene::TimelineMode::Live: return DynamicSceneControlTimelineMode::Live;
+                case scene::Scene::TimelineMode::Record: return DynamicSceneControlTimelineMode::Record;
+                case scene::Scene::TimelineMode::Playback: return DynamicSceneControlTimelineMode::Playback;
+            }
+            throw std::runtime_error("Unknown scene timeline mode");
+        }
     } // namespace
 
     SceneEntry::SceneEntry(std::string id, std::string title, const SceneEntryKind kind, std::move_only_function<std::shared_ptr<scene::Scene>()> create_static_scene, std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_dynamic_source) : id(std::move(id)), title(std::move(title)), kind(kind), create_static_scene(std::move(create_static_scene)), create_dynamic_source(std::move(create_dynamic_source)) {}
@@ -120,6 +147,21 @@ namespace spectra::scene_runtime {
         this->last_error_message.clear();
     }
 
+    void DynamicSceneHostServiceRouter::set_volume_buffer_backend(std::move_only_function<DynamicSceneVolumeBufferAllocation(const DynamicSceneVolumeBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback) {
+        if (!request_callback) throw std::runtime_error("Dynamic scene volume buffer request callback must not be empty");
+        if (!release_callback) throw std::runtime_error("Dynamic scene volume buffer release callback must not be empty");
+        this->request_volume_buffer_callback = std::move(request_callback);
+        this->release_volume_buffer_callback = std::move(release_callback);
+        this->last_error_message.clear();
+    }
+
+    void DynamicSceneHostServiceRouter::clear_volume_buffer_backend() noexcept {
+        this->request_volume_buffer_callback = nullptr;
+        this->release_volume_buffer_callback = nullptr;
+        this->volume_buffer_allocations.clear();
+        this->last_error_message.clear();
+    }
+
     DynamicSceneViewportVoxelBufferAllocation DynamicSceneHostServiceRouter::request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) {
         try {
             if (!this->request_viewport_voxel_buffer_callback) throw std::runtime_error("Dynamic scene viewport voxel buffer backend is not available");
@@ -136,6 +178,35 @@ namespace spectra::scene_runtime {
             if (!this->release_viewport_voxel_buffer_callback) throw std::runtime_error("Dynamic scene viewport voxel buffer backend is not available");
             this->last_error_message.clear();
             this->release_viewport_voxel_buffer_callback(resource_id);
+        } catch (const std::exception& error) {
+            this->last_error_message = error.what();
+            throw;
+        }
+    }
+
+    DynamicSceneVolumeBufferAllocation DynamicSceneHostServiceRouter::request_volume_buffer(const DynamicSceneVolumeBufferRequest& request) {
+        try {
+            if (!this->request_volume_buffer_callback) throw std::runtime_error("Dynamic scene volume buffer backend is not available");
+            this->last_error_message.clear();
+            DynamicSceneVolumeBufferAllocation allocation = this->request_volume_buffer_callback(request);
+            if (allocation.resource_id == 0u) throw std::runtime_error("Dynamic scene volume buffer backend returned a zero resource id");
+            if (allocation.byte_size == 0u) throw std::runtime_error("Dynamic scene volume buffer backend returned a zero byte size");
+            if (!this->volume_buffer_allocations.emplace(allocation.resource_id, allocation).second) throw std::runtime_error(std::format("Dynamic scene volume buffer resource {} already exists", allocation.resource_id));
+            return allocation;
+        } catch (const std::exception& error) {
+            this->last_error_message = error.what();
+            throw;
+        }
+    }
+
+    void DynamicSceneHostServiceRouter::release_volume_buffer(const std::uint64_t resource_id) {
+        try {
+            if (!this->release_volume_buffer_callback) throw std::runtime_error("Dynamic scene volume buffer backend is not available");
+            const std::map<std::uint64_t, DynamicSceneVolumeBufferAllocation>::iterator found = this->volume_buffer_allocations.find(resource_id);
+            if (found == this->volume_buffer_allocations.end()) throw std::runtime_error(std::format("Dynamic scene volume buffer resource {} does not exist", resource_id));
+            this->last_error_message.clear();
+            this->release_volume_buffer_callback(resource_id);
+            this->volume_buffer_allocations.erase(found);
         } catch (const std::exception& error) {
             this->last_error_message = error.what();
             throw;
@@ -187,7 +258,7 @@ namespace spectra::scene_runtime {
         return this->activation_error_message;
     }
 
-    bool SceneController::has_active_dynamic_project() {
+    bool SceneController::has_active_dynamic_scene_controls() {
         if (!this->selected_entry_index.has_value()) return false;
         const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
         if (source.kind != SceneEntryKind::Dynamic) return false;
@@ -199,12 +270,37 @@ namespace spectra::scene_runtime {
         return this->host_services;
     }
 
-    DynamicSceneProjectStatus SceneController::active_dynamic_project_status() {
-        return this->active_dynamic_project_source().project_status();
+    bool SceneController::active_scene_timeline_enabled() {
+        if (!this->selected_entry_index.has_value()) return false;
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        if (slot.workspace == nullptr) return false;
+        return slot.workspace->document()->timeline_enabled;
     }
 
-    std::vector<DynamicSceneProjectLogEntry> SceneController::active_dynamic_project_logs() {
-        return this->active_dynamic_project_source().project_logs();
+    bool SceneController::active_scene_timeline_streaming_enabled() {
+        if (!this->active_scene_timeline_enabled()) return false;
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        return slot.workspace->timeline().mode != scene::Scene::TimelineMode::Playback;
+    }
+
+    DynamicSceneControlStatus SceneController::active_dynamic_scene_control_status() {
+        return this->active_dynamic_scene_control_source().control_status();
+    }
+
+    std::vector<DynamicSceneControlLogEntry> SceneController::active_dynamic_scene_control_logs() {
+        return this->active_dynamic_scene_control_source().control_logs();
+    }
+
+    std::vector<DynamicSceneControlImage> SceneController::active_dynamic_scene_control_images() {
+        return this->active_dynamic_scene_control_source().control_images();
+    }
+
+    std::vector<DynamicSceneControlScalarSeries> SceneController::active_dynamic_scene_control_scalar_series() {
+        return this->active_dynamic_scene_control_source().control_scalar_series();
+    }
+
+    std::vector<DynamicSceneControlSetting> SceneController::active_dynamic_scene_control_settings() {
+        return this->active_dynamic_scene_control_source().control_settings();
     }
 
     void SceneController::activate_empty_workspace() {
@@ -270,6 +366,7 @@ namespace spectra::scene_runtime {
                 .time_seconds  = 0.0,
                 .frame_index   = 0u,
             });
+            const std::uint64_t scene_revision = source->scene_revision();
             const std::shared_ptr<const scene::Scene::Document> scene_document = workspace->document();
             scene::Scene::Timeline timeline{
                 .mode                 = scene::Scene::TimelineMode::Live,
@@ -278,11 +375,12 @@ namespace spectra::scene_runtime {
                 .selected_frame_index = 0,
             };
             commit_scene_timeline_and_frame(*workspace, std::move(timeline), std::move(snapshot));
-            static_cast<void>(workspace->resolved_frame());
+            validate_dynamic_scene_renderable_entities(*workspace, "Dynamic scene initial frame");
             const std::size_t index = this->registry.upsert_dynamic_source(std::move(id), std::move(title), std::move(create_source));
             this->sync_slot_count();
             this->release_selected_dynamic_slot();
             this->set_dynamic_slot(index, std::move(source), std::move(workspace));
+            this->slots.at(index).observed_scene_revision = scene_revision;
             this->selected_entry_index = index;
             this->pending_selected_entry_index.reset();
             this->clear_activation_error();
@@ -311,12 +409,43 @@ namespace spectra::scene_runtime {
         return true;
     }
 
-    void SceneController::update_active_project(const double delta_seconds) {
+    void SceneController::toggle_active_scene_timeline_playback() {
+        if (!this->active_scene_timeline_streaming_enabled()) throw std::runtime_error("Active scene timeline playback can only be toggled in Live or Record mode");
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        scene::Scene::Timeline timeline = slot.workspace->timeline();
+        timeline.playing = !timeline.playing;
+        commit_scene_timeline(*slot.workspace, std::move(timeline));
+    }
+
+    void SceneController::request_active_scene_timeline_reset() {
+        if (!this->active_scene_timeline_enabled()) throw std::runtime_error("Active scene does not support timeline reset");
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        scene::Scene::Timeline timeline = slot.workspace->timeline();
+        ++timeline.reset_request_serial;
+        commit_scene_timeline(*slot.workspace, std::move(timeline));
+    }
+
+    void SceneController::update_active_scene_controls(const double delta_seconds) {
         if (!this->selected_entry_index.has_value()) return;
         const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
         if (source.kind != SceneEntryKind::Dynamic) return;
-        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Dynamic project delta time is invalid");
-        this->active_dynamic_project_source().update_project(static_cast<float>(delta_seconds));
+        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Dynamic scene controls delta time is invalid");
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        if (slot.source == nullptr) throw std::runtime_error("Active dynamic scene controls has no source instance");
+        if (slot.workspace == nullptr) throw std::runtime_error("Active dynamic scene controls has no scene workspace");
+        const std::shared_ptr<const scene::Scene::Document> document = slot.workspace->document();
+        if (!document->timeline_enabled) throw std::runtime_error("Dynamic scene source must enable timeline");
+        const scene::Scene::Timeline timeline = slot.workspace->timeline();
+        const bool scene_advancing = timeline.playing && timeline.mode != scene::Scene::TimelineMode::Playback;
+        slot.source->update_controls(DynamicSceneControlUpdateInfo{
+            .wall_delta_seconds = delta_seconds,
+            .scene_delta_seconds = scene_advancing ? delta_seconds : 0.0,
+            .time_seconds = slot.stream_time_seconds,
+            .frame_index = slot.stream_frame_index,
+            .timeline_mode = dynamic_control_timeline_mode(timeline.mode),
+            .timeline_playing = timeline.playing,
+        });
+        this->commit_dynamic_scene_revision(slot, "Dynamic scene controls update");
     }
 
     void SceneController::update_active_scene(const double delta_seconds) {
@@ -350,6 +479,7 @@ namespace spectra::scene_runtime {
             if (slot.committed_playback_frame_index.has_value() && *slot.committed_playback_frame_index == timeline.selected_frame_index) return;
             scene::Scene::FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
             commit_scene_frame(*slot.workspace, std::move(selected_frame));
+            validate_dynamic_scene_renderable_entities(*slot.workspace, "Dynamic scene playback frame");
             slot.committed_playback_frame_index = timeline.selected_frame_index;
             return;
         }
@@ -376,14 +506,53 @@ namespace spectra::scene_runtime {
             timeline.recorded_frames.push_back(snapshot);
             timeline.selected_frame_index = timeline.recorded_frames.size() - 1u;
             commit_scene_timeline_and_frame(*slot.workspace, std::move(timeline), std::move(snapshot));
+            validate_dynamic_scene_renderable_entities(*slot.workspace, "Dynamic scene recorded frame");
             return;
         }
         commit_scene_frame(*slot.workspace, std::move(snapshot));
+        validate_dynamic_scene_renderable_entities(*slot.workspace, "Dynamic scene live frame");
     }
 
-    void SceneController::execute_active_dynamic_project_action(const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) {
-        if (action_id.empty()) throw std::runtime_error("Dynamic project action id must not be empty");
-        this->active_dynamic_project_source().execute_project_action(action_id, options);
+    void SceneController::execute_active_dynamic_scene_control_action(const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) {
+        if (action_id.empty()) throw std::runtime_error("Dynamic scene controls action id must not be empty");
+        if (!this->selected_entry_index.has_value()) throw std::runtime_error("No active dynamic scene controls");
+        const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
+        if (source.kind != SceneEntryKind::Dynamic) throw std::runtime_error("Active scene is not a dynamic scene controls");
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        if (slot.source == nullptr) throw std::runtime_error("Active dynamic scene controls has no source instance");
+        if (slot.workspace == nullptr) throw std::runtime_error("Active dynamic scene controls has no scene workspace");
+        slot.source->execute_control_action(action_id, options);
+        this->commit_dynamic_scene_revision(slot, "Dynamic scene control action");
+    }
+
+    void SceneController::update_active_dynamic_scene_control_setting(const std::string_view key, const std::string_view value) {
+        if (key.empty()) throw std::runtime_error("Dynamic scene controls setting key must not be empty");
+        if (!this->selected_entry_index.has_value()) throw std::runtime_error("No active dynamic scene controls");
+        const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
+        if (source.kind != SceneEntryKind::Dynamic) throw std::runtime_error("Active scene is not a dynamic scene controls");
+        SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
+        if (slot.source == nullptr) throw std::runtime_error("Active dynamic scene controls has no source instance");
+        if (slot.workspace == nullptr) throw std::runtime_error("Active dynamic scene controls has no scene workspace");
+        slot.source->update_control_setting(key, value);
+        this->commit_dynamic_scene_revision(slot, "Dynamic scene control setting");
+    }
+
+    void SceneController::commit_dynamic_scene_revision(SceneSlot& slot, const std::string_view context) {
+        if (slot.source == nullptr) throw std::runtime_error("Dynamic scene revision commit requires a source instance");
+        if (slot.workspace == nullptr) throw std::runtime_error("Dynamic scene revision commit requires a scene workspace");
+        const std::uint64_t scene_revision = slot.source->scene_revision();
+        if (scene_revision == slot.observed_scene_revision) return;
+        scene::Scene::Document document = slot.source->create_scene_document();
+        if (!document.timeline_enabled) throw std::runtime_error("Dynamic scene source document must enable timeline");
+        if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Dynamic scene source document frame rate must be finite and positive");
+        scene::Scene::FrameSnapshot snapshot = slot.source->create_scene_frame(scene::Scene::FrameInfo{
+            .delta_seconds = 0.0,
+            .time_seconds  = slot.stream_time_seconds,
+            .frame_index   = slot.stream_frame_index,
+        });
+        commit_scene_document_and_frame(*slot.workspace, std::move(document), std::move(snapshot));
+        validate_dynamic_scene_renderable_entities(*slot.workspace, context);
+        slot.observed_scene_revision = scene_revision;
     }
 
     void SceneController::sync_slot_count() {
@@ -403,6 +572,7 @@ namespace spectra::scene_runtime {
         slot.stream_frame_index = 0;
         slot.observed_reset_request_serial = 0;
         slot.observed_clear_recording_request_serial = 0;
+        slot.observed_scene_revision = 0;
         slot.committed_playback_frame_index.reset();
     }
 
@@ -418,6 +588,7 @@ namespace spectra::scene_runtime {
         slot.stream_frame_index = 0;
         slot.observed_reset_request_serial = 0;
         slot.observed_clear_recording_request_serial = 0;
+        slot.observed_scene_revision = 0;
         slot.committed_playback_frame_index.reset();
     }
 
@@ -435,6 +606,7 @@ namespace spectra::scene_runtime {
         slot.stream_frame_index = 0;
         slot.observed_reset_request_serial = 0;
         slot.observed_clear_recording_request_serial = 0;
+        slot.observed_scene_revision = 0;
         slot.committed_playback_frame_index.reset();
     }
 
@@ -459,6 +631,7 @@ namespace spectra::scene_runtime {
             .time_seconds  = 0.0,
             .frame_index   = 0u,
         });
+        slot.observed_scene_revision = slot.source->scene_revision();
         const std::shared_ptr<const scene::Scene::Document> scene_document = slot.workspace->document();
         if (!scene_document->timeline_enabled) throw std::runtime_error("Dynamic scene source must enable timeline");
         scene::Scene::Timeline timeline{
@@ -468,15 +641,16 @@ namespace spectra::scene_runtime {
             .selected_frame_index = 0,
         };
         commit_scene_timeline_and_frame(*slot.workspace, std::move(timeline), std::move(snapshot));
+        validate_dynamic_scene_renderable_entities(*slot.workspace, "Dynamic scene initial frame");
         return slot;
     }
 
-    DynamicSceneSourceInstance& SceneController::active_dynamic_project_source() {
-        if (!this->selected_entry_index.has_value()) throw std::runtime_error("No active dynamic project");
+    DynamicSceneSourceInstance& SceneController::active_dynamic_scene_control_source() {
+        if (!this->selected_entry_index.has_value()) throw std::runtime_error("No active dynamic scene controls");
         const SceneEntry& source = this->registry.entry(*this->selected_entry_index);
-        if (source.kind != SceneEntryKind::Dynamic) throw std::runtime_error("Active scene is not a dynamic project");
+        if (source.kind != SceneEntryKind::Dynamic) throw std::runtime_error("Active scene is not a dynamic scene controls");
         SceneSlot& slot = this->ensure_slot(*this->selected_entry_index);
-        if (slot.source == nullptr) throw std::runtime_error("Active dynamic project has no source instance");
+        if (slot.source == nullptr) throw std::runtime_error("Active dynamic scene controls has no source instance");
         return *slot.source;
     }
 
@@ -494,6 +668,7 @@ namespace spectra::scene_runtime {
         slot.stream_time_seconds = 0.0;
         slot.stream_frame_index = 0;
         slot.source->reset();
+        slot.observed_scene_revision = slot.source->scene_revision();
         scene::Scene::FrameSnapshot snapshot = slot.source->create_scene_frame(scene::Scene::FrameInfo{
             .delta_seconds = 0.0,
             .time_seconds  = 0.0,
@@ -501,14 +676,15 @@ namespace spectra::scene_runtime {
         });
         timeline.selected_frame_index = 0;
         commit_scene_timeline_and_frame(*slot.workspace, std::move(timeline), std::move(snapshot));
+        validate_dynamic_scene_renderable_entities(*slot.workspace, "Dynamic scene reset frame");
     }
 
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 14u;
+        constexpr std::uint32_t plugin_abi_version = 23u;
         constexpr std::string_view scene_api_name = "spectra.dynamic_scene.scene";
-        constexpr std::string_view project_api_name = "spectra.dynamic_scene.project";
+        constexpr std::string_view controls_api_name = "spectra.dynamic_scene.controls";
         constexpr std::uint32_t scene_api_version = 1u;
-        constexpr std::uint32_t project_api_version = 1u;
+        constexpr std::uint32_t controls_api_version = 1u;
 
         typedef void SpectraDynamicSceneInstance;
 
@@ -559,6 +735,9 @@ namespace spectra::scene_runtime {
             std::uint32_t kind{};
             std::uint32_t required{};
             SpectraDynamicSceneString default_value{};
+            SpectraDynamicSceneString group{};
+            std::uint32_t advanced{};
+            std::int32_t priority{};
             SpectraDynamicSceneOpenOptionChoiceSpan choices{};
         };
 
@@ -572,52 +751,156 @@ namespace spectra::scene_runtime {
             std::uint64_t count{};
         };
 
-        struct SpectraDynamicSceneProjectAction {
+        struct SpectraDynamicSceneControlAction {
             SpectraDynamicSceneString id{};
             SpectraDynamicSceneString label{};
             SpectraDynamicSceneString description{};
+            std::uint32_t group{};
+            std::int32_t priority{};
+            std::uint32_t style{};
             SpectraDynamicSceneOpenOptionSchemaSpan options{};
         };
 
-        struct SpectraDynamicSceneProjectActionSpan {
-            const SpectraDynamicSceneProjectAction* data{};
+        struct SpectraDynamicSceneControlActionSpan {
+            const SpectraDynamicSceneControlAction* data{};
             std::uint64_t count{};
         };
 
-        struct SpectraDynamicSceneProjectMetric {
+        struct SpectraDynamicSceneControlSetting {
+            SpectraDynamicSceneString key{};
+            SpectraDynamicSceneString label{};
+            SpectraDynamicSceneString description{};
+            std::uint32_t kind{};
+            SpectraDynamicSceneString value{};
+            SpectraDynamicSceneString group{};
+            std::uint32_t advanced{};
+            std::int32_t priority{};
+            SpectraDynamicSceneOpenOptionChoiceSpan choices{};
+        };
+
+        struct SpectraDynamicSceneControlSettingSpan {
+            const SpectraDynamicSceneControlSetting* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneControlSettingView {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneControlSettingSpan settings{};
+        };
+
+        struct SpectraDynamicSceneControlMetric {
             SpectraDynamicSceneString key{};
             SpectraDynamicSceneString label{};
             SpectraDynamicSceneString value{};
+            std::uint32_t placement_flags{};
+            std::int32_t priority{};
+            std::uint32_t has_color{};
+            float color[4]{};
         };
 
-        struct SpectraDynamicSceneProjectMetricSpan {
-            const SpectraDynamicSceneProjectMetric* data{};
+        struct SpectraDynamicSceneControlMetricSpan {
+            const SpectraDynamicSceneControlMetric* data{};
             std::uint64_t count{};
         };
 
-        struct SpectraDynamicSceneProjectStatusView {
+        struct SpectraDynamicSceneControlDisabledAction {
+            SpectraDynamicSceneString action_id{};
+            SpectraDynamicSceneString reason{};
+        };
+
+        struct SpectraDynamicSceneControlDisabledActionSpan {
+            const SpectraDynamicSceneControlDisabledAction* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneControlStatusView {
             std::uint64_t struct_size{};
             SpectraDynamicSceneString phase{};
             SpectraDynamicSceneString headline{};
             SpectraDynamicSceneString detail{};
-            SpectraDynamicSceneProjectMetricSpan metrics{};
+            SpectraDynamicSceneControlMetricSpan metrics{};
             SpectraDynamicSceneStringSpan enabled_action_ids{};
+            SpectraDynamicSceneControlDisabledActionSpan disabled_actions{};
         };
 
-        struct SpectraDynamicSceneProjectLogEntry {
+        struct SpectraDynamicSceneControlLogEntry {
             std::uint64_t sequence{};
             SpectraDynamicSceneString level{};
             SpectraDynamicSceneString message{};
         };
 
-        struct SpectraDynamicSceneProjectLogEntrySpan {
-            const SpectraDynamicSceneProjectLogEntry* data{};
+        struct SpectraDynamicSceneControlLogEntrySpan {
+            const SpectraDynamicSceneControlLogEntry* data{};
             std::uint64_t count{};
         };
 
-        struct SpectraDynamicSceneProjectLogView {
+        struct SpectraDynamicSceneControlLogView {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneProjectLogEntrySpan entries{};
+            SpectraDynamicSceneControlLogEntrySpan entries{};
+        };
+
+        struct SpectraDynamicSceneControlImage {
+            SpectraDynamicSceneString id{};
+            SpectraDynamicSceneString label{};
+            SpectraDynamicSceneString description{};
+            const std::uint8_t* rgba8{};
+            std::uint64_t rgba8_size{};
+            std::uint64_t revision{};
+            std::uint32_t width{};
+            std::uint32_t height{};
+        };
+
+        struct SpectraDynamicSceneControlImageSpan {
+            const SpectraDynamicSceneControlImage* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneControlImageView {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneControlImageSpan images{};
+        };
+
+        struct SpectraDynamicSceneControlScalarSample {
+            std::uint64_t step{};
+            double time_seconds{};
+            double value{};
+        };
+
+        struct SpectraDynamicSceneControlScalarSampleSpan {
+            const SpectraDynamicSceneControlScalarSample* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneControlScalarSeries {
+            SpectraDynamicSceneString id{};
+            SpectraDynamicSceneString label{};
+            SpectraDynamicSceneString description{};
+            SpectraDynamicSceneString unit{};
+            float color[4]{};
+            std::uint32_t group{};
+            std::int32_t priority{};
+            std::uint64_t revision{};
+            SpectraDynamicSceneControlScalarSampleSpan samples{};
+        };
+
+        struct SpectraDynamicSceneControlScalarSeriesSpan {
+            const SpectraDynamicSceneControlScalarSeries* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneControlScalarSeriesView {
+            std::uint64_t struct_size{};
+            SpectraDynamicSceneControlScalarSeriesSpan series{};
+        };
+
+        struct SpectraDynamicSceneControlUpdateInfo {
+            std::uint64_t struct_size{};
+            double wall_delta_seconds{};
+            double scene_delta_seconds{};
+            double time_seconds{};
+            std::uint64_t frame_index{};
+            std::uint32_t timeline_mode{};
+            std::uint32_t timeline_playing{};
         };
 
         struct SpectraDynamicSceneGpuDeviceIdentity {
@@ -645,6 +928,24 @@ namespace spectra::scene_runtime {
 
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneRequestViewportVoxelBufferFn)(void* user_data, const SpectraDynamicSceneViewportVoxelBufferRequest* request, SpectraDynamicSceneViewportVoxelBufferAllocation* allocation);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneReleaseViewportVoxelBufferFn)(void* user_data, std::uint64_t resource_id);
+
+        struct SpectraDynamicSceneVolumeBufferRequest {
+            std::uint64_t struct_size{};
+            std::uint64_t byte_size{};
+            SpectraDynamicSceneString debug_name{};
+        };
+
+        struct SpectraDynamicSceneVolumeBufferAllocation {
+            std::uint64_t struct_size{};
+            std::uint64_t resource_id{};
+            std::uint64_t byte_size{};
+            std::uint32_t handle_kind{};
+            std::uintptr_t handle{};
+            SpectraDynamicSceneGpuDeviceIdentity device_identity{};
+        };
+
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneRequestVolumeBufferFn)(void* user_data, const SpectraDynamicSceneVolumeBufferRequest* request, SpectraDynamicSceneVolumeBufferAllocation* allocation);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneReleaseVolumeBufferFn)(void* user_data, std::uint64_t resource_id);
         typedef SpectraDynamicSceneString (*SpectraDynamicSceneHostLastErrorFn)(void* user_data);
 
         struct SpectraDynamicSceneHostServices {
@@ -652,6 +953,8 @@ namespace spectra::scene_runtime {
             void* user_data{};
             SpectraDynamicSceneRequestViewportVoxelBufferFn request_viewport_voxel_buffer{};
             SpectraDynamicSceneReleaseViewportVoxelBufferFn release_viewport_voxel_buffer{};
+            SpectraDynamicSceneRequestVolumeBufferFn request_volume_buffer{};
+            SpectraDynamicSceneReleaseVolumeBufferFn release_volume_buffer{};
             SpectraDynamicSceneHostLastErrorFn last_error{};
         };
 
@@ -701,27 +1004,6 @@ namespace spectra::scene_runtime {
             std::uint64_t count{};
         };
 
-        struct SpectraDynamicSceneCameraImage {
-            const std::uint8_t* rgba8{};
-            std::uint64_t rgba8_size{};
-            std::uint64_t revision{};
-            std::uint32_t width{};
-            std::uint32_t height{};
-            float tint[4]{};
-        };
-
-        struct SpectraDynamicSceneCameraVisualization {
-            std::uint32_t enabled{};
-            float color[4]{};
-            float width{};
-            std::uint32_t width_mode{};
-            std::uint32_t depth_mode{};
-            float visual_near{};
-            float visual_far{};
-            std::uint32_t has_image{};
-            SpectraDynamicSceneCameraImage image{};
-        };
-
         struct SpectraDynamicSceneCamera {
             SpectraDynamicSceneString name{};
             SpectraDynamicSceneString local_coordinate_system{};
@@ -738,7 +1020,6 @@ namespace spectra::scene_runtime {
             float cy{};
             float near_plane{};
             float far_plane{};
-            SpectraDynamicSceneCameraVisualization visualization{};
         };
 
         struct SpectraDynamicSceneCameraSpan {
@@ -819,6 +1100,12 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneString name{};
             std::uint32_t dimensions[3]{};
             SpectraDynamicSceneFloatSpan values{};
+            std::uint32_t source_kind{};
+            std::uint32_t index_encoding{};
+            std::uint64_t buffer_id{};
+            std::uintptr_t external_device_pointer{};
+            std::uint64_t source_byte_size{};
+            std::uint64_t revision{};
         };
 
         struct SpectraDynamicSceneVolumeChannelSpan {
@@ -838,6 +1125,11 @@ namespace spectra::scene_runtime {
         struct SpectraDynamicSceneVolumeSpan {
             const SpectraDynamicSceneVolume* data{};
             std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneEntityRef {
+            std::uint32_t kind{};
+            SpectraDynamicSceneString name{};
         };
 
         struct SpectraDynamicSceneViewportSegment {
@@ -861,6 +1153,7 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneViewportSegmentSet {
             SpectraDynamicSceneString name{};
+            SpectraDynamicSceneEntityRef owner{};
             SpectraDynamicSceneViewportSegmentSpan segments{};
             SpectraDynamicSceneColorSpan colors{};
             SpectraDynamicSceneFloatSpan widths{};
@@ -877,6 +1170,7 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneViewportVoxelGrid {
             SpectraDynamicSceneString name{};
+            SpectraDynamicSceneEntityRef owner{};
             std::uint32_t dimensions[3]{};
             float origin[3]{};
             float voxel_size[3]{};
@@ -897,6 +1191,39 @@ namespace spectra::scene_runtime {
             std::uint64_t count{};
         };
 
+        struct SpectraDynamicSceneViewportCameraVisualImage {
+            const std::uint8_t* rgba8{};
+            std::uint64_t rgba8_size{};
+            std::uint64_t revision{};
+            std::uint32_t width{};
+            std::uint32_t height{};
+            float tint[4]{};
+        };
+
+        struct SpectraDynamicSceneViewportCameraVisual {
+            SpectraDynamicSceneString name{};
+            SpectraDynamicSceneEntityRef owner{};
+            float color[4]{};
+            float width{};
+            std::uint32_t width_mode{};
+            std::uint32_t depth_mode{};
+            float visual_near{};
+            float visual_far{};
+            std::uint32_t has_image{};
+            SpectraDynamicSceneViewportCameraVisualImage image{};
+        };
+
+        struct SpectraDynamicSceneViewportCameraVisualSpan {
+            const SpectraDynamicSceneViewportCameraVisual* data{};
+            std::uint64_t count{};
+        };
+
+        struct SpectraDynamicSceneDebugAttachmentSet {
+            SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
+            SpectraDynamicSceneViewportVoxelGridSpan viewport_voxel_grids{};
+            SpectraDynamicSceneViewportCameraVisualSpan viewport_camera_visuals{};
+        };
+
         struct SpectraDynamicSceneDocumentView {
             std::uint64_t struct_size{};
             SpectraDynamicSceneString default_coordinate_system{};
@@ -908,8 +1235,7 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneSphereSpan spheres{};
             SpectraDynamicScenePointCloudSpan point_clouds{};
             SpectraDynamicSceneVolumeSpan volumes{};
-            SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
-            SpectraDynamicSceneViewportVoxelGridSpan viewport_voxel_grids{};
+            SpectraDynamicSceneDebugAttachmentSet debug_attachments{};
         };
 
         struct SpectraDynamicSceneFrameInfo {
@@ -925,8 +1251,7 @@ namespace spectra::scene_runtime {
             SpectraDynamicScenePointCloudSpan point_clouds{};
             SpectraDynamicSceneVolumeSpan volumes{};
             SpectraDynamicSceneCameraSpan cameras{};
-            SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
-            SpectraDynamicSceneViewportVoxelGridSpan viewport_voxel_grids{};
+            SpectraDynamicSceneDebugAttachmentSet debug_attachments{};
         };
 
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(const SpectraDynamicSceneOpenInfo* open_info, SpectraDynamicSceneInstance** instance);
@@ -935,16 +1260,21 @@ namespace spectra::scene_runtime {
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneStepFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectUpdateFn)(SpectraDynamicSceneInstance* instance, float delta_seconds);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectActionFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneString action_id, SpectraDynamicSceneOptionSpan options);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectStatusFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneProjectStatusView* status);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneProjectLogsFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneProjectLogView* logs);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlsUpdateFn)(SpectraDynamicSceneInstance* instance, const SpectraDynamicSceneControlUpdateInfo* update_info);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneSceneRevisionFn)(SpectraDynamicSceneInstance* instance, std::uint64_t* revision);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlActionFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneString action_id, SpectraDynamicSceneOptionSpan options);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlSettingsFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneControlSettingView* settings);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlSettingUpdateFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneString key, SpectraDynamicSceneString value);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlStatusFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneControlStatusView* status);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlLogsFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneControlLogView* logs);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlImagesFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneControlImageView* images);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlScalarSeriesFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneControlScalarSeriesView* series);
         typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneGetApiFn)(SpectraDynamicSceneString api_name, std::uint32_t api_version, const void** api);
 
         struct SpectraDynamicSceneSceneApi {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneString pbrt_template_path{};
+            SpectraDynamicSceneString base_pbrt_path{};
             double frames_per_second{};
             SpectraDynamicSceneCreateFn create{};
             SpectraDynamicSceneDestroyFn destroy{};
@@ -955,13 +1285,18 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneLastErrorFn last_error{};
         };
 
-        struct SpectraDynamicSceneProjectApi {
+        struct SpectraDynamicSceneControlsApi {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneProjectActionSpan project_actions{};
-            SpectraDynamicSceneProjectUpdateFn project_update{};
-            SpectraDynamicSceneProjectActionFn project_action{};
-            SpectraDynamicSceneProjectStatusFn project_status{};
-            SpectraDynamicSceneProjectLogsFn project_logs{};
+            SpectraDynamicSceneControlActionSpan control_actions{};
+            SpectraDynamicSceneControlsUpdateFn controls_update{};
+            SpectraDynamicSceneSceneRevisionFn scene_revision{};
+            SpectraDynamicSceneControlActionFn control_action{};
+            SpectraDynamicSceneControlSettingsFn control_settings{};
+            SpectraDynamicSceneControlSettingUpdateFn control_setting_update{};
+            SpectraDynamicSceneControlStatusFn control_status{};
+            SpectraDynamicSceneControlLogsFn control_logs{};
+            SpectraDynamicSceneControlImagesFn control_images{};
+            SpectraDynamicSceneControlScalarSeriesFn control_scalar_series{};
         };
 
         struct SpectraDynamicScenePlugin {
@@ -969,7 +1304,7 @@ namespace spectra::scene_runtime {
             std::uint64_t struct_size{};
             SpectraDynamicSceneString id{};
             SpectraDynamicSceneString title{};
-            SpectraDynamicSceneString project_panel_title{};
+            SpectraDynamicSceneString controls_panel_title{};
             SpectraDynamicSceneString open_action_label{};
             SpectraDynamicSceneString open_action_description{};
             SpectraDynamicSceneOpenOptionSchemaSpan open_options{};
@@ -1052,6 +1387,18 @@ namespace spectra::scene_runtime {
             return abi_span(span.data, span.count, context);
         }
 
+        [[nodiscard]] std::span<const SpectraDynamicSceneViewportCameraVisual> abi_span(const SpectraDynamicSceneViewportCameraVisualSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
+        [[nodiscard]] std::span<const SpectraDynamicSceneControlScalarSample> abi_span(const SpectraDynamicSceneControlScalarSampleSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
+        [[nodiscard]] std::span<const SpectraDynamicSceneControlScalarSeries> abi_span(const SpectraDynamicSceneControlScalarSeriesSpan span, const std::string_view context) {
+            return abi_span(span.data, span.count, context);
+        }
+
         [[nodiscard]] float finite_float(const float value, const std::string_view context) {
             if (!std::isfinite(value)) throw std::runtime_error(std::format("{} must be finite", context));
             return value;
@@ -1122,6 +1469,41 @@ namespace spectra::scene_runtime {
             case 1u: return scene::Scene::ViewportVoxelGridIndexEncoding::Morton3D;
             }
             throw std::runtime_error(std::format("{} has invalid viewport voxel grid index encoding {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::VolumeChannelSourceKind volume_channel_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::VolumeChannelSourceKind::Values;
+            case 1u: return scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer;
+            }
+            throw std::runtime_error(std::format("{} has invalid volume channel source kind {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::VolumeChannelIndexEncoding volume_channel_index_encoding_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::VolumeChannelIndexEncoding::Linear;
+            case 1u: return scene::Scene::VolumeChannelIndexEncoding::Morton3D;
+            }
+            throw std::runtime_error(std::format("{} has invalid volume channel index encoding {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::SceneEntityKind scene_entity_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return scene::Scene::SceneEntityKind::Mesh;
+            case 1u: return scene::Scene::SceneEntityKind::Sphere;
+            case 2u: return scene::Scene::SceneEntityKind::PointCloud;
+            case 3u: return scene::Scene::SceneEntityKind::VolumeGrid;
+            case 4u: return scene::Scene::SceneEntityKind::Camera;
+            case 5u: return scene::Scene::SceneEntityKind::Light;
+            }
+            throw std::runtime_error(std::format("{} has invalid scene entity kind {}", context, value));
+        }
+
+        [[nodiscard]] scene::Scene::SceneEntityRef make_entity_ref(const SpectraDynamicSceneEntityRef& entity, const std::string_view context) {
+            return scene::Scene::SceneEntityRef{
+                .kind = scene_entity_kind_from_u32(entity.kind, context),
+                .name = abi_string(entity.name, std::format("{} name", context), false),
+            };
         }
 
         [[nodiscard]] scene::Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
@@ -1201,38 +1583,6 @@ namespace spectra::scene_runtime {
             throw std::runtime_error(std::format("Dynamic scene camera \"{}\" has invalid projection {}", name, camera.projection));
         }
 
-        [[nodiscard]] scene::Scene::CameraImage make_camera_image(const SpectraDynamicSceneCamera& camera, const std::string& name) {
-            const auto& image = camera.visualization.image;
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Dynamic scene camera \"{}\" RGBA8 image dimensions must be non-zero", name));
-            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
-            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Dynamic scene camera \"{}\" RGBA8 image byte count must be width * height * 4", name));
-            scene::Scene::CameraImage result{
-                .width = image.width,
-                .height = image.height,
-                .rgba8 = image.rgba8,
-                .rgba8_size = image.rgba8_size,
-                .revision = image.revision,
-                .tint = make_vector4(image.tint, std::format("Dynamic scene camera \"{}\" image tint", name)),
-            };
-            static_cast<void>(abi_span(image.rgba8, image.rgba8_size, std::format("Dynamic scene camera \"{}\" RGBA8 image", name)));
-            return result;
-        }
-
-        [[nodiscard]] scene::Scene::CameraVisualization make_camera_visualization(const SpectraDynamicSceneCamera& camera, const std::string& name) {
-            if (camera.visualization.enabled == 0u) return scene::Scene::CameraVisualization{};
-            scene::Scene::CameraVisualization visualization{
-                .enabled = true,
-                .color = make_vector4(camera.visualization.color, std::format("Dynamic scene camera \"{}\" visualization color", name)),
-                .width = finite_float(camera.visualization.width, std::format("Dynamic scene camera \"{}\" visualization width", name)),
-                .width_mode = viewport_segment_width_mode_from_u32(camera.visualization.width_mode, std::format("Dynamic scene camera \"{}\" visualization", name)),
-                .depth_mode = viewport_segment_depth_mode_from_u32(camera.visualization.depth_mode, std::format("Dynamic scene camera \"{}\" visualization", name)),
-                .visual_near = finite_float(camera.visualization.visual_near, std::format("Dynamic scene camera \"{}\" visualization near", name)),
-                .visual_far = finite_float(camera.visualization.visual_far, std::format("Dynamic scene camera \"{}\" visualization far", name)),
-            };
-            if (camera.visualization.has_image != 0u) visualization.image = make_camera_image(camera, name);
-            return visualization;
-        }
-
         [[nodiscard]] scene::Scene::Camera make_camera(const SpectraDynamicSceneCamera& camera) {
             const std::string name = abi_string(camera.name, "Dynamic scene camera name", false);
             const std::string local_coordinate_system_name = abi_string(camera.local_coordinate_system, std::format("Dynamic scene camera \"{}\" local coordinate system", name), false);
@@ -1251,7 +1601,6 @@ namespace spectra::scene_runtime {
                     .navigation_up = scene::normalize(up, std::format("Dynamic scene camera \"{}\" up", name)),
                     .projection = camera_projection(camera, name),
                 },
-                .visualization = make_camera_visualization(camera, name),
             };
         }
 
@@ -1332,16 +1681,64 @@ namespace spectra::scene_runtime {
                 scene::Scene::VolumeChannel converted{
                     .name = abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false),
                     .dimensions = {channel.dimensions[0], channel.dimensions[1], channel.dimensions[2]},
+                    .source_kind = volume_channel_source_kind_from_u32(channel.source_kind, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false))),
+                    .index_encoding = volume_channel_index_encoding_from_u32(channel.index_encoding, std::format("Dynamic scene volume \"{}\" channel \"{}\"", name, abi_string(channel.name, std::format("Dynamic scene volume \"{}\" channel name", name), false))),
+                    .buffer_id = channel.buffer_id,
+                    .external_device_pointer = channel.external_device_pointer,
+                    .source_byte_size = channel.source_byte_size,
+                    .revision = channel.revision,
                 };
                 if (converted.dimensions != result.dimensions) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" dimensions do not match", name, converted.name));
                 const std::uint64_t expected_count = static_cast<std::uint64_t>(converted.dimensions[0]) * static_cast<std::uint64_t>(converted.dimensions[1]) * static_cast<std::uint64_t>(converted.dimensions[2]);
                 const std::span<const float> values = abi_span(channel.values.data, channel.values.count, std::format("Dynamic scene volume \"{}\" channel \"{}\" values", name, converted.name));
-                if (expected_count != values.size()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value count does not match dimensions", name, converted.name));
-                converted.values.assign(values.begin(), values.end());
-                for (std::size_t index = 0u; index < converted.values.size(); ++index)
-                    if (!std::isfinite(converted.values[index])) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value #{} must be finite", name, converted.name, index));
+                if (converted.source_kind == scene::Scene::VolumeChannelSourceKind::Values) {
+                    if (expected_count != values.size()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value count does not match dimensions", name, converted.name));
+                    converted.values.assign(values.begin(), values.end());
+                    for (std::size_t index = 0u; index < converted.values.size(); ++index)
+                        if (!std::isfinite(converted.values[index])) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" value #{} must be finite", name, converted.name, index));
+                } else {
+                    if (!values.empty()) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" external GPU source must not provide CPU values", name, converted.name));
+                    if (expected_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" byte count exceeds uint64 range", name, converted.name));
+                    if (converted.source_byte_size < expected_count * sizeof(float)) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" external GPU source byte size is too small", name, converted.name));
+                    if (converted.buffer_id == 0u) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" external GPU source has no buffer id", name, converted.name));
+                    if (converted.external_device_pointer == 0u) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" external GPU source has no device pointer for pathtracer snapshot", name, converted.name));
+                    if (converted.revision == 0u) throw std::runtime_error(std::format("Dynamic scene volume \"{}\" channel \"{}\" external GPU source revision must not be zero", name, converted.name));
+                }
                 result.channels.push_back(std::move(converted));
             }
+            return result;
+        }
+
+        [[nodiscard]] scene::Scene::ViewportCameraVisualImage make_viewport_camera_visual_image(const SpectraDynamicSceneViewportCameraVisualImage& image, const std::string& name) {
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Dynamic scene viewport camera visual \"{}\" RGBA8 image dimensions must be non-zero", name));
+            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Dynamic scene viewport camera visual \"{}\" RGBA8 image byte count must be width * height * 4", name));
+            scene::Scene::ViewportCameraVisualImage result{
+                .width = image.width,
+                .height = image.height,
+                .rgba8 = image.rgba8,
+                .rgba8_size = image.rgba8_size,
+                .revision = image.revision,
+                .tint = make_vector4(image.tint, std::format("Dynamic scene viewport camera visual \"{}\" image tint", name)),
+            };
+            static_cast<void>(abi_span(image.rgba8, image.rgba8_size, std::format("Dynamic scene viewport camera visual \"{}\" RGBA8 image", name)));
+            return result;
+        }
+
+        [[nodiscard]] scene::Scene::ViewportCameraVisual make_viewport_camera_visual(const SpectraDynamicSceneViewportCameraVisual& visual, const bool dynamic) {
+            const std::string name = abi_string(visual.name, "Dynamic scene viewport camera visual name", false);
+            scene::Scene::ViewportCameraVisual result{
+                .name = name,
+                .owner = make_entity_ref(visual.owner, std::format("Dynamic scene viewport camera visual \"{}\" owner", name)),
+                .color = make_vector4(visual.color, std::format("Dynamic scene viewport camera visual \"{}\" color", name)),
+                .width = finite_float(visual.width, std::format("Dynamic scene viewport camera visual \"{}\" width", name)),
+                .width_mode = viewport_segment_width_mode_from_u32(visual.width_mode, std::format("Dynamic scene viewport camera visual \"{}\"", name)),
+                .depth_mode = viewport_segment_depth_mode_from_u32(visual.depth_mode, std::format("Dynamic scene viewport camera visual \"{}\"", name)),
+                .visual_near = finite_float(visual.visual_near, std::format("Dynamic scene viewport camera visual \"{}\" near", name)),
+                .visual_far = finite_float(visual.visual_far, std::format("Dynamic scene viewport camera visual \"{}\" far", name)),
+                .dynamic = dynamic,
+            };
+            if (visual.has_image != 0u) result.image = make_viewport_camera_visual_image(visual.image, name);
             return result;
         }
 
@@ -1349,6 +1746,7 @@ namespace spectra::scene_runtime {
             const std::string name = abi_string(segment_set.name, "Dynamic scene viewport segment set name", false);
             scene::Scene::ViewportSegmentSet result{
                 .name = name,
+                .owner = make_entity_ref(segment_set.owner, std::format("Dynamic scene viewport segment set \"{}\" owner", name)),
                 .width = finite_float(segment_set.width, std::format("Dynamic scene viewport segment set \"{}\" width", name)),
                 .width_mode = viewport_segment_width_mode_from_u32(segment_set.width_mode, std::format("Dynamic scene viewport segment set \"{}\"", name)),
                 .depth_mode = viewport_segment_depth_mode_from_u32(segment_set.depth_mode, std::format("Dynamic scene viewport segment set \"{}\"", name)),
@@ -1381,6 +1779,7 @@ namespace spectra::scene_runtime {
             const std::string name = abi_string(voxel_grid.name, "Dynamic scene viewport voxel grid name", false);
             return scene::Scene::ViewportVoxelGrid{
                 .name = name,
+                .owner = make_entity_ref(voxel_grid.owner, std::format("Dynamic scene viewport voxel grid \"{}\" owner", name)),
                 .dimensions = {voxel_grid.dimensions[0], voxel_grid.dimensions[1], voxel_grid.dimensions[2]},
                 .origin = make_vector3(voxel_grid.origin, std::format("Dynamic scene viewport voxel grid \"{}\" origin", name)),
                 .voxel_size = make_vector3(voxel_grid.voxel_size, std::format("Dynamic scene viewport voxel grid \"{}\" voxel size", name)),
@@ -1422,6 +1821,17 @@ namespace spectra::scene_runtime {
             if (!material_names.contains(primitive.material_name)) throw std::runtime_error(std::format("Dynamic scene {} \"{}\" references unknown material \"{}\"", kind, primitive.name, primitive.material_name));
         }
 
+        [[nodiscard]] scene::Scene::DebugAttachmentSet make_debug_attachment_set(const SpectraDynamicSceneDebugAttachmentSet& attachments, const bool dynamic, const std::string_view context) {
+            scene::Scene::DebugAttachmentSet result{};
+            for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(attachments.viewport_segment_sets, std::format("{} viewport segment sets", context)))
+                result.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, dynamic));
+            for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_span(attachments.viewport_voxel_grids, std::format("{} viewport voxel grids", context)))
+                result.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, dynamic));
+            for (const SpectraDynamicSceneViewportCameraVisual& visual_view : abi_span(attachments.viewport_camera_visuals, std::format("{} viewport camera visuals", context)))
+                result.viewport_camera_visuals.push_back(make_viewport_camera_visual(visual_view, dynamic));
+            return result;
+        }
+
         void append_document_view(scene::Scene::Document& document, const SpectraDynamicSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
             if (view.struct_size != sizeof(SpectraDynamicSceneDocumentView)) throw std::runtime_error("Dynamic scene document view ABI size mismatch");
             const std::string coordinate_system_name = abi_string(view.default_coordinate_system, "Dynamic scene document default coordinate system", true);
@@ -1460,10 +1870,7 @@ namespace spectra::scene_runtime {
                 require_material_reference(volume, material_names, "volume");
                 document.volumes.push_back(std::move(volume));
             }
-            for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(view.viewport_segment_sets, "Dynamic scene document viewport segment sets"))
-                document.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, false));
-            for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_span(view.viewport_voxel_grids, "Dynamic scene document viewport voxel grids"))
-                document.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, false));
+            document.debug_attachments = make_debug_attachment_set(view.debug_attachments, false, "Dynamic scene document debug attachments");
         }
 
         [[nodiscard]] scene::Scene::FrameSnapshot make_frame_snapshot(const SpectraDynamicSceneFrameView& view, const scene::Scene::FrameInfo& frame, const std::set<std::string>& material_names) {
@@ -1491,10 +1898,7 @@ namespace spectra::scene_runtime {
             }
             for (const SpectraDynamicSceneCamera& camera_view : abi_span(view.cameras, "Dynamic scene frame cameras"))
                 snapshot.cameras.push_back(make_camera(camera_view));
-            for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(view.viewport_segment_sets, "Dynamic scene frame viewport segment sets"))
-                snapshot.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, true));
-            for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_span(view.viewport_voxel_grids, "Dynamic scene frame viewport voxel grids"))
-                snapshot.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, true));
+            snapshot.debug_attachments = make_debug_attachment_set(view.debug_attachments, true, "Dynamic scene frame debug attachments");
             return snapshot;
         }
 
@@ -1587,6 +1991,52 @@ namespace spectra::scene_runtime {
             }
         }
 
+        [[nodiscard]] SpectraDynamicSceneResult request_volume_buffer(void* user_data, const SpectraDynamicSceneVolumeBufferRequest* request, SpectraDynamicSceneVolumeBufferAllocation* allocation) noexcept {
+            try {
+                dynamic_scene_host_service_callback_error.clear();
+                if (user_data == nullptr) throw std::runtime_error("Dynamic scene host services user data pointer is null");
+                if (request == nullptr) throw std::runtime_error("Dynamic scene volume buffer request pointer is null");
+                if (allocation == nullptr) throw std::runtime_error("Dynamic scene volume buffer allocation pointer is null");
+                if (request->struct_size != sizeof(SpectraDynamicSceneVolumeBufferRequest)) throw std::runtime_error("Dynamic scene volume buffer request ABI size mismatch");
+                DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
+                const DynamicSceneVolumeBufferAllocation allocated = host_services.request_volume_buffer(DynamicSceneVolumeBufferRequest{
+                    .byte_size = request->byte_size,
+                    .debug_name = abi_string(request->debug_name, "Dynamic scene volume buffer debug name", true),
+                });
+                *allocation = SpectraDynamicSceneVolumeBufferAllocation{
+                    .struct_size = sizeof(SpectraDynamicSceneVolumeBufferAllocation),
+                    .resource_id = allocated.resource_id,
+                    .byte_size = allocated.byte_size,
+                    .handle_kind = abi_gpu_resource_handle_kind(allocated.handle_kind),
+                    .handle = allocated.handle,
+                    .device_identity = abi_gpu_device_identity(allocated.device_identity),
+                };
+                return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
+            } catch (const std::exception& error) {
+                dynamic_scene_host_service_callback_error = error.what();
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            } catch (...) {
+                dynamic_scene_host_service_callback_error = "unknown dynamic scene host service error";
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            }
+        }
+
+        [[nodiscard]] SpectraDynamicSceneResult release_volume_buffer(void* user_data, const std::uint64_t resource_id) noexcept {
+            try {
+                dynamic_scene_host_service_callback_error.clear();
+                if (user_data == nullptr) throw std::runtime_error("Dynamic scene host services user data pointer is null");
+                DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
+                host_services.release_volume_buffer(resource_id);
+                return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
+            } catch (const std::exception& error) {
+                dynamic_scene_host_service_callback_error = error.what();
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            } catch (...) {
+                dynamic_scene_host_service_callback_error = "unknown dynamic scene host service error";
+                return SPECTRA_DYNAMIC_SCENE_RESULT_ERROR;
+            }
+        }
+
         [[nodiscard]] SpectraDynamicSceneString dynamic_scene_host_services_last_error(void* user_data) noexcept {
             if (user_data == nullptr) return abi_text(dynamic_scene_host_service_callback_error);
             DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
@@ -1601,6 +2051,8 @@ namespace spectra::scene_runtime {
                 .user_data = &host_services,
                 .request_viewport_voxel_buffer = request_viewport_voxel_buffer,
                 .release_viewport_voxel_buffer = release_viewport_voxel_buffer,
+                .request_volume_buffer = request_volume_buffer,
+                .release_volume_buffer = release_volume_buffer,
                 .last_error = dynamic_scene_host_services_last_error,
             };
         }
@@ -1632,7 +2084,7 @@ namespace spectra::scene_runtime {
         [[nodiscard]] std::filesystem::path normalized_dynamic_scene_plugin_path(const std::filesystem::path& plugin_path) {
             if (plugin_path.empty()) throw std::runtime_error("Dynamic scene plugin path must not be empty");
             const std::string path_text = plugin_path.string();
-            if (path_text.find('?') != std::string::npos) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; open the plugin path and configure it in the Project popover");
+            if (path_text.find('?') != std::string::npos) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; open the plugin path and configure it in the Scene popover");
             const std::filesystem::path absolute_path = std::filesystem::absolute(plugin_path).lexically_normal();
             if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a dynamic scene plugin library, not a folder");
             if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file does not exist", absolute_path.string()));
@@ -1711,8 +2163,12 @@ namespace spectra::scene_runtime {
                 .kind = make_open_option_kind(schema.kind, context),
                 .required = schema.required != 0u,
                 .default_value = abi_string(schema.default_value, std::format("{} default value", context), true),
+                .group = abi_string(schema.group, std::format("{} group", context), true),
+                .advanced = schema.advanced != 0u,
+                .priority = schema.priority,
             };
             if (schema.required != 0u && schema.required != 1u) throw std::runtime_error(std::format("{} required flag must be 0 or 1", context));
+            if (schema.advanced != 0u && schema.advanced != 1u) throw std::runtime_error(std::format("{} advanced flag must be 0 or 1", context));
             const std::span<const SpectraDynamicSceneOpenOptionChoice> choices = abi_span(schema.choices.data, schema.choices.count, std::format("{} choices", context));
             if (converted.kind == DynamicSceneOpenOptionKind::Choice && choices.empty()) throw std::runtime_error(std::format("{} choice option must provide at least one choice", context));
             if (converted.kind != DynamicSceneOpenOptionKind::Choice && !choices.empty()) throw std::runtime_error(std::format("{} non-choice option must not provide choices", context));
@@ -1747,45 +2203,129 @@ namespace spectra::scene_runtime {
             return converted;
         }
 
-        [[nodiscard]] DynamicSceneProjectAction make_project_action(const SpectraDynamicSceneProjectAction& action, const std::string_view context) {
-            return DynamicSceneProjectAction{
+        [[nodiscard]] DynamicSceneControlAction make_control_action(const SpectraDynamicSceneControlAction& action, const std::string_view context) {
+            if (action.group > DynamicSceneControlActionGroupUtility) throw std::runtime_error(std::format("{} has unknown action group {}", context, action.group));
+            if (action.style > DynamicSceneControlActionStyleDanger) throw std::runtime_error(std::format("{} has unknown action style {}", context, action.style));
+            return DynamicSceneControlAction{
                 .id = abi_string(action.id, std::format("{} id", context), false),
                 .label = abi_string(action.label, std::format("{} label", context), false),
                 .description = abi_string(action.description, std::format("{} description", context), true),
+                .group = action.group,
+                .priority = action.priority,
+                .style = action.style,
                 .options = make_open_option_schemas(action.options, std::format("{} option schema", context)),
             };
         }
 
-        [[nodiscard]] std::vector<DynamicSceneProjectAction> make_project_actions(const SpectraDynamicSceneProjectActionSpan actions, const std::string_view context) {
-            const std::span<const SpectraDynamicSceneProjectAction> action_span = abi_span(actions.data, actions.count, context);
+        [[nodiscard]] std::vector<DynamicSceneControlAction> make_control_actions(const SpectraDynamicSceneControlActionSpan actions, const std::string_view context) {
+            const std::span<const SpectraDynamicSceneControlAction> action_span = abi_span(actions.data, actions.count, context);
             std::set<std::string> action_ids{};
-            std::vector<DynamicSceneProjectAction> converted{};
+            std::vector<DynamicSceneControlAction> converted{};
             converted.reserve(action_span.size());
             for (std::size_t action_index = 0u; action_index < action_span.size(); ++action_index) {
-                DynamicSceneProjectAction action = make_project_action(action_span[action_index], std::format("{} {}", context, action_index));
+                DynamicSceneControlAction action = make_control_action(action_span[action_index], std::format("{} {}", context, action_index));
                 if (!action_ids.insert(action.id).second) throw std::runtime_error(std::format("{} action '{}' is duplicated", context, action.id));
                 converted.push_back(std::move(action));
             }
             return converted;
         }
 
-        [[nodiscard]] DynamicSceneProjectStatus make_project_status(const SpectraDynamicSceneProjectStatusView& view, const std::string_view context) {
-            if (view.struct_size != sizeof(SpectraDynamicSceneProjectStatusView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
-            DynamicSceneProjectStatus status{
+        [[nodiscard]] bool control_setting_kind_supported(const DynamicSceneOpenOptionKind kind) {
+            return kind == DynamicSceneOpenOptionKind::Choice || kind == DynamicSceneOpenOptionKind::Bool || kind == DynamicSceneOpenOptionKind::Float || kind == DynamicSceneOpenOptionKind::UnsignedInteger;
+        }
+
+        void validate_control_setting_value(const DynamicSceneControlSetting& setting, const std::string_view context) {
+            switch (setting.kind) {
+                case DynamicSceneOpenOptionKind::Choice:
+                    if (!std::ranges::any_of(setting.choices, [&setting](const DynamicSceneOpenOptionChoice& choice) { return choice.value == setting.value; })) throw std::runtime_error(std::format("{} setting '{}' value '{}' is not one of its choices", context, setting.key, setting.value));
+                    return;
+                case DynamicSceneOpenOptionKind::Bool:
+                    static_cast<void>(parse_bool_default(setting.value));
+                    return;
+                case DynamicSceneOpenOptionKind::Float:
+                    static_cast<void>(parse_float_default(setting.value, std::format("{} setting '{}' value", context, setting.key)));
+                    return;
+                case DynamicSceneOpenOptionKind::UnsignedInteger:
+                    static_cast<void>(parse_unsigned_integer_default(setting.value, std::format("{} setting '{}' value", context, setting.key)));
+                    return;
+                default:
+                    throw std::runtime_error(std::format("{} setting '{}' uses an unsupported kind", context, setting.key));
+            }
+        }
+
+        [[nodiscard]] DynamicSceneControlSetting make_control_setting(const SpectraDynamicSceneControlSetting& setting, const std::string_view context) {
+            DynamicSceneControlSetting converted{
+                .key = abi_string(setting.key, std::format("{} key", context), false),
+                .label = abi_string(setting.label, std::format("{} label", context), false),
+                .description = abi_string(setting.description, std::format("{} description", context), true),
+                .kind = make_open_option_kind(setting.kind, context),
+                .value = abi_string(setting.value, std::format("{} value", context), false),
+                .group = abi_string(setting.group, std::format("{} group", context), true),
+                .advanced = setting.advanced != 0u,
+                .priority = setting.priority,
+            };
+            if (setting.advanced != 0u && setting.advanced != 1u) throw std::runtime_error(std::format("{} advanced flag must be 0 or 1", context));
+            if (!control_setting_kind_supported(converted.kind)) throw std::runtime_error(std::format("{} setting '{}' must use Bool, Choice, Float, or UnsignedInteger", context, converted.key));
+            const std::span<const SpectraDynamicSceneOpenOptionChoice> choices = abi_span(setting.choices.data, setting.choices.count, std::format("{} choices", context));
+            if (converted.kind == DynamicSceneOpenOptionKind::Choice && choices.empty()) throw std::runtime_error(std::format("{} setting '{}' choice kind requires choices", context, converted.key));
+            if (converted.kind != DynamicSceneOpenOptionKind::Choice && !choices.empty()) throw std::runtime_error(std::format("{} setting '{}' non-choice kind must not provide choices", context, converted.key));
+            std::set<std::string> choice_values{};
+            converted.choices.reserve(choices.size());
+            for (std::size_t choice_index = 0u; choice_index < choices.size(); ++choice_index) {
+                const SpectraDynamicSceneOpenOptionChoice& choice = choices[choice_index];
+                DynamicSceneOpenOptionChoice converted_choice{
+                    .value = abi_string(choice.value, std::format("{} choice {} value", context, choice_index), false),
+                    .label = abi_string(choice.label, std::format("{} choice {} label", context, choice_index), false),
+                };
+                if (!choice_values.insert(converted_choice.value).second) throw std::runtime_error(std::format("{} setting '{}' choice value '{}' is duplicated", context, converted.key, converted_choice.value));
+                converted.choices.push_back(std::move(converted_choice));
+            }
+            validate_control_setting_value(converted, context);
+            return converted;
+        }
+
+        [[nodiscard]] std::vector<DynamicSceneControlSetting> make_control_settings(const SpectraDynamicSceneControlSettingView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneControlSettingView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            const std::span<const SpectraDynamicSceneControlSetting> setting_span = abi_span(view.settings.data, view.settings.count, std::format("{} settings", context));
+            std::set<std::string> setting_keys{};
+            std::vector<DynamicSceneControlSetting> converted{};
+            converted.reserve(setting_span.size());
+            for (std::size_t setting_index = 0u; setting_index < setting_span.size(); ++setting_index) {
+                DynamicSceneControlSetting setting = make_control_setting(setting_span[setting_index], std::format("{} setting {}", context, setting_index));
+                if (!setting_keys.insert(setting.key).second) throw std::runtime_error(std::format("{} setting '{}' is duplicated", context, setting.key));
+                converted.push_back(std::move(setting));
+            }
+            return converted;
+        }
+
+        [[nodiscard]] DynamicSceneControlStatus make_control_status(const SpectraDynamicSceneControlStatusView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneControlStatusView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            DynamicSceneControlStatus status{
                 .phase = abi_string(view.phase, std::format("{} phase", context), false),
                 .headline = abi_string(view.headline, std::format("{} headline", context), false),
                 .detail = abi_string(view.detail, std::format("{} detail", context), true),
             };
-            const std::span<const SpectraDynamicSceneProjectMetric> metrics = abi_span(view.metrics.data, view.metrics.count, std::format("{} metrics", context));
+            const std::span<const SpectraDynamicSceneControlMetric> metrics = abi_span(view.metrics.data, view.metrics.count, std::format("{} metrics", context));
             std::set<std::string> metric_keys{};
             status.metrics.reserve(metrics.size());
             for (std::size_t metric_index = 0u; metric_index < metrics.size(); ++metric_index) {
-                const SpectraDynamicSceneProjectMetric& metric = metrics[metric_index];
-                DynamicSceneProjectMetric converted{
+                const SpectraDynamicSceneControlMetric& metric = metrics[metric_index];
+                DynamicSceneControlMetric converted{
                     .key = abi_string(metric.key, std::format("{} metric {} key", context, metric_index), false),
                     .label = abi_string(metric.label, std::format("{} metric {} label", context, metric_index), false),
                     .value = abi_string(metric.value, std::format("{} metric {} value", context, metric_index), false),
+                    .placement_flags = metric.placement_flags,
+                    .priority = metric.priority,
+                    .has_color = metric.has_color != 0u,
+                    .color = {
+                        finite_float(metric.color[0], std::format("{} metric {} color r", context, metric_index)),
+                        finite_float(metric.color[1], std::format("{} metric {} color g", context, metric_index)),
+                        finite_float(metric.color[2], std::format("{} metric {} color b", context, metric_index)),
+                        finite_float(metric.color[3], std::format("{} metric {} color a", context, metric_index)),
+                    },
                 };
+                if ((converted.placement_flags & ~(DynamicSceneControlPlacementViewportOverlay | DynamicSceneControlPlacementPanelSummary | DynamicSceneControlPlacementPanelDetail)) != 0u) throw std::runtime_error(std::format("{} metric '{}' has unknown placement flags {}", context, converted.key, converted.placement_flags));
+                if (metric.has_color != 0u && metric.has_color != 1u) throw std::runtime_error(std::format("{} metric '{}' has_color flag must be 0 or 1", context, converted.key));
                 if (!metric_keys.insert(converted.key).second) throw std::runtime_error(std::format("{} metric '{}' is duplicated", context, converted.key));
                 status.metrics.push_back(std::move(converted));
             }
@@ -1797,21 +2337,119 @@ namespace spectra::scene_runtime {
                 if (!enabled_ids.insert(action_id).second) throw std::runtime_error(std::format("{} enabled action id '{}' is duplicated", context, action_id));
                 status.enabled_action_ids.push_back(std::move(action_id));
             }
+            const std::span<const SpectraDynamicSceneControlDisabledAction> disabled_actions = abi_span(view.disabled_actions.data, view.disabled_actions.count, std::format("{} disabled actions", context));
+            std::set<std::string> disabled_ids{};
+            status.disabled_actions.reserve(disabled_actions.size());
+            for (std::size_t disabled_index = 0u; disabled_index < disabled_actions.size(); ++disabled_index) {
+                const SpectraDynamicSceneControlDisabledAction& disabled = disabled_actions[disabled_index];
+                DynamicSceneControlDisabledAction converted{
+                    .action_id = abi_string(disabled.action_id, std::format("{} disabled action {} id", context, disabled_index), false),
+                    .reason = abi_string(disabled.reason, std::format("{} disabled action {} reason", context, disabled_index), false),
+                };
+                if (!disabled_ids.insert(converted.action_id).second) throw std::runtime_error(std::format("{} disabled action id '{}' is duplicated", context, converted.action_id));
+                if (enabled_ids.contains(converted.action_id)) throw std::runtime_error(std::format("{} action '{}' cannot be both enabled and disabled", context, converted.action_id));
+                status.disabled_actions.push_back(std::move(converted));
+            }
             return status;
         }
 
-        [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> make_project_logs(const SpectraDynamicSceneProjectLogView& view, const std::string_view context) {
-            if (view.struct_size != sizeof(SpectraDynamicSceneProjectLogView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
-            const std::span<const SpectraDynamicSceneProjectLogEntry> entries = abi_span(view.entries.data, view.entries.count, std::format("{} entries", context));
-            std::vector<DynamicSceneProjectLogEntry> converted{};
+        [[nodiscard]] std::vector<DynamicSceneControlLogEntry> make_control_logs(const SpectraDynamicSceneControlLogView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneControlLogView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            const std::span<const SpectraDynamicSceneControlLogEntry> entries = abi_span(view.entries.data, view.entries.count, std::format("{} entries", context));
+            std::vector<DynamicSceneControlLogEntry> converted{};
             converted.reserve(entries.size());
             for (std::size_t entry_index = 0u; entry_index < entries.size(); ++entry_index) {
-                const SpectraDynamicSceneProjectLogEntry& entry = entries[entry_index];
-                converted.push_back(DynamicSceneProjectLogEntry{
+                const SpectraDynamicSceneControlLogEntry& entry = entries[entry_index];
+                converted.push_back(DynamicSceneControlLogEntry{
                     .sequence = entry.sequence,
                     .level = abi_string(entry.level, std::format("{} entry {} level", context, entry_index), false),
                     .message = abi_string(entry.message, std::format("{} entry {} message", context, entry_index), false),
                 });
+            }
+            return converted;
+        }
+
+        [[nodiscard]] std::uint64_t checked_control_image_rgba8_byte_count(const DynamicSceneControlImage& image, const std::string_view context) {
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} image '{}' dimensions must be non-zero", context, image.id));
+            const std::uint64_t width = image.width;
+            const std::uint64_t height = image.height;
+            if (width > std::numeric_limits<std::uint64_t>::max() / height / 4u) throw std::runtime_error(std::format("{} image '{}' dimensions overflow RGBA8 byte count", context, image.id));
+            return width * height * 4u;
+        }
+
+        [[nodiscard]] std::vector<DynamicSceneControlImage> make_control_images(const SpectraDynamicSceneControlImageView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneControlImageView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            const std::span<const SpectraDynamicSceneControlImage> images = abi_span(view.images.data, view.images.count, std::format("{} images", context));
+            std::set<std::string> image_ids{};
+            std::vector<DynamicSceneControlImage> converted{};
+            converted.reserve(images.size());
+            for (std::size_t image_index = 0u; image_index < images.size(); ++image_index) {
+                const SpectraDynamicSceneControlImage& image = images[image_index];
+                DynamicSceneControlImage converted_image{
+                    .id = abi_string(image.id, std::format("{} image {} id", context, image_index), false),
+                    .label = abi_string(image.label, std::format("{} image {} label", context, image_index), false),
+                    .description = abi_string(image.description, std::format("{} image {} description", context, image_index), true),
+                    .rgba8 = image.rgba8,
+                    .rgba8_size = image.rgba8_size,
+                    .revision = image.revision,
+                    .width = image.width,
+                    .height = image.height,
+                };
+                if (!image_ids.insert(converted_image.id).second) throw std::runtime_error(std::format("{} image '{}' is duplicated", context, converted_image.id));
+                const std::uint64_t expected_byte_count = checked_control_image_rgba8_byte_count(converted_image, context);
+                if (converted_image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("{} image '{}' RGBA8 byte count must be width * height * 4", context, converted_image.id));
+                if (converted_image.rgba8 == nullptr) throw std::runtime_error(std::format("{} image '{}' RGBA8 pointer must not be null", context, converted_image.id));
+                if (converted_image.revision == 0u) throw std::runtime_error(std::format("{} image '{}' revision must not be zero", context, converted_image.id));
+                static_cast<void>(abi_span(converted_image.rgba8, converted_image.rgba8_size, std::format("{} image '{}' RGBA8 data", context, converted_image.id)));
+                converted.push_back(std::move(converted_image));
+            }
+            return converted;
+        }
+
+        [[nodiscard]] DynamicSceneControlScalarSample make_control_scalar_sample(const SpectraDynamicSceneControlScalarSample& sample, const std::string_view context) {
+            return DynamicSceneControlScalarSample{
+                .step = sample.step,
+                .time_seconds = finite_double(sample.time_seconds, std::format("{} time", context)),
+                .value = finite_double(sample.value, std::format("{} value", context)),
+            };
+        }
+
+        [[nodiscard]] std::vector<DynamicSceneControlScalarSeries> make_control_scalar_series(const SpectraDynamicSceneControlScalarSeriesView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraDynamicSceneControlScalarSeriesView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            const std::span<const SpectraDynamicSceneControlScalarSeries> series_span = abi_span(view.series, std::format("{} series", context));
+            std::set<std::string> series_ids{};
+            std::vector<DynamicSceneControlScalarSeries> converted{};
+            converted.reserve(series_span.size());
+            for (std::size_t series_index = 0u; series_index < series_span.size(); ++series_index) {
+                const SpectraDynamicSceneControlScalarSeries& series = series_span[series_index];
+                DynamicSceneControlScalarSeries converted_series{
+                    .id = abi_string(series.id, std::format("{} series {} id", context, series_index), false),
+                    .label = abi_string(series.label, std::format("{} series {} label", context, series_index), false),
+                    .description = abi_string(series.description, std::format("{} series {} description", context, series_index), true),
+                    .unit = abi_string(series.unit, std::format("{} series {} unit", context, series_index), true),
+                    .color = {
+                        finite_float(series.color[0], std::format("{} series {} color r", context, series_index)),
+                        finite_float(series.color[1], std::format("{} series {} color g", context, series_index)),
+                        finite_float(series.color[2], std::format("{} series {} color b", context, series_index)),
+                        finite_float(series.color[3], std::format("{} series {} color a", context, series_index)),
+                    },
+                    .group = series.group,
+                    .priority = series.priority,
+                    .revision = series.revision,
+                };
+                if (converted_series.group > DynamicSceneControlActionGroupUtility) throw std::runtime_error(std::format("{} series '{}' has unknown group {}", context, converted_series.id, converted_series.group));
+                if (!series_ids.insert(converted_series.id).second) throw std::runtime_error(std::format("{} series '{}' is duplicated", context, converted_series.id));
+                if (converted_series.revision == 0u) throw std::runtime_error(std::format("{} series '{}' revision must not be zero", context, converted_series.id));
+                const std::span<const SpectraDynamicSceneControlScalarSample> samples = abi_span(series.samples, std::format("{} series '{}' samples", context, converted_series.id));
+                converted_series.samples.reserve(samples.size());
+                std::uint64_t previous_step{};
+                for (std::size_t sample_index = 0u; sample_index < samples.size(); ++sample_index) {
+                    DynamicSceneControlScalarSample sample = make_control_scalar_sample(samples[sample_index], std::format("{} series '{}' sample {}", context, converted_series.id, sample_index));
+                    if (sample_index != 0u && sample.step < previous_step) throw std::runtime_error(std::format("{} series '{}' samples must be ordered by nondecreasing step", context, converted_series.id));
+                    previous_step = sample.step;
+                    converted_series.samples.push_back(sample);
+                }
+                converted.push_back(std::move(converted_series));
             }
             return converted;
         }
@@ -1873,9 +2511,9 @@ namespace spectra::scene_runtime {
                 if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin entry returned null", this->open_request.plugin_path.string()));
                 this->validate_plugin_descriptor();
                 this->scene_api = this->required_api<SpectraDynamicSceneSceneApi>(scene_api_name, scene_api_version);
-                this->project_api = this->optional_api<SpectraDynamicSceneProjectApi>(project_api_name, project_api_version);
+                this->controls_api = this->optional_api<SpectraDynamicSceneControlsApi>(controls_api_name, controls_api_version);
                 this->validate_scene_api();
-                this->validate_project_api();
+                this->validate_controls_api();
             }
 
             DynamicScenePluginLibrary(const DynamicScenePluginLibrary& other) = delete;
@@ -1892,8 +2530,8 @@ namespace spectra::scene_runtime {
                 return abi_string(this->plugin->title, "Dynamic scene plugin title", false);
             }
 
-            [[nodiscard]] std::string project_panel_title() const {
-                return abi_string(this->plugin->project_panel_title, "Dynamic scene plugin project panel title", false);
+            [[nodiscard]] std::string controls_panel_title() const {
+                return abi_string(this->plugin->controls_panel_title, "Dynamic scene plugin controls panel title", false);
             }
 
             [[nodiscard]] std::string open_action_label() const {
@@ -1920,9 +2558,16 @@ namespace spectra::scene_runtime {
                 return make_open_option_schemas(this->plugin->open_options, "Dynamic scene plugin open option schema");
             }
 
-            [[nodiscard]] std::vector<DynamicSceneProjectAction> project_actions() const {
-                if (this->project_api == nullptr) return {};
-                return make_project_actions(this->project_api->project_actions, "Dynamic scene plugin project action");
+            [[nodiscard]] std::vector<DynamicSceneControlAction> control_actions() const {
+                if (this->controls_api == nullptr) return {};
+                return make_control_actions(this->controls_api->control_actions, "Dynamic scene plugin controls action");
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneControlSetting> control_settings(SpectraDynamicSceneInstance* instance) const {
+                if (this->controls_api == nullptr) return {};
+                SpectraDynamicSceneControlSettingView view{};
+                this->check_result(this->controls_api->control_settings(instance, &view), instance, "Dynamic scene plugin controls settings");
+                return make_control_settings(view, "Dynamic scene plugin controls settings");
             }
 
             [[nodiscard]] double frames_per_second() const {
@@ -1930,8 +2575,8 @@ namespace spectra::scene_runtime {
             }
 
             [[nodiscard]] scene::Scene::Document make_base_document() const {
-                const std::string template_path_text = abi_string(this->scene_api->pbrt_template_path, "Dynamic scene plugin PBRT template path", true);
-                if (template_path_text.empty()) {
+                const std::string base_path_text = abi_string(this->scene_api->base_pbrt_path, "Dynamic scene plugin base PBRT path", true);
+                if (base_path_text.empty()) {
                     return scene::Scene::Document{
                         .revision = scene::Scene::Revision{1},
                         .name = this->id(),
@@ -1941,12 +2586,12 @@ namespace spectra::scene_runtime {
                         .timeline_enabled = true,
                     };
                 }
-                const std::filesystem::path template_relative_path{template_path_text};
-                if (template_relative_path.is_absolute()) throw std::runtime_error(std::format("{}: dynamic scene PBRT template path must be relative to the plugin directory", template_path_text));
-                const std::filesystem::path template_path = (this->plugin_directory / template_relative_path).lexically_normal();
-                if (!std::filesystem::is_regular_file(template_path)) throw std::runtime_error(std::format("{}: dynamic scene PBRT template file does not exist", template_path.string()));
-                scene::Scene template_scene = scene::Scene::parse_pbrt_file(template_path);
-                scene::Scene::Document document = *template_scene.document();
+                const std::filesystem::path base_relative_path{base_path_text};
+                if (base_relative_path.is_absolute()) throw std::runtime_error(std::format("{}: dynamic scene base PBRT path must be relative to the plugin directory", base_path_text));
+                const std::filesystem::path base_path = (this->plugin_directory / base_relative_path).lexically_normal();
+                if (!std::filesystem::is_regular_file(base_path)) throw std::runtime_error(std::format("{}: dynamic scene base PBRT file does not exist", base_path.string()));
+                scene::Scene base_scene = scene::Scene::parse_pbrt_file(base_path);
+                scene::Scene::Document document = *base_scene.document();
                 document.revision = scene::Scene::Revision{1};
                 document.name = this->id();
                 document.title = this->title();
@@ -1994,22 +2639,39 @@ namespace spectra::scene_runtime {
                 this->check_result(this->scene_api->step(instance, delta_seconds), instance, "Dynamic scene plugin step");
             }
 
-            void update_project(SpectraDynamicSceneInstance* instance, const float delta_seconds) const {
-                if (this->project_api == nullptr) return;
-                this->check_result(this->project_api->project_update(instance, delta_seconds), instance, "Dynamic scene plugin project update");
+            void update_controls(SpectraDynamicSceneInstance* instance, const DynamicSceneControlUpdateInfo& update) const {
+                if (this->controls_api == nullptr) return;
+                const SpectraDynamicSceneControlUpdateInfo update_info{
+                    .struct_size = sizeof(SpectraDynamicSceneControlUpdateInfo),
+                    .wall_delta_seconds = update.wall_delta_seconds,
+                    .scene_delta_seconds = update.scene_delta_seconds,
+                    .time_seconds = update.time_seconds,
+                    .frame_index = update.frame_index,
+                    .timeline_mode = static_cast<std::uint32_t>(update.timeline_mode),
+                    .timeline_playing = update.timeline_playing ? 1u : 0u,
+                };
+                this->check_result(this->controls_api->controls_update(instance, &update_info), instance, "Dynamic scene plugin controls update");
             }
 
-            void project_action(SpectraDynamicSceneInstance* instance, const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) const {
-                if (this->project_api == nullptr) throw std::runtime_error("Dynamic scene plugin does not expose a project API");
-                if (action_id.empty()) throw std::runtime_error("Dynamic scene plugin project action id must not be empty");
+            [[nodiscard]] std::uint64_t scene_revision(SpectraDynamicSceneInstance* instance) const {
+                if (this->controls_api == nullptr) return 0u;
+                std::uint64_t revision{};
+                this->check_result(this->controls_api->scene_revision(instance, &revision), instance, "Dynamic scene plugin controls scene revision");
+                if (revision == 0u) throw std::runtime_error("Dynamic scene plugin controls scene revision must not be zero");
+                return revision;
+            }
+
+            void control_action(SpectraDynamicSceneInstance* instance, const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) const {
+                if (this->controls_api == nullptr) throw std::runtime_error("Dynamic scene plugin does not expose a controls API");
+                if (action_id.empty()) throw std::runtime_error("Dynamic scene plugin controls action id must not be empty");
                 std::vector<DynamicScenePluginOptionStorage> option_storage{};
                 std::vector<SpectraDynamicSceneOption> option_views{};
                 std::set<std::string> option_keys{};
                 option_storage.reserve(options.size());
                 option_views.reserve(options.size());
                 for (const DynamicSceneOpenOption& option : options) {
-                    if (option.key.empty()) throw std::runtime_error("Dynamic scene project action option key must not be empty");
-                    if (!option_keys.insert(option.key).second) throw std::runtime_error(std::format("Dynamic scene project action option '{}' is duplicated", option.key));
+                    if (option.key.empty()) throw std::runtime_error("Dynamic scene controls action option key must not be empty");
+                    if (!option_keys.insert(option.key).second) throw std::runtime_error(std::format("Dynamic scene controls action option '{}' is duplicated", option.key));
                     option_storage.push_back(DynamicScenePluginOptionStorage{
                         .key = option.key,
                         .value = option.value,
@@ -2022,7 +2684,7 @@ namespace spectra::scene_runtime {
                     });
                 }
                 this->check_result(
-                    this->project_api->project_action(
+                    this->controls_api->control_action(
                         instance,
                         abi_text(action_id),
                         SpectraDynamicSceneOptionSpan{
@@ -2030,31 +2692,53 @@ namespace spectra::scene_runtime {
                             .count = static_cast<std::uint64_t>(option_views.size()),
                         }),
                     instance,
-                    std::format("Dynamic scene plugin project action '{}'", action_id));
+                    std::format("Dynamic scene plugin controls action '{}'", action_id));
             }
 
-            [[nodiscard]] DynamicSceneProjectStatus project_status(SpectraDynamicSceneInstance* instance) const {
-                if (this->project_api == nullptr) {
-                    return DynamicSceneProjectStatus{
+            void control_setting_update(SpectraDynamicSceneInstance* instance, const std::string_view key, const std::string_view value) const {
+                if (this->controls_api == nullptr) throw std::runtime_error("Dynamic scene plugin does not expose a controls API");
+                if (key.empty()) throw std::runtime_error("Dynamic scene plugin controls setting key must not be empty");
+                this->check_result(this->controls_api->control_setting_update(instance, abi_text(key), abi_text(value)), instance, std::format("Dynamic scene plugin controls setting '{}'", key));
+            }
+
+            [[nodiscard]] DynamicSceneControlStatus control_status(SpectraDynamicSceneInstance* instance) const {
+                if (this->controls_api == nullptr) {
+                    return DynamicSceneControlStatus{
                         .phase = "Active",
                         .headline = "Dynamic scene active",
                     };
                 }
-                SpectraDynamicSceneProjectStatusView view{};
-                this->check_result(this->project_api->project_status(instance, &view), instance, "Dynamic scene plugin project status");
-                DynamicSceneProjectStatus status = make_project_status(view, "Dynamic scene plugin project status");
+                SpectraDynamicSceneControlStatusView view{};
+                this->check_result(this->controls_api->control_status(instance, &view), instance, "Dynamic scene plugin controls status");
+                DynamicSceneControlStatus status = make_control_status(view, "Dynamic scene plugin controls status");
                 std::set<std::string> action_ids{};
-                for (const DynamicSceneProjectAction& action : this->project_actions()) action_ids.insert(action.id);
+                for (const DynamicSceneControlAction& action : this->control_actions()) action_ids.insert(action.id);
                 for (const std::string& enabled_action_id : status.enabled_action_ids)
-                    if (!action_ids.contains(enabled_action_id)) throw std::runtime_error(std::format("Dynamic scene plugin project status enabled unknown action '{}'", enabled_action_id));
+                    if (!action_ids.contains(enabled_action_id)) throw std::runtime_error(std::format("Dynamic scene plugin controls status enabled unknown action '{}'", enabled_action_id));
+                for (const DynamicSceneControlDisabledAction& disabled_action : status.disabled_actions)
+                    if (!action_ids.contains(disabled_action.action_id)) throw std::runtime_error(std::format("Dynamic scene plugin controls status disabled unknown action '{}'", disabled_action.action_id));
                 return status;
             }
 
-            [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> project_logs(SpectraDynamicSceneInstance* instance) const {
-                if (this->project_api == nullptr) return {};
-                SpectraDynamicSceneProjectLogView view{};
-                this->check_result(this->project_api->project_logs(instance, &view), instance, "Dynamic scene plugin project logs");
-                return make_project_logs(view, "Dynamic scene plugin project logs");
+            [[nodiscard]] std::vector<DynamicSceneControlLogEntry> control_logs(SpectraDynamicSceneInstance* instance) const {
+                if (this->controls_api == nullptr) return {};
+                SpectraDynamicSceneControlLogView view{};
+                this->check_result(this->controls_api->control_logs(instance, &view), instance, "Dynamic scene plugin controls logs");
+                return make_control_logs(view, "Dynamic scene plugin controls logs");
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneControlImage> control_images(SpectraDynamicSceneInstance* instance) const {
+                if (this->controls_api == nullptr) return {};
+                SpectraDynamicSceneControlImageView view{};
+                this->check_result(this->controls_api->control_images(instance, &view), instance, "Dynamic scene plugin controls images");
+                return make_control_images(view, "Dynamic scene plugin controls images");
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneControlScalarSeries> control_scalar_series(SpectraDynamicSceneInstance* instance) const {
+                if (this->controls_api == nullptr) return {};
+                SpectraDynamicSceneControlScalarSeriesView view{};
+                this->check_result(this->controls_api->control_scalar_series(instance, &view), instance, "Dynamic scene plugin controls scalar series");
+                return make_control_scalar_series(view, "Dynamic scene plugin controls scalar series");
             }
 
             [[nodiscard]] SpectraDynamicSceneDocumentView document(SpectraDynamicSceneInstance* instance) const {
@@ -2096,7 +2780,7 @@ namespace spectra::scene_runtime {
                 if (this->plugin->struct_size != sizeof(SpectraDynamicScenePlugin)) throw std::runtime_error(std::format("{}: dynamic scene plugin descriptor size mismatch", this->open_request.plugin_path.string()));
                 static_cast<void>(this->id());
                 static_cast<void>(this->title());
-                static_cast<void>(this->project_panel_title());
+                static_cast<void>(this->controls_panel_title());
                 static_cast<void>(this->open_action_label());
                 static_cast<void>(this->open_action_description());
                 if (this->plugin->get_api == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin get_api function is null", this->open_request.plugin_path.string()));
@@ -2116,14 +2800,19 @@ namespace spectra::scene_runtime {
                 if (this->scene_api->last_error == nullptr) throw std::runtime_error(std::format("{}: dynamic scene scene API last_error function is null", this->open_request.plugin_path.string()));
             }
 
-            void validate_project_api() const {
-                if (this->project_api == nullptr) return;
-                if (this->project_api->struct_size != sizeof(SpectraDynamicSceneProjectApi)) throw std::runtime_error(std::format("{}: dynamic scene project API descriptor size mismatch", this->open_request.plugin_path.string()));
-                if (this->project_api->project_update == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_update function is null", this->open_request.plugin_path.string()));
-                if (this->project_api->project_action == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_action function is null", this->open_request.plugin_path.string()));
-                if (this->project_api->project_status == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_status function is null", this->open_request.plugin_path.string()));
-                if (this->project_api->project_logs == nullptr) throw std::runtime_error(std::format("{}: dynamic scene project API project_logs function is null", this->open_request.plugin_path.string()));
-                static_cast<void>(this->project_actions());
+            void validate_controls_api() const {
+                if (this->controls_api == nullptr) return;
+                if (this->controls_api->struct_size != sizeof(SpectraDynamicSceneControlsApi)) throw std::runtime_error(std::format("{}: dynamic scene controls API descriptor size mismatch", this->open_request.plugin_path.string()));
+                if (this->controls_api->controls_update == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API controls_update function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->scene_revision == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API scene_revision function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_action == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_action function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_settings == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_settings function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_setting_update == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_setting_update function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_status == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_status function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_logs == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_logs function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_images == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_images function is null", this->open_request.plugin_path.string()));
+                if (this->controls_api->control_scalar_series == nullptr) throw std::runtime_error(std::format("{}: dynamic scene controls API control_scalar_series function is null", this->open_request.plugin_path.string()));
+                static_cast<void>(this->control_actions());
             }
 
             DynamicScenePluginOpenRequestStorage open_request{};
@@ -2131,7 +2820,7 @@ namespace spectra::scene_runtime {
             NativeLibrary native;
             const SpectraDynamicScenePlugin* plugin{};
             const SpectraDynamicSceneSceneApi* scene_api{};
-            const SpectraDynamicSceneProjectApi* project_api{};
+            const SpectraDynamicSceneControlsApi* controls_api{};
         };
 
         class DynamicScenePluginSourceInstance final : public DynamicSceneSourceInstance {
@@ -2159,20 +2848,40 @@ namespace spectra::scene_runtime {
                 this->plugin->step(this->instance, delta_seconds);
             }
 
-            void update_project(const float delta_seconds) override {
-                this->plugin->update_project(this->instance, delta_seconds);
+            void update_controls(const DynamicSceneControlUpdateInfo& update) override {
+                this->plugin->update_controls(this->instance, update);
             }
 
-            void execute_project_action(const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) override {
-                this->plugin->project_action(this->instance, action_id, options);
+            [[nodiscard]] std::uint64_t scene_revision() const override {
+                return this->plugin->scene_revision(this->instance);
             }
 
-            [[nodiscard]] DynamicSceneProjectStatus project_status() const override {
-                return this->plugin->project_status(this->instance);
+            void execute_control_action(const std::string_view action_id, const std::span<const DynamicSceneOpenOption> options) override {
+                this->plugin->control_action(this->instance, action_id, options);
             }
 
-            [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> project_logs() const override {
-                return this->plugin->project_logs(this->instance);
+            [[nodiscard]] std::vector<DynamicSceneControlSetting> control_settings() const override {
+                return this->plugin->control_settings(this->instance);
+            }
+
+            void update_control_setting(const std::string_view key, const std::string_view value) override {
+                this->plugin->control_setting_update(this->instance, key, value);
+            }
+
+            [[nodiscard]] DynamicSceneControlStatus control_status() const override {
+                return this->plugin->control_status(this->instance);
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneControlLogEntry> control_logs() const override {
+                return this->plugin->control_logs(this->instance);
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneControlImage> control_images() const override {
+                return this->plugin->control_images(this->instance);
+            }
+
+            [[nodiscard]] std::vector<DynamicSceneControlScalarSeries> control_scalar_series() const override {
+                return this->plugin->control_scalar_series(this->instance);
             }
 
             [[nodiscard]] scene::Scene::Document create_scene_document() const override {
@@ -2181,7 +2890,7 @@ namespace spectra::scene_runtime {
                 std::set<std::string> light_names = collect_light_names(document);
                 append_document_view(document, this->plugin->document(this->instance), material_names, light_names);
                 if (document.active_camera_name.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide an active camera name", this->plugin->id()));
-                if (document.cameras.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide a camera or PBRT template camera", this->plugin->id()));
+                if (document.cameras.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide a camera or base PBRT camera", this->plugin->id()));
                 document.timeline_enabled = true;
                 document.frames_per_second = this->plugin->frames_per_second();
                 this->material_names = std::move(material_names);
@@ -2221,12 +2930,12 @@ namespace spectra::scene_runtime {
         return DynamicScenePluginInfo{
             .id = plugin.id(),
             .title = plugin.title(),
-            .project_panel_title = plugin.project_panel_title(),
+            .controls_panel_title = plugin.controls_panel_title(),
             .open_action_label = plugin.open_action_label(),
             .open_action_description = plugin.open_action_description(),
             .path = plugin.path(),
             .open_options = plugin.open_options(),
-            .project_actions = plugin.project_actions(),
+            .control_actions = plugin.control_actions(),
         };
     }
 

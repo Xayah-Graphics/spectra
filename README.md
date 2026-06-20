@@ -5,18 +5,15 @@
 [![Arch Linux](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml)
 [![License](https://img.shields.io/github/license/Xayah-Graphics/spectra)](LICENSE)
 
-Spectra is an alpha-stage renderer and visualization workspace for graphics research, physical simulation, and 3D
-reconstruction experiments. It provides a Vulkan-based interactive host with two renderer backends:
+Spectra is an alpha-stage renderer and visualization workspace for graphics research, graphics scene inspection and dynamic rendering workflows. It provides a Vulkan-based interactive host with two renderer backends:
 
-- **Spectra Rasterizer** for live scene and simulation preview.
+- **Spectra Rasterizer** for live scene preview.
 - **Spectra Pathtracer** for OptiX/CUDA path-traced rendering of the current scene snapshot.
 
-The project is designed around a shared scene workspace. Static PBRT scenes and runtime dynamic scene plugins are loaded
-by the application layer, then consumed by both renderers without renderer-owned file loading.
-
-| Pathtracing Rendering                                                                                                                       | Physical Simulation                                                                                                                                   |
-|---------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/883141b90fd655fa7e4b227d8a54842ee137392c/spectra-pathtracer-cornell-box.png) | ![Cloth Simulation](https://github.com/Xayah-Graphics/imagebed/blob/0b600f42860a713b7bad36e350fbb55f29a4d97c/spectra-pathtracer-cloth-simulation.png) |
+Spectra is designed around a shared scene workspace. Static PBRT scenes and runtime dynamic scene plugins are loaded
+by the application layer, then consumed by both renderers without renderer-owned file loading. Dynamic plugins are
+dynamic scene sources: they publish renderable scene entities, scene parameters, and optional rasterizer-only debug
+attachments through the same scene model used by PBRT imports.
 
 ## Build
 
@@ -47,16 +44,17 @@ You may also load PBRT scenes and dynamic scene plugins through the GUI.
 ```
 
 then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
-empty dynamic project first; the Project popover renders the generic form declared by the plugin descriptor and creates
-the dynamic scene only when the plugin-declared open action is pressed. After creation, the same popover displays
-plugin-declared project actions, status metrics, and logs.
+empty dynamic scene controls workspace first; the Scene popover renders the generic form declared by the plugin
+descriptor and creates the dynamic scene only when the plugin-declared open action is pressed. After creation, the same
+popover displays plugin-declared control actions, status metrics, logs, charts, and preview images, while selected
+metrics may also appear as compact viewport overlay chips.
 
 
 ## Dynamic Scene Plugins Developer Guide
 
 Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
 link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
-Inside Spectra, dynamic plugin/project lifetime is owned by `spectra.scene_runtime`; the rasterizer only supplies the
+Inside Spectra, dynamic plugin lifetime is owned by `spectra.scene_runtime`; the rasterizer only supplies the
 Vulkan-backed host-service implementation and preview draw passes.
 
 A dynamic scene plugin only needs to:
@@ -66,15 +64,17 @@ A dynamic scene plugin only needs to:
 3. Declare the ABI structs exactly as documented below.
 
 The plugin owns all returned string and array views. Scene metadata is copied into Spectra scene storage during
-conversion, but camera visual pixels and viewport voxel grid GPU payloads are borrowed. Camera visual RGBA8 pointers
-must stay valid for the plugin instance lifetime, and `revision` must increase when the pixel contents change. Viewport
-voxel grid data is borrowed GPU data: the plugin requests a Spectra-owned external Vulkan storage buffer through host
-services, imports it into its own GPU runtime, writes the declared source payload, and publishes
-`resource_id + source_kind + index_encoding + source_byte_size + revision`.
+conversion, but camera visual pixels, control preview pixels, viewport voxel grid GPU payloads, and external volume
+channel GPU payloads are borrowed.
+Camera visual and control preview RGBA8 pointers must stay valid for the plugin instance lifetime, and `revision` must
+increase when the pixel contents change. Viewport voxel grid data is borrowed GPU data: the plugin requests a
+Spectra-owned external Vulkan storage buffer through host services, imports it into its own GPU runtime, writes the
+declared source payload, and publishes
+`resource_id + source_kind + index_encoding + external_device_pointer + source_byte_size + revision`.
 
 ### Binary Contract
 
-- ABI version: `14`.
+- ABI version: `23`.
 - Exported symbol: `spectra_dynamic_scene_plugin`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
@@ -84,11 +84,11 @@ services, imports it into its own GPU runtime, writes the declared source payloa
 
 ### Required ABI Declarations
 
-Dynamic scene plugins must declare the documented C ABI in the producer project. Do not include Spectra headers, link
+Dynamic scene plugins must declare the documented C ABI in the producer. Do not include Spectra headers, link
 Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. The plugin descriptor exposes generic
-project/open metadata, an open-options schema, and `get_api`. Spectra renders the open schema in the Project popover,
+controls/open metadata, an open-options schema, and `get_api`. Spectra renders the open schema in the Scene popover,
 loads the required scene capability table through `get_api("spectra.dynamic_scene.scene", 1)`, and loads the optional
-project-control table through `get_api("spectra.dynamic_scene.project", 1)`.
+controls table through `get_api("spectra.dynamic_scene.controls", 1)`.
 
 ### Required Export
 
@@ -103,13 +103,15 @@ extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra
 ```
 
 The returned descriptor and every capability table returned by `get_api` must stay valid while the library is loaded.
-Set `abi_version` to `14`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
+Set `abi_version` to `23`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
 unsupported optional APIs. The scene API is required; missing it is an error.
 
 ### Data Rules
 
 - `id`, `title`, material names, light names, camera name, primitive names, and material references must be non-empty.
 - `frames_per_second` must be finite and positive.
+- A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or
+  `VolumeGrid`. Cameras, lights, controls telemetry, and debug attachments do not count as renderable scene entities.
 - `default_coordinate_system` may be empty or one of `SpectraYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
   Unknown names are errors.
 - Material `model` values: `lit_surface`, `unlit_surface`, `emissive_surface`, `volume`, `point_sprite`.
@@ -118,9 +120,25 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 - Meshes require non-empty vertices and triangle indices.
 - Spheres require positive radius.
 - Point radii must be positive.
-- Volume dimensions must be positive, and each channel value count must equal `x * y * z`.
-- Viewport segment annotations and camera visualization are preview-only. They are consumed by the rasterizer and ignored
-  by the pathtracer/PBRT scene.
+- Volume dimensions must be positive. Volume channels are true render-entity data. A channel named `density` is
+  renderable extinction density / `sigma_t` data and may be consumed by PBRT/pathtracer volume rendering. Acceleration
+  data such as occupancy grids, masks, empty-space skipping structures, or training sampler grids must not be published
+  as `VolumeGrid` density channels; publish them as debug attachments owned by the corresponding renderable volume.
+  Renderer backends must consume volume channels through their native volume adapter; a backend that cannot consume a
+  channel source must reject the scene explicitly.
+  Channel `source_kind` values are `0` CPU float values and `1` external GPU float buffer. Channel
+  `index_encoding` values are `0` row-major linear `x + dimX * (y + dimY * z)` and `1` Morton/Z-order. CPU channels
+  must provide exactly `x * y * z` finite float values and no GPU buffer id. External GPU channels must provide no CPU
+  values, a non-zero rasterizer `buffer_id`, a non-zero borrowed `external_device_pointer` for pathtracer static
+  snapshot materialization, `source_byte_size >= x * y * z * sizeof(float)`, and non-zero `revision`.
+- Debug attachments are preview-only data attached to real scene entities. Each viewport segment set, viewport voxel
+  grid, and viewport camera visual must name an existing owner entity through `{ kind, name }`. Supported owner kinds are
+  `0` mesh, `1` sphere, `2` point cloud, `3` volume grid, `4` camera, and `5` light. Viewport voxel grids must be owned
+  by a volume grid; viewport camera visuals must be owned by a camera. Missing, empty, or type-mismatched owners are
+  errors.
+- Viewport segment annotations and viewport camera visuals are preview-only. They are consumed by the rasterizer and
+  ignored by the pathtracer/PBRT scene. Camera visuals are attachments owned by camera entities; camera structs
+  themselves do not contain visualization fields.
 - Viewport voxel grids are preview-only sparse voxel annotations. They are consumed by the rasterizer and ignored by the
   pathtracer/PBRT scene. `dimensions` and positive `voxel_size` describe the logical grid; `buffer_id` names a
   host-service GPU buffer. `source_kind` values are `0` compacted `uint32_t` index list and `1` dense occupancy
@@ -131,13 +149,39 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 - Viewport width modes: `0` screen-space pixels, `1` world-space units.
 - Viewport depth modes: `0` depth tested, `1` always visible.
 - Camera projection values: `0` perspective, `1` pinhole intrinsics.
-- Camera visual RGBA8 images are borrowed pointers with tightly packed `width * height * 4` bytes.
-- `pbrt_template_path` may be empty. If non-empty, it must be relative to the plugin library directory.
-- `project_panel_title` and `open_action_label` must be non-empty. `open_action_description` may be empty.
-- The project API is optional. If present, `project_actions` may be empty, but every declared action id and label must be
+- Viewport camera visual RGBA8 images are borrowed pointers with tightly packed `width * height * 4` bytes.
+- `base_pbrt_path` may be empty. If non-empty, it must be relative to the plugin library directory.
+- `controls_panel_title` and `open_action_label` must be non-empty. `open_action_description` may be empty.
+- The controls API is optional. If present, `control_actions` may be empty, but every declared action id and label must be
   non-empty and unique. Action option schemas use the same option kind and validation rules as open options.
-- If the project API is present, `project_status` phase, headline, metric keys/labels/values, enabled action ids, log
-  levels, and log messages must be non-empty. Enabled action ids must refer to declared project actions.
+- Option schemas may declare UI hints: `group`, `advanced`, and `priority`. `advanced` must be `0` or `1`; `group` may
+  be empty. Spectra uses these hints only for generic form layout and does not assign project-specific meaning to them.
+- Control action UI hints: `group` values are `0` Run, `1` Preview, `2` Debug, and `3` Utility. `style` values are `0`
+  Secondary, `1` Primary, and `2` Danger. `priority` sorts actions within a group. Unknown values are errors.
+- If the controls API is present, `control_settings` and `control_setting_update` are required. Settings are live
+  editable controls for active dynamic scenes; Spectra submits a changed setting immediately and then checks
+  `scene_revision` to refresh changed scene/debug data. Setting kinds are restricted to `3` choice, `4` bool,
+  `5` float, and `6` unsigned integer. Text and path kinds are only valid for open options or explicit action options.
+  Setting keys and labels must be non-empty and unique in one view. Setting values must parse according to kind; choice
+  settings must provide non-empty unique choices and the current value must be one of those choices. Setting
+  `group`, `advanced`, and `priority` use the same generic layout hints as option schemas.
+- If the controls API is present, `control_status` phase, headline, metric keys/labels/values, enabled action ids, log
+  levels, and log messages must be non-empty. Enabled action ids and disabled action ids must refer to declared control
+  actions. Disabled action reasons must be non-empty. The same action must not appear in both enabled and disabled
+  action lists in one status view.
+- Control metric presentation flags are bit flags: `1` ViewportOverlay, `2` PanelSummary, and `4` PanelDetail. Unknown
+  bits are errors. Metric `priority` sorts metrics within a placement. `has_color` must be `0` or `1`; if set, `color`
+  must contain finite RGBA values. Spectra uses these hints only for generic dashboard and viewport overlay layout.
+- If the controls API is present, `control_images` is required. It may return an empty span. Non-empty control image
+  outputs must have unique non-empty `id`, non-empty `label`, positive `width` and `height`, non-null tightly packed
+  RGBA8 pixels with byte count `width * height * 4`, and non-zero `revision`. Spectra uploads these images to the
+  Scene popover texture cache and reuses the texture while pointer, byte size, dimensions, and revision are unchanged.
+- If the controls API is present, `control_scalar_series` is required. It may return an empty span. Non-empty scalar
+  series outputs must have unique non-empty `id`, non-empty `label`, finite `color`, and non-zero `revision`. Samples
+  must have finite `time_seconds` and `value`, and must be ordered by nondecreasing `step`. Spectra copies scalar
+  samples for Scene popover charts only; scalar series do not enter `scene::Scene`, PBRT export, rasterizer scene
+  passes, or the pathtracer scene. Scalar series `group` values follow the same Run/Preview/Debug/Utility constants as
+  actions, and `priority` sorts charts within a group.
 - Open option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
   `6` unsigned integer.
 - Open option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
@@ -146,7 +190,7 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 ### Capability Tables
 
 - `get_api("spectra.dynamic_scene.scene", 1, &api)` must return a non-null `SpectraDynamicSceneSceneApi`.
-- `get_api("spectra.dynamic_scene.project", 1, &api)` may return null if the plugin has no project controls.
+- `get_api("spectra.dynamic_scene.controls", 1, &api)` may return null if the plugin has no dynamic scene controls.
 - Unknown capability names or unsupported capability versions return `OK` with `*api = nullptr`.
 
 ### Callback Rules
@@ -157,30 +201,54 @@ unsupported optional APIs. The scene API is required; missing it is an error.
   kinds are `1` opaque Win32 handle and `2` opaque file descriptor.
 - The producer may import that external memory into CUDA or another GPU runtime and write either compacted `uint32_t`
   viewport voxel cell indices or a dense bitfield, according to `source_kind`. The producer owns synchronization in
-  v14: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
+  v23: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
   There is no CPU voxel copy path and no semaphore fallback.
 - Host services `release_viewport_voxel_buffer` releases the Spectra resource. Producers must release imported
   GPU mappings and then release every requested resource before instance destruction or reset.
+- Host services `request_volume_buffer` / `release_volume_buffer` follow the same external-memory ownership rules for
+  true `VolumeGrid` channel data. Producers may publish a `VolumeChannel` that references the returned `resource_id`
+  with `source_kind = 1` and also exposes the producer-owned borrowed device pointer for static pathtracer snapshot
+  materialization; the producer owns GPU synchronization before the callback returning the corresponding scene
+  document/frame returns.
+- `SPECTRA_VOLUME_DEBUG=1` enables generic pathtracer volume diagnostics, including density range and approximate
+  majorant statistics. This is for validating renderable volume data, not for accepting acceleration/debug data as a
+  fallback.
 - Scene API `create` returns a plugin-owned instance pointer.
 - Scene API `destroy` releases that instance.
-- Scene API `reset` resets simulation state and rebuilds internal visualization buffers.
-- Scene API `step` advances simulation state by `delta_seconds`.
-- Scene API `document` returns static scene data: materials, lights, camera, and static primitives.
-- Scene API `frame` returns dynamic primitives for the requested frame cursor.
-- Scene API `last_error` returns the most recent instance-local error string; it may be empty. Project API callbacks use
+- Scene API `reset` resets dynamic scene state and rebuilds internal visualization buffers.
+- Scene API `step` advances dynamic scene state by `delta_seconds`.
+- Scene API `document` returns static scene data: materials, lights, camera, static primitives, and static debug
+  attachments.
+- Scene API `frame` returns dynamic primitives and dynamic debug attachments for the requested frame cursor.
+- Scene API `last_error` returns the most recent instance-local error string; it may be empty. Controls API callbacks use
   the same instance error channel.
-- Project API `project_update` advances plugin-owned project work once per GUI frame. It is independent from scene
-  timeline `step` and should keep long-running work chunked enough for interactive UI.
-- Project API `project_action` executes one plugin-declared action with strict key/value options.
-- Project API `project_status` returns the current plugin-defined phase, headline, detail, metrics, and currently
-  enabled actions.
-- Project API `project_logs` returns a plugin-owned log snapshot. Spectra copies log entries for display.
+- Controls API `controls_update` receives a `SpectraDynamicSceneControlUpdateInfo` once per GUI frame. `wall_delta_seconds`
+  is the elapsed host UI time. `scene_delta_seconds` is the delta that long-running source-owned scene work may consume;
+  it is `0` when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`,
+  and `frame_index` describe the host timeline state. Controls update is independent from scene timeline `step`, but it
+  must honor `scene_delta_seconds` so Space/record/playback controls stay synchronized with plugin actions, telemetry,
+  and preview availability.
+- Controls API `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
+  `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as
+  logs, scalar charts, and preview images must not increment it.
+- Controls API `control_action` executes one plugin-declared action with strict key/value options.
+- Controls API `control_settings` returns the current plugin-owned live setting schema/value list. Controls API
+  `control_setting_update` applies one changed setting key/value pair; it must validate the value strictly and increase
+  `scene_revision` if the change modifies scene entities or debug attachments.
+- Controls API `control_status` returns the current plugin-defined phase, headline, detail, metrics, and currently
+  enabled actions plus plugin-defined reasons for disabled actions.
+- Controls API `control_logs` returns a plugin-owned log snapshot. Spectra copies log entries for display.
+- Controls API `control_images` returns plugin-owned borrowed CPU RGBA8 preview images for the Scene popover. Spectra
+  does not copy them into `scene::Scene`, does not export them to PBRT, and does not expose them to the pathtracer scene.
+- Controls API `control_scalar_series` returns plugin-owned scalar control charts for the Scene popover.
+  Spectra copies scalar samples for display and does not expose them to `scene::Scene`, PBRT, rasterizer scene passes,
+  or the pathtracer scene.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.
 
 Scene URI query strings such as `plugin.dll?dataset=...` are not supported. Open a plugin path directly, then configure
-and create the dynamic scene through the Project popover.
+and create the dynamic scene through the Scene popover.
 
 ## License
 

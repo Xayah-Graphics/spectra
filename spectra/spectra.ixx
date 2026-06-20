@@ -41,6 +41,14 @@ namespace spectra {
         std::move_only_function<void()> draw{};
     };
 
+    export struct ViewportOverlay {
+        std::string id{};
+        std::string title{};
+        std::string owner_renderer{};
+        std::int32_t priority{};
+        std::move_only_function<void(ImVec2, ImVec2)> draw{};
+    };
+
     export struct ToolbarAction {
         std::string id{};
         std::string title{};
@@ -58,6 +66,14 @@ namespace spectra {
         std::string tooltip{};
         std::string status_text{};
         bool status_error{};
+    };
+
+    export struct Rgba8ImageSource {
+        const std::uint8_t* data{};
+        std::uint64_t byte_size{};
+        std::uint32_t width{};
+        std::uint32_t height{};
+        std::uint64_t revision{};
     };
 
     export struct FileDropHandler {
@@ -104,6 +120,15 @@ namespace spectra {
         std::string{std::move(popover.shortcut_label)};
         static_cast<ImGuiKey>(popover.shortcut_key);
         std::move_only_function<void()>{std::move(popover.draw)};
+    };
+
+    export template <typename ViewportOverlayContribution>
+    concept ViewportOverlayLike = requires(ViewportOverlayContribution overlay) {
+        std::string{std::move(overlay.id)};
+        std::string{std::move(overlay.title)};
+        std::string{std::move(overlay.owner_renderer)};
+        static_cast<std::int32_t>(overlay.priority);
+        std::move_only_function<void(ImVec2, ImVec2)>{std::move(overlay.draw)};
     };
 
     export template <typename ToolbarActionContribution>
@@ -171,11 +196,17 @@ namespace spectra {
         template <typename CommandPopoverContribution>
             requires CommandPopoverLike<CommandPopoverContribution>
         void register_command_popover(CommandPopoverContribution popover);
+        template <typename ViewportOverlayContribution>
+            requires ViewportOverlayLike<ViewportOverlayContribution>
+        void register_viewport_overlay(ViewportOverlayContribution overlay);
         template <typename ToolbarActionContribution>
             requires ToolbarActionLike<ToolbarActionContribution>
         void register_toolbar_action(ToolbarActionContribution action);
         void open_command_popover(std::string id);
         void close_command_popover(std::string id);
+        void draw_viewport_overlays(ImVec2 viewport_position, ImVec2 viewport_size);
+        void draw_imgui_rgba8_image(std::string_view cache_key, Rgba8ImageSource source, ImVec2 display_size);
+        void clear_imgui_rgba8_images(std::string_view cache_key_prefix = {});
         void set_workspace_title_provider(std::move_only_function<WorkspaceTitle()> provider);
         template <typename FileDropHandlerContribution>
             requires FileDropHandlerLike<FileDropHandlerContribution>
@@ -248,6 +279,7 @@ namespace spectra {
         void store_renderer(RendererSlot renderer);
         void store_panel(Panel panel);
         void store_command_popover(CommandPopover popover);
+        void store_viewport_overlay(ViewportOverlay overlay);
         void store_toolbar_action(ToolbarAction action);
         void store_file_drop_handler(FileDropHandler handler);
 
@@ -264,6 +296,31 @@ namespace spectra {
         void draw_command_popover();
         void draw_registered_panels();
         void update_window_title(float delta_seconds);
+
+        struct ImGuiRgba8TextureSource {
+            std::uintptr_t data{};
+            std::uint64_t byte_size{};
+            std::uint32_t width{};
+            std::uint32_t height{};
+            std::uint64_t revision{};
+
+            friend auto operator<=>(const ImGuiRgba8TextureSource&, const ImGuiRgba8TextureSource&) = default;
+        };
+
+        struct ImGuiRgba8Texture {
+            ImGuiRgba8TextureSource source{};
+            vk::raii::Image image{nullptr};
+            vk::raii::DeviceMemory memory{nullptr};
+            vk::raii::ImageView view{nullptr};
+            vk::raii::Sampler sampler{nullptr};
+            VkDescriptorSet descriptor{VK_NULL_HANDLE};
+            vk::ImageLayout layout{vk::ImageLayout::eUndefined};
+        };
+
+        void destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) noexcept;
+        void destroy_imgui_rgba8_textures() noexcept;
+        [[nodiscard]] ImGuiRgba8Texture& ensure_imgui_rgba8_texture(std::string_view cache_key, Rgba8ImageSource source);
+        void upload_imgui_rgba8_texture(ImGuiRgba8Texture& texture, const std::uint8_t* data);
 
         struct {
             vk::raii::Context context{};
@@ -296,6 +353,7 @@ namespace spectra {
 
         struct {
             vk::raii::DescriptorPool descriptor_pool{nullptr};
+            std::map<std::string, ImGuiRgba8Texture> rgba8_textures{};
             bool initialized{false};
             bool renderers_notified_before_shutdown{false};
         } imgui;
@@ -337,6 +395,7 @@ namespace spectra {
         struct {
             std::vector<Panel> panels{};
             std::vector<CommandPopover> command_popovers{};
+            std::vector<ViewportOverlay> viewport_overlays{};
             std::vector<ToolbarAction> toolbar_actions{};
             std::move_only_function<WorkspaceTitle()> title_provider{};
             bool dock_layout_initialized{false};
@@ -407,6 +466,18 @@ namespace spectra {
             .title          = std::string{std::move(handler.title)},
             .owner_renderer = this->resolve_contribution_owner(std::string{std::move(handler.owner_renderer)}),
             .handle         = std::move(handler.handle),
+        });
+    }
+
+    template <typename ViewportOverlayContribution>
+        requires ViewportOverlayLike<ViewportOverlayContribution>
+    void Spectra::register_viewport_overlay(ViewportOverlayContribution overlay) {
+        this->store_viewport_overlay(ViewportOverlay{
+            .id             = std::string{std::move(overlay.id)},
+            .title          = std::string{std::move(overlay.title)},
+            .owner_renderer = this->resolve_contribution_owner(std::string{std::move(overlay.owner_renderer)}),
+            .priority       = static_cast<std::int32_t>(overlay.priority),
+            .draw           = std::move(overlay.draw),
         });
     }
 

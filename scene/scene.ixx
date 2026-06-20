@@ -20,8 +20,9 @@ namespace spectra::scene {
 
         enum class DirtyFlags : std::uint32_t {
             None     = 0,
-            Timeline = 1u << 0u,
-            Frame    = 1u << 1u,
+            Document = 1u << 0u,
+            Timeline = 1u << 1u,
+            Frame    = 1u << 2u,
         };
 
         struct SourceLocation {
@@ -247,10 +248,26 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
+        enum class VolumeChannelSourceKind : std::uint32_t {
+            Values            = 0u,
+            ExternalGpuBuffer = 1u,
+        };
+
+        enum class VolumeChannelIndexEncoding : std::uint32_t {
+            Linear   = 0u,
+            Morton3D = 1u,
+        };
+
         struct VolumeChannel {
             std::string name{};
             std::array<std::uint32_t, 3> dimensions{};
             std::vector<float> values{};
+            VolumeChannelSourceKind source_kind{VolumeChannelSourceKind::Values};
+            VolumeChannelIndexEncoding index_encoding{VolumeChannelIndexEncoding::Linear};
+            std::uint64_t buffer_id{};
+            std::uintptr_t external_device_pointer{};
+            std::uint64_t source_byte_size{};
+            std::uint64_t revision{};
         };
 
         struct VolumeGrid {
@@ -262,6 +279,20 @@ namespace spectra::scene {
             std::string material_name{};
             bool dynamic{true};
             SourceLocation source{};
+        };
+
+        enum class SceneEntityKind : std::uint32_t {
+            Mesh       = 0u,
+            Sphere     = 1u,
+            PointCloud = 2u,
+            VolumeGrid = 3u,
+            Camera     = 4u,
+            Light      = 5u,
+        };
+
+        struct SceneEntityRef {
+            SceneEntityKind kind{SceneEntityKind::Mesh};
+            std::string name{};
         };
 
         struct ViewportSegment {
@@ -289,7 +320,7 @@ namespace spectra::scene {
             Morton3D = 1u,
         };
 
-        struct CameraImage {
+        struct ViewportCameraVisualImage {
             std::uint32_t width{};
             std::uint32_t height{};
             const std::uint8_t* rgba8{};
@@ -298,26 +329,29 @@ namespace spectra::scene {
             Vector4 tint{1.0f, 1.0f, 1.0f, 1.0f};
         };
 
-        struct CameraVisualization {
-            bool enabled{false};
+        struct ViewportCameraVisual {
+            std::string name{};
+            SceneEntityRef owner{.kind = SceneEntityKind::Camera};
             Vector4 color{0.0f, 0.75f, 1.0f, 0.85f};
             float width{2.0f};
             ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
             ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
             float visual_near{0.05f};
             float visual_far{1.0f};
-            std::optional<CameraImage> image{};
+            std::optional<ViewportCameraVisualImage> image{};
+            bool dynamic{true};
+            SourceLocation source{};
         };
 
         struct Camera {
             std::string name{};
             CameraViewState view{};
-            CameraVisualization visualization{};
             SourceLocation source{};
         };
 
         struct ViewportSegmentSet {
             std::string name{};
+            SceneEntityRef owner{};
             std::vector<ViewportSegment> segments{};
             std::vector<Vector4> colors{};
             std::vector<float> widths{};
@@ -331,6 +365,7 @@ namespace spectra::scene {
 
         struct ViewportVoxelGrid {
             std::string name{};
+            SceneEntityRef owner{};
             std::array<std::uint32_t, 3> dimensions{};
             Vector3 origin{};
             Vector3 voxel_size{1.0f, 1.0f, 1.0f};
@@ -346,6 +381,12 @@ namespace spectra::scene {
             std::uint64_t revision{};
             bool dynamic{true};
             SourceLocation source{};
+        };
+
+        struct DebugAttachmentSet {
+            std::vector<ViewportSegmentSet> viewport_segment_sets{};
+            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
+            std::vector<ViewportCameraVisual> viewport_camera_visuals{};
         };
 
         struct Document {
@@ -365,8 +406,7 @@ namespace spectra::scene {
             std::vector<Sphere> spheres{};
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
-            std::vector<ViewportSegmentSet> viewport_segment_sets{};
-            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
+            DebugAttachmentSet debug_attachments{};
         };
 
         enum class TimelineMode {
@@ -387,8 +427,7 @@ namespace spectra::scene {
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
             std::vector<Camera> cameras{};
-            std::vector<ViewportSegmentSet> viewport_segment_sets{};
-            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
+            DebugAttachmentSet debug_attachments{};
         };
 
         struct Timeline {
@@ -409,8 +448,7 @@ namespace spectra::scene {
             std::vector<PointCloud> point_clouds{};
             std::vector<VolumeGrid> volumes{};
             std::vector<Camera> cameras{};
-            std::vector<ViewportSegmentSet> viewport_segment_sets{};
-            std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
+            DebugAttachmentSet debug_attachments{};
         };
 
         class Builder {
@@ -442,10 +480,12 @@ namespace spectra::scene {
 
         class Edit {
         public:
+            void replace_document(Document document);
             void replace_timeline(Timeline timeline);
             void replace_frame(FrameSnapshot frame);
 
         private:
+            std::optional<Document> document_replacement{};
             std::optional<Timeline> timeline_replacement{};
             std::optional<FrameSnapshot> frame_replacement{};
             DirtyFlags dirty{DirtyFlags::None};
@@ -468,6 +508,7 @@ namespace spectra::scene {
         [[nodiscard]] Timeline timeline() const;
         [[nodiscard]] ResolvedFrame resolved_frame() const;
         [[nodiscard]] ResolvedScene resolved_scene() const;
+        [[nodiscard]] ResolvedScene resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const;
         [[nodiscard]] Info info() const;
         [[nodiscard]] DirtyFlags commit(Edit edit);
 

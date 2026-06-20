@@ -81,6 +81,10 @@ namespace {
         std::array<std::uint32_t, 4> counts{};
     };
 
+    struct VolumeUploadPushConstantsData {
+        std::array<std::uint32_t, 4> dimensions{};
+    };
+
     struct CameraVisualPlanes {
         std::array<spectra::scene::Vector3, 4> near_corners{};
         std::array<spectra::scene::Vector3, 4> far_corners{};
@@ -200,17 +204,31 @@ namespace {
         return frame.position + frame.right * local.x + frame.up * local.y + frame.forward * local.z;
     }
 
-    [[nodiscard]] CameraVisualPlanes camera_visual_planes(const spectra::scene::Scene::Camera& camera) {
-        if (!camera.visualization.enabled) throw std::runtime_error(std::format("Rasterizer camera \"{}\" visualization is disabled", camera.name));
+    [[nodiscard]] CameraVisualPlanes camera_visual_planes(const spectra::scene::Scene::Camera& camera, const spectra::scene::Scene::ViewportCameraVisual& visual) {
         const spectra::scene::CameraFrame frame = spectra::scene::camera_frame(camera.view.pose);
-        const std::array<spectra::scene::Vector3, 4> near_local = camera_visual_local_corners(camera.view.projection, camera.visualization.visual_near);
-        const std::array<spectra::scene::Vector3, 4> far_local = camera_visual_local_corners(camera.view.projection, camera.visualization.visual_far);
+        const std::array<spectra::scene::Vector3, 4> near_local = camera_visual_local_corners(camera.view.projection, visual.visual_near);
+        const std::array<spectra::scene::Vector3, 4> far_local = camera_visual_local_corners(camera.view.projection, visual.visual_far);
         CameraVisualPlanes planes{};
         for (std::size_t index = 0u; index < 4u; ++index) {
             planes.near_corners.at(index) = camera_visual_world_point(frame, near_local.at(index));
             planes.far_corners.at(index) = camera_visual_world_point(frame, far_local.at(index));
         }
         return planes;
+    }
+
+    [[nodiscard]] const spectra::scene::Scene::Camera& require_camera_visual_owner(const std::span<const spectra::scene::Scene::Camera> cameras, const spectra::scene::Scene::ViewportCameraVisual& visual) {
+        if (visual.owner.kind != spectra::scene::Scene::SceneEntityKind::Camera) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" owner must be a camera", visual.name));
+        for (const spectra::scene::Scene::Camera& camera : cameras) {
+            if (camera.name == visual.owner.name) return camera;
+        }
+        throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" references missing camera \"{}\"", visual.name, visual.owner.name));
+    }
+
+    [[nodiscard]] const spectra::scene::Scene::ViewportCameraVisual* find_camera_visual_for_owner(const std::span<const spectra::scene::Scene::ViewportCameraVisual> visuals, const std::string_view camera_name) {
+        for (const spectra::scene::Scene::ViewportCameraVisual& visual : visuals) {
+            if (visual.owner.kind == spectra::scene::Scene::SceneEntityKind::Camera && visual.owner.name == camera_name) return &visual;
+        }
+        return nullptr;
     }
 
     [[nodiscard]] std::array<float, 16> camera_visual_image_model(const CameraVisualPlanes& planes) {
@@ -877,6 +895,10 @@ namespace spectra::rasterizer {
     void Renderer::attach(HostView host) {
         if (this->lifecycle.attached) throw std::runtime_error("Spectra rasterizer plugin is already attached");
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
+        std::move_only_function<void(ImVec2, ImVec2)> draw_viewport_overlays = host.take_viewport_overlay_draw_callback();
+        this->host.draw_viewport_overlays = [draw_viewport_overlays = std::move(draw_viewport_overlays)](const float x, const float y, const float width, const float height) mutable {
+            draw_viewport_overlays(ImVec2{x, y}, ImVec2{width, height});
+        };
         this->connect_dynamic_scene_host_services();
         this->register_workspace_contributions(host);
         this->lifecycle.attached = true;
@@ -892,7 +914,7 @@ namespace spectra::rasterizer {
         this->destroy_point_cloud_resources();
         this->destroy_viewport_segment_resources();
         this->destroy_viewport_voxel_grid_resources();
-        this->destroy_external_viewport_voxel_buffers();
+        this->destroy_external_storage_buffers();
         this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
         this->destroy_camera_resources();
@@ -900,6 +922,7 @@ namespace spectra::rasterizer {
         this->host.device           = nullptr;
         this->host.swapchain_extent = vk::Extent2D{};
         this->host.frame_count      = 0;
+        this->host.draw_viewport_overlays = {};
         this->lifecycle.attached    = false;
         this->lifecycle.imgui_ready = false;
     }
@@ -1135,28 +1158,47 @@ namespace spectra::rasterizer {
         buffer.capacity = required_size;
     }
 
-    scene_runtime::DynamicSceneViewportVoxelBufferAllocation Renderer::request_viewport_voxel_buffer(const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request) {
-        if (request.byte_size == 0u) throw std::runtime_error("Dynamic scene viewport voxel buffer byte size must be positive");
-        if (request.byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error("Dynamic scene viewport voxel buffer byte size exceeds Vulkan device size range");
-        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot allocate dynamic scene viewport voxel buffer before rasterizer is attached");
+    scene_runtime::DynamicSceneGpuResourceHandleKind Renderer::external_storage_handle_kind() const {
+#if defined(_WIN32)
+        return scene_runtime::DynamicSceneGpuResourceHandleKind::OpaqueWin32;
+#else
+        return scene_runtime::DynamicSceneGpuResourceHandleKind::OpaqueFileDescriptor;
+#endif
+    }
+
+    Renderer::ExternalStorageBuffer& Renderer::external_storage_buffer(const std::uint64_t resource_id, const std::string_view context) {
+        const std::map<std::uint64_t, ExternalStorageBuffer>::iterator found = this->external_storage.buffers.find(resource_id);
+        if (found == this->external_storage.buffers.end()) throw std::runtime_error(std::format("{} external storage buffer {} does not exist", context, resource_id));
+        return found->second;
+    }
+
+    const Renderer::ExternalStorageBuffer& Renderer::external_storage_buffer(const std::uint64_t resource_id, const std::string_view context) const {
+        const std::map<std::uint64_t, ExternalStorageBuffer>::const_iterator found = this->external_storage.buffers.find(resource_id);
+        if (found == this->external_storage.buffers.end()) throw std::runtime_error(std::format("{} external storage buffer {} does not exist", context, resource_id));
+        return found->second;
+    }
+
+    scene_runtime::DynamicSceneViewportVoxelBufferAllocation Renderer::request_external_storage_buffer(const std::uint64_t byte_size, const std::string_view debug_name, const std::string_view context) {
+        static_cast<void>(debug_name);
+        if (byte_size == 0u) throw std::runtime_error(std::format("{} byte size must be positive", context));
+        if (byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error(std::format("{} byte size exceeds Vulkan device size range", context));
+        if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error(std::format("Cannot allocate {} before rasterizer is attached", context));
 
 #if defined(_WIN32)
         constexpr vk::ExternalMemoryHandleTypeFlagBits handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
-        constexpr scene_runtime::DynamicSceneGpuResourceHandleKind exported_handle_kind = scene_runtime::DynamicSceneGpuResourceHandleKind::OpaqueWin32;
 #else
         constexpr vk::ExternalMemoryHandleTypeFlagBits handle_type = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
-        constexpr scene_runtime::DynamicSceneGpuResourceHandleKind exported_handle_kind = scene_runtime::DynamicSceneGpuResourceHandleKind::OpaqueFileDescriptor;
 #endif
 
-        const std::uint64_t resource_id = this->viewport_voxel_grid_pass.next_resource_id++;
-        if (resource_id == 0u) throw std::runtime_error("Dynamic scene viewport voxel buffer resource id overflowed");
-        ExternalViewportVoxelBuffer resource{
+        const std::uint64_t resource_id = this->external_storage.next_resource_id++;
+        if (resource_id == 0u) throw std::runtime_error(std::format("{} resource id overflowed", context));
+        ExternalStorageBuffer resource{
             .resource_id = resource_id,
-            .byte_size = request.byte_size,
+            .byte_size = byte_size,
         };
 
         const vk::ExternalMemoryBufferCreateInfo external_buffer_create_info{handle_type};
-        vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(request.byte_size), vk::BufferUsageFlagBits::eStorageBuffer, vk::SharingMode::eExclusive};
+        vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(byte_size), vk::BufferUsageFlagBits::eStorageBuffer, vk::SharingMode::eExclusive};
         buffer_create_info.setPNext(&external_buffer_create_info);
         resource.buffer.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
 
@@ -1167,37 +1209,63 @@ namespace spectra::rasterizer {
         memory_allocate_info.setPNext(&export_memory_allocate_info);
         resource.buffer.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
         resource.buffer.buffer.bindMemory(*resource.buffer.memory, 0);
-        resource.buffer.capacity = static_cast<vk::DeviceSize>(request.byte_size);
-
-        this->ensure_viewport_voxel_buffer_descriptor(resource);
+        resource.buffer.capacity = static_cast<vk::DeviceSize>(byte_size);
 
 #if defined(_WIN32)
         const vk::MemoryGetWin32HandleInfoKHR handle_info{*resource.buffer.memory, handle_type};
         HANDLE exported_handle = this->host.device->getMemoryWin32HandleKHR(handle_info);
-        if (exported_handle == nullptr) throw std::runtime_error("Failed to export dynamic scene viewport voxel buffer Win32 handle");
+        if (exported_handle == nullptr) throw std::runtime_error(std::format("Failed to export {} Win32 handle", context));
         const std::uintptr_t exported_handle_value = reinterpret_cast<std::uintptr_t>(exported_handle);
 #else
         const vk::MemoryGetFdInfoKHR handle_info{*resource.buffer.memory, handle_type};
         int exported_handle = this->host.device->getMemoryFdKHR(handle_info);
-        if (exported_handle < 0) throw std::runtime_error("Failed to export dynamic scene viewport voxel buffer file descriptor");
+        if (exported_handle < 0) throw std::runtime_error(std::format("Failed to export {} file descriptor", context));
         const std::uintptr_t exported_handle_value = static_cast<std::uintptr_t>(exported_handle);
 #endif
 
         scene_runtime::DynamicSceneViewportVoxelBufferAllocation allocation{
             .resource_id = resource_id,
             .byte_size = static_cast<std::uint64_t>(memory_requirements.size),
-            .handle_kind = exported_handle_kind,
+            .handle_kind = this->external_storage_handle_kind(),
             .handle = exported_handle_value,
             .device_identity = make_dynamic_scene_gpu_device_identity(*this->host.physical_device),
         };
-        this->viewport_voxel_grid_pass.buffers.emplace(resource_id, std::move(resource));
+        this->external_storage.buffers.emplace(resource_id, std::move(resource));
         return allocation;
     }
 
+    void Renderer::release_external_storage_buffer(const std::uint64_t resource_id, const std::string_view context) {
+        if (resource_id == 0u) throw std::runtime_error(std::format("{} resource id must not be zero", context));
+        const std::map<std::uint64_t, ExternalStorageBuffer>::iterator found = this->external_storage.buffers.find(resource_id);
+        if (found == this->external_storage.buffers.end()) throw std::runtime_error(std::format("{} resource {} does not exist", context, resource_id));
+        if (this->host.device != nullptr) this->host.device->waitIdle();
+        this->destroy_external_buffer(found->second.buffer);
+        this->external_storage.buffers.erase(found);
+    }
+
+    scene_runtime::DynamicSceneViewportVoxelBufferAllocation Renderer::request_viewport_voxel_buffer(const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request) {
+        scene_runtime::DynamicSceneViewportVoxelBufferAllocation allocation = this->request_external_storage_buffer(request.byte_size, request.debug_name, "Dynamic scene viewport voxel buffer");
+        ViewportVoxelBufferDescriptor descriptor{};
+        this->ensure_viewport_voxel_buffer_descriptor(allocation.resource_id, descriptor);
+        const std::pair<std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator, bool> inserted = this->viewport_voxel_grid_pass.buffer_descriptors.emplace(allocation.resource_id, std::move(descriptor));
+        if (!inserted.second) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer descriptor {} already exists", allocation.resource_id));
+        return allocation;
+    }
+
+    scene_runtime::DynamicSceneVolumeBufferAllocation Renderer::request_volume_buffer(const scene_runtime::DynamicSceneVolumeBufferRequest& request) {
+        const scene_runtime::DynamicSceneViewportVoxelBufferAllocation allocation = this->request_external_storage_buffer(request.byte_size, request.debug_name, "Dynamic scene volume buffer");
+        return scene_runtime::DynamicSceneVolumeBufferAllocation{
+            .resource_id = allocation.resource_id,
+            .byte_size = allocation.byte_size,
+            .handle_kind = allocation.handle_kind,
+            .handle = allocation.handle,
+            .device_identity = allocation.device_identity,
+        };
+    }
+
     void Renderer::release_viewport_voxel_buffer(const std::uint64_t resource_id) {
-        if (resource_id == 0u) throw std::runtime_error("Dynamic scene viewport voxel buffer resource id must not be zero");
-        const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::iterator found = this->viewport_voxel_grid_pass.buffers.find(resource_id);
-        if (found == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer resource {} does not exist", resource_id));
+        const std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(resource_id);
+        if (descriptor == this->viewport_voxel_grid_pass.buffer_descriptors.end()) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer descriptor {} does not exist", resource_id));
         if (this->host.device != nullptr) this->host.device->waitIdle();
         for (FrameViewportVoxelGridResources& frame_voxel_grids : this->viewport_voxel_grid_pass.frame_voxel_grids) {
             std::erase_if(frame_voxel_grids.drawCommands, [resource_id](const ViewportVoxelGridDrawCommand& draw_command) {
@@ -1212,30 +1280,36 @@ namespace spectra::rasterizer {
             this->destroy_viewport_voxel_grid_compaction_resource(compaction->second);
             compaction = this->viewport_voxel_grid_pass.compactions.erase(compaction);
         }
-        this->viewport_voxel_grid_pass.buffers.erase(found);
+        this->viewport_voxel_grid_pass.buffer_descriptors.erase(descriptor);
+        this->release_external_storage_buffer(resource_id, "Dynamic scene viewport voxel buffer");
     }
 
-    void Renderer::ensure_viewport_voxel_buffer_descriptor(ExternalViewportVoxelBuffer& resource) {
-        if (resource.descriptor_valid) return;
+    void Renderer::release_volume_buffer(const std::uint64_t resource_id) {
+        if (this->viewport_voxel_grid_pass.buffer_descriptors.contains(resource_id)) throw std::runtime_error(std::format("Dynamic scene volume buffer {} is registered as a viewport voxel debug buffer", resource_id));
+        this->release_external_storage_buffer(resource_id, "Dynamic scene volume buffer");
+    }
+
+    void Renderer::ensure_viewport_voxel_buffer_descriptor(const std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor) {
+        if (descriptor.descriptor_valid) return;
+        const ExternalStorageBuffer& resource = this->external_storage_buffer(resource_id, "Dynamic scene viewport voxel buffer");
         if (!*resource.buffer.buffer) throw std::runtime_error("Dynamic scene viewport voxel buffer has no Vulkan buffer");
         if (!*this->viewport_voxel_grid_pass.descriptor_set_layout || !*this->viewport_voxel_grid_pass.descriptor_pool) return;
         const vk::DescriptorSetLayout descriptor_set_layout = *this->viewport_voxel_grid_pass.descriptor_set_layout;
         const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, 1u, &descriptor_set_layout};
-        resource.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
-        if (resource.descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate dynamic scene viewport voxel buffer descriptor set");
+        descriptor.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+        if (descriptor.descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate dynamic scene viewport voxel buffer descriptor set");
         const vk::DescriptorBufferInfo descriptor_buffer_info{*resource.buffer.buffer, 0u, resource.byte_size};
-        const std::array descriptor_writes{vk::WriteDescriptorSet{*resource.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_info}};
+        const std::array descriptor_writes{vk::WriteDescriptorSet{*descriptor.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_info}};
         this->host.device->updateDescriptorSets(descriptor_writes, {});
-        resource.descriptor_valid = true;
+        descriptor.descriptor_valid = true;
     }
 
     void Renderer::ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command) {
         if (draw_command.sourceKind != scene::Scene::ViewportVoxelGridSourceKind::Bitfield) throw std::runtime_error("Viewport voxel grid compaction requires a bitfield source");
-        const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::iterator source = this->viewport_voxel_grid_pass.buffers.find(draw_command.bufferId);
-        if (source == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Viewport voxel grid bitfield buffer {} does not exist", draw_command.bufferId));
+        const ExternalStorageBuffer& source = this->external_storage_buffer(draw_command.bufferId, "Viewport voxel grid bitfield");
         if (draw_command.cellCount == 0u) throw std::runtime_error("Viewport voxel grid bitfield compaction requires a non-zero cell count");
         if (draw_command.bitfieldByteCount == 0u) throw std::runtime_error("Viewport voxel grid bitfield compaction requires a non-zero bitfield byte count");
-        if (draw_command.bitfieldByteCount > source->second.byte_size) throw std::runtime_error(std::format("Viewport voxel grid bitfield byte count {} exceeds buffer {} byte size {}", draw_command.bitfieldByteCount, draw_command.bufferId, source->second.byte_size));
+        if (draw_command.bitfieldByteCount > source.byte_size) throw std::runtime_error(std::format("Viewport voxel grid bitfield byte count {} exceeds buffer {} byte size {}", draw_command.bitfieldByteCount, draw_command.bufferId, source.byte_size));
         if (!*this->viewport_voxel_grid_pass.descriptor_set_layout || !*this->viewport_voxel_grid_pass.compaction_descriptor_set_layout || !*this->viewport_voxel_grid_pass.descriptor_pool) throw std::runtime_error("Viewport voxel grid compaction descriptors are not initialized");
 
         const ViewportVoxelGridCompactionKey key{
@@ -1254,14 +1328,14 @@ namespace spectra::rasterizer {
         this->ensure_device_buffer(resource.compactedIndexBuffer, compacted_bytes, vk::BufferUsageFlagBits::eStorageBuffer);
         this->ensure_device_buffer(resource.counterBuffer, sizeof(std::uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst);
         this->ensure_device_buffer(resource.indirectBuffer, sizeof(vk::DrawIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndirectBuffer);
-        if (compacted_recreated || counter_recreated || indirect_recreated || resource.source_buffer_id != draw_command.bufferId || resource.source_byte_size != source->second.byte_size) {
+        if (compacted_recreated || counter_recreated || indirect_recreated || resource.source_buffer_id != draw_command.bufferId || resource.source_byte_size != source.byte_size) {
             resource.compute_descriptor_sets = nullptr;
             resource.draw_descriptor_sets = nullptr;
             resource.compute_descriptor_valid = false;
             resource.draw_descriptor_valid = false;
         }
         resource.source_buffer_id = draw_command.bufferId;
-        resource.source_byte_size = source->second.byte_size;
+        resource.source_byte_size = source.byte_size;
         resource.compacted_capacity = draw_command.cellCount;
 
         if (!resource.compute_descriptor_valid) {
@@ -1272,7 +1346,7 @@ namespace spectra::rasterizer {
             const std::array descriptor_buffer_infos{
                 vk::DescriptorBufferInfo{*resource.compactedIndexBuffer.buffer, 0u, compacted_bytes},
                 vk::DescriptorBufferInfo{*resource.counterBuffer.buffer, 0u, sizeof(std::uint32_t)},
-                vk::DescriptorBufferInfo{*source->second.buffer.buffer, 0u, source->second.byte_size},
+                vk::DescriptorBufferInfo{*source.buffer.buffer, 0u, source.byte_size},
                 vk::DescriptorBufferInfo{*resource.indirectBuffer.buffer, 0u, sizeof(vk::DrawIndirectCommand)},
             };
             const std::array descriptor_writes{
@@ -1305,10 +1379,20 @@ namespace spectra::rasterizer {
             [this](const std::uint64_t resource_id) {
                 this->release_viewport_voxel_buffer(resource_id);
             });
+        this->scene.dynamic_host_services->set_volume_buffer_backend(
+            [this](const scene_runtime::DynamicSceneVolumeBufferRequest& request) {
+                return this->request_volume_buffer(request);
+            },
+            [this](const std::uint64_t resource_id) {
+                this->release_volume_buffer(resource_id);
+            });
     }
 
     void Renderer::disconnect_dynamic_scene_host_services() noexcept {
-        if (this->scene.dynamic_host_services != nullptr) this->scene.dynamic_host_services->clear_viewport_voxel_buffer_backend();
+        if (this->scene.dynamic_host_services != nullptr) {
+            this->scene.dynamic_host_services->clear_viewport_voxel_buffer_backend();
+            this->scene.dynamic_host_services->clear_volume_buffer_backend();
+        }
     }
 
     void Renderer::create_image_2d(GpuImage2D& image, const vk::Extent2D extent, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect) {
@@ -1365,7 +1449,7 @@ namespace spectra::rasterizer {
             1,
             vk::SampleCountFlagBits::e1,
             vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+            vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eStorage,
             vk::SharingMode::eExclusive,
             0,
             nullptr,
@@ -1446,11 +1530,11 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::destroy_viewport_voxel_grid_resources() noexcept {
-        if (this->viewport_voxel_grid_pass.frame_count == 0 && !*this->viewport_voxel_grid_pass.descriptor_set_layout && !*this->viewport_voxel_grid_pass.compaction_descriptor_set_layout && !*this->viewport_voxel_grid_pass.descriptor_pool && !*this->viewport_voxel_grid_pass.pipeline_layout && !*this->viewport_voxel_grid_pass.compaction_pipeline_layout && !*this->viewport_voxel_grid_pass.compaction_pipeline && !*this->viewport_voxel_grid_pass.depth_tested_pipeline && !*this->viewport_voxel_grid_pass.always_visible_pipeline && this->viewport_voxel_grid_pass.frame_voxel_grids.empty() && this->viewport_voxel_grid_pass.compactions.empty()) return;
+        if (this->viewport_voxel_grid_pass.frame_count == 0 && !*this->viewport_voxel_grid_pass.descriptor_set_layout && !*this->viewport_voxel_grid_pass.compaction_descriptor_set_layout && !*this->viewport_voxel_grid_pass.descriptor_pool && !*this->viewport_voxel_grid_pass.pipeline_layout && !*this->viewport_voxel_grid_pass.compaction_pipeline_layout && !*this->viewport_voxel_grid_pass.compaction_pipeline && !*this->viewport_voxel_grid_pass.depth_tested_pipeline && !*this->viewport_voxel_grid_pass.always_visible_pipeline && this->viewport_voxel_grid_pass.frame_voxel_grids.empty() && this->viewport_voxel_grid_pass.compactions.empty() && this->viewport_voxel_grid_pass.buffer_descriptors.empty()) return;
         this->wait_device_idle_for_cleanup();
-        for (std::pair<const std::uint64_t, ExternalViewportVoxelBuffer>& resource : this->viewport_voxel_grid_pass.buffers) {
-            resource.second.descriptor_sets = nullptr;
-            resource.second.descriptor_valid = false;
+        for (std::pair<const std::uint64_t, ViewportVoxelBufferDescriptor>& descriptor : this->viewport_voxel_grid_pass.buffer_descriptors) {
+            descriptor.second.descriptor_sets = nullptr;
+            descriptor.second.descriptor_valid = false;
         }
         for (std::pair<const ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>& resource : this->viewport_voxel_grid_pass.compactions) this->destroy_viewport_voxel_grid_compaction_resource(resource.second);
         this->viewport_voxel_grid_pass.compactions.clear();
@@ -1466,15 +1550,18 @@ namespace spectra::rasterizer {
         this->viewport_voxel_grid_pass.frame_count = 0;
     }
 
-    void Renderer::destroy_external_viewport_voxel_buffers() noexcept {
-        if (this->viewport_voxel_grid_pass.buffers.empty()) return;
+    void Renderer::destroy_external_storage_buffers() noexcept {
+        if (this->external_storage.buffers.empty()) return;
         this->wait_device_idle_for_cleanup();
-        for (std::pair<const std::uint64_t, ExternalViewportVoxelBuffer>& resource : this->viewport_voxel_grid_pass.buffers) {
-            resource.second.descriptor_sets = nullptr;
-            resource.second.descriptor_valid = false;
+        for (std::pair<const std::uint64_t, ViewportVoxelBufferDescriptor>& descriptor : this->viewport_voxel_grid_pass.buffer_descriptors) {
+            descriptor.second.descriptor_sets = nullptr;
+            descriptor.second.descriptor_valid = false;
+        }
+        for (std::pair<const std::uint64_t, ExternalStorageBuffer>& resource : this->external_storage.buffers) {
             this->destroy_external_buffer(resource.second.buffer);
         }
-        this->viewport_voxel_grid_pass.buffers.clear();
+        this->viewport_voxel_grid_pass.buffer_descriptors.clear();
+        this->external_storage.buffers.clear();
     }
 
     void Renderer::destroy_viewport_voxel_grid_compaction_resource(ViewportVoxelGridCompactionResource& resource) noexcept {
@@ -1514,22 +1601,27 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::destroy_volume_resources() noexcept {
-        if (this->volume_pass.frame_count == 0 && !*this->volume_pass.descriptor_set_layout && !*this->volume_pass.descriptor_pool && this->volume_pass.descriptor_sets.size() == 0 && !*this->volume_pass.sampler && !*this->volume_pass.pipeline_layout && !*this->volume_pass.pipeline && this->volume_pass.frame_volumes.empty()) return;
+        if (this->volume_pass.frame_count == 0 && !*this->volume_pass.descriptor_set_layout && !*this->volume_pass.upload_descriptor_set_layout && !*this->volume_pass.descriptor_pool && this->volume_pass.descriptor_sets.size() == 0 && !*this->volume_pass.sampler && !*this->volume_pass.pipeline_layout && !*this->volume_pass.upload_pipeline_layout && !*this->volume_pass.pipeline && !*this->volume_pass.upload_pipeline && this->volume_pass.frame_volumes.empty()) return;
         this->wait_device_idle_for_cleanup();
         for (FrameVolumeResources& frame_volume : this->volume_pass.frame_volumes) {
             this->destroy_host_buffer(frame_volume.densityStagingBuffer);
             this->destroy_host_buffer(frame_volume.temperatureStagingBuffer);
             this->destroy_volume_image(frame_volume.densityImage);
             this->destroy_volume_image(frame_volume.temperatureImage);
+            frame_volume.externalDensityUploadDescriptorSets = nullptr;
+            frame_volume.externalDensityUploadPending = false;
         }
         this->volume_pass.frame_volumes.clear();
-        this->volume_pass.pipeline              = nullptr;
-        this->volume_pass.pipeline_layout       = nullptr;
-        this->volume_pass.sampler               = nullptr;
-        this->volume_pass.descriptor_sets       = nullptr;
-        this->volume_pass.descriptor_pool       = nullptr;
-        this->volume_pass.descriptor_set_layout = nullptr;
-        this->volume_pass.frame_count           = 0;
+        this->volume_pass.upload_pipeline              = nullptr;
+        this->volume_pass.pipeline                     = nullptr;
+        this->volume_pass.upload_pipeline_layout       = nullptr;
+        this->volume_pass.pipeline_layout              = nullptr;
+        this->volume_pass.sampler                      = nullptr;
+        this->volume_pass.descriptor_sets              = nullptr;
+        this->volume_pass.descriptor_pool              = nullptr;
+        this->volume_pass.upload_descriptor_set_layout = nullptr;
+        this->volume_pass.descriptor_set_layout        = nullptr;
+        this->volume_pass.frame_count                  = 0;
     }
 
     void Renderer::destroy_selection_resources() noexcept {
@@ -1970,7 +2062,7 @@ namespace spectra::rasterizer {
         this->viewport_voxel_grid_pass.frame_count = this->host.frame_count;
         this->viewport_voxel_grid_pass.frame_voxel_grids.resize(this->host.frame_count);
 
-        for (std::pair<const std::uint64_t, ExternalViewportVoxelBuffer>& resource : this->viewport_voxel_grid_pass.buffers) this->ensure_viewport_voxel_buffer_descriptor(resource.second);
+        for (std::pair<const std::uint64_t, ViewportVoxelBufferDescriptor>& descriptor : this->viewport_voxel_grid_pass.buffer_descriptors) this->ensure_viewport_voxel_buffer_descriptor(descriptor.first, descriptor.second);
     }
 
     void Renderer::ensure_viewport_image_plane_resources() {
@@ -2086,12 +2178,20 @@ namespace spectra::rasterizer {
         };
         const vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(descriptor_bindings.size()), descriptor_bindings.data()};
         this->volume_pass.descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, descriptor_set_layout_create_info};
+        const std::array upload_descriptor_bindings{
+            vk::DescriptorSetLayoutBinding{0u, vk::DescriptorType::eStorageBuffer, 1u, vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{1u, vk::DescriptorType::eStorageImage, 1u, vk::ShaderStageFlagBits::eCompute},
+        };
+        const vk::DescriptorSetLayoutCreateInfo upload_descriptor_set_layout_create_info{{}, static_cast<std::uint32_t>(upload_descriptor_bindings.size()), upload_descriptor_bindings.data()};
+        this->volume_pass.upload_descriptor_set_layout = vk::raii::DescriptorSetLayout{*this->host.device, upload_descriptor_set_layout_create_info};
         const std::array descriptor_pool_sizes{
             vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, this->host.frame_count},
             vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, this->host.frame_count * 2u},
             vk::DescriptorPoolSize{vk::DescriptorType::eSampler, this->host.frame_count},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, this->host.frame_count},
+            vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, this->host.frame_count},
         };
-        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->host.frame_count, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+        const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, this->host.frame_count * 2u, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
         this->volume_pass.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
         const vk::DescriptorSetLayout descriptor_set_layout = *this->volume_pass.descriptor_set_layout;
         std::vector<vk::DescriptorSetLayout> descriptor_set_layouts(this->host.frame_count, descriptor_set_layout);
@@ -2123,11 +2223,20 @@ namespace spectra::rasterizer {
         const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(VolumePushConstantsData)};
         const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &volume_descriptor_set_layout, 1u, &push_constant_range};
         this->volume_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
+        const vk::DescriptorSetLayout volume_upload_descriptor_set_layout = *this->volume_pass.upload_descriptor_set_layout;
+        const vk::PushConstantRange upload_push_constant_range{vk::ShaderStageFlagBits::eCompute, 0u, sizeof(VolumeUploadPushConstantsData)};
+        const vk::PipelineLayoutCreateInfo upload_pipeline_layout_create_info{{}, 1u, &volume_upload_descriptor_set_layout, 1u, &upload_push_constant_range};
+        this->volume_pass.upload_pipeline_layout = vk::raii::PipelineLayout{*this->host.device, upload_pipeline_layout_create_info};
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_volume_vertex_spv_sizeInBytes, spectra_rasterizer_volume_vertex_spv};
         const vk::ShaderModuleCreateInfo fragment_shader_create_info{{}, spectra_rasterizer_volume_fragment_spv_sizeInBytes, spectra_rasterizer_volume_fragment_spv};
         const vk::raii::ShaderModule vertex_shader{*this->host.device, vertex_shader_create_info};
         const vk::raii::ShaderModule fragment_shader{*this->host.device, fragment_shader_create_info};
+        const vk::ShaderModuleCreateInfo upload_shader_create_info{{}, spectra_rasterizer_volume_upload_compute_spv_sizeInBytes, spectra_rasterizer_volume_upload_compute_spv};
+        const vk::raii::ShaderModule upload_shader{*this->host.device, upload_shader_create_info};
+        const vk::PipelineShaderStageCreateInfo upload_shader_stage{{}, vk::ShaderStageFlagBits::eCompute, *upload_shader, "main"};
+        const vk::ComputePipelineCreateInfo upload_pipeline_create_info{{}, upload_shader_stage, *this->volume_pass.upload_pipeline_layout};
+        this->volume_pass.upload_pipeline = vk::raii::Pipeline{*this->host.device, nullptr, upload_pipeline_create_info};
         const std::array shader_stages{
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eVertex, *vertex_shader, "main"},
             vk::PipelineShaderStageCreateInfo{{}, vk::ShaderStageFlagBits::eFragment, *fragment_shader, "main"},
@@ -2350,9 +2459,22 @@ namespace spectra::rasterizer {
             if (channel.name != channel_name) continue;
             const std::uint64_t expected_count = static_cast<std::uint64_t>(channel.dimensions[0]) * static_cast<std::uint64_t>(channel.dimensions[1]) * static_cast<std::uint64_t>(channel.dimensions[2]);
             if (expected_count == 0u) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" has zero dimensions", channel.name));
-            if (expected_count != channel.values.size()) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" value count does not match dimensions", channel.name));
-            for (const float value : channel.values) {
-                if (!std::isfinite(value)) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" contains a non-finite value", channel.name));
+            switch (channel.source_kind) {
+            case scene::Scene::VolumeChannelSourceKind::Values:
+                if (expected_count != channel.values.size()) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" value count does not match dimensions", channel.name));
+                for (const float value : channel.values) {
+                    if (!std::isfinite(value)) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" contains a non-finite value", channel.name));
+                }
+                break;
+            case scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer:
+                if (!channel.values.empty()) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" external GPU source must not provide CPU values", channel.name));
+                if (channel.buffer_id == 0u) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" external GPU source has no buffer id", channel.name));
+                if (expected_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" byte count exceeds uint64 range", channel.name));
+                if (channel.source_byte_size < expected_count * sizeof(float)) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" external GPU source byte size is too small", channel.name));
+                if (channel.revision == 0u) throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" external GPU source revision must not be zero", channel.name));
+                break;
+            default:
+                throw std::runtime_error(std::format("Rasterizer volume channel \"{}\" has unsupported source kind", channel.name));
             }
             return &channel;
         }
@@ -2437,11 +2559,14 @@ namespace spectra::rasterizer {
             frame_cameras = std::span<const scene::Scene::Camera>{timeline.current_frame->cameras};
         }
 
-        const auto make_camera_record = [&active_camera_name = document->active_camera_name](const scene::Scene::Camera& camera) {
+        const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
+        const std::span<const scene::Scene::ViewportCameraVisual> resolved_camera_visuals{resolved_frame.debug_attachments.viewport_camera_visuals};
+        const auto make_camera_record = [&active_camera_name = document->active_camera_name, resolved_camera_visuals](const scene::Scene::Camera& camera) {
             if (camera.name.empty()) throw std::runtime_error("Rasterizer scene collection camera name must not be empty");
             const scene::CameraFrame camera_frame = scene::camera_frame(camera.view.pose);
+            const scene::Scene::ViewportCameraVisual* visual = find_camera_visual_for_owner(resolved_camera_visuals, camera.name);
             std::string image_source{};
-            if (camera.visualization.image.has_value()) image_source = std::format("RGBA8 {}x{}", camera.visualization.image->width, camera.visualization.image->height);
+            if (visual != nullptr && visual->image.has_value()) image_source = std::format("RGBA8 {}x{}", visual->image->width, visual->image->height);
             float vertical_fov{};
             if (camera.view.projection.kind != scene::CameraProjectionKind::Orthographic) vertical_fov = scene::camera_projection_vertical_fov_degrees(camera.view.projection);
             return SceneObjectRecord{
@@ -2462,9 +2587,9 @@ namespace spectra::rasterizer {
                 .camera_cy                   = camera.view.projection.cy,
                 .camera_near_plane           = camera.view.projection.near_plane,
                 .camera_far_plane            = camera.view.projection.far_plane,
-                .camera_visual_enabled       = camera.visualization.enabled,
-                .camera_visual_near          = camera.visualization.visual_near,
-                .camera_visual_far           = camera.visualization.visual_far,
+                .camera_visual_enabled       = visual != nullptr,
+                .camera_visual_near          = visual != nullptr ? visual->visual_near : 0.0f,
+                .camera_visual_far           = visual != nullptr ? visual->visual_far : 0.0f,
                 .camera_image_source         = std::move(image_source),
             };
         };
@@ -2523,10 +2648,11 @@ namespace spectra::rasterizer {
             record.volume_channels.reserve(volume.channels.size());
             for (const scene::Scene::VolumeChannel& channel : volume.channels) {
                 if (channel.name.empty()) throw std::runtime_error(std::format("Rasterizer scene collection volume \"{}\" channel name must not be empty", volume.name));
+                const std::uint64_t logical_value_count = static_cast<std::uint64_t>(channel.dimensions[0]) * static_cast<std::uint64_t>(channel.dimensions[1]) * static_cast<std::uint64_t>(channel.dimensions[2]);
                 record.volume_channels.push_back(SceneVolumeChannelSummary{
                     .name        = channel.name,
                     .dimensions  = channel.dimensions,
-                    .value_count = channel.values.size(),
+                    .value_count = channel.source_kind == scene::Scene::VolumeChannelSourceKind::Values ? channel.values.size() : logical_value_count,
                 });
             }
             return record;
@@ -2978,7 +3104,7 @@ namespace spectra::rasterizer {
                 .a = color.w,
             });
         };
-        for (const scene::Scene::ViewportSegmentSet& segment_set : resolved_frame.viewport_segment_sets) {
+        for (const scene::Scene::ViewportSegmentSet& segment_set : resolved_frame.debug_attachments.viewport_segment_sets) {
             if (segment_set.segments.empty()) continue;
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
@@ -3001,12 +3127,12 @@ namespace spectra::rasterizer {
                 .depthMode     = segment_set.depth_mode,
             });
         }
-        for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
-            if (!camera.visualization.enabled) continue;
+        for (const scene::Scene::ViewportCameraVisual& visual : resolved_frame.debug_attachments.viewport_camera_visuals) {
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
             if (instances.size() + 12u > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer camera frustum edge count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
-            const CameraVisualPlanes planes = camera_visual_planes(camera);
+            const scene::Scene::Camera& camera = require_camera_visual_owner(std::span<const scene::Scene::Camera>{resolved_frame.cameras}, visual);
+            const CameraVisualPlanes planes = camera_visual_planes(camera, visual);
             const std::array<std::array<const scene::Vector3*, 2>, 12> edges{{
                 {&planes.near_corners.at(0u), &planes.near_corners.at(1u)},
                 {&planes.near_corners.at(1u), &planes.near_corners.at(2u)},
@@ -3026,16 +3152,16 @@ namespace spectra::rasterizer {
                 append_segment_instance(
                     to_render_vector(*edge.at(0u)),
                     to_render_vector(*edge.at(1u)),
-                    camera.visualization.color,
-                    camera.visualization.width,
-                    camera.visualization.width_mode,
-                    std::format("Rasterizer camera \"{}\" visualization", camera.name)
+                    visual.color,
+                    visual.width,
+                    visual.width_mode,
+                    std::format("Rasterizer viewport camera visual \"{}\"", visual.name)
                 );
             }
             draw_commands.push_back(ViewportSegmentDrawCommand{
                 .firstInstance = first_instance,
                 .instanceCount = static_cast<std::uint32_t>(edges.size()),
-                .depthMode     = camera.visualization.depth_mode,
+                .depthMode     = visual.depth_mode,
             });
         }
 
@@ -3056,16 +3182,17 @@ namespace spectra::rasterizer {
 
         std::vector<ViewportVoxelGridDrawCommand> draw_commands{};
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
-        for (const scene::Scene::ViewportVoxelGrid& voxel_grid : resolved_frame.viewport_voxel_grids) {
+        for (const scene::Scene::ViewportVoxelGrid& voxel_grid : resolved_frame.debug_attachments.viewport_voxel_grids) {
             const std::uint64_t cell_count = static_cast<std::uint64_t>(voxel_grid.dimensions[0]) * static_cast<std::uint64_t>(voxel_grid.dimensions[1]) * static_cast<std::uint64_t>(voxel_grid.dimensions[2]);
             if (cell_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" cell count exceeds uint32 draw range", voxel_grid.name));
             if (voxel_grid.source_kind == scene::Scene::ViewportVoxelGridSourceKind::IndexList && voxel_grid.index_count == 0u) continue;
             if (voxel_grid.source_kind == scene::Scene::ViewportVoxelGridSourceKind::IndexList && voxel_grid.index_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" index count exceeds uint32 draw range", voxel_grid.name));
-            const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::iterator resource = this->viewport_voxel_grid_pass.buffers.find(voxel_grid.buffer_id);
-            if (resource == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" references unknown voxel buffer {}", voxel_grid.name, voxel_grid.buffer_id));
-            if (voxel_grid.source_byte_size > resource->second.byte_size) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" source byte size exceeds voxel buffer capacity", voxel_grid.name));
-            this->ensure_viewport_voxel_buffer_descriptor(resource->second);
-            if (!resource->second.descriptor_valid || resource->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" voxel buffer descriptor is invalid", voxel_grid.name));
+            const ExternalStorageBuffer& resource = this->external_storage_buffer(voxel_grid.buffer_id, std::format("Rasterizer viewport voxel grid \"{}\"", voxel_grid.name));
+            if (voxel_grid.source_byte_size > resource.byte_size) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" source byte size exceeds voxel buffer capacity", voxel_grid.name));
+            std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(voxel_grid.buffer_id);
+            if (descriptor == this->viewport_voxel_grid_pass.buffer_descriptors.end()) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" references buffer {} that is not registered as viewport voxel debug data", voxel_grid.name, voxel_grid.buffer_id));
+            this->ensure_viewport_voxel_buffer_descriptor(descriptor->first, descriptor->second);
+            if (!descriptor->second.descriptor_valid || descriptor->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" voxel buffer descriptor is invalid", voxel_grid.name));
             const std::uint64_t bitfield_byte_count = (cell_count + 7u) / 8u;
             if (bitfield_byte_count > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error(std::format("Rasterizer viewport voxel grid \"{}\" bitfield byte count exceeds uint32 range", voxel_grid.name));
             const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(voxel_grid.transform));
@@ -3101,19 +3228,20 @@ namespace spectra::rasterizer {
         std::vector<ViewportImagePlaneInstance> instances{};
         std::vector<ViewportImagePlaneDrawCommand> draw_commands{};
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.workspace->resolved_frame();
-        for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
-            if (!camera.visualization.enabled || !camera.visualization.image.has_value()) continue;
+        for (const scene::Scene::ViewportCameraVisual& visual : resolved_frame.debug_attachments.viewport_camera_visuals) {
+            if (!visual.image.has_value()) continue;
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport image plane instance count exceeds uint32 range");
-            const scene::Scene::CameraImage& image = *camera.visualization.image;
-            if (!finite_scene_vector(image.tint)) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image tint must be finite", camera.name));
-            if (image.tint.x < 0.0f || image.tint.y < 0.0f || image.tint.z < 0.0f || image.tint.w < 0.0f || image.tint.w > 1.0f) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image tint is invalid", camera.name));
+            const scene::Scene::Camera& camera = require_camera_visual_owner(std::span<const scene::Scene::Camera>{resolved_frame.cameras}, visual);
+            const scene::Scene::ViewportCameraVisualImage& image = *visual.image;
+            if (!finite_scene_vector(image.tint)) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" image tint must be finite", visual.name));
+            if (image.tint.x < 0.0f || image.tint.y < 0.0f || image.tint.z < 0.0f || image.tint.w < 0.0f || image.tint.w > 1.0f) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" image tint is invalid", visual.name));
 
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image dimensions must be non-zero", camera.name));
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" image dimensions must be non-zero", visual.name));
             const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
-            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Rasterizer camera \"{}\" RGBA8 byte count must be width * height * 4", camera.name));
-            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("Rasterizer camera \"{}\" RGBA8 pointer must not be null", camera.name));
+            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" RGBA8 byte count must be width * height * 4", visual.name));
+            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" RGBA8 pointer must not be null", visual.name));
 
-            const std::string image_key = std::format("camera-rgba8://{}", camera.name);
+            const std::string image_key = std::format("camera-visual-rgba8://{}", visual.name);
             const ViewportImagePlaneTexture::Source source{
                 .data = reinterpret_cast<std::uintptr_t>(image.rgba8),
                 .byteSize = image.rgba8_size,
@@ -3159,13 +3287,13 @@ namespace spectra::rasterizer {
 
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
             instances.push_back(ViewportImagePlaneInstance{
-                .model = camera_visual_image_model(camera_visual_planes(camera)),
+                .model = camera_visual_image_model(camera_visual_planes(camera, visual)),
                 .tint = {image.tint.x, image.tint.y, image.tint.z, image.tint.w},
             });
             draw_commands.push_back(ViewportImagePlaneDrawCommand{
                 .firstInstance = first_instance,
                 .instanceCount = 1u,
-                .depthMode = camera.visualization.depth_mode,
+                .depthMode = visual.depth_mode,
                 .imageKey = image_key,
             });
         }
@@ -3190,6 +3318,8 @@ namespace spectra::rasterizer {
         if (selected_volume == nullptr) {
             frame_volume.uploadedRevision = scene_revision;
             frame_volume.uploadPending    = false;
+            frame_volume.externalDensityUploadDescriptorSets = nullptr;
+            frame_volume.externalDensityUploadPending = false;
             frame_volume.descriptorValid  = false;
             frame_volume.drawCommand      = VolumeDrawCommand{};
             return;
@@ -3205,16 +3335,44 @@ namespace spectra::rasterizer {
         if (density_channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel dimensions must match the volume dimensions", volume.name));
         if (temperature_channel != nullptr && temperature_channel->dimensions != volume.dimensions) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel dimensions must match the volume dimensions", volume.name));
 
+        const std::uint64_t cell_count = static_cast<std::uint64_t>(volume.dimensions[0]) * static_cast<std::uint64_t>(volume.dimensions[1]) * static_cast<std::uint64_t>(volume.dimensions[2]);
+        if (cell_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Rasterizer volume \"{}\" byte count exceeds uint64 range", volume.name));
+        const vk::DeviceSize channel_bytes = static_cast<vk::DeviceSize>(cell_count * sizeof(float));
+        if (temperature_channel != nullptr && temperature_channel->source_kind != scene::Scene::VolumeChannelSourceKind::Values) throw std::runtime_error(std::format("Rasterizer volume \"{}\" temperature channel uses an external GPU source; only density supports external GPU volume upload", volume.name));
+
         const vk::Extent3D image_extent{volume.dimensions[0], volume.dimensions[1], volume.dimensions[2]};
         if (!*frame_volume.densityImage.image || frame_volume.densityImage.extent != image_extent) {
             this->create_volume_image(frame_volume.densityImage, image_extent);
             this->create_volume_image(frame_volume.temperatureImage, image_extent);
             frame_volume.descriptorValid = false;
         }
-        const vk::DeviceSize channel_bytes = static_cast<vk::DeviceSize>(density_channel.values.size() * sizeof(float));
-        this->ensure_host_buffer(frame_volume.densityStagingBuffer, channel_bytes, vk::BufferUsageFlagBits::eTransferSrc);
+        if (density_channel.source_kind == scene::Scene::VolumeChannelSourceKind::Values) {
+            this->ensure_host_buffer(frame_volume.densityStagingBuffer, channel_bytes, vk::BufferUsageFlagBits::eTransferSrc);
+            std::memcpy(frame_volume.densityStagingBuffer.mapped, density_channel.values.data(), static_cast<std::size_t>(channel_bytes));
+            frame_volume.externalDensityUploadDescriptorSets = nullptr;
+            frame_volume.externalDensityUploadPending = false;
+        } else {
+            if (!*this->volume_pass.upload_descriptor_set_layout || !*this->volume_pass.descriptor_pool) throw std::runtime_error("Spectra rasterizer volume external upload descriptors are not initialized");
+            const ExternalStorageBuffer& source = this->external_storage_buffer(density_channel.buffer_id, std::format("Rasterizer volume \"{}\" density channel", volume.name));
+            if (density_channel.source_byte_size > source.byte_size) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel byte size {} exceeds external GPU buffer {} byte size {}", volume.name, density_channel.source_byte_size, density_channel.buffer_id, source.byte_size));
+            if (density_channel.source_byte_size < channel_bytes) throw std::runtime_error(std::format("Rasterizer volume \"{}\" density channel external GPU byte size is too small", volume.name));
+            this->destroy_host_buffer(frame_volume.densityStagingBuffer);
+            if (frame_volume.externalDensityUploadDescriptorSets.size() != 1u) {
+                const vk::DescriptorSetLayout upload_descriptor_set_layout = *this->volume_pass.upload_descriptor_set_layout;
+                const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->volume_pass.descriptor_pool, 1u, &upload_descriptor_set_layout};
+                frame_volume.externalDensityUploadDescriptorSets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+                if (frame_volume.externalDensityUploadDescriptorSets.size() != 1u) throw std::runtime_error("Failed to allocate Spectra rasterizer volume external upload descriptor set");
+            }
+            const vk::DescriptorBufferInfo source_buffer_info{*source.buffer.buffer, 0u, static_cast<vk::DeviceSize>(density_channel.source_byte_size)};
+            const vk::DescriptorImageInfo density_image_info{{}, *frame_volume.densityImage.view, vk::ImageLayout::eGeneral};
+            const std::array upload_descriptor_writes{
+                vk::WriteDescriptorSet{*frame_volume.externalDensityUploadDescriptorSets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &source_buffer_info, nullptr},
+                vk::WriteDescriptorSet{*frame_volume.externalDensityUploadDescriptorSets.at(0), 1u, 0u, 1u, vk::DescriptorType::eStorageImage, &density_image_info, nullptr, nullptr},
+            };
+            this->host.device->updateDescriptorSets(upload_descriptor_writes, {});
+            frame_volume.externalDensityUploadPending = true;
+        }
         this->ensure_host_buffer(frame_volume.temperatureStagingBuffer, channel_bytes, vk::BufferUsageFlagBits::eTransferSrc);
-        std::memcpy(frame_volume.densityStagingBuffer.mapped, density_channel.values.data(), static_cast<std::size_t>(channel_bytes));
         if (temperature_channel != nullptr) std::memcpy(frame_volume.temperatureStagingBuffer.mapped, temperature_channel->values.data(), static_cast<std::size_t>(channel_bytes));
         else std::memset(frame_volume.temperatureStagingBuffer.mapped, 0, static_cast<std::size_t>(channel_bytes));
 
@@ -3272,9 +3430,33 @@ namespace spectra::rasterizer {
     void Renderer::record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume) {
         if (!frame_volume.uploadPending) return;
         if (!*frame_volume.densityImage.image || !*frame_volume.temperatureImage.image) throw std::runtime_error("Spectra rasterizer volume upload is missing GPU images");
-        if (!*frame_volume.densityStagingBuffer.buffer || !*frame_volume.temperatureStagingBuffer.buffer) throw std::runtime_error("Spectra rasterizer volume upload is missing staging buffers");
-        transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
-        frame_volume.densityImage.layout = vk::ImageLayout::eTransferDstOptimal;
+        if (!*frame_volume.temperatureStagingBuffer.buffer) throw std::runtime_error("Spectra rasterizer volume upload is missing temperature staging buffer");
+        if (frame_volume.externalDensityUploadPending) {
+            if (frame_volume.externalDensityUploadDescriptorSets.size() != 1u) throw std::runtime_error("Spectra rasterizer volume external upload is missing descriptor set");
+            if (!*this->volume_pass.upload_pipeline || !*this->volume_pass.upload_pipeline_layout) throw std::runtime_error("Spectra rasterizer volume external upload pipeline is not initialized");
+            const scene::Scene::VolumeGrid& volume = frame_volume.drawCommand.volume;
+            const scene::Scene::VolumeChannel& density_channel = this->require_volume_channel(volume, "density");
+            transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite);
+            frame_volume.densityImage.layout = vk::ImageLayout::eGeneral;
+            const VolumeUploadPushConstantsData push_constants{
+                .dimensions = {
+                    volume.dimensions[0],
+                    volume.dimensions[1],
+                    volume.dimensions[2],
+                    density_channel.index_encoding == scene::Scene::VolumeChannelIndexEncoding::Morton3D ? 1u : 0u,
+                },
+            };
+            command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *this->volume_pass.upload_pipeline);
+            command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *this->volume_pass.upload_pipeline_layout, 0u, *frame_volume.externalDensityUploadDescriptorSets.at(0), {});
+            command_buffer.pushConstants(*this->volume_pass.upload_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0u, sizeof(VolumeUploadPushConstantsData), &push_constants);
+            command_buffer.dispatch((volume.dimensions[0] + 7u) / 8u, (volume.dimensions[1] + 7u) / 8u, (volume.dimensions[2] + 3u) / 4u);
+            transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderStorageWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            frame_volume.densityImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        } else {
+            if (!*frame_volume.densityStagingBuffer.buffer) throw std::runtime_error("Spectra rasterizer volume upload is missing density staging buffer");
+            transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+            frame_volume.densityImage.layout = vk::ImageLayout::eTransferDstOptimal;
+        }
         transition_image_layout(command_buffer, *frame_volume.temperatureImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.temperatureImage.layout, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
         frame_volume.temperatureImage.layout = vk::ImageLayout::eTransferDstOptimal;
 
@@ -3287,14 +3469,17 @@ namespace spectra::rasterizer {
             frame_volume.densityImage.extent,
         };
         const std::array regions{region};
-        command_buffer.copyBufferToImage(*frame_volume.densityStagingBuffer.buffer, *frame_volume.densityImage.image, vk::ImageLayout::eTransferDstOptimal, regions);
+        if (!frame_volume.externalDensityUploadPending) command_buffer.copyBufferToImage(*frame_volume.densityStagingBuffer.buffer, *frame_volume.densityImage.image, vk::ImageLayout::eTransferDstOptimal, regions);
         command_buffer.copyBufferToImage(*frame_volume.temperatureStagingBuffer.buffer, *frame_volume.temperatureImage.image, vk::ImageLayout::eTransferDstOptimal, regions);
 
-        transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
-        frame_volume.densityImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        if (!frame_volume.externalDensityUploadPending) {
+            transition_image_layout(command_buffer, *frame_volume.densityImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.densityImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
+            frame_volume.densityImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
         transition_image_layout(command_buffer, *frame_volume.temperatureImage.image, vk::ImageAspectFlagBits::eColor, frame_volume.temperatureImage.layout, vk::ImageLayout::eShaderReadOnlyOptimal, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead);
         frame_volume.temperatureImage.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         frame_volume.uploadPending = false;
+        frame_volume.externalDensityUploadPending = false;
     }
 
     std::string Renderer::active_scene_id() const {
@@ -3606,7 +3791,6 @@ namespace spectra::rasterizer {
         this->consume_completed_selection_pick(frame.frame_index);
         this->lifecycle.active_frame_index = frame.frame_index;
         FrameResult result{};
-        this->handle_timeline_shortcuts();
         this->ensure_viewport_resources();
         this->ensure_camera_resources();
         this->ensure_mesh_resources();
@@ -3767,10 +3951,10 @@ namespace spectra::rasterizer {
             const vk::raii::DescriptorSets* draw_descriptor_sets{};
             const ViewportVoxelGridCompactionResource* compaction_resource{};
             if (draw_command.sourceKind == scene::Scene::ViewportVoxelGridSourceKind::IndexList) {
-                const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::const_iterator resource = this->viewport_voxel_grid_pass.buffers.find(draw_command.bufferId);
-                if (resource == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Viewport voxel grid buffer {} was released before rendering", draw_command.bufferId));
-                if (!resource->second.descriptor_valid || resource->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid buffer {} descriptor is invalid", draw_command.bufferId));
-                draw_descriptor_sets = &resource->second.descriptor_sets;
+                const std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::const_iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(draw_command.bufferId);
+                if (descriptor == this->viewport_voxel_grid_pass.buffer_descriptors.end()) throw std::runtime_error(std::format("Viewport voxel grid buffer {} was released before rendering", draw_command.bufferId));
+                if (!descriptor->second.descriptor_valid || descriptor->second.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid buffer {} descriptor is invalid", draw_command.bufferId));
+                draw_descriptor_sets = &descriptor->second.descriptor_sets;
             } else {
                 const ViewportVoxelGridCompactionKey key{
                     .bufferId = draw_command.bufferId,
@@ -3821,15 +4005,14 @@ namespace spectra::rasterizer {
         };
         const std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>::const_iterator compaction = this->viewport_voxel_grid_pass.compactions.find(key);
         if (compaction == this->viewport_voxel_grid_pass.compactions.end()) throw std::runtime_error(std::format("Viewport voxel grid compaction resource for buffer {} does not exist", draw_command.bufferId));
-        const std::map<std::uint64_t, ExternalViewportVoxelBuffer>::const_iterator source = this->viewport_voxel_grid_pass.buffers.find(draw_command.bufferId);
-        if (source == this->viewport_voxel_grid_pass.buffers.end()) throw std::runtime_error(std::format("Viewport voxel grid bitfield buffer {} was released before compaction", draw_command.bufferId));
+        const ExternalStorageBuffer& source = this->external_storage_buffer(draw_command.bufferId, "Viewport voxel grid bitfield");
         if (!compaction->second.compute_descriptor_valid || compaction->second.compute_descriptor_sets.size() != 1u) throw std::runtime_error(std::format("Viewport voxel grid compaction descriptor for buffer {} is invalid", draw_command.bufferId));
         if (!*compaction->second.compactedIndexBuffer.buffer || !*compaction->second.counterBuffer.buffer || !*compaction->second.indirectBuffer.buffer) throw std::runtime_error(std::format("Viewport voxel grid compaction buffers for source {} are invalid", draw_command.bufferId));
 
         command_buffer.fillBuffer(*compaction->second.counterBuffer.buffer, 0u, sizeof(std::uint32_t), 0u);
         command_buffer.fillBuffer(*compaction->second.indirectBuffer.buffer, 0u, sizeof(std::uint32_t), 36u);
         command_buffer.fillBuffer(*compaction->second.indirectBuffer.buffer, sizeof(std::uint32_t), sizeof(vk::DrawIndirectCommand) - sizeof(std::uint32_t), 0u);
-        transition_buffer_access(command_buffer, *source->second.buffer.buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+        transition_buffer_access(command_buffer, *source.buffer.buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
         transition_buffer_access(command_buffer, *compaction->second.counterBuffer.buffer, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
         transition_buffer_access(command_buffer, *compaction->second.indirectBuffer.buffer, vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
 
@@ -4522,6 +4705,7 @@ namespace spectra::rasterizer {
         draw_list->AddRectFilled(chip_min, chip_max, IM_COL32(15, 18, 22, 164), 7.0f);
         draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, IM_COL32(206, 214, 220, 255), chip.c_str());
 
+        if (this->host.draw_viewport_overlays) this->host.draw_viewport_overlays(image_min.x, image_min.y, image_size.x, image_size.y);
         this->draw_orientation_gizmo(image_rect);
         ImGui::PopClipRect();
     }
@@ -4548,51 +4732,6 @@ namespace spectra::rasterizer {
         this->handle_viewport_input(image_rect);
         this->draw_viewport_overlays(image_rect);
         this->draw_viewport_toolbar(image_rect);
-    }
-
-    void Renderer::handle_timeline_shortcuts() {
-        if (!this->timeline_enabled()) return;
-        ImGuiIO& io = ImGui::GetIO();
-        if (io.WantTextInput) return;
-        if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
-        if (this->timeline_streaming_enabled() && ImGui::IsKeyPressed(ImGuiKey_Space, false)) this->toggle_timeline_playback();
-        if (ImGui::IsKeyPressed(ImGuiKey_R, false)) this->request_timeline_reset();
-    }
-
-    void Renderer::commit_timeline_from_ui(scene::Scene::Timeline timeline) {
-        if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline edits");
-        scene::Scene::Edit edit{};
-        edit.replace_timeline(std::move(timeline));
-        const scene::Scene::DirtyFlags dirty = this->scene.workspace->commit(std::move(edit));
-        if (!scene::Scene::has_dirty_flag(dirty, scene::Scene::DirtyFlags::Timeline)) throw std::runtime_error("Rasterizer timeline UI edit did not mark the timeline dirty");
-    }
-
-    bool Renderer::timeline_enabled() const {
-        return this->scene.workspace->document()->timeline_enabled;
-    }
-
-    bool Renderer::timeline_streaming_enabled() const {
-        if (!this->timeline_enabled()) return false;
-        return this->scene.workspace->timeline().mode != scene::Scene::TimelineMode::Playback;
-    }
-
-    bool Renderer::timeline_playing() const {
-        if (!this->timeline_streaming_enabled()) return false;
-        return this->scene.workspace->timeline().playing;
-    }
-
-    void Renderer::toggle_timeline_playback() {
-        if (!this->timeline_streaming_enabled()) throw std::runtime_error("Rasterizer timeline playback can only be toggled in Live or Record mode");
-        scene::Scene::Timeline timeline = this->scene.workspace->timeline();
-        timeline.playing = !timeline.playing;
-        this->commit_timeline_from_ui(std::move(timeline));
-    }
-
-    void Renderer::request_timeline_reset() {
-        if (!this->timeline_enabled()) throw std::runtime_error("Static rasterizer scenes do not support timeline reset");
-        scene::Scene::Timeline timeline = this->scene.workspace->timeline();
-        ++timeline.reset_request_serial;
-        this->commit_timeline_from_ui(std::move(timeline));
     }
 
     void Renderer::draw_scene_collection_panel() {

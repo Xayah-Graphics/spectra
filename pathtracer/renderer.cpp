@@ -971,6 +971,114 @@ namespace spectra::pathtracer {
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
 
+    [[nodiscard]] std::uint64_t checked_volume_cell_count(const scene::Scene::VolumeGrid& volume) {
+        const std::uint64_t dim_x = volume.dimensions[0];
+        const std::uint64_t dim_y = volume.dimensions[1];
+        const std::uint64_t dim_z = volume.dimensions[2];
+        if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" dimensions must be positive", volume.name));
+        if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(std::format("Pathtracer volume \"{}\" cell count overflows uint64", volume.name));
+        const std::uint64_t xy = dim_x * dim_y;
+        if (xy > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(std::format("Pathtracer volume \"{}\" cell count overflows uint64", volume.name));
+        return xy * dim_z;
+    }
+
+    [[nodiscard]] std::uint32_t part1by2(const std::uint32_t input) {
+        std::uint32_t value = input & 0x000003ffu;
+        value = (value | (value << 16u)) & 0x030000ffu;
+        value = (value | (value << 8u)) & 0x0300f00fu;
+        value = (value | (value << 4u)) & 0x030c30c3u;
+        value = (value | (value << 2u)) & 0x09249249u;
+        return value;
+    }
+
+    [[nodiscard]] std::uint32_t encode_morton3d(const std::uint32_t x, const std::uint32_t y, const std::uint32_t z) {
+        return part1by2(x) | (part1by2(y) << 1u) | (part1by2(z) << 2u);
+    }
+
+    [[nodiscard]] std::vector<float> linearize_volume_snapshot_values(const std::vector<float>& raw_values, const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) {
+        const std::uint64_t cell_count = checked_volume_cell_count(volume);
+        const auto canonical_value = [&channel](const float value) {
+            if (channel.name == "density") return std::max(0.0f, value);
+            return value;
+        };
+        if (cell_count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("Pathtracer volume \"{}\" cell count exceeds host vector range", volume.name));
+        if (channel.index_encoding == scene::Scene::VolumeChannelIndexEncoding::Linear) {
+            if (raw_values.size() < cell_count) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" linear snapshot is too small", volume.name, channel.name));
+            std::vector<float> values{};
+            values.reserve(static_cast<std::size_t>(cell_count));
+            for (std::uint64_t index = 0u; index < cell_count; ++index) values.push_back(canonical_value(raw_values.at(static_cast<std::size_t>(index))));
+            return values;
+        }
+        if (volume.dimensions[0] > 1024u || volume.dimensions[1] > 1024u || volume.dimensions[2] > 1024u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" Morton3D snapshot dimensions exceed 10-bit Morton encoding range", volume.name));
+        std::vector<float> values(static_cast<std::size_t>(cell_count));
+        for (std::uint32_t z = 0u; z < volume.dimensions[2]; ++z) {
+            for (std::uint32_t y = 0u; y < volume.dimensions[1]; ++y) {
+                for (std::uint32_t x = 0u; x < volume.dimensions[0]; ++x) {
+                    const std::uint32_t source_index = encode_morton3d(x, y, z);
+                    if (source_index >= raw_values.size()) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" Morton3D snapshot is too small for source index {}", volume.name, channel.name, source_index));
+                    const std::uint64_t linear_index = static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(volume.dimensions[0]) * (static_cast<std::uint64_t>(y) + static_cast<std::uint64_t>(volume.dimensions[1]) * static_cast<std::uint64_t>(z));
+                    values.at(static_cast<std::size_t>(linear_index)) = canonical_value(raw_values.at(source_index));
+                }
+            }
+        }
+        return values;
+    }
+
+    [[nodiscard]] scene::Scene::Info make_scene_info_from_resolved_scene(const scene::Scene::ResolvedScene& scene_snapshot) {
+        const auto one_float_parameter = [](const std::vector<scene::Scene::Parameter>& parameters, const std::string& name, const float default_value) {
+            for (const scene::Scene::Parameter& parameter : parameters) {
+                if (parameter.type != "float" && parameter.type != "integer") continue;
+                if (parameter.name != name) continue;
+                if (parameter.type == "float") {
+                    const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
+                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
+                    return values->front();
+                }
+                const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
+                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
+                return static_cast<float>(values->front());
+            }
+            return default_value;
+        };
+
+        std::size_t definition_shape_count = 0u;
+        std::size_t definition_area_light_count = 0u;
+        for (const scene::Scene::ObjectDefinition& definition : scene_snapshot.object_definitions) {
+            definition_shape_count += definition.shapes.size();
+            for (const scene::Scene::Shape& shape : definition.shapes)
+                if (shape.area_light.has_value()) ++definition_area_light_count;
+        }
+        std::size_t area_light_count = definition_area_light_count;
+        for (const scene::Scene::Shape& shape : scene_snapshot.shapes)
+            if (shape.area_light.has_value()) ++area_light_count;
+        std::size_t infinite_light_count = 0u;
+        for (const scene::Scene::Light& light : scene_snapshot.lights)
+            if (light.entity.type == "infinite") ++infinite_light_count;
+
+        const float camera_fov = one_float_parameter(scene_snapshot.render_settings.camera.parameters, "fov", scene_snapshot.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
+        if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene_snapshot.name, camera_fov));
+
+        return scene::Scene::Info{
+            .name = scene_snapshot.name,
+            .title = scene_snapshot.title,
+            .coordinate_system = scene::coordinate_system_label(scene::coordinate_system("PBRT")),
+            .camera = scene_snapshot.render_settings.camera.type,
+            .sampler = scene_snapshot.render_settings.sampler.type,
+            .integrator = scene_snapshot.render_settings.integrator.type,
+            .accelerator = scene_snapshot.render_settings.accelerator.type,
+            .shape_count = scene_snapshot.shapes.size() + definition_shape_count,
+            .material_count = scene_snapshot.materials.size(),
+            .texture_count = scene_snapshot.textures.size(),
+            .medium_count = scene_snapshot.media.size(),
+            .light_count = scene_snapshot.lights.size(),
+            .area_light_count = area_light_count,
+            .infinite_light_count = infinite_light_count,
+            .object_definition_count = scene_snapshot.object_definitions.size(),
+            .object_instance_count = scene_snapshot.object_instances.size(),
+            .camera_fov_degrees = camera_fov,
+        };
+    }
+
 } // namespace spectra::pathtracer
 
 
@@ -1027,6 +1135,7 @@ namespace spectra::pathtracer {
         [[nodiscard]] const scene::Scene::Info& active_scene_info() const;
         [[nodiscard]] const scene::Scene::ResolvedScene& active_scene_snapshot() const;
         [[nodiscard]] std::string active_scene_id() const;
+        [[nodiscard]] std::vector<float> materialize_external_volume_channel(const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) const;
         void load_source_scene();
 
         void draw_viewport_window();
@@ -1072,9 +1181,9 @@ namespace spectra::pathtracer {
         vk::Extent2D swapchain_extent{};
         bool attached{false};
         bool overlays_visible{true};
+        std::move_only_function<void(ImVec2, ImVec2)> draw_external_viewport_overlays{};
         std::shared_ptr<const scene::Scene> source_scene{};
         std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
-
         struct {
             bool viewport_known{false};
             bool viewport_hovered{false};
@@ -1249,6 +1358,7 @@ namespace spectra::pathtracer {
         this->device           = nullptr;
         this->frame_count      = 0;
         this->swapchain_extent = vk::Extent2D{};
+        this->draw_external_viewport_overlays = {};
         this->attached         = false;
     }
 
@@ -1277,6 +1387,23 @@ namespace spectra::pathtracer {
         return scene.name;
     }
 
+    std::vector<float> Renderer::Impl::materialize_external_volume_channel(const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) const {
+        if (channel.source_kind == scene::Scene::VolumeChannelSourceKind::Values) return channel.values;
+        if (channel.buffer_id == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source has no buffer id", volume.name, channel.name));
+        if (channel.source_byte_size == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source has no byte size", volume.name, channel.name));
+        if (channel.source_byte_size % sizeof(float) != 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source byte size is not float aligned", volume.name, channel.name));
+        const std::uint64_t cell_count = checked_volume_cell_count(volume);
+        if (cell_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" byte count overflows uint64", volume.name, channel.name));
+        if (channel.source_byte_size < cell_count * sizeof(float)) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source is smaller than the volume dimensions", volume.name, channel.name));
+        if (channel.external_device_pointer == 0u) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" external source has no borrowed device pointer for static snapshot", volume.name, channel.name));
+        const std::uint64_t source_value_count = channel.source_byte_size / sizeof(float);
+        if (source_value_count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("Pathtracer volume \"{}\" channel \"{}\" source value count exceeds host vector range", volume.name, channel.name));
+        std::vector<float> raw_values(static_cast<std::size_t>(source_value_count));
+        CUDA_CHECK(cudaMemcpy(raw_values.data(), reinterpret_cast<const void*>(channel.external_device_pointer), static_cast<std::size_t>(channel.source_byte_size), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaDeviceSynchronize());
+        return linearize_volume_snapshot_values(raw_values, volume, channel);
+    }
+
     void Renderer::Impl::load_source_scene() {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         const scene::Scene::Revision source_revision = this->source_scene->revision();
@@ -1287,7 +1414,9 @@ namespace spectra::pathtracer {
         this->observed_scene_revision = source_revision;
 
         try {
-            scene::Scene::ResolvedScene source_snapshot = this->source_scene->resolved_scene();
+            scene::Scene::ResolvedScene source_snapshot = this->source_scene->resolved_scene([this](const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) {
+                return this->materialize_external_volume_channel(volume, channel);
+            });
             const SceneSupportReport report = analyze_scene(source_snapshot);
             if (!report.supported) {
                 this->scene_status_state = "Unsupported";
@@ -1296,7 +1425,7 @@ namespace spectra::pathtracer {
                 return;
             }
 
-            this->scene_info     = this->source_scene->info();
+            this->scene_info     = make_scene_info_from_resolved_scene(source_snapshot);
             this->scene_snapshot = std::move(source_snapshot);
             this->scene_status_state.clear();
             this->scene_status_detail.clear();
@@ -1315,6 +1444,7 @@ namespace spectra::pathtracer {
     void Renderer::Impl::attach(HostView host) {
         if (this->attached) throw std::runtime_error("Spectra pathtracer plugin is already attached");
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
+        this->draw_external_viewport_overlays = host.take_viewport_overlay_draw_callback();
         this->attached = true;
         try {
             this->gpu_runtime = std::make_unique<GpuRuntime>(this->runtime_config);
@@ -2126,6 +2256,7 @@ namespace spectra::pathtracer {
             draw_list->AddRectFilled(chip_min, chip_max, IM_COL32(15, 18, 22, 164), 7.0f);
             draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, IM_COL32(206, 214, 220, 255), chip.c_str());
         }
+        if (this->draw_external_viewport_overlays) this->draw_external_viewport_overlays(image_min, image_size);
         ImGui::PopClipRect();
     }
 

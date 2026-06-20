@@ -54,6 +54,12 @@ namespace spectra::rasterizer {
             vk::DeviceSize capacity{};
         };
 
+        struct ExternalStorageBuffer {
+            ExternalGpuBuffer buffer{};
+            std::uint64_t resource_id{};
+            std::uint64_t byte_size{};
+        };
+
         struct DeviceGpuBuffer {
             vk::raii::Buffer buffer{nullptr};
             vk::raii::DeviceMemory memory{nullptr};
@@ -269,11 +275,8 @@ namespace spectra::rasterizer {
             std::vector<ViewportVoxelGridDrawCommand> drawCommands{};
         };
 
-        struct ExternalViewportVoxelBuffer {
-            ExternalGpuBuffer buffer{};
+        struct ViewportVoxelBufferDescriptor {
             vk::raii::DescriptorSets descriptor_sets{nullptr};
-            std::uint64_t resource_id{};
-            std::uint64_t byte_size{};
             bool descriptor_valid{};
         };
 
@@ -325,8 +328,10 @@ namespace spectra::rasterizer {
             GpuBuffer temperatureStagingBuffer{};
             GpuImage3D densityImage{};
             GpuImage3D temperatureImage{};
+            vk::raii::DescriptorSets externalDensityUploadDescriptorSets{nullptr};
             scene::Scene::Revision uploadedRevision{};
             bool uploadPending{};
+            bool externalDensityUploadPending{};
             bool descriptorValid{};
             VolumeDrawCommand drawCommand{};
         };
@@ -348,9 +353,16 @@ namespace spectra::rasterizer {
         void destroy_device_buffer(DeviceGpuBuffer& buffer) noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
         void ensure_device_buffer(DeviceGpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
+        [[nodiscard]] scene_runtime::DynamicSceneGpuResourceHandleKind external_storage_handle_kind() const;
+        [[nodiscard]] ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context);
+        [[nodiscard]] const ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context) const;
+        [[nodiscard]] scene_runtime::DynamicSceneViewportVoxelBufferAllocation request_external_storage_buffer(std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
+        void release_external_storage_buffer(std::uint64_t resource_id, std::string_view context);
         [[nodiscard]] scene_runtime::DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request);
+        [[nodiscard]] scene_runtime::DynamicSceneVolumeBufferAllocation request_volume_buffer(const scene_runtime::DynamicSceneVolumeBufferRequest& request);
         void release_viewport_voxel_buffer(std::uint64_t resource_id);
-        void ensure_viewport_voxel_buffer_descriptor(ExternalViewportVoxelBuffer& resource);
+        void release_volume_buffer(std::uint64_t resource_id);
+        void ensure_viewport_voxel_buffer_descriptor(std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor);
         void ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command);
         void connect_dynamic_scene_host_services();
         void disconnect_dynamic_scene_host_services() noexcept;
@@ -364,7 +376,7 @@ namespace spectra::rasterizer {
         void destroy_point_cloud_resources() noexcept;
         void destroy_viewport_segment_resources() noexcept;
         void destroy_viewport_voxel_grid_resources() noexcept;
-        void destroy_external_viewport_voxel_buffers() noexcept;
+        void destroy_external_storage_buffers() noexcept;
         void destroy_viewport_voxel_grid_compaction_resource(ViewportVoxelGridCompactionResource& resource) noexcept;
         void destroy_viewport_image_plane_texture(ViewportImagePlaneTexture& texture) noexcept;
         void destroy_viewport_image_plane_resources() noexcept;
@@ -477,19 +489,13 @@ namespace spectra::rasterizer {
         void draw_inspector_panel();
         void draw_inspector_material_block(std::string_view material_name);
         void draw_inspector_transform(const scene::Transform& transform);
-        void handle_timeline_shortcuts();
-        void commit_timeline_from_ui(scene::Scene::Timeline timeline);
-        [[nodiscard]] bool timeline_enabled() const;
-        [[nodiscard]] bool timeline_streaming_enabled() const;
-        [[nodiscard]] bool timeline_playing() const;
-        void toggle_timeline_playback();
-        void request_timeline_reset();
 
         struct {
             const vk::raii::PhysicalDevice* physical_device{};
             const vk::raii::Device* device{};
             vk::Extent2D swapchain_extent{};
             std::uint32_t frame_count{};
+            std::move_only_function<void(float, float, float, float)> draw_viewport_overlays{};
         } host;
 
         struct {
@@ -589,10 +595,14 @@ namespace spectra::rasterizer {
             vk::raii::Pipeline depth_tested_pipeline{nullptr};
             vk::raii::Pipeline always_visible_pipeline{nullptr};
             std::vector<FrameViewportVoxelGridResources> frame_voxel_grids{};
-            std::map<std::uint64_t, ExternalViewportVoxelBuffer> buffers{};
+            std::map<std::uint64_t, ViewportVoxelBufferDescriptor> buffer_descriptors{};
             std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource> compactions{};
-            std::uint64_t next_resource_id{1u};
         } viewport_voxel_grid_pass;
+
+        struct {
+            std::map<std::uint64_t, ExternalStorageBuffer> buffers{};
+            std::uint64_t next_resource_id{1u};
+        } external_storage;
 
         struct {
             std::uint32_t frame_count{};
@@ -608,11 +618,14 @@ namespace spectra::rasterizer {
         struct {
             std::uint32_t frame_count{};
             vk::raii::DescriptorSetLayout descriptor_set_layout{nullptr};
+            vk::raii::DescriptorSetLayout upload_descriptor_set_layout{nullptr};
             vk::raii::DescriptorPool descriptor_pool{nullptr};
             vk::raii::DescriptorSets descriptor_sets{nullptr};
             vk::raii::Sampler sampler{nullptr};
             vk::raii::PipelineLayout pipeline_layout{nullptr};
+            vk::raii::PipelineLayout upload_pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
+            vk::raii::Pipeline upload_pipeline{nullptr};
             std::vector<FrameVolumeResources> frame_volumes{};
         } volume_pass;
 

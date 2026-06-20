@@ -31,6 +31,9 @@ namespace spectra::scene_runtime {
         DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Text};
         bool required{};
         std::string default_value{};
+        std::string group{};
+        bool advanced{};
+        std::int32_t priority{};
         std::vector<DynamicSceneOpenOptionChoice> choices{};
     };
 
@@ -65,6 +68,19 @@ namespace spectra::scene_runtime {
         DynamicSceneGpuDeviceIdentity device_identity{};
     };
 
+    export struct DynamicSceneVolumeBufferRequest {
+        std::uint64_t byte_size{};
+        std::string debug_name{};
+    };
+
+    export struct DynamicSceneVolumeBufferAllocation {
+        std::uint64_t resource_id{};
+        std::uint64_t byte_size{};
+        DynamicSceneGpuResourceHandleKind handle_kind{DynamicSceneGpuResourceHandleKind::OpaqueWin32};
+        std::uintptr_t handle{};
+        DynamicSceneGpuDeviceIdentity device_identity{};
+    };
+
     export class DynamicSceneHostServices {
     public:
         DynamicSceneHostServices() = default;
@@ -76,6 +92,8 @@ namespace spectra::scene_runtime {
 
         [[nodiscard]] virtual DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) = 0;
         virtual void release_viewport_voxel_buffer(std::uint64_t resource_id) = 0;
+        [[nodiscard]] virtual DynamicSceneVolumeBufferAllocation request_volume_buffer(const DynamicSceneVolumeBufferRequest& request) = 0;
+        virtual void release_volume_buffer(std::uint64_t resource_id) = 0;
         [[nodiscard]] virtual std::string_view last_error() const = 0;
     };
 
@@ -90,13 +108,20 @@ namespace spectra::scene_runtime {
 
         void set_viewport_voxel_buffer_backend(std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
         void clear_viewport_voxel_buffer_backend() noexcept;
+        void set_volume_buffer_backend(std::move_only_function<DynamicSceneVolumeBufferAllocation(const DynamicSceneVolumeBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
+        void clear_volume_buffer_backend() noexcept;
         [[nodiscard]] DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) override;
         void release_viewport_voxel_buffer(std::uint64_t resource_id) override;
+        [[nodiscard]] DynamicSceneVolumeBufferAllocation request_volume_buffer(const DynamicSceneVolumeBufferRequest& request) override;
+        void release_volume_buffer(std::uint64_t resource_id) override;
         [[nodiscard]] std::string_view last_error() const override;
 
     private:
         std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_viewport_voxel_buffer_callback{};
         std::move_only_function<void(std::uint64_t)> release_viewport_voxel_buffer_callback{};
+        std::move_only_function<DynamicSceneVolumeBufferAllocation(const DynamicSceneVolumeBufferRequest&)> request_volume_buffer_callback{};
+        std::move_only_function<void(std::uint64_t)> release_volume_buffer_callback{};
+        std::map<std::uint64_t, DynamicSceneVolumeBufferAllocation> volume_buffer_allocations{};
         std::string last_error_message{};
     };
 
@@ -106,31 +131,111 @@ namespace spectra::scene_runtime {
         std::shared_ptr<DynamicSceneHostServices> host_services{};
     };
 
-    export struct DynamicSceneProjectAction {
+    export inline constexpr std::uint32_t DynamicSceneControlPlacementViewportOverlay = 1u << 0u;
+    export inline constexpr std::uint32_t DynamicSceneControlPlacementPanelSummary = 1u << 1u;
+    export inline constexpr std::uint32_t DynamicSceneControlPlacementPanelDetail = 1u << 2u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionGroupRun = 0u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionGroupPreview = 1u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionGroupDebug = 2u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionGroupUtility = 3u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionStyleSecondary = 0u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionStylePrimary = 1u;
+    export inline constexpr std::uint32_t DynamicSceneControlActionStyleDanger = 2u;
+
+    export struct DynamicSceneControlAction {
         std::string id{};
         std::string label{};
         std::string description{};
+        std::uint32_t group{};
+        std::int32_t priority{};
+        std::uint32_t style{};
         std::vector<DynamicSceneOpenOptionSchema> options{};
     };
 
-    export struct DynamicSceneProjectMetric {
+    export struct DynamicSceneControlSetting {
+        std::string key{};
+        std::string label{};
+        std::string description{};
+        DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Bool};
+        std::string value{};
+        std::string group{};
+        bool advanced{};
+        std::int32_t priority{};
+        std::vector<DynamicSceneOpenOptionChoice> choices{};
+    };
+
+    export struct DynamicSceneControlMetric {
         std::string key{};
         std::string label{};
         std::string value{};
+        std::uint32_t placement_flags{};
+        std::int32_t priority{};
+        bool has_color{};
+        std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
     };
 
-    export struct DynamicSceneProjectStatus {
+    export struct DynamicSceneControlDisabledAction {
+        std::string action_id{};
+        std::string reason{};
+    };
+
+    export struct DynamicSceneControlStatus {
         std::string phase{};
         std::string headline{};
         std::string detail{};
-        std::vector<DynamicSceneProjectMetric> metrics{};
+        std::vector<DynamicSceneControlMetric> metrics{};
         std::vector<std::string> enabled_action_ids{};
+        std::vector<DynamicSceneControlDisabledAction> disabled_actions{};
     };
 
-    export struct DynamicSceneProjectLogEntry {
+    export struct DynamicSceneControlLogEntry {
         std::uint64_t sequence{};
         std::string level{};
         std::string message{};
+    };
+
+    export struct DynamicSceneControlImage {
+        std::string id{};
+        std::string label{};
+        std::string description{};
+        const std::uint8_t* rgba8{};
+        std::uint64_t rgba8_size{};
+        std::uint64_t revision{};
+        std::uint32_t width{};
+        std::uint32_t height{};
+    };
+
+    export struct DynamicSceneControlScalarSample {
+        std::uint64_t step{};
+        double time_seconds{};
+        double value{};
+    };
+
+    export struct DynamicSceneControlScalarSeries {
+        std::string id{};
+        std::string label{};
+        std::string description{};
+        std::string unit{};
+        std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
+        std::uint32_t group{};
+        std::int32_t priority{};
+        std::uint64_t revision{};
+        std::vector<DynamicSceneControlScalarSample> samples{};
+    };
+
+    export enum class DynamicSceneControlTimelineMode : std::uint32_t {
+        Live = 0u,
+        Record = 1u,
+        Playback = 2u,
+    };
+
+    export struct DynamicSceneControlUpdateInfo {
+        double wall_delta_seconds{};
+        double scene_delta_seconds{};
+        double time_seconds{};
+        std::uint64_t frame_index{};
+        DynamicSceneControlTimelineMode timeline_mode{DynamicSceneControlTimelineMode::Live};
+        bool timeline_playing{};
     };
 
     export class DynamicSceneSourceInstance {
@@ -145,10 +250,15 @@ namespace spectra::scene_runtime {
 
         virtual void reset() = 0;
         virtual void step(float delta_seconds) = 0;
-        virtual void update_project(float delta_seconds) = 0;
-        virtual void execute_project_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options) = 0;
-        [[nodiscard]] virtual DynamicSceneProjectStatus project_status() const = 0;
-        [[nodiscard]] virtual std::vector<DynamicSceneProjectLogEntry> project_logs() const = 0;
+        virtual void update_controls(const DynamicSceneControlUpdateInfo& update) = 0;
+        [[nodiscard]] virtual std::uint64_t scene_revision() const = 0;
+        virtual void execute_control_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options) = 0;
+        [[nodiscard]] virtual std::vector<DynamicSceneControlSetting> control_settings() const = 0;
+        virtual void update_control_setting(std::string_view key, std::string_view value) = 0;
+        [[nodiscard]] virtual DynamicSceneControlStatus control_status() const = 0;
+        [[nodiscard]] virtual std::vector<DynamicSceneControlLogEntry> control_logs() const = 0;
+        [[nodiscard]] virtual std::vector<DynamicSceneControlImage> control_images() const = 0;
+        [[nodiscard]] virtual std::vector<DynamicSceneControlScalarSeries> control_scalar_series() const = 0;
         [[nodiscard]] virtual scene::Scene::Document create_scene_document() const = 0;
         [[nodiscard]] virtual scene::Scene::FrameSnapshot create_scene_frame(const scene::Scene::FrameInfo& frame) const = 0;
     };
@@ -184,12 +294,12 @@ namespace spectra::scene_runtime {
     export struct DynamicScenePluginInfo {
         std::string id{};
         std::string title{};
-        std::string project_panel_title{};
+        std::string controls_panel_title{};
         std::string open_action_label{};
         std::string open_action_description{};
         std::filesystem::path path{};
         std::vector<DynamicSceneOpenOptionSchema> open_options{};
-        std::vector<DynamicSceneProjectAction> project_actions{};
+        std::vector<DynamicSceneControlAction> control_actions{};
     };
 
     export class SceneRegistry final {
@@ -235,18 +345,26 @@ namespace spectra::scene_runtime {
         [[nodiscard]] bool pending_switch() const;
         [[nodiscard]] bool has_activation_error() const;
         [[nodiscard]] const std::string& activation_error() const;
-        [[nodiscard]] bool has_active_dynamic_project();
+        [[nodiscard]] bool has_active_dynamic_scene_controls();
         [[nodiscard]] std::shared_ptr<DynamicSceneHostServices> dynamic_host_services() const;
-        [[nodiscard]] DynamicSceneProjectStatus active_dynamic_project_status();
-        [[nodiscard]] std::vector<DynamicSceneProjectLogEntry> active_dynamic_project_logs();
+        [[nodiscard]] bool active_scene_timeline_enabled();
+        [[nodiscard]] bool active_scene_timeline_streaming_enabled();
+        [[nodiscard]] DynamicSceneControlStatus active_dynamic_scene_control_status();
+        [[nodiscard]] std::vector<DynamicSceneControlLogEntry> active_dynamic_scene_control_logs();
+        [[nodiscard]] std::vector<DynamicSceneControlImage> active_dynamic_scene_control_images();
+        [[nodiscard]] std::vector<DynamicSceneControlScalarSeries> active_dynamic_scene_control_scalar_series();
+        [[nodiscard]] std::vector<DynamicSceneControlSetting> active_dynamic_scene_control_settings();
         void activate_empty_workspace();
         void request_activate(std::size_t index);
         [[nodiscard]] bool activate_static_scene(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> load_scene);
         [[nodiscard]] bool activate_dynamic_scene(std::string id, std::string title, std::move_only_function<std::unique_ptr<DynamicSceneSourceInstance>()> create_source);
         [[nodiscard]] bool apply_pending_scene();
-        void update_active_project(double delta_seconds);
+        void toggle_active_scene_timeline_playback();
+        void request_active_scene_timeline_reset();
+        void update_active_scene_controls(double delta_seconds);
         void update_active_scene(double delta_seconds);
-        void execute_active_dynamic_project_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options);
+        void execute_active_dynamic_scene_control_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options);
+        void update_active_dynamic_scene_control_setting(std::string_view key, std::string_view value);
 
     private:
         struct SceneSlot {
@@ -257,6 +375,7 @@ namespace spectra::scene_runtime {
             std::uint64_t stream_frame_index{};
             std::uint64_t observed_reset_request_serial{};
             std::uint64_t observed_clear_recording_request_serial{};
+            std::uint64_t observed_scene_revision{};
             std::optional<std::uint64_t> committed_playback_frame_index{};
         };
 
@@ -266,9 +385,10 @@ namespace spectra::scene_runtime {
         void release_selected_dynamic_slot();
         void clear_activation_error();
         [[nodiscard]] SceneSlot& ensure_slot(std::size_t index);
-        [[nodiscard]] DynamicSceneSourceInstance& active_dynamic_project_source();
+        [[nodiscard]] DynamicSceneSourceInstance& active_dynamic_scene_control_source();
         [[nodiscard]] scene::Scene::Document create_dynamic_slot(std::size_t index, SceneSlot* slot);
         void reset_dynamic_scene(SceneSlot& slot, scene::Scene::Timeline timeline);
+        void commit_dynamic_scene_revision(SceneSlot& slot, std::string_view context);
 
         SceneRegistry registry{};
         std::vector<SceneSlot> slots{};
