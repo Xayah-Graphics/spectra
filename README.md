@@ -262,9 +262,6 @@ callbacks must be present.
 Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.
 
-Scene URI query strings such as `plugin.dll?dataset=...` are not supported. Open a plugin path directly, then configure
-and create the dynamic scene through the Scene popover.
-
 ## License
 
 Spectra is distributed under the GNU General Public License v2. See [LICENSE](LICENSE).

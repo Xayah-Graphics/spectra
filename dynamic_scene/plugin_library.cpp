@@ -168,8 +168,6 @@ namespace spectra::dynamic_scene {
 
         [[nodiscard]] std::filesystem::path normalized_dynamic_scene_plugin_path(const std::filesystem::path& plugin_path) {
             if (plugin_path.empty()) throw std::runtime_error("Dynamic scene plugin path must not be empty");
-            const std::string path_text = plugin_path.string();
-            if (path_text.find('?') != std::string::npos) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; open the plugin path and configure it in the Scene popover");
             const std::filesystem::path absolute_path = std::filesystem::absolute(plugin_path).lexically_normal();
             if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a dynamic scene plugin library, not a folder");
             if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file does not exist", absolute_path.string()));
