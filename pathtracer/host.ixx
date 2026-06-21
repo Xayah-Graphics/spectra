@@ -62,6 +62,7 @@ namespace spectra::pathtracer {
     export struct FrameContext {
         std::uint32_t frame_index{};
         std::uint32_t image_index{};
+        std::uint64_t frame_number{};
         double delta_seconds{};
     };
 

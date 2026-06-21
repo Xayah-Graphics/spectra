@@ -23,7 +23,6 @@ module spectra.rasterizer.renderer;
 
 import spectra.rasterizer.host;
 import spectra.rasterizer.math;
-import spectra.dynamic_scene.host;
 import spectra.scene;
 import std;
 
@@ -476,11 +475,11 @@ namespace {
         throw std::runtime_error("No matching Vulkan memory type for Spectra rasterizer");
     }
 
-    [[nodiscard]] spectra::dynamic_scene::GpuDeviceIdentity make_dynamic_scene_gpu_device_identity(const vk::raii::PhysicalDevice& physical_device) {
+    [[nodiscard]] spectra::scene::GpuDeviceIdentity make_scene_gpu_device_identity(const vk::raii::PhysicalDevice& physical_device) {
         const auto properties_chain = physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
         const vk::PhysicalDeviceProperties properties = properties_chain.get<vk::PhysicalDeviceProperties2>().properties;
         const vk::PhysicalDeviceIDProperties id_properties = properties_chain.get<vk::PhysicalDeviceIDProperties>();
-        spectra::dynamic_scene::GpuDeviceIdentity identity{
+        spectra::scene::GpuDeviceIdentity identity{
             .vendor_id = properties.vendorID,
             .device_id = properties.deviceID,
             .device_node_mask = id_properties.deviceNodeMask,
@@ -849,27 +848,13 @@ namespace {
 } // namespace
 
 namespace spectra::rasterizer {
-    Renderer::Renderer(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host) {
+    Renderer::Renderer(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
         this->scene.instance = std::move(scene_instance);
         this->scene.camera_workspace = std::move(camera_workspace);
-        this->scene.dynamic_host = std::move(dynamic_host);
         if (this->scene.instance == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene");
         if (this->scene.camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene camera workspace");
-        if (this->scene.dynamic_host == nullptr) throw std::runtime_error("Spectra rasterizer requires dynamic scene host services");
-        static_cast<void>(this->scene.instance->document());
-        this->ensure_viewport_camera_session();
-        this->synchronize_viewport_camera();
-    }
-
-    Renderer::Renderer(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host) {
-        this->scene.instance = scene_source.initial_scene;
-        this->scene.source = std::move(scene_source);
-        this->scene.camera_workspace = std::move(camera_workspace);
-        this->scene.dynamic_host = std::move(dynamic_host);
-        if (this->scene.instance == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene");
-        if (!this->scene.source.update) throw std::runtime_error("Spectra rasterizer scene source requires an update callback");
-        if (this->scene.camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene camera workspace");
-        if (this->scene.dynamic_host == nullptr) throw std::runtime_error("Spectra rasterizer requires dynamic scene host services");
+        this->scene.host_services = this->scene.instance->host_services();
+        if (this->scene.host_services == nullptr) throw std::runtime_error("Spectra rasterizer requires scene host services");
         static_cast<void>(this->scene.instance->document());
         this->ensure_viewport_camera_session();
         this->synchronize_viewport_camera();
@@ -899,18 +884,15 @@ namespace spectra::rasterizer {
         this->destroy_viewport_voxel_grid_resources();
         this->destroy_viewport_image_plane_resources();
         this->destroy_volume_resources();
+        if (this->lifecycle.attached && this->scene.host_services != nullptr) this->scene.host_services->clear_gpu_buffer_backend();
         this->scene.instance = std::move(scene_instance);
         this->scene.camera_workspace = std::move(camera_workspace);
+        this->scene.host_services = this->scene.instance->host_services();
+        if (this->lifecycle.attached) this->connect_scene_host();
         this->scene.observed_camera_revision = scene::CameraRevision{};
+        this->scene.observed_camera_scene_id.clear();
         this->viewport.camera_initialized = false;
         this->reset_viewport_camera_session();
-    }
-
-    void Renderer::sync_scene_source(const double delta_seconds) {
-        if (!this->scene.source.update) return;
-        std::shared_ptr<scene::Scene> current_scene = this->scene.source.current(delta_seconds);
-        if (this->scene.instance == current_scene) return;
-        this->set_scene(std::move(current_scene), this->scene.camera_workspace);
     }
 
     void Renderer::attach(HostView host) {
@@ -920,13 +902,13 @@ namespace spectra::rasterizer {
         this->host.draw_viewport_overlays = [draw_viewport_overlays = std::move(draw_viewport_overlays)](const float x, const float y, const float width, const float height) mutable {
             draw_viewport_overlays(ImVec2{x, y}, ImVec2{width, height});
         };
-        this->connect_dynamic_scene_host();
+        this->connect_scene_host();
         this->register_workspace_contributions(host);
         this->lifecycle.attached = true;
     }
 
     void Renderer::detach() noexcept {
-        this->disconnect_dynamic_scene_host();
+        this->disconnect_scene_host();
         this->destroy_selection_resources();
         this->destroy_viewport_resources();
         this->destroy_screenshot_resources();
@@ -1179,11 +1161,11 @@ namespace spectra::rasterizer {
         buffer.capacity = required_size;
     }
 
-    dynamic_scene::GpuResourceHandleKind Renderer::external_storage_handle_kind() const {
+    scene::GpuResourceHandleKind Renderer::external_storage_handle_kind() const {
 #if defined(_WIN32)
-        return dynamic_scene::GpuResourceHandleKind::OpaqueWin32;
+        return scene::GpuResourceHandleKind::OpaqueWin32;
 #else
-        return dynamic_scene::GpuResourceHandleKind::OpaqueFileDescriptor;
+        return scene::GpuResourceHandleKind::OpaqueFileDescriptor;
 #endif
     }
 
@@ -1199,7 +1181,7 @@ namespace spectra::rasterizer {
         return found->second;
     }
 
-    dynamic_scene::GpuBufferAllocation Renderer::request_external_storage_buffer(const std::uint32_t kind, const std::uint64_t byte_size, const std::string_view debug_name, const std::string_view context) {
+    scene::GpuBufferAllocation Renderer::request_external_storage_buffer(const std::uint32_t kind, const std::uint64_t byte_size, const std::string_view debug_name, const std::string_view context) {
         static_cast<void>(debug_name);
         if (byte_size == 0u) throw std::runtime_error(std::format("{} byte size must be positive", context));
         if (byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error(std::format("{} byte size exceeds Vulkan device size range", context));
@@ -1244,13 +1226,13 @@ namespace spectra::rasterizer {
         const std::uintptr_t exported_handle_value = static_cast<std::uintptr_t>(exported_handle);
 #endif
 
-        dynamic_scene::GpuBufferAllocation allocation{
+        scene::GpuBufferAllocation allocation{
             .resource_id = resource_id,
             .byte_size = static_cast<std::uint64_t>(memory_requirements.size),
             .kind = kind,
             .handle_kind = this->external_storage_handle_kind(),
             .handle = exported_handle_value,
-            .device_identity = make_dynamic_scene_gpu_device_identity(*this->host.physical_device),
+            .device_identity = make_scene_gpu_device_identity(*this->host.physical_device),
         };
         this->external_storage.buffers.emplace(resource_id, std::move(resource));
         return allocation;
@@ -1265,20 +1247,20 @@ namespace spectra::rasterizer {
         this->external_storage.buffers.erase(found);
     }
 
-    dynamic_scene::GpuBufferAllocation Renderer::request_dynamic_gpu_buffer(const dynamic_scene::GpuBufferRequest& request) {
-        if (request.kind == dynamic_scene::GpuBufferKindViewportVoxelGrid) {
-            dynamic_scene::GpuBufferAllocation allocation = this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Dynamic scene viewport voxel buffer");
+    scene::GpuBufferAllocation Renderer::request_scene_gpu_buffer(const scene::GpuBufferRequest& request) {
+        if (request.kind == scene::GpuBufferKindViewportVoxelGrid) {
+            scene::GpuBufferAllocation allocation = this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Scene viewport voxel buffer");
             ViewportVoxelBufferDescriptor descriptor{};
             this->ensure_viewport_voxel_buffer_descriptor(allocation.resource_id, descriptor);
             const std::pair<std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator, bool> inserted = this->viewport_voxel_grid_pass.buffer_descriptors.emplace(allocation.resource_id, std::move(descriptor));
-            if (!inserted.second) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer descriptor {} already exists", allocation.resource_id));
+            if (!inserted.second) throw std::runtime_error(std::format("Scene viewport voxel buffer descriptor {} already exists", allocation.resource_id));
             return allocation;
         }
-        if (request.kind == dynamic_scene::GpuBufferKindVolumeChannel) return this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Dynamic scene volume buffer");
-        throw std::runtime_error(std::format("Dynamic scene GPU buffer kind {} is unsupported by the rasterizer", request.kind));
+        if (request.kind == scene::GpuBufferKindVolumeChannel) return this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Scene volume buffer");
+        throw std::runtime_error(std::format("Scene GPU buffer kind {} is unsupported by the rasterizer", request.kind));
     }
 
-    void Renderer::release_dynamic_gpu_buffer(const std::uint64_t resource_id) {
+    void Renderer::release_scene_gpu_buffer(const std::uint64_t resource_id) {
         const bool viewport_voxel_buffer = this->viewport_voxel_grid_pass.buffer_descriptors.contains(resource_id);
         if (viewport_voxel_buffer) {
             const std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(resource_id);
@@ -1297,21 +1279,21 @@ namespace spectra::rasterizer {
                 compaction = this->viewport_voxel_grid_pass.compactions.erase(compaction);
             }
             this->viewport_voxel_grid_pass.buffer_descriptors.erase(descriptor);
-            this->release_external_storage_buffer(resource_id, "Dynamic scene viewport voxel buffer");
+            this->release_external_storage_buffer(resource_id, "Scene viewport voxel buffer");
             return;
         }
-        this->release_external_storage_buffer(resource_id, "Dynamic scene volume buffer");
+        this->release_external_storage_buffer(resource_id, "Scene volume buffer");
     }
 
     void Renderer::ensure_viewport_voxel_buffer_descriptor(const std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor) {
         if (descriptor.descriptor_valid) return;
-        const ExternalStorageBuffer& resource = this->external_storage_buffer(resource_id, "Dynamic scene viewport voxel buffer");
-        if (!*resource.buffer.buffer) throw std::runtime_error("Dynamic scene viewport voxel buffer has no Vulkan buffer");
+        const ExternalStorageBuffer& resource = this->external_storage_buffer(resource_id, "Scene viewport voxel buffer");
+        if (!*resource.buffer.buffer) throw std::runtime_error("Scene viewport voxel buffer has no Vulkan buffer");
         if (!*this->viewport_voxel_grid_pass.descriptor_set_layout || !*this->viewport_voxel_grid_pass.descriptor_pool) return;
         const vk::DescriptorSetLayout descriptor_set_layout = *this->viewport_voxel_grid_pass.descriptor_set_layout;
         const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*this->viewport_voxel_grid_pass.descriptor_pool, 1u, &descriptor_set_layout};
         descriptor.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
-        if (descriptor.descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate dynamic scene viewport voxel buffer descriptor set");
+        if (descriptor.descriptor_sets.size() != 1u) throw std::runtime_error("Failed to allocate Scene viewport voxel buffer descriptor set");
         const vk::DescriptorBufferInfo descriptor_buffer_info{*resource.buffer.buffer, 0u, resource.byte_size};
         const std::array descriptor_writes{vk::WriteDescriptorSet{*descriptor.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eStorageBuffer, nullptr, &descriptor_buffer_info}};
         this->host.device->updateDescriptorSets(descriptor_writes, {});
@@ -1384,19 +1366,19 @@ namespace spectra::rasterizer {
         }
     }
 
-    void Renderer::connect_dynamic_scene_host() {
-        if (this->scene.dynamic_host == nullptr) throw std::runtime_error("Spectra rasterizer dynamic scene host services are not initialized");
-        this->scene.dynamic_host->set_gpu_buffer_backend(
-            [this](const dynamic_scene::GpuBufferRequest& request) {
-                return this->request_dynamic_gpu_buffer(request);
+    void Renderer::connect_scene_host() {
+        if (this->scene.host_services == nullptr) throw std::runtime_error("Spectra rasterizer Scene host services are not initialized");
+        this->scene.host_services->set_gpu_buffer_backend(
+            [this](const scene::GpuBufferRequest& request) {
+                return this->request_scene_gpu_buffer(request);
             },
             [this](const std::uint64_t resource_id) {
-                this->release_dynamic_gpu_buffer(resource_id);
+                this->release_scene_gpu_buffer(resource_id);
             });
     }
 
-    void Renderer::disconnect_dynamic_scene_host() noexcept {
-        if (this->scene.dynamic_host != nullptr) this->scene.dynamic_host->clear_gpu_buffer_backend();
+    void Renderer::disconnect_scene_host() noexcept {
+        if (this->scene.host_services != nullptr) this->scene.host_services->clear_gpu_buffer_backend();
     }
 
     void Renderer::create_image_2d(GpuImage2D& image, const vk::Extent2D extent, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect) {
@@ -3662,8 +3644,10 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::synchronize_viewport_camera() {
-        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->snapshot(this->active_scene_id());
-        if (this->viewport.camera_initialized && snapshot.revision == this->scene.observed_camera_revision) return;
+        const std::string scene_id = this->active_scene_id();
+        this->scene.camera_workspace->ensure_camera(scene_id, this->initial_camera_state_from_scene());
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->snapshot(scene_id);
+        if (this->viewport.camera_initialized && scene_id == this->scene.observed_camera_scene_id && snapshot.revision == this->scene.observed_camera_revision) return;
         this->apply_viewport_camera_state(snapshot);
     }
 
@@ -3675,6 +3659,7 @@ namespace spectra::rasterizer {
         this->viewport.camera_far_plane = snapshot.state.view.projection.far_plane;
         this->viewport.camera_initialized = true;
         this->scene.observed_camera_revision = snapshot.revision;
+        this->scene.observed_camera_scene_id = this->active_scene_id();
     }
 
     void Renderer::commit_viewport_camera_state(scene::CameraState state) {
@@ -3903,7 +3888,7 @@ namespace spectra::rasterizer {
     }
 
     FrameResult Renderer::begin_frame(HostView host, const FrameContext& frame) {
-        this->sync_scene_source(frame.delta_seconds);
+        this->scene.instance->advance(frame.frame_number, frame.delta_seconds);
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         if (frame.frame_index >= this->host.frame_count) throw std::runtime_error("Spectra rasterizer frame index is out of range");
         this->consume_completed_screenshot(frame.frame_index);

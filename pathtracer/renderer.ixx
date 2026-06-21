@@ -40,8 +40,7 @@ namespace spectra::pathtracer {
 
         class Renderer final {
         public:
-            Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
-            Renderer(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+            Renderer(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             ~Renderer() noexcept;
 
             Renderer(const Renderer& other) = delete;
@@ -50,7 +49,7 @@ namespace spectra::pathtracer {
             Renderer& operator=(Renderer&& other) noexcept;
 
             [[nodiscard]] static std::string_view name();
-            void set_scene(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+            void set_scene(std::shared_ptr<scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             void attach(HostView host);
             template <Host HostType>
             void attach(HostType& host) {
@@ -64,12 +63,14 @@ namespace spectra::pathtracer {
                 requires requires(const HostFrameContext& frame) {
                     { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
                     { frame.image_index } -> std::convertible_to<std::uint32_t>;
+                    { frame.frame_number } -> std::convertible_to<std::uint64_t>;
                     { frame.delta_seconds } -> std::convertible_to<double>;
                 }
             [[nodiscard]] FrameResult begin_frame(HostType& host, const HostFrameContext& frame) {
                 return this->begin_frame(HostView{host}, FrameContext{
                     .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
                     .image_index   = static_cast<std::uint32_t>(frame.image_index),
+                    .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
                     .delta_seconds = static_cast<double>(frame.delta_seconds),
                 });
             }

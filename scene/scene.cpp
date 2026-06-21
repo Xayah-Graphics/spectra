@@ -10,6 +10,8 @@ module;
 module spectra.scene;
 
 import std;
+import spectra.scene.plugin_codec;
+import spectra.scene.plugin_library;
 
 namespace spectra::scene {
     [[nodiscard]] Scene::Document make_preview_document_from_pbrt(const Scene::ResolvedScene& scene);
@@ -1463,6 +1465,157 @@ namespace spectra::scene {
         this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Frame);
     }
 
+    namespace {
+        [[nodiscard]] Scene::Document make_empty_document() {
+            return Scene::Document{
+                .revision = Scene::Revision{1},
+                .name = "untitled",
+                .title = "Untitled",
+                .source = "scene://untitled",
+                .timeline_enabled = false,
+                .cameras = {
+                    Scene::Camera{
+                        .name = "Camera",
+                        .view = camera_view_from_look_at(
+                            Vector3{0.0f, 1.0f, 5.0f},
+                            Vector3{0.0f, 0.0f, 0.0f},
+                            Vector3{0.0f, 1.0f, 0.0f},
+                            CameraProjection{
+                                .kind = CameraProjectionKind::Perspective,
+                                .vertical_fov_degrees = 45.0f,
+                                .near_plane = 0.01f,
+                                .far_plane = 200.0f,
+                            }
+                        ),
+                    },
+                },
+                .active_camera_name = "Camera",
+            };
+        }
+
+        void commit_scene_frame(Scene& scene_instance, Scene::FrameSnapshot frame) {
+            Scene::Edit edit{};
+            edit.replace_frame(std::move(frame));
+            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
+            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+        }
+
+        void commit_scene_timeline(Scene& scene_instance, Scene::Timeline timeline) {
+            Scene::Edit edit{};
+            edit.replace_timeline(std::move(timeline));
+            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
+            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
+        }
+
+        void commit_scene_timeline_and_frame(Scene& scene_instance, Scene::Timeline timeline, Scene::FrameSnapshot frame) {
+            Scene::Edit edit{};
+            edit.replace_timeline(std::move(timeline));
+            edit.replace_frame(std::move(frame));
+            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
+            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Timeline)) throw std::runtime_error("Scene timeline commit did not mark the timeline dirty");
+            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+        }
+
+        void commit_scene_document_and_frame(Scene& scene_instance, Scene::Document document, Scene::FrameSnapshot frame) {
+            Scene::Edit edit{};
+            edit.replace_document(std::move(document));
+            edit.replace_frame(std::move(frame));
+            const Scene::DirtyFlags dirty = scene_instance.commit(std::move(edit));
+            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Document)) throw std::runtime_error("Scene document commit did not mark the document dirty");
+            if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
+        }
+
+        [[nodiscard]] bool resolved_frame_has_renderable_entity(const Scene::ResolvedFrame& frame) {
+            return !frame.meshes.empty() || !frame.spheres.empty() || !frame.point_clouds.empty() || !frame.volumes.empty();
+        }
+
+        void validate_scene_renderable_entities(Scene& scene_instance, const std::string_view context) {
+            const Scene::ResolvedFrame frame = scene_instance.resolved_frame();
+            if (!resolved_frame_has_renderable_entity(frame)) throw std::runtime_error(std::format("{} must contain at least one renderable Mesh, Sphere, PointCloud, or VolumeGrid entity", context));
+        }
+
+        [[nodiscard]] ControlTimelineMode control_timeline_mode(const Scene::TimelineMode mode) {
+            switch (mode) {
+            case Scene::TimelineMode::Live: return ControlTimelineMode::Live;
+            case Scene::TimelineMode::Record: return ControlTimelineMode::Record;
+            case Scene::TimelineMode::Playback: return ControlTimelineMode::Playback;
+            }
+            throw std::runtime_error("Unknown scene timeline mode");
+        }
+
+        [[nodiscard]] std::string lowercase_ascii(std::string value) {
+            for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+            return value;
+        }
+
+        [[nodiscard]] bool path_extension_is(const std::filesystem::path& path, const std::string_view extension) {
+            return lowercase_ascii(path.extension().string()) == lowercase_ascii(std::string{extension});
+        }
+
+        [[nodiscard]] bool is_pbrt_scene_file(const std::filesystem::path& path) {
+            if (path_extension_is(path, ".pbrt")) return true;
+            if (!path_extension_is(path, ".gz")) return false;
+            return path_extension_is(path.stem(), ".pbrt");
+        }
+
+        [[nodiscard]] std::string scene_file_title(const std::filesystem::path& path) {
+            std::filesystem::path filename = path.filename();
+            if (path_extension_is(filename, ".gz")) filename = filename.stem();
+            if (path_extension_is(filename, ".pbrt")) filename = filename.stem();
+            if (filename.empty()) throw std::runtime_error("PBRT scene path has an empty filename");
+            return filename.string();
+        }
+    } // namespace
+
+    void HostServiceRouter::set_gpu_buffer_backend(std::move_only_function<GpuBufferAllocation(const GpuBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback) {
+        if (!request_callback) throw std::runtime_error("Scene GPU buffer request callback must not be empty");
+        if (!release_callback) throw std::runtime_error("Scene GPU buffer release callback must not be empty");
+        this->request_gpu_buffer_callback = std::move(request_callback);
+        this->release_gpu_buffer_callback = std::move(release_callback);
+        this->last_error_message.clear();
+    }
+
+    void HostServiceRouter::clear_gpu_buffer_backend() noexcept {
+        this->request_gpu_buffer_callback = nullptr;
+        this->release_gpu_buffer_callback = nullptr;
+        this->gpu_buffer_allocations.clear();
+        this->last_error_message.clear();
+    }
+
+    GpuBufferAllocation HostServiceRouter::request_gpu_buffer(const GpuBufferRequest& request) {
+        try {
+            if (!this->request_gpu_buffer_callback) throw std::runtime_error("Scene GPU buffer backend is not available");
+            this->last_error_message.clear();
+            GpuBufferAllocation allocation = this->request_gpu_buffer_callback(request);
+            if (allocation.resource_id == 0u) throw std::runtime_error("Scene GPU buffer backend returned a zero resource id");
+            if (allocation.byte_size == 0u) throw std::runtime_error("Scene GPU buffer backend returned a zero byte size");
+            if (allocation.kind != request.kind) throw std::runtime_error(std::format("Scene GPU buffer backend returned kind {} for request kind {}", allocation.kind, request.kind));
+            if (!this->gpu_buffer_allocations.emplace(allocation.resource_id, allocation).second) throw std::runtime_error(std::format("Scene GPU buffer resource {} already exists", allocation.resource_id));
+            return allocation;
+        } catch (const std::exception& error) {
+            this->last_error_message = error.what();
+            throw;
+        }
+    }
+
+    void HostServiceRouter::release_gpu_buffer(const std::uint64_t resource_id) {
+        try {
+            if (!this->release_gpu_buffer_callback) throw std::runtime_error("Scene GPU buffer backend is not available");
+            const std::map<std::uint64_t, GpuBufferAllocation>::iterator found = this->gpu_buffer_allocations.find(resource_id);
+            if (found == this->gpu_buffer_allocations.end()) throw std::runtime_error(std::format("Scene GPU buffer resource {} does not exist", resource_id));
+            this->last_error_message.clear();
+            this->release_gpu_buffer_callback(resource_id);
+            this->gpu_buffer_allocations.erase(found);
+        } catch (const std::exception& error) {
+            this->last_error_message = error.what();
+            throw;
+        }
+    }
+
+    std::string_view HostServiceRouter::last_error() const {
+        return this->last_error_message;
+    }
+
     Scene::Builder::Builder(std::string name, std::string title, std::string source) {
         if (name.empty()) throw std::runtime_error("Scene builder requires a non-empty scene name");
         if (title.empty()) throw std::runtime_error("Scene builder requires a non-empty scene title");
@@ -1536,6 +1689,8 @@ namespace spectra::scene {
         return Scene{std::move(scene)};
     }
 
+    Scene::Scene() : Scene(make_empty_document()) {}
+
     Scene::Scene(Scene::Document document) {
         if (document.revision.value == 0) document.revision = Scene::Revision{1};
         document.default_coordinate_system = coordinate_system(document.default_coordinate_system.name);
@@ -1561,6 +1716,10 @@ namespace spectra::scene {
         this->current_timeline.frames_per_second = this->current_document->frames_per_second;
         this->canonical_scene = std::move(scene);
     }
+
+    Scene::Scene(Scene&& other) noexcept = default;
+    Scene& Scene::operator=(Scene&& other) noexcept = default;
+    Scene::~Scene() noexcept = default;
 
     Scene::Revision Scene::revision() const {
         if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
@@ -1608,6 +1767,306 @@ namespace spectra::scene {
         return describe_scene(this->resolved_scene());
     }
 
+    SceneKind Scene::kind() const {
+        if (this->descriptor_valid) return this->current_descriptor.kind;
+        return SceneKind::Static;
+    }
+
+    bool Scene::has_descriptor() const {
+        return this->descriptor_valid;
+    }
+
+    const SceneDescriptor& Scene::descriptor() const {
+        if (!this->descriptor_valid) throw std::runtime_error("Scene has no active descriptor");
+        return this->current_descriptor;
+    }
+
+    bool Scene::has_controls() const {
+        return this->descriptor_valid && this->current_descriptor.kind == SceneKind::Dynamic && this->driver_runtime.driver != nullptr;
+    }
+
+    std::shared_ptr<HostServiceRouter> Scene::host_services() const {
+        return this->host;
+    }
+
+    ControlSnapshot Scene::control_snapshot() const {
+        return this->active_driver().control_snapshot();
+    }
+
+    void Scene::replace_with_scene(Scene scene) {
+        const std::shared_ptr<HostServiceRouter> preserved_host = std::move(this->host);
+        const Scene::Revision replacement_revision{std::max(scene.current_revision.value, this->current_revision.value + 1u)};
+        this->current_revision = replacement_revision;
+        if (scene.current_document != nullptr) {
+            Scene::Document document = *scene.current_document;
+            document.revision = replacement_revision;
+            this->current_document = std::make_shared<Scene::Document>(std::move(document));
+        } else {
+            this->current_document.reset();
+        }
+        this->current_timeline = std::move(scene.current_timeline);
+        if (scene.canonical_scene.has_value()) {
+            Scene::ResolvedScene resolved = std::move(*scene.canonical_scene);
+            resolved.revision = replacement_revision;
+            this->canonical_scene = std::move(resolved);
+        } else {
+            this->canonical_scene.reset();
+        }
+        this->current_descriptor = std::move(scene.current_descriptor);
+        this->descriptor_valid = scene.descriptor_valid;
+        this->driver_runtime = std::move(scene.driver_runtime);
+        this->host = preserved_host == nullptr ? std::make_shared<HostServiceRouter>() : preserved_host;
+    }
+
+    void Scene::reset_driver_runtime() {
+        this->driver_runtime.driver.reset();
+        this->driver_runtime.frame_accumulator_seconds = 0.0;
+        this->driver_runtime.stream_time_seconds = 0.0;
+        this->driver_runtime.stream_frame_index = 0u;
+        this->driver_runtime.observed_reset_request_serial = 0u;
+        this->driver_runtime.observed_clear_recording_request_serial = 0u;
+        this->driver_runtime.observed_scene_revision = 0u;
+        this->driver_runtime.committed_playback_frame_index.reset();
+        this->driver_runtime.advanced_frame_number.reset();
+    }
+
+    SceneDriver& Scene::active_driver() const {
+        if (!this->descriptor_valid || this->current_descriptor.kind != SceneKind::Dynamic) throw std::runtime_error("Active scene is not plugin-driven");
+        if (this->driver_runtime.driver == nullptr) throw std::runtime_error("Active scene has no driver");
+        return *this->driver_runtime.driver;
+    }
+
+    void Scene::close() {
+        this->reset_driver_runtime();
+        this->replace_with_scene(Scene{});
+        this->descriptor_valid = false;
+    }
+
+    void Scene::open_static_scene(std::string id, std::string title, Scene scene) {
+        if (id.empty()) throw std::runtime_error("Static scene id must not be empty");
+        if (title.empty()) title = scene.info().title;
+        if (title.empty()) throw std::runtime_error("Static scene title must not be empty");
+        this->reset_driver_runtime();
+        this->replace_with_scene(std::move(scene));
+        this->current_descriptor = SceneDescriptor{
+            .id = std::move(id),
+            .title = std::move(title),
+            .kind = SceneKind::Static,
+        };
+        this->descriptor_valid = true;
+    }
+
+    void Scene::open_pbrt_file(const std::filesystem::path& scene_path) {
+        if (scene_path.empty()) throw std::runtime_error("Scene path must not be empty");
+        const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
+        if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Scene path must be a PBRT file, not a directory");
+        if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
+        if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
+        this->open_static_scene(absolute_path.string(), scene_file_title(absolute_path), Scene::parse_pbrt_file(absolute_path));
+    }
+
+    void Scene::attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver) {
+        if (id.empty()) throw std::runtime_error("Plugin-driven scene id must not be empty");
+        if (driver == nullptr) throw std::runtime_error("Plugin-driven scene requires a driver");
+        driver->reset();
+        Scene::Document document = driver->create_scene_document();
+        if (!document.timeline_enabled) throw std::runtime_error("Plugin-driven scene document must enable timeline");
+        if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Plugin-driven scene document frame rate must be finite and positive");
+        if (title.empty()) title = document.title;
+        if (title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
+        Scene scene_instance{std::move(document)};
+        Scene::FrameSnapshot snapshot = driver->create_scene_frame(Scene::FrameInfo{
+            .delta_seconds = 0.0,
+            .time_seconds = 0.0,
+            .frame_index = 0u,
+        });
+        const std::uint64_t scene_revision = driver->scene_revision();
+        const std::shared_ptr<const Scene::Document> scene_document = scene_instance.document();
+        Scene::Timeline timeline{
+            .mode = Scene::TimelineMode::Live,
+            .frames_per_second = scene_document->frames_per_second,
+            .playing = true,
+            .selected_frame_index = 0u,
+        };
+        commit_scene_timeline_and_frame(scene_instance, std::move(timeline), std::move(snapshot));
+        validate_scene_renderable_entities(scene_instance, "Plugin-driven scene initial frame");
+        this->reset_driver_runtime();
+        this->replace_with_scene(std::move(scene_instance));
+        this->driver_runtime.driver = std::move(driver);
+        this->driver_runtime.observed_scene_revision = scene_revision;
+        this->current_descriptor = SceneDescriptor{
+            .id = std::move(id),
+            .title = std::move(title),
+            .kind = SceneKind::Dynamic,
+        };
+        this->descriptor_valid = true;
+    }
+
+    void Scene::open_plugin_scene(ScenePluginOpenRequest request) {
+        if (request.host == nullptr) request.host = this->host;
+        std::shared_ptr<PluginLibrary> plugin = std::make_shared<PluginLibrary>(std::move(request.plugin_path), std::move(request.options), std::move(request.host));
+        const std::string id = plugin->scene_id();
+        const std::string title = plugin->title();
+        this->attach_driver(id, title, make_plugin_driver(std::move(plugin)));
+    }
+
+    void Scene::advance(const std::uint64_t frame_number, const double delta_seconds) {
+        if (this->kind() == SceneKind::Static) return;
+        if (this->driver_runtime.advanced_frame_number.has_value() && *this->driver_runtime.advanced_frame_number == frame_number) return;
+        SceneDriver& driver = this->active_driver();
+        const std::shared_ptr<const Scene::Document> document = this->document();
+        if (!document->timeline_enabled) throw std::runtime_error("Plugin-driven scene must enable timeline");
+        if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene delta time is invalid");
+        Scene::Timeline timeline = this->timeline();
+        if (timeline.frames_per_second <= 0.0) throw std::runtime_error("Scene timeline frame rate must be positive");
+        const double fixed_delta_seconds = 1.0 / timeline.frames_per_second;
+        const auto mark_advanced = [this, frame_number] {
+            this->driver_runtime.advanced_frame_number = frame_number;
+        };
+        if (timeline.reset_request_serial != this->driver_runtime.observed_reset_request_serial) {
+            this->reset_driver_scene(std::move(timeline));
+            this->driver_runtime.observed_reset_request_serial = this->timeline().reset_request_serial;
+            this->driver_runtime.committed_playback_frame_index.reset();
+            mark_advanced();
+            return;
+        }
+        if (timeline.clear_recording_request_serial != this->driver_runtime.observed_clear_recording_request_serial) {
+            timeline.recorded_frames.clear();
+            timeline.selected_frame_index = 0u;
+            commit_scene_timeline(*this, std::move(timeline));
+            this->driver_runtime.observed_clear_recording_request_serial = this->timeline().clear_recording_request_serial;
+            this->driver_runtime.committed_playback_frame_index.reset();
+            mark_advanced();
+            return;
+        }
+        if (timeline.mode == Scene::TimelineMode::Playback) {
+            if (timeline.recorded_frames.empty()) {
+                mark_advanced();
+                return;
+            }
+            if (timeline.selected_frame_index >= timeline.recorded_frames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
+            if (this->driver_runtime.committed_playback_frame_index.has_value() && *this->driver_runtime.committed_playback_frame_index == timeline.selected_frame_index) {
+                mark_advanced();
+                return;
+            }
+            Scene::FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
+            commit_scene_frame(*this, std::move(selected_frame));
+            validate_scene_renderable_entities(*this, "Scene playback frame");
+            this->driver_runtime.committed_playback_frame_index = timeline.selected_frame_index;
+            mark_advanced();
+            return;
+        }
+        this->driver_runtime.committed_playback_frame_index.reset();
+        const bool scene_advancing = timeline.playing && timeline.mode != Scene::TimelineMode::Playback;
+        driver.update(UpdateInfo{
+            .wall_delta_seconds = delta_seconds,
+            .scene_delta_seconds = scene_advancing ? delta_seconds : 0.0,
+            .time_seconds = this->driver_runtime.stream_time_seconds,
+            .frame_index = this->driver_runtime.stream_frame_index,
+            .timeline_mode = control_timeline_mode(timeline.mode),
+            .timeline_playing = timeline.playing,
+        });
+        this->commit_driver_revision("Scene update");
+        if (!timeline.playing) {
+            mark_advanced();
+            return;
+        }
+        this->driver_runtime.frame_accumulator_seconds += delta_seconds;
+        bool advanced = false;
+        Scene::FrameSnapshot snapshot{};
+        while (this->driver_runtime.frame_accumulator_seconds >= fixed_delta_seconds) {
+            this->driver_runtime.frame_accumulator_seconds -= fixed_delta_seconds;
+            ++this->driver_runtime.stream_frame_index;
+            this->driver_runtime.stream_time_seconds += fixed_delta_seconds;
+            snapshot = driver.create_scene_frame(Scene::FrameInfo{
+                .delta_seconds = fixed_delta_seconds,
+                .time_seconds = this->driver_runtime.stream_time_seconds,
+                .frame_index = this->driver_runtime.stream_frame_index,
+            });
+            advanced = true;
+        }
+        if (!advanced) {
+            mark_advanced();
+            return;
+        }
+        if (timeline.mode == Scene::TimelineMode::Record) {
+            timeline.recorded_frames.push_back(snapshot);
+            timeline.selected_frame_index = timeline.recorded_frames.size() - 1u;
+            commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
+            validate_scene_renderable_entities(*this, "Scene recorded frame");
+            mark_advanced();
+            return;
+        }
+        commit_scene_frame(*this, std::move(snapshot));
+        validate_scene_renderable_entities(*this, "Scene live frame");
+        mark_advanced();
+    }
+
+    void Scene::toggle_timeline_playback() {
+        if (!this->document()->timeline_enabled) throw std::runtime_error("Scene does not support timeline playback");
+        Scene::Timeline timeline = this->timeline();
+        if (timeline.mode == Scene::TimelineMode::Playback) throw std::runtime_error("Scene playback can only be toggled in Live or Record mode");
+        timeline.playing = !timeline.playing;
+        commit_scene_timeline(*this, std::move(timeline));
+        this->driver_runtime.advanced_frame_number.reset();
+    }
+
+    void Scene::request_timeline_reset() {
+        if (!this->document()->timeline_enabled) throw std::runtime_error("Scene does not support timeline reset");
+        Scene::Timeline timeline = this->timeline();
+        ++timeline.reset_request_serial;
+        commit_scene_timeline(*this, std::move(timeline));
+        this->driver_runtime.advanced_frame_number.reset();
+    }
+
+    void Scene::execute_control_action(const std::string_view action_id, const std::span<const ControlOption> options) {
+        if (action_id.empty()) throw std::runtime_error("Scene control action id must not be empty");
+        this->active_driver().execute_control_action(action_id, options);
+        this->commit_driver_revision("Scene control action");
+        this->driver_runtime.advanced_frame_number.reset();
+    }
+
+    void Scene::update_control_setting(const std::string_view key, const std::string_view value) {
+        if (key.empty()) throw std::runtime_error("Scene control setting key must not be empty");
+        this->active_driver().update_control_setting(key, value);
+        this->commit_driver_revision("Scene control setting");
+        this->driver_runtime.advanced_frame_number.reset();
+    }
+
+    void Scene::commit_driver_revision(const std::string_view context) {
+        SceneDriver& driver = this->active_driver();
+        const std::uint64_t scene_revision = driver.scene_revision();
+        if (scene_revision == this->driver_runtime.observed_scene_revision) return;
+        Scene::Document document = driver.create_scene_document();
+        if (!document.timeline_enabled) throw std::runtime_error("Plugin-driven scene document must enable timeline");
+        if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Plugin-driven scene document frame rate must be finite and positive");
+        Scene::FrameSnapshot snapshot = driver.create_scene_frame(Scene::FrameInfo{
+            .delta_seconds = 0.0,
+            .time_seconds = this->driver_runtime.stream_time_seconds,
+            .frame_index = this->driver_runtime.stream_frame_index,
+        });
+        commit_scene_document_and_frame(*this, std::move(document), std::move(snapshot));
+        validate_scene_renderable_entities(*this, context);
+        this->driver_runtime.observed_scene_revision = scene_revision;
+    }
+
+    void Scene::reset_driver_scene(Scene::Timeline timeline) {
+        SceneDriver& driver = this->active_driver();
+        this->driver_runtime.frame_accumulator_seconds = 0.0;
+        this->driver_runtime.stream_time_seconds = 0.0;
+        this->driver_runtime.stream_frame_index = 0u;
+        driver.reset();
+        this->driver_runtime.observed_scene_revision = driver.scene_revision();
+        Scene::FrameSnapshot snapshot = driver.create_scene_frame(Scene::FrameInfo{
+            .delta_seconds = 0.0,
+            .time_seconds = 0.0,
+            .frame_index = 0u,
+        });
+        timeline.selected_frame_index = 0u;
+        commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
+        validate_scene_renderable_entities(*this, "Scene reset frame");
+    }
+
     const Scene::Document& Scene::preview_document() const {
         if (this->current_document != nullptr) return *this->current_document;
         if (!this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
@@ -1648,6 +2107,26 @@ namespace spectra::scene {
 
     void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path) {
         write_pbrt_scene_file(scene, path);
+    }
+
+    bool is_plugin_file(const std::filesystem::path& path) {
+        const PluginAbiCodec codec{};
+        return codec.accepts_plugin_path(path);
+    }
+
+    ScenePluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {
+        PluginLibrary plugin{plugin_path};
+        return ScenePluginInfo{
+            .id = plugin.id(),
+            .title = plugin.title(),
+            .controls_panel_title = plugin.controls_panel_title(),
+            .open_action_label = plugin.open_action_label(),
+            .open_action_description = plugin.open_action_description(),
+            .path = plugin.path(),
+            .open_options = plugin.open_options(),
+            .control_actions = plugin.control_actions(),
+            .control_settings = plugin.control_settings(),
+        };
     }
 
     namespace {

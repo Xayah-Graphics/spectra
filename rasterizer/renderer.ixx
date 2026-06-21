@@ -12,7 +12,6 @@ module;
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
-export import spectra.dynamic_scene.host;
 export import spectra.scene;
 
 import std;
@@ -22,8 +21,7 @@ namespace spectra::rasterizer {
     public:
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
-        Renderer(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
-        Renderer(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
+        Renderer(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -379,17 +377,17 @@ namespace spectra::rasterizer {
         void destroy_device_buffer(DeviceGpuBuffer& buffer) noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
         void ensure_device_buffer(DeviceGpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
-        [[nodiscard]] dynamic_scene::GpuResourceHandleKind external_storage_handle_kind() const;
+        [[nodiscard]] scene::GpuResourceHandleKind external_storage_handle_kind() const;
         [[nodiscard]] ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context);
         [[nodiscard]] const ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context) const;
-        [[nodiscard]] dynamic_scene::GpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
+        [[nodiscard]] scene::GpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
         void release_external_storage_buffer(std::uint64_t resource_id, std::string_view context);
-        [[nodiscard]] dynamic_scene::GpuBufferAllocation request_dynamic_gpu_buffer(const dynamic_scene::GpuBufferRequest& request);
-        void release_dynamic_gpu_buffer(std::uint64_t resource_id);
+        [[nodiscard]] scene::GpuBufferAllocation request_scene_gpu_buffer(const scene::GpuBufferRequest& request);
+        void release_scene_gpu_buffer(std::uint64_t resource_id);
         void ensure_viewport_voxel_buffer_descriptor(std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor);
         void ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command);
-        void connect_dynamic_scene_host();
-        void disconnect_dynamic_scene_host() noexcept;
+        void connect_scene_host();
+        void disconnect_scene_host() noexcept;
         void create_image_2d(GpuImage2D& image, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect);
         void destroy_image_2d(GpuImage2D& image) noexcept;
         void create_volume_image(GpuImage3D& image, vk::Extent3D extent, vk::Format format);
@@ -420,7 +418,6 @@ namespace spectra::rasterizer {
         [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
-        void sync_scene_source(double delta_seconds);
         void rebuild_scene_ui_cache_if_needed();
         void prune_scene_selection_to_cache();
         [[nodiscard]] const SceneObjectRecord* scene_object_record(const SceneObjectKey& key) const;
@@ -531,10 +528,10 @@ namespace spectra::rasterizer {
 
         struct {
             std::shared_ptr<scene::Scene> instance{};
-            scene::SceneSource source{};
             std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
             scene::CameraRevision observed_camera_revision{};
-            std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host{};
+            std::string observed_camera_scene_id{};
+            std::shared_ptr<scene::HostServiceRouter> host_services{};
         } scene;
 
         struct {

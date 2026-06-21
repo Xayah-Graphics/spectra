@@ -10,6 +10,245 @@ namespace spectra::scene {
         explicit EmptySceneError(const std::string& message) : std::runtime_error(message) {}
     };
 
+    export enum class ControlOptionKind {
+        Text,
+        DirectoryPath,
+        FilePath,
+        Choice,
+        Bool,
+        Float,
+        UnsignedInteger,
+    };
+
+    export struct ControlOptionChoice {
+        std::string value{};
+        std::string label{};
+    };
+
+    export struct ControlOptionSchema {
+        std::string key{};
+        std::string label{};
+        std::string description{};
+        ControlOptionKind kind{ControlOptionKind::Text};
+        bool required{};
+        std::string default_value{};
+        std::string group{};
+        bool advanced{};
+        std::int32_t priority{};
+        std::vector<ControlOptionChoice> choices{};
+    };
+
+    export struct ControlOption {
+        std::string key{};
+        std::string value{};
+    };
+
+    export enum class GpuResourceHandleKind : std::uint32_t {
+        OpaqueWin32 = 1u,
+        OpaqueFileDescriptor = 2u,
+    };
+
+    export struct GpuDeviceIdentity {
+        std::uint32_t vendor_id{};
+        std::uint32_t device_id{};
+        std::array<std::uint8_t, 16u> device_uuid{};
+        std::array<std::uint8_t, 8u> device_luid{};
+        std::uint32_t device_node_mask{};
+    };
+
+    export inline constexpr std::uint32_t GpuBufferKindVolumeChannel = 0u;
+    export inline constexpr std::uint32_t GpuBufferKindViewportVoxelGrid = 1u;
+
+    export struct GpuBufferRequest {
+        std::uint32_t kind{};
+        std::uint64_t byte_size{};
+        std::string debug_name{};
+    };
+
+    export struct GpuBufferAllocation {
+        std::uint64_t resource_id{};
+        std::uint64_t byte_size{};
+        std::uint32_t kind{};
+        GpuResourceHandleKind handle_kind{GpuResourceHandleKind::OpaqueWin32};
+        std::uintptr_t handle{};
+        GpuDeviceIdentity device_identity{};
+    };
+
+    export class HostServices {
+    public:
+        HostServices() = default;
+        HostServices(const HostServices& other) = delete;
+        HostServices(HostServices&& other) = delete;
+        HostServices& operator=(const HostServices& other) = delete;
+        HostServices& operator=(HostServices&& other) = delete;
+        virtual ~HostServices() noexcept = default;
+
+        [[nodiscard]] virtual GpuBufferAllocation request_gpu_buffer(const GpuBufferRequest& request) = 0;
+        virtual void release_gpu_buffer(std::uint64_t resource_id) = 0;
+        [[nodiscard]] virtual std::string_view last_error() const = 0;
+    };
+
+    export class HostServiceRouter final : public HostServices {
+    public:
+        HostServiceRouter() = default;
+        HostServiceRouter(const HostServiceRouter& other) = delete;
+        HostServiceRouter(HostServiceRouter&& other) = delete;
+        HostServiceRouter& operator=(const HostServiceRouter& other) = delete;
+        HostServiceRouter& operator=(HostServiceRouter&& other) = delete;
+        ~HostServiceRouter() noexcept override = default;
+
+        void set_gpu_buffer_backend(std::move_only_function<GpuBufferAllocation(const GpuBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
+        void clear_gpu_buffer_backend() noexcept;
+        [[nodiscard]] GpuBufferAllocation request_gpu_buffer(const GpuBufferRequest& request) override;
+        void release_gpu_buffer(std::uint64_t resource_id) override;
+        [[nodiscard]] std::string_view last_error() const override;
+
+    private:
+        std::move_only_function<GpuBufferAllocation(const GpuBufferRequest&)> request_gpu_buffer_callback{};
+        std::move_only_function<void(std::uint64_t)> release_gpu_buffer_callback{};
+        std::map<std::uint64_t, GpuBufferAllocation> gpu_buffer_allocations{};
+        std::string last_error_message{};
+    };
+
+    export inline constexpr std::uint32_t ControlPlacementViewportOverlay = 1u << 0u;
+    export inline constexpr std::uint32_t ControlPlacementPanelSummary = 1u << 1u;
+    export inline constexpr std::uint32_t ControlPlacementPanelDetail = 1u << 2u;
+    export inline constexpr std::uint32_t ControlActionGroupRun = 0u;
+    export inline constexpr std::uint32_t ControlActionGroupPreview = 1u;
+    export inline constexpr std::uint32_t ControlActionGroupDebug = 2u;
+    export inline constexpr std::uint32_t ControlActionGroupUtility = 3u;
+    export inline constexpr std::uint32_t ControlActionStyleSecondary = 0u;
+    export inline constexpr std::uint32_t ControlActionStylePrimary = 1u;
+    export inline constexpr std::uint32_t ControlActionStyleDanger = 2u;
+
+    export struct ControlAction {
+        std::string id{};
+        std::string label{};
+        std::string description{};
+        std::uint32_t group{};
+        std::int32_t priority{};
+        std::uint32_t style{};
+        std::vector<ControlOptionSchema> options{};
+    };
+
+    export struct ControlSettingValue {
+        std::string key{};
+        std::string value{};
+    };
+
+    export struct ControlMetric {
+        std::string key{};
+        std::string label{};
+        std::string value{};
+        std::uint32_t placement_flags{};
+        std::int32_t priority{};
+        bool has_color{};
+        std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
+    };
+
+    export struct ControlActionState {
+        std::string action_id{};
+        bool enabled{};
+        std::string disabled_reason{};
+    };
+
+    export struct ControlStatus {
+        std::string phase{};
+        std::string headline{};
+        std::string detail{};
+        std::vector<ControlMetric> metrics{};
+        std::vector<ControlActionState> action_states{};
+    };
+
+    export struct ControlLogEntry {
+        std::uint64_t sequence{};
+        std::string level{};
+        std::string message{};
+    };
+
+    export struct ControlImage {
+        std::string id{};
+        std::string label{};
+        std::string description{};
+        const std::uint8_t* rgba8{};
+        std::uint64_t rgba8_size{};
+        std::uint64_t revision{};
+        std::uint32_t width{};
+        std::uint32_t height{};
+    };
+
+    export struct ControlScalarSample {
+        std::uint64_t step{};
+        double time_seconds{};
+        double value{};
+    };
+
+    export struct ControlScalarSeries {
+        std::string id{};
+        std::string label{};
+        std::string description{};
+        std::string unit{};
+        std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
+        std::uint32_t group{};
+        std::int32_t priority{};
+        std::uint64_t revision{};
+        std::vector<ControlScalarSample> samples{};
+    };
+
+    export enum class ControlTimelineMode : std::uint32_t {
+        Live = 0u,
+        Record = 1u,
+        Playback = 2u,
+    };
+
+    export struct UpdateInfo {
+        double wall_delta_seconds{};
+        double scene_delta_seconds{};
+        double time_seconds{};
+        std::uint64_t frame_index{};
+        ControlTimelineMode timeline_mode{ControlTimelineMode::Live};
+        bool timeline_playing{};
+    };
+
+    export struct ControlSnapshot {
+        ControlStatus status{};
+        std::vector<ControlSettingValue> settings{};
+        std::vector<ControlLogEntry> logs{};
+        std::vector<ControlImage> images{};
+        std::vector<ControlScalarSeries> scalar_series{};
+    };
+
+    export enum class SceneKind {
+        Static,
+        Dynamic,
+    };
+
+    export struct SceneDescriptor {
+        std::string id{};
+        std::string title{};
+        SceneKind kind{SceneKind::Static};
+    };
+
+    export class SceneDriver;
+
+    export struct ScenePluginOpenRequest {
+        std::filesystem::path plugin_path{};
+        std::vector<ControlOption> options{};
+        std::shared_ptr<HostServices> host{};
+    };
+
+    export struct ScenePluginInfo {
+        std::string id{};
+        std::string title{};
+        std::string controls_panel_title{};
+        std::string open_action_label{};
+        std::string open_action_description{};
+        std::filesystem::path path{};
+        std::vector<ControlOptionSchema> open_options{};
+        std::vector<ControlAction> control_actions{};
+        std::vector<ControlOptionSchema> control_settings{};
+    };
+
     export class Scene {
     public:
         struct Revision {
@@ -505,9 +744,15 @@ namespace spectra::scene {
             std::uint64_t frame_index{};
         };
 
+        Scene();
         explicit Scene(Document document);
         explicit Scene(ResolvedScene scene);
         Scene(ResolvedScene scene, Document preview_document);
+        Scene(const Scene& other) = delete;
+        Scene(Scene&& other) noexcept;
+        Scene& operator=(const Scene& other) = delete;
+        Scene& operator=(Scene&& other) noexcept;
+        ~Scene() noexcept;
 
         [[nodiscard]] Revision revision() const;
         [[nodiscard]] std::shared_ptr<const Document> document() const;
@@ -517,6 +762,22 @@ namespace spectra::scene {
         [[nodiscard]] ResolvedScene resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const;
         [[nodiscard]] Info info() const;
         [[nodiscard]] DirtyFlags commit(Edit edit);
+        [[nodiscard]] SceneKind kind() const;
+        [[nodiscard]] bool has_descriptor() const;
+        [[nodiscard]] const SceneDescriptor& descriptor() const;
+        [[nodiscard]] bool has_controls() const;
+        [[nodiscard]] std::shared_ptr<HostServiceRouter> host_services() const;
+        [[nodiscard]] ControlSnapshot control_snapshot() const;
+        void close();
+        void open_static_scene(std::string id, std::string title, Scene scene);
+        void open_pbrt_file(const std::filesystem::path& scene_path);
+        void attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver);
+        void open_plugin_scene(ScenePluginOpenRequest request);
+        void advance(std::uint64_t frame_number, double delta_seconds);
+        void toggle_timeline_playback();
+        void request_timeline_reset();
+        void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);
+        void update_control_setting(std::string_view key, std::string_view value);
 
         [[nodiscard]] static Scene parse_pbrt(std::string_view scene_id);
         [[nodiscard]] static Scene parse_pbrt_file(const std::filesystem::path& scene_path);
@@ -532,25 +793,56 @@ namespace spectra::scene {
         [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
 
     private:
+        struct DriverRuntime {
+            std::unique_ptr<SceneDriver> driver{};
+            double frame_accumulator_seconds{};
+            double stream_time_seconds{};
+            std::uint64_t stream_frame_index{};
+            std::uint64_t observed_reset_request_serial{};
+            std::uint64_t observed_clear_recording_request_serial{};
+            std::uint64_t observed_scene_revision{};
+            std::optional<std::uint64_t> committed_playback_frame_index{};
+            std::optional<std::uint64_t> advanced_frame_number{};
+        };
+
         [[nodiscard]] const Document& preview_document() const;
+        void replace_with_scene(Scene scene);
+        void reset_driver_runtime();
+        [[nodiscard]] SceneDriver& active_driver() const;
+        void reset_driver_scene(Timeline timeline);
+        void commit_driver_revision(std::string_view context);
 
         Revision current_revision{};
         mutable std::shared_ptr<const Document> current_document{};
         Timeline current_timeline{};
         std::optional<ResolvedScene> canonical_scene{};
+        SceneDescriptor current_descriptor{};
+        bool descriptor_valid{};
+        std::shared_ptr<HostServiceRouter> host{std::make_shared<HostServiceRouter>()};
+        DriverRuntime driver_runtime{};
     };
 
-    export struct SceneSource {
-        std::shared_ptr<Scene> initial_scene{};
-        std::move_only_function<std::shared_ptr<Scene>(double)> update{};
+    export class SceneDriver {
+    public:
+        SceneDriver() = default;
 
-        [[nodiscard]] std::shared_ptr<Scene> current(const double delta_seconds) {
-            if (!this->update) throw std::runtime_error("Scene source requires an update callback");
-            std::shared_ptr<Scene> workspace = this->update(delta_seconds);
-            if (workspace == nullptr) throw std::runtime_error("Scene source returned null");
-            return workspace;
-        }
+        SceneDriver(const SceneDriver& other) = delete;
+        SceneDriver(SceneDriver&& other) = delete;
+        SceneDriver& operator=(const SceneDriver& other) = delete;
+        SceneDriver& operator=(SceneDriver&& other) = delete;
+        virtual ~SceneDriver() noexcept = default;
+
+        virtual void reset() = 0;
+        virtual void update(const UpdateInfo& update) = 0;
+        [[nodiscard]] virtual std::uint64_t scene_revision() const = 0;
+        virtual void execute_control_action(std::string_view action_id, std::span<const ControlOption> options) = 0;
+        virtual void update_control_setting(std::string_view key, std::string_view value) = 0;
+        [[nodiscard]] virtual ControlSnapshot control_snapshot() const = 0;
+        [[nodiscard]] virtual Scene::Document create_scene_document() const = 0;
+        [[nodiscard]] virtual Scene::FrameSnapshot create_scene_frame(const Scene::FrameInfo& frame) const = 0;
     };
 
+    export [[nodiscard]] bool is_plugin_file(const std::filesystem::path& path);
+    export [[nodiscard]] ScenePluginInfo inspect_plugin(const std::filesystem::path& plugin_path);
     export void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path);
 } // namespace spectra::scene

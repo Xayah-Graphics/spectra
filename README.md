@@ -10,9 +10,9 @@ Spectra is an alpha-stage renderer and visualization workspace for graphics rese
 - **Spectra Rasterizer** for live scene preview.
 - **Spectra Pathtracer** for OptiX/CUDA path-traced rendering of the current scene snapshot.
 
-Spectra is designed around a shared scene workspace. Static PBRT scenes and runtime dynamic scene plugins are loaded
+Spectra is designed around a shared scene workspace. Static PBRT scenes and runtime scene plugins are loaded
 by the application layer, then consumed by both renderers without renderer-owned file loading. Dynamic plugins are
-dynamic scene sources: they publish renderable scene entities, scene parameters, and optional rasterizer-only debug
+scene drivers: they publish renderable scene entities, scene parameters, and optional rasterizer-only debug
 attachments through the same scene model used by PBRT imports.
 
 ## Build
@@ -30,38 +30,36 @@ cmake --build build --parallel
 
 ## Usage
 
-You may load PBRT scene files and dynamic scene plugins directly from the command line.
+You may load PBRT scene files and scene plugins directly from the command line.
 
 ```bash
 ./build/spectra_gui --scene /path/to/scene.pbrt
 ./build/spectra_gui --scene /path/to/plugin.dll
 ```
 
-You may also load PBRT scene files and dynamic scene plugins through the GUI.
+You may also load PBRT scene files and scene plugins through the GUI.
 
 ```bash
 ./build/spectra_gui
 ```
 
 then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
-empty dynamic scene controls workspace first; the Scene popover renders the generic form declared by the plugin
+empty scene plugin controls workspace first; the Scene popover renders the generic form declared by the plugin
 descriptor and creates the dynamic scene only when the plugin-declared open action is pressed. After creation, the same
 popover displays plugin-declared control actions, status metrics, logs, charts, and preview images, while selected
 metrics may also appear as compact viewport overlay chips.
 
 
-## Dynamic Scene Plugins Developer Guide
+## scene plugins Developer Guide
 
-Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
+Spectra loads plugin-driven scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
 link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
-Inside Spectra, `spectra.dynamic_scene` owns the plugin protocol, host services, and DLL loading;
-`spectra.scene_session` owns the current static/dynamic scene session, timeline update, and active scene lifetime. The
-rasterizer only supplies the Vulkan-backed host-service implementation and preview draw passes.
+Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host services, DLL loading, timeline update, and active scene lifetime. The rasterizer only supplies the Vulkan-backed host-service implementation and preview draw passes.
 
-A dynamic scene plugin only needs to:
+A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_dynamic_scene_plugin_v29()`.
+2. Export `spectra_scene_plugin_v1()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -77,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `29`.
-- Exported symbol: `spectra_dynamic_scene_plugin_v29`.
+- ABI version: `1`.
+- Exported symbol: `spectra_scene_plugin_v1`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -90,7 +88,7 @@ declared source payload, and publishes
 
 ### Required ABI Declarations
 
-Dynamic scene plugins must declare the documented C ABI in the producer. Do not include Spectra headers, link
+scene plugins must declare the documented C ABI in the producer. Do not include Spectra headers, link
 Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. A producer only needs to declare payload
 structs for the scene item kinds and control item kinds it actually emits; Spectra's host implementation still supports
 the full item kind tables. The plugin descriptor directly exposes generic controls/open metadata, scene callbacks,
@@ -101,15 +99,15 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 
 ```cpp
 #if defined(_WIN32)
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __declspec(dllexport)
+#define SPECTRA_SCENE_EXPORT __declspec(dllexport)
 #else
-#define SPECTRA_DYNAMIC_SCENE_EXPORT __attribute__((visibility("default")))
+#define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraPlugin* spectra_dynamic_scene_plugin_v29(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v1(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `29` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `1` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are optional as a group. If any controls callback or controls schema is present, all controls
 callbacks must be present.
@@ -125,7 +123,7 @@ callbacks must be present.
   attachments; materials and lights are document-only.
 - A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or
   `VolumeGrid`. Cameras, lights, controls telemetry, and debug attachments do not count as renderable scene entities.
-- `default_coordinate_system` may be empty or one of `SpectraYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
+- `default_coordinate_system` may be empty or one of `SpectraSceneYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
   Unknown names are errors.
 - Material `model` values: `lit_surface`, `unlit_surface`, `emissive_surface`, `volume`, `point_sprite`.
 - Material `alpha_mode` values: `opaque`, `masked`, `blend`.
@@ -175,14 +173,14 @@ callbacks must be present.
 - Control action UI hints: `group` values are `0` Run, `1` Preview, `2` Debug, and `3` Utility. `style` values are `0`
   Secondary, `1` Primary, and `2` Danger. `priority` sorts actions within a group. Unknown values are errors.
 - If controls are present, `control_snapshot` and `control_setting_update` are required. Settings are live editable
-  controls for active dynamic scenes; Spectra submits a changed setting immediately and then checks `scene_revision` to
+  controls for active plugin-driven scenes; Spectra submits a changed setting immediately and then checks `scene_revision` to
   refresh changed scene/debug data. Setting schemas are declared once in the plugin descriptor through normal option
   schemas. Setting kinds are restricted to `3` choice, `4` bool, `5` float, and `6` unsigned integer. Text and path
   kinds are only valid for open options or explicit action options. Setting keys and labels must be non-empty and unique
   in the descriptor. A snapshot setting item returns only `{ key, value }`; each key must match a declared setting and
   the value must parse according to that setting schema.
 - If controls are present, `control_snapshot` returns named fields directly: `settings`, `status`, `logs`, `images`,
-  and `scalar_series`. `status.struct_size` must match `SpectraControlStatusView`. Empty optional arrays use
+  and `scalar_series`. `status.struct_size` must match `SpectraSceneControlStatusView`. Empty optional arrays use
   `{ nullptr, 0 }`. When the descriptor declares control settings, `settings` must provide one value for each schema.
   Log, image, and scalar-series spans may be empty.
 - Status phase, headline, metric keys/labels/values, action state ids, log levels, and log messages must be non-empty.
@@ -209,7 +207,7 @@ callbacks must be present.
 
 ### Callback Rules
 
-- Descriptor `create` receives a non-null `host_services` pointer in `SpectraOpenInfo`.
+- Descriptor `create` receives a non-null `host_services` pointer in `SpectraSceneOpenInfo`.
 - Host services `request_gpu_buffer` allocates a Spectra-owned external Vulkan storage buffer and returns `resource_id`,
   `byte_size`, buffer `kind`, `handle_kind`, an OS external memory handle, and Vulkan device identity. Buffer kind values
   are `0` true `VolumeGrid` channel storage and `1` viewport voxel debug storage. Handle kinds are `1` opaque Win32
@@ -229,7 +227,7 @@ callbacks must be present.
 - Descriptor `create` returns a plugin-owned instance pointer.
 - Descriptor `destroy` releases that instance.
 - Descriptor `reset` resets dynamic scene state and rebuilds internal visualization buffers.
-- Descriptor `update` receives a `SpectraUpdateInfo` once per GUI frame. `wall_delta_seconds`
+- Descriptor `update` receives a `SpectraSceneUpdateInfo` once per GUI frame. `wall_delta_seconds`
   is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
   when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
   `frame_index` describe the host timeline state. Long-running source updates must honor `scene_delta_seconds` so
@@ -259,7 +257,7 @@ callbacks must be present.
   and scalar samples for display. Preview images are uploaded to UI textures but are not copied into `scene::Scene`,
   exported to PBRT, or exposed to the pathtracer scene.
 
-Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
+Callbacks must not throw across the ABI. Return `SPECTRA_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.
 
 ## License

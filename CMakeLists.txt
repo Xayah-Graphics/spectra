@@ -122,55 +122,20 @@ target_sources(
         scene/spatial.ixx
         scene/scene.ixx
         PRIVATE
+        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
+        scene/plugin_abi.ixx
+        scene/plugin_codec.ixx
+        scene/plugin_library.ixx
+        PRIVATE
         scene/spatial.cpp
         scene/scene.cpp
+        scene/plugin_codec.cpp
+        scene/plugin_library.cpp
 )
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
-target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB vendor::lodepng)
+target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB vendor::lodepng ${CMAKE_DL_LIBS})
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
-
-# ============================================================================
-# Dynamic Scene
-# ============================================================================
-add_library(spectra_dynamic_scene)
-add_library(spectra::dynamic_scene ALIAS spectra_dynamic_scene)
-target_sources(
-        spectra_dynamic_scene
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        dynamic_scene/contracts.ixx
-        dynamic_scene/host.ixx
-        dynamic_scene/loader.ixx
-        PRIVATE
-        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        dynamic_scene/plugin_abi.ixx
-        dynamic_scene/plugin_codec.ixx
-        dynamic_scene/plugin_library.ixx
-        PRIVATE
-        dynamic_scene/host.cpp
-        dynamic_scene/loader.cpp
-        dynamic_scene/plugin_codec.cpp
-        dynamic_scene/plugin_library.cpp
-)
-target_link_libraries(spectra_dynamic_scene PUBLIC spectra::scene PRIVATE ${CMAKE_DL_LIBS})
-set_property(TARGET spectra_dynamic_scene PROPERTY CXX_MODULE_STD ON)
-
-# ============================================================================
-# Scene Session
-# ============================================================================
-add_library(spectra_scene_session)
-add_library(spectra::scene_session ALIAS spectra_scene_session)
-target_sources(
-        spectra_scene_session
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        scene_session/session.ixx
-        PRIVATE
-        scene_session/session.cpp
-)
-target_link_libraries(spectra_scene_session PUBLIC spectra::scene spectra::dynamic_scene)
-set_property(TARGET spectra_scene_session PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================
 # Pathtracer Configuration
@@ -638,7 +603,7 @@ target_sources(
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene spectra::dynamic_scene)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 
@@ -651,13 +616,19 @@ add_executable(spectra::gui ALIAS spectra_gui)
 if (WIN32)
     target_sources(spectra_gui PRIVATE spectra.rc)
 endif ()
+target_sources(
+        spectra_gui
+        PRIVATE
+        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
+        scene/ui.ixx
+        PRIVATE
+        scene/ui.cpp
+)
 target_link_libraries(
         spectra_gui
         PRIVATE
         spectra::core
         spectra::scene
-        spectra::dynamic_scene
-        spectra::scene_session
         spectra::pathtracer
         spectra::rasterizer
         xayah-util-xcli
