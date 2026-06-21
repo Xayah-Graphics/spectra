@@ -16,7 +16,7 @@ import spectra.scene;
 
 namespace spectra::scene_runtime {
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 26u;
+        constexpr std::uint32_t plugin_abi_version = 27u;
         constexpr std::string_view scene_api_name = "spectra.dynamic_scene.scene";
         constexpr std::string_view controls_api_name = "spectra.dynamic_scene.controls";
         constexpr std::uint32_t scene_api_version = 1u;
@@ -27,6 +27,17 @@ namespace spectra::scene_runtime {
         typedef std::uint32_t SpectraDynamicSceneResult;
         constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0u;
         constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1u;
+
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_MATERIAL = 0u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_LIGHT = 1u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA = 2u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_MESH = 3u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE = 4u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD = 5u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME = 6u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET = 100u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID = 101u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL = 102u;
 
         struct SpectraDynamicSceneOption {
             const char* key{};
@@ -318,11 +329,6 @@ namespace spectra::scene_runtime {
             float volume_temperature_scale{};
         };
 
-        struct SpectraDynamicSceneMaterialSpan {
-            const SpectraDynamicSceneMaterial* data{};
-            std::uint64_t count{};
-        };
-
         struct SpectraDynamicSceneLight {
             const char* name{};
             const char* kind{};
@@ -330,11 +336,6 @@ namespace spectra::scene_runtime {
             float color[3]{};
             float intensity{};
             float cone_angle_degrees{};
-        };
-
-        struct SpectraDynamicSceneLightSpan {
-            const SpectraDynamicSceneLight* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneCamera {
@@ -353,11 +354,6 @@ namespace spectra::scene_runtime {
             float cy{};
             float near_plane{};
             float far_plane{};
-        };
-
-        struct SpectraDynamicSceneCameraSpan {
-            const SpectraDynamicSceneCamera* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneMeshVertex {
@@ -383,21 +379,11 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneTransform transform{};
         };
 
-        struct SpectraDynamicSceneMeshSpan {
-            const SpectraDynamicSceneMesh* data{};
-            std::uint64_t count{};
-        };
-
         struct SpectraDynamicSceneSphere {
             const char* name{};
             float radius{};
             const char* material_name{};
             SpectraDynamicSceneTransform transform{};
-        };
-
-        struct SpectraDynamicSceneSphereSpan {
-            const SpectraDynamicSceneSphere* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicScenePoint {
@@ -417,11 +403,6 @@ namespace spectra::scene_runtime {
             SpectraDynamicScenePointSpan points{};
             const char* material_name{};
             SpectraDynamicSceneTransform transform{};
-        };
-
-        struct SpectraDynamicScenePointCloudSpan {
-            const SpectraDynamicScenePointCloud* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneFloatSpan {
@@ -454,11 +435,6 @@ namespace spectra::scene_runtime {
             float voxel_size[3]{};
             SpectraDynamicSceneVolumeChannelSpan channels{};
             const char* material_name{};
-        };
-
-        struct SpectraDynamicSceneVolumeSpan {
-            const SpectraDynamicSceneVolume* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneEntityRef {
@@ -497,11 +473,6 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneTransform transform{};
         };
 
-        struct SpectraDynamicSceneViewportSegmentSetSpan {
-            const SpectraDynamicSceneViewportSegmentSet* data{};
-            std::uint64_t count{};
-        };
-
         struct SpectraDynamicSceneViewportVoxelGrid {
             const char* name{};
             SpectraDynamicSceneEntityRef owner{};
@@ -518,11 +489,6 @@ namespace spectra::scene_runtime {
             std::uint64_t source_byte_size{};
             std::uint64_t index_count{};
             std::uint64_t revision{};
-        };
-
-        struct SpectraDynamicSceneViewportVoxelGridSpan {
-            const SpectraDynamicSceneViewportVoxelGrid* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneViewportCameraVisualImage {
@@ -547,29 +513,19 @@ namespace spectra::scene_runtime {
             SpectraDynamicSceneViewportCameraVisualImage image{};
         };
 
-        struct SpectraDynamicSceneViewportCameraVisualSpan {
-            const SpectraDynamicSceneViewportCameraVisual* data{};
+        struct SpectraDynamicSceneTypedSpan {
+            std::uint32_t kind{};
+            std::uint32_t item_size{};
+            const void* data{};
             std::uint64_t count{};
-        };
-
-        struct SpectraDynamicSceneDebugAttachmentSet {
-            SpectraDynamicSceneViewportSegmentSetSpan viewport_segment_sets{};
-            SpectraDynamicSceneViewportVoxelGridSpan viewport_voxel_grids{};
-            SpectraDynamicSceneViewportCameraVisualSpan viewport_camera_visuals{};
         };
 
         struct SpectraDynamicSceneDocumentView {
             std::uint64_t struct_size{};
             const char* default_coordinate_system{};
             const char* active_camera_name{};
-            SpectraDynamicSceneCameraSpan cameras{};
-            SpectraDynamicSceneMaterialSpan materials{};
-            SpectraDynamicSceneLightSpan lights{};
-            SpectraDynamicSceneMeshSpan meshes{};
-            SpectraDynamicSceneSphereSpan spheres{};
-            SpectraDynamicScenePointCloudSpan point_clouds{};
-            SpectraDynamicSceneVolumeSpan volumes{};
-            SpectraDynamicSceneDebugAttachmentSet debug_attachments{};
+            const SpectraDynamicSceneTypedSpan* items{};
+            std::uint64_t item_count{};
         };
 
         struct SpectraDynamicSceneFrameInfo {
@@ -580,12 +536,8 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneFrameView {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneMeshSpan meshes{};
-            SpectraDynamicSceneSphereSpan spheres{};
-            SpectraDynamicScenePointCloudSpan point_clouds{};
-            SpectraDynamicSceneVolumeSpan volumes{};
-            SpectraDynamicSceneCameraSpan cameras{};
-            SpectraDynamicSceneDebugAttachmentSet debug_attachments{};
+            const SpectraDynamicSceneTypedSpan* items{};
+            std::uint64_t item_count{};
         };
 
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneCreateFn)(const SpectraDynamicSceneOpenInfo* open_info, SpectraDynamicSceneInstance** instance);
@@ -667,6 +619,75 @@ namespace spectra::scene_runtime {
             }
         [[nodiscard]] auto abi_span(const Span& span, const std::string_view context) {
             return abi_span(span.data, span.count, context);
+        }
+
+        [[nodiscard]] std::string dynamic_scene_item_kind_name(const std::uint32_t kind) {
+            switch (kind) {
+            case SPECTRA_DYNAMIC_SCENE_ITEM_MATERIAL: return "material";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_LIGHT: return "light";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA: return "camera";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_MESH: return "mesh";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE: return "sphere";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD: return "point cloud";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME: return "volume grid";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET: return "viewport segment set";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID: return "viewport voxel grid";
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL: return "viewport camera visual";
+            default: return std::format("unknown({})", kind);
+            }
+        }
+
+        [[nodiscard]] bool dynamic_scene_document_item_kind_allowed(const std::uint32_t kind) {
+            switch (kind) {
+            case SPECTRA_DYNAMIC_SCENE_ITEM_MATERIAL:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_LIGHT:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_MESH:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        [[nodiscard]] bool dynamic_scene_frame_item_kind_allowed(const std::uint32_t kind) {
+            switch (kind) {
+            case SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_MESH:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID:
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        template <typename Value>
+        [[nodiscard]] std::span<const Value> abi_typed_span(const SpectraDynamicSceneTypedSpan& span, const std::uint32_t expected_kind, const std::string_view context) {
+            if (span.kind != expected_kind) throw std::runtime_error(std::format("{} kind {} does not match expected {}", context, dynamic_scene_item_kind_name(span.kind), dynamic_scene_item_kind_name(expected_kind)));
+            if (span.item_size != sizeof(Value)) throw std::runtime_error(std::format("{} item size {} does not match expected {}", context, span.item_size, sizeof(Value)));
+            if (span.count == 0u) throw std::runtime_error(std::format("{} typed span is empty; omit unused item kinds instead", context));
+            if (span.data == nullptr) throw std::runtime_error(std::format("{} data pointer is null", context));
+            if (span.count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("{} item count is too large", context));
+            return std::span<const Value>{static_cast<const Value*>(span.data), static_cast<std::size_t>(span.count)};
+        }
+
+        template <typename IsAllowed>
+        void require_valid_typed_scene_items(const std::span<const SpectraDynamicSceneTypedSpan> items, const IsAllowed& is_allowed, const std::string_view context) {
+            std::set<std::uint32_t> kinds{};
+            for (const SpectraDynamicSceneTypedSpan& item : items) {
+                if (!is_allowed(item.kind)) throw std::runtime_error(std::format("{} contains unsupported item kind {}", context, dynamic_scene_item_kind_name(item.kind)));
+                if (!kinds.insert(item.kind).second) throw std::runtime_error(std::format("{} contains duplicated item kind {}", context, dynamic_scene_item_kind_name(item.kind)));
+            }
         }
 
         [[nodiscard]] float finite_float(const float value, const std::string_view context) {
@@ -1115,15 +1136,23 @@ namespace spectra::scene_runtime {
             if (!material_names.contains(primitive.material_name)) throw std::runtime_error(std::format("Dynamic scene {} \"{}\" references unknown material \"{}\"", kind, primitive.name, primitive.material_name));
         }
 
-        [[nodiscard]] scene::Scene::DebugAttachmentSet make_debug_attachment_set(const SpectraDynamicSceneDebugAttachmentSet& attachments, const bool dynamic, const std::string_view context) {
-            scene::Scene::DebugAttachmentSet result{};
-            for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_span(attachments.viewport_segment_sets, std::format("{} viewport segment sets", context)))
-                result.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, dynamic));
-            for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_span(attachments.viewport_voxel_grids, std::format("{} viewport voxel grids", context)))
-                result.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, dynamic));
-            for (const SpectraDynamicSceneViewportCameraVisual& visual_view : abi_span(attachments.viewport_camera_visuals, std::format("{} viewport camera visuals", context)))
-                result.viewport_camera_visuals.push_back(make_viewport_camera_visual(visual_view, dynamic));
-            return result;
+        void append_debug_attachment_item(scene::Scene::DebugAttachmentSet& attachments, const SpectraDynamicSceneTypedSpan& item, const bool dynamic, const std::string_view context) {
+            switch (item.kind) {
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET:
+                for (const SpectraDynamicSceneViewportSegmentSet& segment_set_view : abi_typed_span<SpectraDynamicSceneViewportSegmentSet>(item, SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET, std::format("{} viewport segment sets", context)))
+                    attachments.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, dynamic));
+                return;
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID:
+                for (const SpectraDynamicSceneViewportVoxelGrid& voxel_grid_view : abi_typed_span<SpectraDynamicSceneViewportVoxelGrid>(item, SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID, std::format("{} viewport voxel grids", context)))
+                    attachments.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, dynamic));
+                return;
+            case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL:
+                for (const SpectraDynamicSceneViewportCameraVisual& visual_view : abi_typed_span<SpectraDynamicSceneViewportCameraVisual>(item, SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL, std::format("{} viewport camera visuals", context)))
+                    attachments.viewport_camera_visuals.push_back(make_viewport_camera_visual(visual_view, dynamic));
+                return;
+            default:
+                throw std::runtime_error(std::format("{} item kind {} is not a debug attachment", context, dynamic_scene_item_kind_name(item.kind)));
+            }
         }
 
         void append_document_view(scene::Scene::Document& document, const SpectraDynamicSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
@@ -1132,67 +1161,111 @@ namespace spectra::scene_runtime {
             if (!coordinate_system_name.empty()) document.default_coordinate_system = scene::coordinate_system(coordinate_system_name);
             const std::string active_camera_name = abi_string(view.active_camera_name, "Dynamic scene document active camera name", true);
             if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
-            for (const SpectraDynamicSceneCamera& camera_view : abi_span(view.cameras, "Dynamic scene document cameras"))
-                document.cameras.push_back(make_camera(camera_view));
-            for (const SpectraDynamicSceneMaterial& material_view : abi_span(view.materials, "Dynamic scene document materials")) {
-                scene::Scene::PreviewMaterial material = make_material(material_view);
-                require_unique_name(material_names, material, "material");
-                document.materials.push_back(std::move(material));
+            const std::span<const SpectraDynamicSceneTypedSpan> items = abi_span(view.items, view.item_count, "Dynamic scene document items");
+            require_valid_typed_scene_items(items, dynamic_scene_document_item_kind_allowed, "Dynamic scene document");
+            const std::size_t mesh_begin = document.meshes.size();
+            const std::size_t sphere_begin = document.spheres.size();
+            const std::size_t point_cloud_begin = document.point_clouds.size();
+            const std::size_t volume_begin = document.volumes.size();
+            for (const SpectraDynamicSceneTypedSpan& item : items) {
+                switch (item.kind) {
+                case SPECTRA_DYNAMIC_SCENE_ITEM_MATERIAL:
+                    for (const SpectraDynamicSceneMaterial& material_view : abi_typed_span<SpectraDynamicSceneMaterial>(item, SPECTRA_DYNAMIC_SCENE_ITEM_MATERIAL, "Dynamic scene document materials")) {
+                        scene::Scene::PreviewMaterial material = make_material(material_view);
+                        require_unique_name(material_names, material, "material");
+                        document.materials.push_back(std::move(material));
+                    }
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_LIGHT:
+                    for (const SpectraDynamicSceneLight& light_view : abi_typed_span<SpectraDynamicSceneLight>(item, SPECTRA_DYNAMIC_SCENE_ITEM_LIGHT, "Dynamic scene document lights")) {
+                        scene::Scene::PreviewLight light = make_light(light_view);
+                        require_unique_name(light_names, light, "light");
+                        document.lights.push_back(std::move(light));
+                    }
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA:
+                    for (const SpectraDynamicSceneCamera& camera_view : abi_typed_span<SpectraDynamicSceneCamera>(item, SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA, "Dynamic scene document cameras"))
+                        document.cameras.push_back(make_camera(camera_view));
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_MESH:
+                    for (const SpectraDynamicSceneMesh& mesh_view : abi_typed_span<SpectraDynamicSceneMesh>(item, SPECTRA_DYNAMIC_SCENE_ITEM_MESH, "Dynamic scene document meshes"))
+                        document.meshes.push_back(make_mesh(mesh_view, false));
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE:
+                    for (const SpectraDynamicSceneSphere& sphere_view : abi_typed_span<SpectraDynamicSceneSphere>(item, SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE, "Dynamic scene document spheres"))
+                        document.spheres.push_back(make_sphere(sphere_view, false));
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD:
+                    for (const SpectraDynamicScenePointCloud& point_cloud_view : abi_typed_span<SpectraDynamicScenePointCloud>(item, SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD, "Dynamic scene document point clouds"))
+                        document.point_clouds.push_back(make_point_cloud(point_cloud_view, false));
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME:
+                    for (const SpectraDynamicSceneVolume& volume_view : abi_typed_span<SpectraDynamicSceneVolume>(item, SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME, "Dynamic scene document volumes"))
+                        document.volumes.push_back(make_volume(volume_view, false));
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET:
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID:
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL:
+                    append_debug_attachment_item(document.debug_attachments, item, false, "Dynamic scene document debug attachments");
+                    break;
+                default:
+                    throw std::runtime_error(std::format("Dynamic scene document item kind {} is unsupported", dynamic_scene_item_kind_name(item.kind)));
+                }
             }
-            for (const SpectraDynamicSceneLight& light_view : abi_span(view.lights, "Dynamic scene document lights")) {
-                scene::Scene::PreviewLight light = make_light(light_view);
-                require_unique_name(light_names, light, "light");
-                document.lights.push_back(std::move(light));
-            }
-            for (const SpectraDynamicSceneMesh& mesh_view : abi_span(view.meshes, "Dynamic scene document meshes")) {
-                scene::Scene::Mesh mesh = make_mesh(mesh_view, false);
-                require_material_reference(mesh, material_names, "mesh");
-                document.meshes.push_back(std::move(mesh));
-            }
-            for (const SpectraDynamicSceneSphere& sphere_view : abi_span(view.spheres, "Dynamic scene document spheres")) {
-                scene::Scene::Sphere sphere = make_sphere(sphere_view, false);
-                require_material_reference(sphere, material_names, "sphere");
-                document.spheres.push_back(std::move(sphere));
-            }
-            for (const SpectraDynamicScenePointCloud& point_cloud_view : abi_span(view.point_clouds, "Dynamic scene document point clouds")) {
-                scene::Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view, false);
-                require_material_reference(point_cloud, material_names, "point cloud");
-                document.point_clouds.push_back(std::move(point_cloud));
-            }
-            for (const SpectraDynamicSceneVolume& volume_view : abi_span(view.volumes, "Dynamic scene document volumes")) {
-                scene::Scene::VolumeGrid volume = make_volume(volume_view, false);
-                require_material_reference(volume, material_names, "volume");
-                document.volumes.push_back(std::move(volume));
-            }
-            document.debug_attachments = make_debug_attachment_set(view.debug_attachments, false, "Dynamic scene document debug attachments");
+            for (std::size_t index = mesh_begin; index < document.meshes.size(); ++index) require_material_reference(document.meshes[index], material_names, "mesh");
+            for (std::size_t index = sphere_begin; index < document.spheres.size(); ++index) require_material_reference(document.spheres[index], material_names, "sphere");
+            for (std::size_t index = point_cloud_begin; index < document.point_clouds.size(); ++index) require_material_reference(document.point_clouds[index], material_names, "point cloud");
+            for (std::size_t index = volume_begin; index < document.volumes.size(); ++index) require_material_reference(document.volumes[index], material_names, "volume");
         }
 
         [[nodiscard]] scene::Scene::FrameSnapshot make_frame_snapshot(const SpectraDynamicSceneFrameView& view, const scene::Scene::FrameInfo& frame, const std::set<std::string>& material_names) {
             if (view.struct_size != sizeof(SpectraDynamicSceneFrameView)) throw std::runtime_error("Dynamic scene frame view ABI size mismatch");
             scene::Scene::FrameSnapshot snapshot{.cursor = scene::Scene::make_frame_cursor(frame)};
-            for (const SpectraDynamicSceneMesh& mesh_view : abi_span(view.meshes, "Dynamic scene frame meshes")) {
-                scene::Scene::Mesh mesh = make_mesh(mesh_view, true);
-                require_material_reference(mesh, material_names, "mesh");
-                snapshot.meshes.push_back(std::move(mesh));
+            const std::span<const SpectraDynamicSceneTypedSpan> items = abi_span(view.items, view.item_count, "Dynamic scene frame items");
+            require_valid_typed_scene_items(items, dynamic_scene_frame_item_kind_allowed, "Dynamic scene frame");
+            for (const SpectraDynamicSceneTypedSpan& item : items) {
+                switch (item.kind) {
+                case SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA:
+                    for (const SpectraDynamicSceneCamera& camera_view : abi_typed_span<SpectraDynamicSceneCamera>(item, SPECTRA_DYNAMIC_SCENE_ITEM_CAMERA, "Dynamic scene frame cameras"))
+                        snapshot.cameras.push_back(make_camera(camera_view));
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_MESH:
+                    for (const SpectraDynamicSceneMesh& mesh_view : abi_typed_span<SpectraDynamicSceneMesh>(item, SPECTRA_DYNAMIC_SCENE_ITEM_MESH, "Dynamic scene frame meshes")) {
+                        scene::Scene::Mesh mesh = make_mesh(mesh_view, true);
+                        require_material_reference(mesh, material_names, "mesh");
+                        snapshot.meshes.push_back(std::move(mesh));
+                    }
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE:
+                    for (const SpectraDynamicSceneSphere& sphere_view : abi_typed_span<SpectraDynamicSceneSphere>(item, SPECTRA_DYNAMIC_SCENE_ITEM_SPHERE, "Dynamic scene frame spheres")) {
+                        scene::Scene::Sphere sphere = make_sphere(sphere_view, true);
+                        require_material_reference(sphere, material_names, "sphere");
+                        snapshot.spheres.push_back(std::move(sphere));
+                    }
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD:
+                    for (const SpectraDynamicScenePointCloud& point_cloud_view : abi_typed_span<SpectraDynamicScenePointCloud>(item, SPECTRA_DYNAMIC_SCENE_ITEM_POINT_CLOUD, "Dynamic scene frame point clouds")) {
+                        scene::Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view, true);
+                        require_material_reference(point_cloud, material_names, "point cloud");
+                        snapshot.point_clouds.push_back(std::move(point_cloud));
+                    }
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME:
+                    for (const SpectraDynamicSceneVolume& volume_view : abi_typed_span<SpectraDynamicSceneVolume>(item, SPECTRA_DYNAMIC_SCENE_ITEM_VOLUME, "Dynamic scene frame volumes")) {
+                        scene::Scene::VolumeGrid volume = make_volume(volume_view, true);
+                        require_material_reference(volume, material_names, "volume");
+                        snapshot.volumes.push_back(std::move(volume));
+                    }
+                    break;
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_SEGMENT_SET:
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_VOXEL_GRID:
+                case SPECTRA_DYNAMIC_SCENE_ITEM_VIEWPORT_CAMERA_VISUAL:
+                    append_debug_attachment_item(snapshot.debug_attachments, item, true, "Dynamic scene frame debug attachments");
+                    break;
+                default:
+                    throw std::runtime_error(std::format("Dynamic scene frame item kind {} is unsupported", dynamic_scene_item_kind_name(item.kind)));
+                }
             }
-            for (const SpectraDynamicSceneSphere& sphere_view : abi_span(view.spheres, "Dynamic scene frame spheres")) {
-                scene::Scene::Sphere sphere = make_sphere(sphere_view, true);
-                require_material_reference(sphere, material_names, "sphere");
-                snapshot.spheres.push_back(std::move(sphere));
-            }
-            for (const SpectraDynamicScenePointCloud& point_cloud_view : abi_span(view.point_clouds, "Dynamic scene frame point clouds")) {
-                scene::Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view, true);
-                require_material_reference(point_cloud, material_names, "point cloud");
-                snapshot.point_clouds.push_back(std::move(point_cloud));
-            }
-            for (const SpectraDynamicSceneVolume& volume_view : abi_span(view.volumes, "Dynamic scene frame volumes")) {
-                scene::Scene::VolumeGrid volume = make_volume(volume_view, true);
-                require_material_reference(volume, material_names, "volume");
-                snapshot.volumes.push_back(std::move(volume));
-            }
-            for (const SpectraDynamicSceneCamera& camera_view : abi_span(view.cameras, "Dynamic scene frame cameras"))
-                snapshot.cameras.push_back(make_camera(camera_view));
-            snapshot.debug_attachments = make_debug_attachment_set(view.debug_attachments, true, "Dynamic scene frame debug attachments");
             return snapshot;
         }
 

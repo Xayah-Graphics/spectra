@@ -76,11 +76,12 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `26`.
+- ABI version: `27`.
 - Exported symbol: `spectra_dynamic_scene_plugin`.
 - Windows export: `extern "C" __declspec(dllexport)`.
-- Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, entity kinds, projection kinds,
-  channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum declarations.
+- Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
+  projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
+  declarations.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
 - Use the platform default C calling convention.
 - Do not use `#pragma pack`, custom alignment, C++ standard library types, C++ exceptions, RTTI objects, allocators, or
@@ -89,10 +90,12 @@ declared source payload, and publishes
 ### Required ABI Declarations
 
 Dynamic scene plugins must declare the documented C ABI in the producer. Do not include Spectra headers, link
-Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. The plugin descriptor exposes generic
-controls/open metadata, an open-options schema, and `get_api`. Spectra renders the open schema in the Scene popover,
-loads the required scene capability table through `get_api("spectra.dynamic_scene.scene", 1)`, and loads the optional
-controls table through `get_api("spectra.dynamic_scene.controls", 1)`.
+Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. A producer only needs to declare payload
+structs for the scene item kinds it actually emits; Spectra's host implementation still supports the full item kind
+table. The plugin descriptor exposes generic controls/open metadata, an open-options schema, and `get_api`. Spectra
+renders the open schema in the Scene popover, loads the required scene capability table through
+`get_api("spectra.dynamic_scene.scene", 1)`, and loads the optional controls table through
+`get_api("spectra.dynamic_scene.controls", 1)`.
 
 ### Required Export
 
@@ -107,13 +110,22 @@ extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra
 ```
 
 The returned descriptor and every capability table returned by `get_api` must stay valid while the library is loaded.
-Set `abi_version` to `26`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
+Set `abi_version` to `27`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
 unsupported optional APIs. The scene API is required; missing it is an error.
 
 ### Data Rules
 
 - `id`, `title`, material names, light names, camera name, primitive names, and material references must be non-empty.
 - `frames_per_second` must be finite and positive.
+- Scene document and frame payloads are published through `SpectraDynamicSceneTypedSpan { kind, item_size, data, count }`
+  arrays. `kind` must be one item from the table below, `item_size` must equal `sizeof(payload_struct_for_kind)`,
+  `count` must be non-zero, and `data` must be non-null. Omit unused or empty item kinds instead of publishing empty
+  spans. A document or frame view must not contain duplicate item kinds. Document views may publish material, light,
+  camera, mesh, sphere, point cloud, volume grid, viewport segment set, viewport voxel grid, and viewport camera visual
+  items. Frame views may publish camera, mesh, sphere, point cloud, volume grid, viewport segment set, viewport voxel
+  grid, and viewport camera visual items; material and light items are document-only.
+- Scene item kind values: `0` material, `1` light, `2` camera, `3` mesh, `4` sphere, `5` point cloud, `6` volume grid,
+  `100` viewport segment set, `101` viewport voxel grid, and `102` viewport camera visual.
 - A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or
   `VolumeGrid`. Cameras, lights, controls telemetry, and debug attachments do not count as renderable scene entities.
 - `default_coordinate_system` may be empty or one of `SpectraYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
@@ -209,7 +221,7 @@ unsupported optional APIs. The scene API is required; missing it is an error.
   kinds are `1` opaque Win32 handle and `2` opaque file descriptor.
 - The producer may import that external memory into CUDA or another GPU runtime and write either compacted `uint32_t`
   viewport voxel cell indices or a dense bitfield, according to `source_kind`. The producer owns synchronization in
-  v26: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
+  v27: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
   There is no CPU voxel copy path and no semaphore fallback.
 - Host services `release_viewport_voxel_buffer` releases the Spectra resource. Producers must release imported
   GPU mappings and then release every requested resource before instance destruction or reset.
@@ -229,9 +241,10 @@ unsupported optional APIs. The scene API is required; missing it is an error.
   when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
   `frame_index` describe the host timeline state. Long-running source updates must honor `scene_delta_seconds` so
   Space/record/playback controls stay synchronized with source actions, telemetry, and preview availability.
-- Scene API `document` returns static scene data: materials, lights, camera, static primitives, and static debug
-  attachments.
-- Scene API `frame` returns dynamic primitives and dynamic debug attachments for the requested frame cursor.
+- Scene API `document` returns static scene data as typed item spans: materials, lights, cameras, static renderable
+  entities, and static debug attachments.
+- Scene API `frame` returns dynamic typed item spans for the requested frame cursor: dynamic cameras, renderable
+  entities, and debug attachments.
 - Scene API `last_error` returns the most recent instance-local error string; it may be empty. Controls API callbacks use
   the same instance error channel.
 - Controls API `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
