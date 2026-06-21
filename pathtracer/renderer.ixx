@@ -41,6 +41,7 @@ namespace spectra::pathtracer {
         class Renderer final {
         public:
             Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+            Renderer(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             ~Renderer() noexcept;
 
             Renderer(const Renderer& other) = delete;
@@ -51,10 +52,27 @@ namespace spectra::pathtracer {
             [[nodiscard]] static std::string_view name();
             void set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
             void attach(HostView host);
+            template <Host HostType>
+            void attach(HostType& host) {
+                this->attach(HostView{host});
+            }
             void detach() noexcept;
             void before_imgui_shutdown() noexcept;
             void after_imgui_created();
             [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
+            template <Host HostType, typename HostFrameContext>
+                requires requires(const HostFrameContext& frame) {
+                    { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
+                    { frame.image_index } -> std::convertible_to<std::uint32_t>;
+                    { frame.delta_seconds } -> std::convertible_to<double>;
+                }
+            [[nodiscard]] FrameResult begin_frame(HostType& host, const HostFrameContext& frame) {
+                return this->begin_frame(HostView{host}, FrameContext{
+                    .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
+                    .image_index   = static_cast<std::uint32_t>(frame.image_index),
+                    .delta_seconds = static_cast<double>(frame.delta_seconds),
+                });
+            }
             void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
         private:

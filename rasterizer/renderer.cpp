@@ -861,6 +861,20 @@ namespace spectra::rasterizer {
         this->synchronize_viewport_camera();
     }
 
+    Renderer::Renderer(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host) {
+        this->scene.workspace = scene_workspace_source.initial_workspace;
+        this->scene.workspace_source = std::move(scene_workspace_source);
+        this->scene.camera_workspace = std::move(camera_workspace);
+        this->scene.dynamic_host = std::move(dynamic_host);
+        if (this->scene.workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene workspace");
+        if (!this->scene.workspace_source.update) throw std::runtime_error("Spectra rasterizer scene workspace source requires an update callback");
+        if (this->scene.camera_workspace == nullptr) throw std::runtime_error("Spectra rasterizer requires a scene camera workspace");
+        if (this->scene.dynamic_host == nullptr) throw std::runtime_error("Spectra rasterizer requires dynamic scene host services");
+        static_cast<void>(this->scene.workspace->document());
+        this->ensure_viewport_camera_session();
+        this->synchronize_viewport_camera();
+    }
+
     Renderer::~Renderer() noexcept = default;
 
     std::string_view Renderer::name() {
@@ -890,6 +904,13 @@ namespace spectra::rasterizer {
         this->scene.observed_camera_revision = scene::CameraRevision{};
         this->viewport.camera_initialized = false;
         this->reset_viewport_camera_session();
+    }
+
+    void Renderer::sync_scene_workspace(const double delta_seconds) {
+        if (!this->scene.workspace_source.update) return;
+        std::shared_ptr<scene::Scene> current_workspace = this->scene.workspace_source.current(delta_seconds);
+        if (this->scene.workspace == current_workspace) return;
+        this->set_scene_workspace(std::move(current_workspace), this->scene.camera_workspace);
     }
 
     void Renderer::attach(HostView host) {
@@ -3882,6 +3903,7 @@ namespace spectra::rasterizer {
     }
 
     FrameResult Renderer::begin_frame(HostView host, const FrameContext& frame) {
+        this->sync_scene_workspace(frame.delta_seconds);
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         if (frame.frame_index >= this->host.frame_count) throw std::runtime_error("Spectra rasterizer frame index is out of range");
         this->consume_completed_screenshot(frame.frame_index);

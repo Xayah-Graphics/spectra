@@ -160,7 +160,7 @@ namespace spectra {
     };
 
     export template <typename Renderer, typename Host>
-    concept RendererFor = std::movable<std::remove_cvref_t<Renderer>> && requires(std::remove_cvref_t<Renderer>& renderer, Host& host, const FrameContext& frame, const vk::raii::CommandBuffer& commandBuffer) {
+    concept RendererFor = requires(std::remove_cvref_t<Renderer>& renderer, Host& host, const FrameContext& frame, const vk::raii::CommandBuffer& commandBuffer) {
         { std::remove_cvref_t<Renderer>::name() } -> std::convertible_to<std::string_view>;
         { renderer.attach(host) } -> std::same_as<void>;
         { renderer.detach() } noexcept -> std::same_as<void>;
@@ -188,8 +188,11 @@ namespace spectra {
         [[nodiscard]] vk::Extent2D swapchain_extent() const;
 
         template <typename Renderer>
-            requires RendererFor<Renderer, Spectra>
+            requires std::movable<std::remove_cvref_t<Renderer>> && RendererFor<Renderer, Spectra>
         void register_renderer(Renderer renderer);
+        template <typename Renderer>
+            requires RendererFor<Renderer, Spectra>
+        void register_renderer(std::shared_ptr<Renderer> renderer);
         template <typename PanelContribution>
             requires PanelLike<PanelContribution>
         void register_panel(PanelContribution panel);
@@ -248,9 +251,13 @@ namespace spectra {
     private:
         struct RendererSlot {
             template <typename Renderer>
+                requires std::movable<std::remove_cvref_t<Renderer>> && RendererFor<Renderer, Spectra>
+            explicit RendererSlot(Renderer renderer) : RendererSlot(std::make_shared<std::remove_cvref_t<Renderer>>(std::move(renderer))) {}
+
+            template <typename Renderer>
                 requires RendererFor<Renderer, Spectra>
-            explicit RendererSlot(Renderer renderer) {
-                auto instance               = std::make_shared<Renderer>(std::move(renderer));
+            explicit RendererSlot(std::shared_ptr<Renderer> instance) {
+                if (instance == nullptr) throw std::runtime_error("Spectra renderer instance must not be null");
                 this->name                  = std::string{std::remove_cvref_t<Renderer>::name()};
                 this->attach                = [instance](Spectra& spectra) { instance->attach(spectra); };
                 this->detach                = [instance]() noexcept { instance->detach(); };
@@ -405,8 +412,14 @@ namespace spectra {
     };
 
     template <typename Renderer>
-        requires RendererFor<Renderer, Spectra>
+        requires std::movable<std::remove_cvref_t<Renderer>> && RendererFor<Renderer, Spectra>
     void Spectra::register_renderer(Renderer renderer) {
+        this->store_renderer(RendererSlot{std::move(renderer)});
+    }
+
+    template <typename Renderer>
+        requires RendererFor<Renderer, Spectra>
+    void Spectra::register_renderer(std::shared_ptr<Renderer> renderer) {
         this->store_renderer(RendererSlot{std::move(renderer)});
     }
 

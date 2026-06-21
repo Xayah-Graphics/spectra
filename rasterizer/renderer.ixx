@@ -23,6 +23,7 @@ namespace spectra::rasterizer {
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
         Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
+        Renderer(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -34,10 +35,29 @@ namespace spectra::rasterizer {
         void set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
 
         void attach(HostView host);
+        template <Host HostType>
+        void attach(HostType& host) {
+            this->attach(HostView{host});
+        }
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
         [[nodiscard]] FrameResult begin_frame(HostView host, const FrameContext& frame);
+        template <Host HostType, typename HostFrameContext>
+            requires requires(const HostFrameContext& frame) {
+                { frame.frame_slot_index } -> std::convertible_to<std::uint32_t>;
+                { frame.image_index } -> std::convertible_to<std::uint32_t>;
+                { frame.frame_number } -> std::convertible_to<std::uint64_t>;
+                { frame.delta_seconds } -> std::convertible_to<double>;
+            }
+        [[nodiscard]] FrameResult begin_frame(HostType& host, const HostFrameContext& frame) {
+            return this->begin_frame(HostView{host}, FrameContext{
+                .frame_index   = static_cast<std::uint32_t>(frame.frame_slot_index),
+                .image_index   = static_cast<std::uint32_t>(frame.image_index),
+                .frame_number  = static_cast<std::uint64_t>(frame.frame_number),
+                .delta_seconds = static_cast<double>(frame.delta_seconds),
+            });
+        }
         void record_frame(const vk::raii::CommandBuffer& command_buffer);
 
     private:
@@ -400,6 +420,7 @@ namespace spectra::rasterizer {
         [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
+        void sync_scene_workspace(double delta_seconds);
         void rebuild_scene_ui_cache_if_needed();
         void prune_scene_selection_to_cache();
         [[nodiscard]] const SceneObjectRecord* scene_object_record(const SceneObjectKey& key) const;
@@ -510,6 +531,7 @@ namespace spectra::rasterizer {
 
         struct {
             std::shared_ptr<scene::Scene> workspace{};
+            scene::SceneWorkspaceSource workspace_source{};
             std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
             scene::CameraRevision observed_camera_revision{};
             std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host{};

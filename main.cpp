@@ -1062,147 +1062,20 @@ namespace {
         return title;
     }
 
-    class PathtracerRendererAdapter final {
-    public:
-        PathtracerRendererAdapter(std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
-            this->active_workspace = this->scene_controller->active_workspace();
-            this->renderer = std::make_unique<spectra::pathtracer::Renderer>(this->active_workspace, this->camera_workspace);
-        }
+    [[nodiscard]] spectra::scene::SceneWorkspaceSource make_scene_workspace_source(std::shared_ptr<spectra::scene_workspace::Controller> controller) {
+        return spectra::scene::SceneWorkspaceSource{
+            .initial_workspace = controller->active_workspace(),
+            .update = [controller](const double delta_seconds) {
+                static_cast<void>(controller->apply_pending_scene());
+                handle_scene_timeline_shortcuts(*controller);
+                controller->update_active_scene(delta_seconds);
+                return controller->active_workspace();
+            },
+        };
+    }
 
-        PathtracerRendererAdapter(const PathtracerRendererAdapter& other) = delete;
-        PathtracerRendererAdapter(PathtracerRendererAdapter&& other) noexcept = default;
-        PathtracerRendererAdapter& operator=(const PathtracerRendererAdapter& other) = delete;
-        PathtracerRendererAdapter& operator=(PathtracerRendererAdapter&& other) noexcept = default;
-        ~PathtracerRendererAdapter() noexcept = default;
-
-        [[nodiscard]] static std::string_view name() {
-            return spectra::pathtracer::Renderer::name();
-        }
-
-        void attach(spectra::Spectra& host) {
-            this->renderer->attach(spectra::pathtracer::HostView{host});
-        }
-
-        void detach() noexcept {
-            this->renderer->detach();
-        }
-
-        void before_imgui_shutdown() noexcept {
-            this->renderer->before_imgui_shutdown();
-        }
-
-        void after_imgui_created() {
-            this->renderer->after_imgui_created();
-        }
-
-        [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
-            static_cast<void>(this->scene_controller->apply_pending_scene());
-            this->sync_scene_workspace();
-            handle_scene_timeline_shortcuts(*this->scene_controller);
-            this->scene_controller->update_active_scene(frame.delta_seconds);
-            const spectra::pathtracer::FrameContext frame_context{
-                .frame_index = frame.frame_slot_index,
-                .image_index = frame.image_index,
-            };
-            spectra::pathtracer::FrameResult result = this->renderer->begin_frame(spectra::pathtracer::HostView{host}, frame_context);
-            return spectra::FrameResult{
-                .completion_semaphore = std::move(result.completion_semaphore),
-                .close_requested      = result.close_requested,
-                .window_detail        = std::move(result.window_detail),
-            };
-        }
-
-        void record_frame(const vk::raii::CommandBuffer& command_buffer) {
-            this->renderer->record_frame(command_buffer);
-        }
-
-    private:
-        void sync_scene_workspace() {
-            std::shared_ptr<spectra::scene::Scene> current_workspace = this->scene_controller->active_workspace();
-            if (this->active_workspace == current_workspace) return;
-            this->renderer->set_scene_workspace(current_workspace, this->camera_workspace);
-            this->active_workspace = std::move(current_workspace);
-        }
-
-        std::shared_ptr<spectra::scene_workspace::Controller> scene_controller{};
-        std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
-        std::shared_ptr<spectra::scene::Scene> active_workspace{};
-        std::unique_ptr<spectra::pathtracer::Renderer> renderer{};
-    };
-
-    class RasterizerRendererAdapter final {
-    public:
-        RasterizerRendererAdapter(std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host(std::move(dynamic_host)) {
-            this->active_workspace = this->scene_controller->active_workspace();
-            this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace, this->dynamic_host);
-        }
-
-        RasterizerRendererAdapter(const RasterizerRendererAdapter& other) = delete;
-        RasterizerRendererAdapter(RasterizerRendererAdapter&& other) noexcept = default;
-        RasterizerRendererAdapter& operator=(const RasterizerRendererAdapter& other) = delete;
-        RasterizerRendererAdapter& operator=(RasterizerRendererAdapter&& other) noexcept = default;
-        ~RasterizerRendererAdapter() noexcept = default;
-
-        [[nodiscard]] static std::string_view name() {
-            return spectra::rasterizer::Renderer::name();
-        }
-
-        void attach(spectra::Spectra& host) {
-            this->renderer->attach(spectra::rasterizer::HostView{host});
-        }
-
-        void detach() noexcept {
-            this->renderer->detach();
-        }
-
-        void before_imgui_shutdown() noexcept {
-            this->renderer->before_imgui_shutdown();
-        }
-
-        void after_imgui_created() {
-            this->renderer->after_imgui_created();
-        }
-
-        [[nodiscard]] spectra::FrameResult begin_frame(spectra::Spectra& host, const spectra::FrameContext& frame) {
-            static_cast<void>(this->scene_controller->apply_pending_scene());
-            this->sync_scene_workspace();
-            handle_scene_timeline_shortcuts(*this->scene_controller);
-            this->scene_controller->update_active_scene(frame.delta_seconds);
-            const spectra::rasterizer::FrameContext rasterizer_frame{
-                .frame_index   = frame.frame_slot_index,
-                .image_index   = frame.image_index,
-                .frame_number  = frame.frame_number,
-                .delta_seconds = frame.delta_seconds,
-            };
-            spectra::rasterizer::FrameResult result = this->renderer->begin_frame(spectra::rasterizer::HostView{host}, rasterizer_frame);
-            return spectra::FrameResult{
-                .completion_semaphore = std::move(result.completion_semaphore),
-                .close_requested      = result.close_requested,
-                .window_detail        = std::move(result.window_detail),
-            };
-        }
-
-        void record_frame(const vk::raii::CommandBuffer& command_buffer) {
-            this->renderer->record_frame(command_buffer);
-        }
-
-    private:
-        void sync_scene_workspace() {
-            std::shared_ptr<spectra::scene::Scene> current_workspace = this->scene_controller->active_workspace();
-            if (this->active_workspace == current_workspace) return;
-            this->renderer->set_scene_workspace(current_workspace, this->camera_workspace);
-            this->active_workspace = std::move(current_workspace);
-        }
-
-        std::shared_ptr<spectra::scene_workspace::Controller> scene_controller{};
-        std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
-        std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host{};
-        std::shared_ptr<spectra::scene::Scene> active_workspace{};
-        std::unique_ptr<spectra::rasterizer::Renderer> renderer{};
-    };
-
-    static_assert(spectra::RendererFor<PathtracerRendererAdapter, spectra::Spectra>);
-    static_assert(spectra::RendererFor<RasterizerRendererAdapter, spectra::Spectra>);
+    static_assert(spectra::RendererFor<spectra::pathtracer::Renderer, spectra::Spectra>);
+    static_assert(spectra::RendererFor<spectra::rasterizer::Renderer, spectra::Spectra>);
 
     [[nodiscard]] std::shared_ptr<spectra::scene::Scene> make_empty_scene_workspace() {
         spectra::scene::Scene::Document document{
@@ -1264,8 +1137,8 @@ int main(const int argc, const char* const* const argv) {
         auto dynamic_scene_controls = std::make_shared<DynamicSceneControlsState>();
 
         spectra::Spectra app{"Spectra"};
-        app.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, dynamic_host});
-        app.register_renderer(PathtracerRendererAdapter{scene_controller, camera_workspace});
+        app.register_renderer(std::make_shared<spectra::rasterizer::Renderer>(make_scene_workspace_source(scene_controller), camera_workspace, dynamic_host));
+        app.register_renderer(std::make_shared<spectra::pathtracer::Renderer>(make_scene_workspace_source(scene_controller), camera_workspace));
         app.set_workspace_title_provider([scene_controller, scene_status_state] { return make_scene_workspace_title(*scene_controller, *scene_status_state); });
         app.register_file_drop_handler(spectra::FileDropHandler{
             .id             = "scene.file-drop",
