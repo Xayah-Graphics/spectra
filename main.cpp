@@ -5,12 +5,10 @@ import spectra.rasterizer.renderer;
 import spectra.scene.ui;
 import xayah.util.xcli;
 
-namespace {
-    static_assert(spectra::pathtracer::Host<spectra::Spectra>);
-    static_assert(spectra::rasterizer::Host<spectra::Spectra>);
-    static_assert(spectra::RendererFor<spectra::pathtracer::Renderer, spectra::Spectra>);
-    static_assert(spectra::RendererFor<spectra::rasterizer::Renderer, spectra::Spectra>);
-} // namespace
+static_assert(spectra::pathtracer::Host<spectra::Spectra>);
+static_assert(spectra::rasterizer::Host<spectra::Spectra>);
+static_assert(spectra::RendererFor<spectra::pathtracer::Renderer, spectra::Spectra>);
+static_assert(spectra::RendererFor<spectra::rasterizer::Renderer, spectra::Spectra>);
 
 int main(const int argc, const char* const* const argv) {
     try {
