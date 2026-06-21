@@ -90,10 +90,8 @@ namespace {
     };
 
     int resize_input_text_callback(ImGuiInputTextCallbackData* data) {
-        if (data == nullptr) return 0;
         if (data->EventFlag != ImGuiInputTextFlags_CallbackResize) return 0;
         auto value = static_cast<std::vector<char>*>(data->UserData);
-        if (value == nullptr) return 0;
         value->resize(static_cast<std::size_t>(data->BufTextLen) + 1u);
         data->Buf = value->data();
         return 0;
@@ -231,10 +229,6 @@ namespace {
         return options;
     }
 
-    [[nodiscard]] bool dynamic_scene_controls_loaded(const DynamicSceneControlsState& controls) {
-        return controls.phase != DynamicSceneControlsPhase::None;
-    }
-
     [[nodiscard]] bool scene_status_visible(SceneWorkspaceStatusState& state) {
         if (state.status_text.empty()) return false;
         if (std::chrono::steady_clock::now() < state.status_expires) return true;
@@ -249,33 +243,9 @@ namespace {
         if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a PBRT scene file, not a folder");
         if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
         if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
-        const std::string id = absolute_path.string();
         const std::string title = scene_file_title(absolute_path);
-        const bool activated = controller.activate_static_scene(id, title, [absolute_path] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(absolute_path)); });
-        if (!activated) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load static scene" : controller.activation_error());
+        if (!controller.activate_static_scene(absolute_path.string(), title, [absolute_path] { return std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt_file(absolute_path)); })) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load static scene" : controller.activation_error());
         return title;
-    }
-
-    struct DynamicSceneActivationResult {
-        std::string id{};
-        std::string title{};
-    };
-
-    [[nodiscard]] DynamicSceneActivationResult activate_dynamic_scene_plugin(spectra::scene_workspace::Controller& controller, spectra::dynamic_scene::OpenRequest request) {
-        if (request.host == nullptr) request.host = controller.dynamic_host();
-        spectra::dynamic_scene::PluginSource plugin = spectra::dynamic_scene::load_plugin(std::move(request));
-        const std::string id = plugin.id;
-        const std::string title = plugin.title;
-        const bool activated = controller.activate_dynamic_scene(std::move(plugin.id), std::move(plugin.title), std::move(plugin.create_source));
-        if (!activated) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load dynamic scene plugin" : controller.activation_error());
-        return DynamicSceneActivationResult{
-            .id = id,
-            .title = title,
-        };
-    }
-
-    void clear_dynamic_scene_controls(DynamicSceneControlsState& controls) {
-        controls = DynamicSceneControlsState{};
     }
 
     void begin_dynamic_scene_controls(DynamicSceneControlsState& controls, spectra::dynamic_scene::PluginInfo plugin) {
@@ -402,14 +372,6 @@ namespace {
         }
     }
 
-    [[nodiscard]] std::string open_dynamic_scene_controls(spectra::scene_workspace::Controller& controller, DynamicSceneControlsState& controls, const std::filesystem::path& plugin_path) {
-        spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(plugin_path);
-        const std::string title = plugin.title;
-        controller.activate_empty_workspace();
-        begin_dynamic_scene_controls(controls, std::move(plugin));
-        return title;
-    }
-
     [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const std::span<const std::filesystem::path> paths) {
         if (paths.empty()) {
             set_scene_status(state, "Drop a PBRT scene or dynamic scene plugin to load it", true);
@@ -423,16 +385,17 @@ namespace {
             const std::filesystem::path& scene_path = paths.front();
             if (spectra::dynamic_scene::is_plugin_file(scene_path)) {
                 application.clear_imgui_rgba8_images("scene-control-image://");
-                const std::string title = open_dynamic_scene_controls(controller, controls, scene_path);
-                set_scene_status(state, std::format("Opened dynamic scene controls {}", title), false);
+                spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(scene_path);
+                set_scene_status(state, std::format("Opened dynamic scene controls {}", plugin.title), false);
+                controller.activate_empty_workspace();
+                begin_dynamic_scene_controls(controls, std::move(plugin));
                 application.open_command_popover("scene.dynamic-controls");
                 return true;
             }
-            const std::string title = activate_pbrt_scene_path(controller, scene_path);
+            set_scene_status(state, std::format("Loaded {}", activate_pbrt_scene_path(controller, scene_path)), false);
             application.clear_imgui_rgba8_images("scene-control-image://");
-            clear_dynamic_scene_controls(controls);
+            controls = DynamicSceneControlsState{};
             application.close_command_popover("scene.dynamic-controls");
-            set_scene_status(state, std::format("Loaded {}", title), false);
         } catch (const std::exception& error) {
             set_scene_status(state, error.what(), true);
         }
@@ -481,12 +444,11 @@ namespace {
         ImGui::PushID(editor.schema.key.c_str());
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(editor.schema.label.c_str());
-        const bool label_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
         if (!editor.schema.required && editor.schema.default_value.empty()) {
             ImGui::SameLine();
             changed = ImGui::Checkbox("Set", &editor.enabled) || changed;
         }
-        if (!editor.schema.description.empty() && label_hovered) ImGui::SetTooltip("%s", editor.schema.description.c_str());
+        if (!editor.schema.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", editor.schema.description.c_str());
         changed = draw_dynamic_scene_option_editor_value(editor) || changed;
         ImGui::PopID();
         return changed;
@@ -499,12 +461,11 @@ namespace {
         ImGui::TableSetColumnIndex(0);
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", editor.schema.label.c_str());
-        const bool label_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
         if (!editor.schema.required && editor.schema.default_value.empty()) {
             ImGui::SameLine();
             changed = ImGui::Checkbox("Set", &editor.enabled) || changed;
         }
-        if (!editor.schema.description.empty() && label_hovered) ImGui::SetTooltip("%s", editor.schema.description.c_str());
+        if (!editor.schema.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", editor.schema.description.c_str());
         ImGui::TableSetColumnIndex(1);
         changed = draw_dynamic_scene_option_editor_value(editor) || changed;
         ImGui::PopID();
@@ -839,8 +800,7 @@ namespace {
     }
 
     void draw_dynamic_control_setting_editor(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlSettingEditor& editor) {
-        const bool changed = draw_dynamic_scene_option_editor(editor.editor);
-        if (!dynamic_scene_option_editor_should_commit(editor.editor, changed)) return;
+        if (!dynamic_scene_option_editor_should_commit(editor.editor, draw_dynamic_scene_option_editor(editor.editor))) return;
         const std::string value = dynamic_scene_option_editor_value(editor.editor);
         try {
             controller.update_active_dynamic_scene_control_setting(editor.schema.key, value);
@@ -877,13 +837,15 @@ namespace {
             spectra::dynamic_scene::OpenRequest request{
                 .plugin_path = controls.plugin.path,
                 .options = collect_dynamic_scene_options(controls.editors),
+                .host = controller.dynamic_host(),
             };
-            const DynamicSceneActivationResult result = activate_dynamic_scene_plugin(controller, std::move(request));
+            spectra::dynamic_scene::PluginSource plugin = spectra::dynamic_scene::load_plugin(std::move(request));
+            controls.active_id = plugin.id;
+            controls.active_title = plugin.title;
+            if (!controller.activate_dynamic_scene(std::move(plugin.id), std::move(plugin.title), std::move(plugin.create_source))) throw std::runtime_error(controller.activation_error().empty() ? "Failed to load dynamic scene plugin" : controller.activation_error());
             controls.phase = DynamicSceneControlsPhase::Active;
-            controls.active_id = result.id;
-            controls.active_title = result.title;
             controls.error.clear();
-            set_scene_status(state, std::format("Loaded {}", result.title), false);
+            set_scene_status(state, std::format("Loaded {}", controls.active_title), false);
             return true;
         } catch (const std::exception& error) {
             controls.phase = DynamicSceneControlsPhase::Error;
@@ -896,13 +858,6 @@ namespace {
         }
     }
 
-    void close_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
-        application.clear_imgui_rgba8_images("scene-control-image://");
-        clear_dynamic_scene_controls(controls);
-        controller.activate_empty_workspace();
-        set_scene_status(state, "Closed dynamic scene controls", false);
-    }
-
     bool draw_dynamic_scene_controls_header(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlStatus* status) {
         const float button_size = ImGui::GetFrameHeight();
         ImGui::AlignTextToFramePadding();
@@ -911,7 +866,10 @@ namespace {
         const float close_x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - button_size;
         if (ImGui::GetCursorPosX() < close_x) ImGui::SameLine(close_x);
         if (ImGui::Button(ICON_MS_CLOSE "##close_dynamic_scene", ImVec2{button_size, button_size})) {
-            close_dynamic_scene_controls_panel(application, controller, state, controls);
+            application.clear_imgui_rgba8_images("scene-control-image://");
+            controls = DynamicSceneControlsState{};
+            controller.activate_empty_workspace();
+            set_scene_status(state, "Closed dynamic scene controls", false);
             return true;
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Close Scene");
@@ -989,7 +947,7 @@ namespace {
     }
 
     void draw_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
-        if (!dynamic_scene_controls_loaded(controls)) {
+        if (controls.phase == DynamicSceneControlsPhase::None) {
             ImGui::TextDisabled("%s", "No dynamic scene controls");
             return;
         }
@@ -1050,7 +1008,7 @@ namespace {
     }
 
     void draw_dynamic_scene_controls_overlay(spectra::scene_workspace::Controller& controller, DynamicSceneControlsState& controls, const ImVec2 viewport_position, const ImVec2 viewport_size) {
-        if (!dynamic_scene_controls_loaded(controls)) return;
+        if (controls.phase == DynamicSceneControlsPhase::None) return;
         if (!controller.has_active_dynamic_scene_controls()) return;
         spectra::dynamic_scene::ControlSnapshot snapshot{};
         try {
@@ -1107,8 +1065,6 @@ namespace {
     class PathtracerRendererAdapter final {
     public:
         PathtracerRendererAdapter(std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
-            if (this->scene_controller == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene controller");
-            if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
             this->active_workspace = this->scene_controller->active_workspace();
             this->renderer = std::make_unique<spectra::pathtracer::Renderer>(this->active_workspace, this->camera_workspace);
         }
@@ -1177,9 +1133,6 @@ namespace {
     class RasterizerRendererAdapter final {
     public:
         RasterizerRendererAdapter(std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host(std::move(dynamic_host)) {
-            if (this->scene_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene controller");
-            if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
-            if (this->dynamic_host == nullptr) throw std::runtime_error("Rasterizer adapter requires dynamic scene host services");
             this->active_workspace = this->scene_controller->active_workspace();
             this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace, this->dynamic_host);
         }
@@ -1279,62 +1232,6 @@ namespace {
         return std::make_shared<spectra::scene::Scene>(std::move(document));
     }
 
-    [[nodiscard]] std::optional<spectra::dynamic_scene::PluginInfo> load_cli_scene(spectra::scene_workspace::Controller& controller, const std::string& scene_id) {
-        const std::filesystem::path requested_path{scene_id};
-        if ((is_pbrt_scene_file(requested_path) || spectra::dynamic_scene::is_plugin_file(requested_path)) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
-        if (spectra::dynamic_scene::is_plugin_file(requested_path)) {
-            controller.activate_empty_workspace();
-            return spectra::dynamic_scene::inspect_plugin(requested_path);
-        }
-        if (std::filesystem::is_regular_file(requested_path)) {
-            static_cast<void>(activate_pbrt_scene_path(controller, requested_path));
-            return std::nullopt;
-        }
-        auto scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(scene_id));
-        const std::string title = scene->info().title;
-        if (!controller.activate_static_scene(scene_id, title, [scene = std::move(scene)] { return scene; })) throw std::runtime_error(controller.activation_error());
-        return std::nullopt;
-    }
-
-    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host, std::optional<spectra::dynamic_scene::PluginInfo> initial_dynamic_scene_plugin) {
-        if (scene_controller == nullptr) throw std::runtime_error("Renderer registration requires a scene controller");
-        if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
-        if (dynamic_host == nullptr) throw std::runtime_error("Renderer registration requires dynamic scene host services");
-        auto scene_status_state = std::make_shared<SceneWorkspaceStatusState>();
-        auto dynamic_scene_controls = std::make_shared<DynamicSceneControlsState>();
-        const bool open_initial_dynamic_scene_controls = initial_dynamic_scene_plugin.has_value();
-        if (initial_dynamic_scene_plugin.has_value()) {
-            const std::string title = initial_dynamic_scene_plugin->title;
-            begin_dynamic_scene_controls(*dynamic_scene_controls, std::move(*initial_dynamic_scene_plugin));
-            set_scene_status(*scene_status_state, std::format("Opened dynamic scene controls {}", title), false);
-        }
-        application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, dynamic_host});
-        application.register_renderer(PathtracerRendererAdapter{scene_controller, camera_workspace});
-        application.set_workspace_title_provider([scene_controller, scene_status_state] { return make_scene_workspace_title(*scene_controller, *scene_status_state); });
-        application.register_file_drop_handler(spectra::FileDropHandler{
-            .id             = "scene.file-drop",
-            .title          = "Scene File Drop",
-            .owner_renderer = {},
-            .handle         = [application = &application, scene_controller, scene_status_state, dynamic_scene_controls](const std::span<const std::filesystem::path> paths) { return handle_scene_file_drop(*application, *scene_controller, *scene_status_state, *dynamic_scene_controls, paths); },
-        });
-        application.register_command_popover(spectra::CommandPopover{
-            .id             = "scene.dynamic-controls",
-            .title          = "Scene",
-            .icon           = ICON_MS_DATASET,
-            .owner_renderer = {},
-            .shortcut_label = "F9",
-            .shortcut_key   = ImGuiKey_F9,
-            .draw           = [application = &application, scene_controller, scene_status_state, dynamic_scene_controls] { draw_dynamic_scene_controls_panel(*application, *scene_controller, *scene_status_state, *dynamic_scene_controls); },
-        });
-        application.register_viewport_overlay(spectra::ViewportOverlay{
-            .id             = "scene.dynamic-controls-overlay",
-            .title          = "Dynamic Scene Controls Overlay",
-            .owner_renderer = {},
-            .priority       = 0,
-            .draw           = [scene_controller, dynamic_scene_controls](const ImVec2 viewport_position, const ImVec2 viewport_size) { draw_dynamic_scene_controls_overlay(*scene_controller, *dynamic_scene_controls, viewport_position, viewport_size); },
-        });
-        if (open_initial_dynamic_scene_controls) application.open_command_popover("scene.dynamic-controls");
-    }
 } // namespace
 
 int main(const int argc, const char* const* const argv) {
@@ -1359,21 +1256,55 @@ int main(const int argc, const char* const* const argv) {
             return 0;
         }
 
-        const auto cli_validation = command.validate();
-        if (!cli_validation) {
-            std::cerr << "error: " << cli_validation.error() << std::endl;
-            return 2;
-        }
-
         spectra::scene_workspace::Registry scene_registry{};
         auto dynamic_host = std::make_shared<spectra::dynamic_scene::HostServiceRouter>();
         auto scene_controller = std::make_shared<spectra::scene_workspace::Controller>(std::move(scene_registry), make_empty_scene_workspace(), dynamic_host);
-        std::optional<spectra::dynamic_scene::PluginInfo> initial_dynamic_scene_plugin{};
-        if (scene_id.has_value()) initial_dynamic_scene_plugin = load_cli_scene(*scene_controller, *scene_id);
         auto camera_workspace = std::make_shared<spectra::scene::CameraWorkspace>();
+        auto scene_status_state = std::make_shared<SceneWorkspaceStatusState>();
+        auto dynamic_scene_controls = std::make_shared<DynamicSceneControlsState>();
 
         spectra::Spectra app{"Spectra"};
-        register_renderers(app, std::move(scene_controller), std::move(camera_workspace), std::move(dynamic_host), std::move(initial_dynamic_scene_plugin));
+        app.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, dynamic_host});
+        app.register_renderer(PathtracerRendererAdapter{scene_controller, camera_workspace});
+        app.set_workspace_title_provider([scene_controller, scene_status_state] { return make_scene_workspace_title(*scene_controller, *scene_status_state); });
+        app.register_file_drop_handler(spectra::FileDropHandler{
+            .id             = "scene.file-drop",
+            .title          = "Scene File Drop",
+            .owner_renderer = {},
+            .handle         = [application = &app, scene_controller, scene_status_state, dynamic_scene_controls](const std::span<const std::filesystem::path> paths) { return handle_scene_file_drop(*application, *scene_controller, *scene_status_state, *dynamic_scene_controls, paths); },
+        });
+        app.register_command_popover(spectra::CommandPopover{
+            .id             = "scene.dynamic-controls",
+            .title          = "Scene",
+            .icon           = ICON_MS_DATASET,
+            .owner_renderer = {},
+            .shortcut_label = "F9",
+            .shortcut_key   = ImGuiKey_F9,
+            .draw           = [application = &app, scene_controller, scene_status_state, dynamic_scene_controls] { draw_dynamic_scene_controls_panel(*application, *scene_controller, *scene_status_state, *dynamic_scene_controls); },
+        });
+        app.register_viewport_overlay(spectra::ViewportOverlay{
+            .id             = "scene.dynamic-controls-overlay",
+            .title          = "Dynamic Scene Controls Overlay",
+            .owner_renderer = {},
+            .priority       = 0,
+            .draw           = [scene_controller, dynamic_scene_controls](const ImVec2 viewport_position, const ImVec2 viewport_size) { draw_dynamic_scene_controls_overlay(*scene_controller, *dynamic_scene_controls, viewport_position, viewport_size); },
+        });
+        if (scene_id.has_value()) {
+            const std::filesystem::path requested_path{*scene_id};
+            if (spectra::dynamic_scene::is_plugin_file(requested_path)) {
+                scene_controller->activate_empty_workspace();
+                spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(requested_path);
+                set_scene_status(*scene_status_state, std::format("Opened dynamic scene controls {}", plugin.title), false);
+                begin_dynamic_scene_controls(*dynamic_scene_controls, std::move(plugin));
+                app.open_command_popover("scene.dynamic-controls");
+            } else if (is_pbrt_scene_file(requested_path) || std::filesystem::is_regular_file(requested_path)) {
+                static_cast<void>(activate_pbrt_scene_path(*scene_controller, requested_path));
+            } else {
+                auto scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(*scene_id));
+                const std::string title = scene->info().title;
+                if (!scene_controller->activate_static_scene(*scene_id, title, [scene = std::move(scene)] { return scene; })) throw std::runtime_error(scene_controller->activation_error());
+            }
+        }
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;
