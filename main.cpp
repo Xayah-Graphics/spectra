@@ -6,7 +6,8 @@ import std;
 import spectra;
 import spectra.pathtracer.renderer;
 import spectra.rasterizer.renderer;
-import spectra.scene_runtime;
+import spectra.scene_runtime.controller;
+import spectra.scene_runtime.plugin;
 import spectra.scene;
 import xayah.util.xcli;
 

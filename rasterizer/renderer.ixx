@@ -12,7 +12,7 @@ module;
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
-export import spectra.scene_runtime;
+export import spectra.scene_runtime.host_services;
 export import spectra.scene;
 
 import std;

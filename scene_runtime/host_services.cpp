@@ -1,7 +1,6 @@
-module spectra.scene_runtime;
+module spectra.scene_runtime.host_services;
 
 import std;
-import spectra.scene;
 
 namespace spectra::scene_runtime {
     void DynamicSceneHostServiceRouter::set_gpu_buffer_backend(std::move_only_function<DynamicSceneGpuBufferAllocation(const DynamicSceneGpuBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback) {

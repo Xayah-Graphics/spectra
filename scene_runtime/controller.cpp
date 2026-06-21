@@ -1,7 +1,8 @@
-module spectra.scene_runtime;
+module spectra.scene_runtime.controller;
 
 import std;
 import spectra.scene;
+import spectra.scene_runtime.host_services;
 
 namespace spectra::scene_runtime {
 

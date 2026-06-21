@@ -139,11 +139,23 @@ target_sources(
         spectra_scene_runtime
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        scene_runtime/scene_runtime.ixx
+        scene_runtime/contracts.ixx
+        scene_runtime/host_services.ixx
+        scene_runtime/controller.ixx
+        scene_runtime/plugin.ixx
+        PRIVATE
+        FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
+        scene_runtime/plugin_c_abi.ixx
+        scene_runtime/plugin_conversion.ixx
+        scene_runtime/plugin_native_library.ixx
+        scene_runtime/plugin_library.ixx
         PRIVATE
         scene_runtime/controller.cpp
         scene_runtime/host_services.cpp
-        scene_runtime/plugin_abi.cpp
+        scene_runtime/plugin.cpp
+        scene_runtime/plugin_conversion.cpp
+        scene_runtime/plugin_native_library.cpp
+        scene_runtime/plugin_library.cpp
 )
 target_link_libraries(spectra_scene_runtime PUBLIC spectra::scene PRIVATE ${CMAKE_DL_LIBS})
 set_property(TARGET spectra_scene_runtime PROPERTY CXX_MODULE_STD ON)

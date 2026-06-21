@@ -23,7 +23,7 @@ module spectra.rasterizer.renderer;
 
 import spectra.rasterizer.host;
 import spectra.rasterizer.math;
-import spectra.scene_runtime;
+import spectra.scene_runtime.host_services;
 import spectra.scene;
 import std;
 
