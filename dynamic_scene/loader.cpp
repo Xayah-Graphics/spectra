@@ -1,11 +1,11 @@
-module spectra.scene_runtime.plugin;
+module spectra.dynamic_scene.loader;
 
 import std;
-import spectra.scene_runtime.plugin_conversion;
-import spectra.scene_runtime.plugin_library;
+import spectra.dynamic_scene.plugin_decode;
+import spectra.dynamic_scene.plugin_library;
 
-namespace spectra::scene_runtime {
-    bool is_dynamic_scene_plugin_file(const std::filesystem::path& path) {
+namespace spectra::dynamic_scene {
+    bool is_plugin_file(const std::filesystem::path& path) {
 #if defined(_WIN32)
         return path_extension_is(path, ".dll");
 #elif defined(__APPLE__)
@@ -15,9 +15,9 @@ namespace spectra::scene_runtime {
 #endif
     }
 
-    DynamicScenePluginInfo inspect_dynamic_scene_plugin(const std::filesystem::path& plugin_path) {
-        DynamicScenePluginLibrary plugin{plugin_path};
-        return DynamicScenePluginInfo{
+    PluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {
+        PluginLibrary plugin{plugin_path};
+        return PluginInfo{
             .id = plugin.id(),
             .title = plugin.title(),
             .controls_panel_title = plugin.controls_panel_title(),
@@ -30,15 +30,15 @@ namespace spectra::scene_runtime {
         };
     }
 
-    DynamicScenePluginSource load_dynamic_scene_plugin(DynamicSceneOpenRequest request) {
-        std::shared_ptr<DynamicScenePluginLibrary> plugin = std::make_shared<DynamicScenePluginLibrary>(std::move(request.plugin_path), std::move(request.options), std::move(request.host_services));
-        return DynamicScenePluginSource{
+    PluginSource load_plugin(OpenRequest request) {
+        std::shared_ptr<PluginLibrary> plugin = std::make_shared<PluginLibrary>(std::move(request.plugin_path), std::move(request.options), std::move(request.host));
+        return PluginSource{
             .id = plugin->source_id(),
             .title = plugin->title(),
             .path = plugin->path(),
             .create_source = [plugin = std::move(plugin)] {
-                return make_dynamic_scene_plugin_source_instance(plugin);
+                return make_plugin_source_instance(plugin);
             },
         };
     }
-} // namespace spectra::scene_runtime
+} // namespace spectra::dynamic_scene

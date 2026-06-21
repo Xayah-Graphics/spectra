@@ -6,8 +6,8 @@ import std;
 import spectra;
 import spectra.pathtracer.renderer;
 import spectra.rasterizer.renderer;
-import spectra.scene_runtime.controller;
-import spectra.scene_runtime.plugin;
+import spectra.scene_workspace.controller;
+import spectra.dynamic_scene.loader;
 import spectra.scene;
 import xayah.util.xcli;
 
@@ -50,8 +50,8 @@ namespace {
         state.status_expires = std::chrono::steady_clock::now() + std::chrono::seconds{4};
     }
 
-    struct DynamicSceneOptionEditor {
-        spectra::scene_runtime::DynamicSceneOptionSchema schema{};
+    struct OptionEditor {
+        spectra::dynamic_scene::OptionSchema schema{};
         std::string text_value{};
         std::vector<char> text_buffer{};
         bool bool_value{};
@@ -60,14 +60,14 @@ namespace {
         bool enabled{true};
     };
 
-    struct DynamicSceneControlActionEditor {
-        spectra::scene_runtime::DynamicSceneControlAction action{};
-        std::vector<DynamicSceneOptionEditor> editors{};
+    struct ControlActionEditor {
+        spectra::dynamic_scene::ControlAction action{};
+        std::vector<OptionEditor> editors{};
     };
 
     struct DynamicSceneControlSettingEditor {
-        spectra::scene_runtime::DynamicSceneOptionSchema schema{};
-        DynamicSceneOptionEditor editor{};
+        spectra::dynamic_scene::OptionSchema schema{};
+        OptionEditor editor{};
         std::string committed_value{};
     };
 
@@ -80,9 +80,9 @@ namespace {
 
     struct DynamicSceneControlsState {
         DynamicSceneControlsPhase phase{DynamicSceneControlsPhase::None};
-        spectra::scene_runtime::DynamicScenePluginInfo plugin{};
-        std::vector<DynamicSceneOptionEditor> editors{};
-        std::vector<DynamicSceneControlActionEditor> action_editors{};
+        spectra::dynamic_scene::PluginInfo plugin{};
+        std::vector<OptionEditor> editors{};
+        std::vector<ControlActionEditor> action_editors{};
         std::vector<DynamicSceneControlSettingEditor> setting_editors{};
         std::string error{};
         std::string active_title{};
@@ -138,21 +138,21 @@ namespace {
         throw std::runtime_error(std::format("{} must be true or false", context));
     }
 
-    [[nodiscard]] bool choice_contains_value(const spectra::scene_runtime::DynamicSceneOptionSchema& schema, const std::string& value) {
-        return std::ranges::any_of(schema.choices, [&value](const spectra::scene_runtime::DynamicSceneOptionChoice& choice) { return choice.value == value; });
+    [[nodiscard]] bool choice_contains_value(const spectra::dynamic_scene::OptionSchema& schema, const std::string& value) {
+        return std::ranges::any_of(schema.choices, [&value](const spectra::dynamic_scene::OptionChoice& choice) { return choice.value == value; });
     }
 
-    [[nodiscard]] DynamicSceneOptionEditor make_dynamic_scene_option_editor(spectra::scene_runtime::DynamicSceneOptionSchema schema) {
-        DynamicSceneOptionEditor editor{.schema = std::move(schema)};
+    [[nodiscard]] OptionEditor make_dynamic_scene_option_editor(spectra::dynamic_scene::OptionSchema schema) {
+        OptionEditor editor{.schema = std::move(schema)};
         editor.enabled = editor.schema.required || !editor.schema.default_value.empty();
         switch (editor.schema.kind) {
-            case spectra::scene_runtime::DynamicSceneOptionKind::Bool:
+            case spectra::dynamic_scene::OptionKind::Bool:
                 editor.bool_value = editor.schema.default_value.empty() ? false : parse_bool_text(editor.schema.default_value, std::format("Dynamic scene open option '{}'", editor.schema.key));
                 break;
-            case spectra::scene_runtime::DynamicSceneOptionKind::Float:
+            case spectra::dynamic_scene::OptionKind::Float:
                 editor.float_value = editor.schema.default_value.empty() ? 0.0f : parse_float_text(editor.schema.default_value, std::format("Dynamic scene open option '{}'", editor.schema.key));
                 break;
-            case spectra::scene_runtime::DynamicSceneOptionKind::UnsignedInteger:
+            case spectra::dynamic_scene::OptionKind::UnsignedInteger:
                 editor.unsigned_value = editor.schema.default_value.empty() ? 0u : parse_unsigned_integer_text(editor.schema.default_value, std::format("Dynamic scene open option '{}'", editor.schema.key));
                 break;
             default:
@@ -163,14 +163,14 @@ namespace {
         return editor;
     }
 
-    [[nodiscard]] DynamicSceneControlActionEditor make_control_action_editor(spectra::scene_runtime::DynamicSceneControlAction action) {
-        DynamicSceneControlActionEditor editor{.action = std::move(action)};
+    [[nodiscard]] ControlActionEditor make_control_action_editor(spectra::dynamic_scene::ControlAction action) {
+        ControlActionEditor editor{.action = std::move(action)};
         editor.editors.reserve(editor.action.options.size());
-        for (const spectra::scene_runtime::DynamicSceneOptionSchema& schema : editor.action.options) editor.editors.push_back(make_dynamic_scene_option_editor(schema));
+        for (const spectra::dynamic_scene::OptionSchema& schema : editor.action.options) editor.editors.push_back(make_dynamic_scene_option_editor(schema));
         return editor;
     }
 
-    [[nodiscard]] DynamicSceneControlSettingEditor make_control_setting_editor(spectra::scene_runtime::DynamicSceneOptionSchema schema, std::string value) {
+    [[nodiscard]] DynamicSceneControlSettingEditor make_control_setting_editor(spectra::dynamic_scene::OptionSchema schema, std::string value) {
         schema.default_value = value;
         schema.required = true;
         DynamicSceneControlSettingEditor editor{};
@@ -180,30 +180,30 @@ namespace {
         return editor;
     }
 
-    [[nodiscard]] std::string dynamic_scene_option_editor_value(const DynamicSceneOptionEditor& editor) {
+    [[nodiscard]] std::string dynamic_scene_option_editor_value(const OptionEditor& editor) {
         switch (editor.schema.kind) {
-            case spectra::scene_runtime::DynamicSceneOptionKind::Bool:
+            case spectra::dynamic_scene::OptionKind::Bool:
                 return editor.bool_value ? "true" : "false";
-            case spectra::scene_runtime::DynamicSceneOptionKind::Float:
+            case spectra::dynamic_scene::OptionKind::Float:
                 return std::format("{:.9g}", editor.float_value);
-            case spectra::scene_runtime::DynamicSceneOptionKind::UnsignedInteger:
+            case spectra::dynamic_scene::OptionKind::UnsignedInteger:
                 return std::format("{}", editor.unsigned_value);
-            case spectra::scene_runtime::DynamicSceneOptionKind::Choice:
+            case spectra::dynamic_scene::OptionKind::Choice:
                 return editor.text_value;
             default:
                 return text_buffer_value(editor.text_buffer);
         }
     }
 
-    void set_dynamic_scene_option_editor_value(DynamicSceneOptionEditor& editor, const std::string_view value) {
+    void set_dynamic_scene_option_editor_value(OptionEditor& editor, const std::string_view value) {
         switch (editor.schema.kind) {
-            case spectra::scene_runtime::DynamicSceneOptionKind::Bool:
+            case spectra::dynamic_scene::OptionKind::Bool:
                 editor.bool_value = parse_bool_text(value, std::format("Dynamic scene option '{}'", editor.schema.key));
                 break;
-            case spectra::scene_runtime::DynamicSceneOptionKind::Float:
+            case spectra::dynamic_scene::OptionKind::Float:
                 editor.float_value = parse_float_text(value, std::format("Dynamic scene option '{}'", editor.schema.key));
                 break;
-            case spectra::scene_runtime::DynamicSceneOptionKind::UnsignedInteger:
+            case spectra::dynamic_scene::OptionKind::UnsignedInteger:
                 editor.unsigned_value = parse_unsigned_integer_text(value, std::format("Dynamic scene option '{}'", editor.schema.key));
                 break;
             default:
@@ -213,16 +213,16 @@ namespace {
         }
     }
 
-    [[nodiscard]] std::vector<spectra::scene_runtime::DynamicSceneOption> collect_dynamic_scene_options(const std::span<const DynamicSceneOptionEditor> editors) {
-        std::vector<spectra::scene_runtime::DynamicSceneOption> options{};
+    [[nodiscard]] std::vector<spectra::dynamic_scene::Option> collect_dynamic_scene_options(const std::span<const OptionEditor> editors) {
+        std::vector<spectra::dynamic_scene::Option> options{};
         options.reserve(editors.size());
-        for (const DynamicSceneOptionEditor& editor : editors) {
+        for (const OptionEditor& editor : editors) {
             if (!editor.schema.required && !editor.enabled) continue;
             std::string value = dynamic_scene_option_editor_value(editor);
             if (editor.schema.required && value.empty()) throw std::runtime_error(std::format("{} is required", editor.schema.label));
-            if (editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::Choice && !value.empty() && !choice_contains_value(editor.schema, value)) throw std::runtime_error(std::format("{} must be one of the declared choices", editor.schema.label));
-            if (!value.empty() || editor.schema.required || editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::Bool || editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::Float || editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::UnsignedInteger) {
-                options.push_back(spectra::scene_runtime::DynamicSceneOption{
+            if (editor.schema.kind == spectra::dynamic_scene::OptionKind::Choice && !value.empty() && !choice_contains_value(editor.schema, value)) throw std::runtime_error(std::format("{} must be one of the declared choices", editor.schema.label));
+            if (!value.empty() || editor.schema.required || editor.schema.kind == spectra::dynamic_scene::OptionKind::Bool || editor.schema.kind == spectra::dynamic_scene::OptionKind::Float || editor.schema.kind == spectra::dynamic_scene::OptionKind::UnsignedInteger) {
+                options.push_back(spectra::dynamic_scene::Option{
                     .key = editor.schema.key,
                     .value = std::move(value),
                 });
@@ -243,7 +243,7 @@ namespace {
         return false;
     }
 
-    [[nodiscard]] std::string activate_pbrt_scene_path(spectra::scene_runtime::SceneController& controller, const std::filesystem::path& scene_path) {
+    [[nodiscard]] std::string activate_pbrt_scene_path(spectra::scene_workspace::Controller& controller, const std::filesystem::path& scene_path) {
         if (scene_path.empty()) throw std::runtime_error("Drop a PBRT scene file into the window to load it");
         const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
         if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a PBRT scene file, not a folder");
@@ -261,9 +261,9 @@ namespace {
         std::string title{};
     };
 
-    [[nodiscard]] DynamicSceneActivationResult activate_dynamic_scene_plugin(spectra::scene_runtime::SceneController& controller, spectra::scene_runtime::DynamicSceneOpenRequest request) {
-        if (request.host_services == nullptr) request.host_services = controller.dynamic_host_services();
-        spectra::scene_runtime::DynamicScenePluginSource plugin = spectra::scene_runtime::load_dynamic_scene_plugin(std::move(request));
+    [[nodiscard]] DynamicSceneActivationResult activate_dynamic_scene_plugin(spectra::scene_workspace::Controller& controller, spectra::dynamic_scene::OpenRequest request) {
+        if (request.host == nullptr) request.host = controller.dynamic_host();
+        spectra::dynamic_scene::PluginSource plugin = spectra::dynamic_scene::load_plugin(std::move(request));
         const std::string id = plugin.id;
         const std::string title = plugin.title;
         const bool activated = controller.activate_dynamic_scene(std::move(plugin.id), std::move(plugin.title), std::move(plugin.create_source));
@@ -274,7 +274,7 @@ namespace {
         };
     }
 
-    [[nodiscard]] std::string activate_scene_path(spectra::scene_runtime::SceneController& controller, const std::filesystem::path& scene_path) {
+    [[nodiscard]] std::string activate_scene_path(spectra::scene_workspace::Controller& controller, const std::filesystem::path& scene_path) {
         if (is_pbrt_scene_file(scene_path)) return activate_pbrt_scene_path(controller, scene_path);
         throw std::runtime_error(std::format("{}: drop a .pbrt/.pbrt.gz scene or a dynamic scene plugin library", scene_path.string()));
     }
@@ -283,34 +283,34 @@ namespace {
         controls = DynamicSceneControlsState{};
     }
 
-    void begin_dynamic_scene_controls(DynamicSceneControlsState& controls, spectra::scene_runtime::DynamicScenePluginInfo plugin) {
+    void begin_dynamic_scene_controls(DynamicSceneControlsState& controls, spectra::dynamic_scene::PluginInfo plugin) {
         controls.plugin = std::move(plugin);
         controls.editors.clear();
         controls.editors.reserve(controls.plugin.open_options.size());
-        for (spectra::scene_runtime::DynamicSceneOptionSchema& schema : controls.plugin.open_options) controls.editors.push_back(make_dynamic_scene_option_editor(std::move(schema)));
-        std::ranges::stable_sort(controls.editors, [](const DynamicSceneOptionEditor& left, const DynamicSceneOptionEditor& right) {
+        for (spectra::dynamic_scene::OptionSchema& schema : controls.plugin.open_options) controls.editors.push_back(make_dynamic_scene_option_editor(std::move(schema)));
+        std::ranges::stable_sort(controls.editors, [](const OptionEditor& left, const OptionEditor& right) {
             if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
             if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
             return left.schema.key < right.schema.key;
         });
         controls.action_editors.clear();
         controls.action_editors.reserve(controls.plugin.control_actions.size());
-        for (const spectra::scene_runtime::DynamicSceneControlAction& action : controls.plugin.control_actions) {
+        for (const spectra::dynamic_scene::ControlAction& action : controls.plugin.control_actions) {
             controls.action_editors.push_back(make_control_action_editor(action));
-            std::ranges::stable_sort(controls.action_editors.back().editors, [](const DynamicSceneOptionEditor& left, const DynamicSceneOptionEditor& right) {
+            std::ranges::stable_sort(controls.action_editors.back().editors, [](const OptionEditor& left, const OptionEditor& right) {
                 if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
                 if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
                 return left.schema.key < right.schema.key;
             });
         }
-        std::ranges::stable_sort(controls.action_editors, [](const DynamicSceneControlActionEditor& left, const DynamicSceneControlActionEditor& right) {
+        std::ranges::stable_sort(controls.action_editors, [](const ControlActionEditor& left, const ControlActionEditor& right) {
             if (left.action.group != right.action.group) return left.action.group < right.action.group;
             if (left.action.priority != right.action.priority) return left.action.priority < right.action.priority;
             return left.action.id < right.action.id;
         });
         controls.setting_editors.clear();
         controls.setting_editors.reserve(controls.plugin.control_settings.size());
-        for (const spectra::scene_runtime::DynamicSceneOptionSchema& schema : controls.plugin.control_settings) controls.setting_editors.push_back(make_control_setting_editor(schema, schema.default_value));
+        for (const spectra::dynamic_scene::OptionSchema& schema : controls.plugin.control_settings) controls.setting_editors.push_back(make_control_setting_editor(schema, schema.default_value));
         std::ranges::stable_sort(controls.setting_editors, [](const DynamicSceneControlSettingEditor& left, const DynamicSceneControlSettingEditor& right) {
             if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
             if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
@@ -322,62 +322,62 @@ namespace {
         controls.phase = DynamicSceneControlsPhase::PluginLoaded;
     }
 
-    [[nodiscard]] std::string dynamic_scene_option_editor_group_label(const DynamicSceneOptionEditor& editor) {
+    [[nodiscard]] std::string dynamic_scene_option_editor_group_label(const OptionEditor& editor) {
         return editor.schema.group.empty() ? "Options" : editor.schema.group;
     }
 
-    [[nodiscard]] std::vector<std::string> dynamic_scene_option_editor_groups(const std::span<const DynamicSceneOptionEditor> editors) {
+    [[nodiscard]] std::vector<std::string> dynamic_scene_option_editor_groups(const std::span<const OptionEditor> editors) {
         std::vector<std::string> groups{};
-        for (const DynamicSceneOptionEditor& editor : editors) {
+        for (const OptionEditor& editor : editors) {
             const std::string group = dynamic_scene_option_editor_group_label(editor);
             if (!std::ranges::contains(groups, group)) groups.push_back(group);
         }
         return groups;
     }
 
-    [[nodiscard]] bool metric_has_placement(const spectra::scene_runtime::DynamicSceneControlMetric& metric, const std::uint32_t placement) {
+    [[nodiscard]] bool metric_has_placement(const spectra::dynamic_scene::ControlMetric& metric, const std::uint32_t placement) {
         return (metric.placement_flags & placement) != 0u;
     }
 
-    [[nodiscard]] std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> control_metrics_with_placement(const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::uint32_t placement) {
-        std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics{};
-        for (const spectra::scene_runtime::DynamicSceneControlMetric& metric : status.metrics) {
+    [[nodiscard]] std::vector<const spectra::dynamic_scene::ControlMetric*> control_metrics_with_placement(const spectra::dynamic_scene::ControlStatus& status, const std::uint32_t placement) {
+        std::vector<const spectra::dynamic_scene::ControlMetric*> metrics{};
+        for (const spectra::dynamic_scene::ControlMetric& metric : status.metrics) {
             if (metric_has_placement(metric, placement)) metrics.push_back(&metric);
         }
-        std::ranges::stable_sort(metrics, [](const spectra::scene_runtime::DynamicSceneControlMetric* left, const spectra::scene_runtime::DynamicSceneControlMetric* right) {
+        std::ranges::stable_sort(metrics, [](const spectra::dynamic_scene::ControlMetric* left, const spectra::dynamic_scene::ControlMetric* right) {
             if (left->priority != right->priority) return left->priority < right->priority;
             return left->key < right->key;
         });
         return metrics;
     }
 
-    [[nodiscard]] std::vector<DynamicSceneControlActionEditor*> control_action_editors_for_group(std::vector<DynamicSceneControlActionEditor>& editors, const std::uint32_t group) {
-        std::vector<DynamicSceneControlActionEditor*> selected{};
-        for (DynamicSceneControlActionEditor& editor : editors) {
+    [[nodiscard]] std::vector<ControlActionEditor*> control_action_editors_for_group(std::vector<ControlActionEditor>& editors, const std::uint32_t group) {
+        std::vector<ControlActionEditor*> selected{};
+        for (ControlActionEditor& editor : editors) {
             if (editor.action.group == group) selected.push_back(&editor);
         }
-        std::ranges::stable_sort(selected, [](const DynamicSceneControlActionEditor* left, const DynamicSceneControlActionEditor* right) {
+        std::ranges::stable_sort(selected, [](const ControlActionEditor* left, const ControlActionEditor* right) {
             if (left->action.priority != right->action.priority) return left->action.priority < right->action.priority;
             return left->action.id < right->action.id;
         });
         return selected;
     }
 
-    [[nodiscard]] std::vector<const spectra::scene_runtime::DynamicSceneControlScalarSeries*> scalar_series_for_group(const std::span<const spectra::scene_runtime::DynamicSceneControlScalarSeries> series, const std::uint32_t group) {
-        std::vector<const spectra::scene_runtime::DynamicSceneControlScalarSeries*> selected{};
-        for (const spectra::scene_runtime::DynamicSceneControlScalarSeries& chart : series) {
+    [[nodiscard]] std::vector<const spectra::dynamic_scene::ControlScalarSeries*> scalar_series_for_group(const std::span<const spectra::dynamic_scene::ControlScalarSeries> series, const std::uint32_t group) {
+        std::vector<const spectra::dynamic_scene::ControlScalarSeries*> selected{};
+        for (const spectra::dynamic_scene::ControlScalarSeries& chart : series) {
             if (chart.group == group) selected.push_back(&chart);
         }
-        std::ranges::stable_sort(selected, [](const spectra::scene_runtime::DynamicSceneControlScalarSeries* left, const spectra::scene_runtime::DynamicSceneControlScalarSeries* right) {
+        std::ranges::stable_sort(selected, [](const spectra::dynamic_scene::ControlScalarSeries* left, const spectra::dynamic_scene::ControlScalarSeries* right) {
             if (left->priority != right->priority) return left->priority < right->priority;
             return left->id < right->id;
         });
         return selected;
     }
 
-    [[nodiscard]] bool scalar_series_group_has_samples(const std::span<const spectra::scene_runtime::DynamicSceneControlScalarSeries> series, const std::uint32_t group) {
-        const std::vector<const spectra::scene_runtime::DynamicSceneControlScalarSeries*> selected_series = scalar_series_for_group(series, group);
-        return std::ranges::any_of(selected_series, [](const spectra::scene_runtime::DynamicSceneControlScalarSeries* chart) { return !chart->samples.empty(); });
+    [[nodiscard]] bool scalar_series_group_has_samples(const std::span<const spectra::dynamic_scene::ControlScalarSeries> series, const std::uint32_t group) {
+        const std::vector<const spectra::dynamic_scene::ControlScalarSeries*> selected_series = scalar_series_for_group(series, group);
+        return std::ranges::any_of(selected_series, [](const spectra::dynamic_scene::ControlScalarSeries* chart) { return !chart->samples.empty(); });
     }
 
     [[nodiscard]] std::string control_setting_group_label(const DynamicSceneControlSettingEditor& editor) {
@@ -393,16 +393,8 @@ namespace {
         return groups;
     }
 
-    void sort_control_setting_editors(std::vector<DynamicSceneControlSettingEditor>& editors) {
-        std::ranges::stable_sort(editors, [](const DynamicSceneControlSettingEditor& left, const DynamicSceneControlSettingEditor& right) {
-            if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
-            if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
-            return left.schema.key < right.schema.key;
-        });
-    }
-
-    void sync_dynamic_control_setting_editors(DynamicSceneControlsState& controls, const std::span<const spectra::scene_runtime::DynamicSceneControlSettingValue> settings) {
-        for (const spectra::scene_runtime::DynamicSceneControlSettingValue& setting : settings) {
+    void sync_dynamic_control_setting_editors(DynamicSceneControlsState& controls, const std::span<const spectra::dynamic_scene::ControlSettingValue> settings) {
+        for (const spectra::dynamic_scene::ControlSettingValue& setting : settings) {
             const auto editor = std::ranges::find_if(controls.setting_editors, [&setting](const DynamicSceneControlSettingEditor& candidate) { return candidate.schema.key == setting.key; });
             if (editor == controls.setting_editors.end()) continue;
             if (editor->committed_value != setting.value || dynamic_scene_option_editor_value(editor->editor) != setting.value) {
@@ -412,15 +404,15 @@ namespace {
         }
     }
 
-    [[nodiscard]] std::string open_dynamic_scene_controls(spectra::scene_runtime::SceneController& controller, DynamicSceneControlsState& controls, const std::filesystem::path& plugin_path) {
-        spectra::scene_runtime::DynamicScenePluginInfo plugin = spectra::scene_runtime::inspect_dynamic_scene_plugin(plugin_path);
+    [[nodiscard]] std::string open_dynamic_scene_controls(spectra::scene_workspace::Controller& controller, DynamicSceneControlsState& controls, const std::filesystem::path& plugin_path) {
+        spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(plugin_path);
         const std::string title = plugin.title;
         controller.activate_empty_workspace();
         begin_dynamic_scene_controls(controls, std::move(plugin));
         return title;
     }
 
-    [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const std::span<const std::filesystem::path> paths) {
+    [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const std::span<const std::filesystem::path> paths) {
         if (paths.empty()) {
             set_scene_status(state, "Drop a PBRT scene or dynamic scene plugin to load it", true);
             return true;
@@ -431,7 +423,7 @@ namespace {
         }
         try {
             const std::filesystem::path& scene_path = paths.front();
-            if (spectra::scene_runtime::is_dynamic_scene_plugin_file(scene_path)) {
+            if (spectra::dynamic_scene::is_plugin_file(scene_path)) {
                 application.clear_imgui_rgba8_images("scene-control-image://");
                 const std::string title = open_dynamic_scene_controls(controller, controls, scene_path);
                 set_scene_status(state, std::format("Opened dynamic scene controls {}", title), false);
@@ -449,15 +441,15 @@ namespace {
         return true;
     }
 
-    bool draw_dynamic_scene_option_editor_value(DynamicSceneOptionEditor& editor) {
+    bool draw_dynamic_scene_option_editor_value(OptionEditor& editor) {
         bool changed{};
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::BeginDisabled(!editor.enabled);
         switch (editor.schema.kind) {
-            case spectra::scene_runtime::DynamicSceneOptionKind::Choice: {
+            case spectra::dynamic_scene::OptionKind::Choice: {
                 const char* preview = editor.text_value.empty() ? "Select..." : editor.text_value.c_str();
                 if (ImGui::BeginCombo("##value", preview)) {
-                    for (const spectra::scene_runtime::DynamicSceneOptionChoice& choice : editor.schema.choices) {
+                    for (const spectra::dynamic_scene::OptionChoice& choice : editor.schema.choices) {
                         const bool selected = editor.text_value == choice.value;
                         if (ImGui::Selectable(choice.label.c_str(), selected)) {
                             editor.text_value = choice.value;
@@ -469,13 +461,13 @@ namespace {
                 }
                 break;
             }
-            case spectra::scene_runtime::DynamicSceneOptionKind::Bool:
+            case spectra::dynamic_scene::OptionKind::Bool:
                 changed = ImGui::Checkbox("##value", &editor.bool_value) || changed;
                 break;
-            case spectra::scene_runtime::DynamicSceneOptionKind::Float:
+            case spectra::dynamic_scene::OptionKind::Float:
                 changed = ImGui::InputFloat("##value", &editor.float_value, 0.0f, 0.0f, "%.6g", ImGuiInputTextFlags_EnterReturnsTrue) || changed;
                 break;
-            case spectra::scene_runtime::DynamicSceneOptionKind::UnsignedInteger:
+            case spectra::dynamic_scene::OptionKind::UnsignedInteger:
                 changed = ImGui::InputScalar("##value", ImGuiDataType_U64, &editor.unsigned_value, nullptr, nullptr, nullptr, ImGuiInputTextFlags_EnterReturnsTrue) || changed;
                 break;
             default:
@@ -486,7 +478,7 @@ namespace {
         return changed;
     }
 
-    bool draw_dynamic_scene_option_editor(DynamicSceneOptionEditor& editor) {
+    bool draw_dynamic_scene_option_editor(OptionEditor& editor) {
         bool changed{};
         ImGui::PushID(editor.schema.key.c_str());
         ImGui::AlignTextToFramePadding();
@@ -502,7 +494,7 @@ namespace {
         return changed;
     }
 
-    bool draw_dynamic_scene_option_editor_compact(DynamicSceneOptionEditor& editor) {
+    bool draw_dynamic_scene_option_editor_compact(OptionEditor& editor) {
         bool changed{};
         ImGui::PushID(editor.schema.key.c_str());
         ImGui::TableNextRow();
@@ -521,22 +513,22 @@ namespace {
         return changed;
     }
 
-    [[nodiscard]] bool dynamic_scene_option_editor_should_commit(const DynamicSceneOptionEditor& editor, const bool changed) {
+    [[nodiscard]] bool dynamic_scene_option_editor_should_commit(const OptionEditor& editor, const bool changed) {
         if (!changed) return false;
-        if (editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::Bool) return true;
-        if (editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::Choice) return true;
-        if (editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::Float || editor.schema.kind == spectra::scene_runtime::DynamicSceneOptionKind::UnsignedInteger) {
+        if (editor.schema.kind == spectra::dynamic_scene::OptionKind::Bool) return true;
+        if (editor.schema.kind == spectra::dynamic_scene::OptionKind::Choice) return true;
+        if (editor.schema.kind == spectra::dynamic_scene::OptionKind::Float || editor.schema.kind == spectra::dynamic_scene::OptionKind::UnsignedInteger) {
             if (ImGui::IsItemDeactivatedAfterEdit()) return true;
             return ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
         }
         return true;
     }
 
-    void draw_dynamic_scene_option_editors_grouped(const std::span<DynamicSceneOptionEditor> editors) {
+    void draw_dynamic_scene_option_editors_grouped(const std::span<OptionEditor> editors) {
         const std::vector<std::string> groups = dynamic_scene_option_editor_groups(editors);
         for (const std::string& group : groups) {
             ImGui::TextDisabled("%s", group.c_str());
-            for (DynamicSceneOptionEditor& editor : editors) {
+            for (OptionEditor& editor : editors) {
                 if (dynamic_scene_option_editor_group_label(editor) != group) continue;
                 static_cast<void>(draw_dynamic_scene_option_editor(editor));
                 ImGui::Spacing();
@@ -544,15 +536,15 @@ namespace {
         }
     }
 
-    void draw_dynamic_scene_option_editors_compact_grouped(const std::span<DynamicSceneOptionEditor> editors) {
+    void draw_dynamic_scene_option_editors_compact_grouped(const std::span<OptionEditor> editors) {
         const std::vector<std::string> groups = dynamic_scene_option_editor_groups(editors);
         for (const std::string& group : groups) {
             if (groups.size() > 1u) ImGui::TextDisabled("%s", group.c_str());
             ImGui::PushID(group.c_str());
-            if (ImGui::BeginTable("DynamicSceneOptionCompactTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+            if (ImGui::BeginTable("OptionCompactTable", 2, ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
-                for (DynamicSceneOptionEditor& editor : editors) {
+                for (OptionEditor& editor : editors) {
                     if (dynamic_scene_option_editor_group_label(editor) != group) continue;
                     static_cast<void>(draw_dynamic_scene_option_editor_compact(editor));
                 }
@@ -572,13 +564,13 @@ namespace {
         throw std::runtime_error("Unknown dynamic scene controls phase");
     }
 
-    [[nodiscard]] bool control_action_enabled(const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::string& action_id) {
-        const auto state = std::ranges::find_if(status.action_states, [&action_id](const spectra::scene_runtime::DynamicSceneControlActionState& action_state) { return action_state.action_id == action_id; });
+    [[nodiscard]] bool control_action_enabled(const spectra::dynamic_scene::ControlStatus& status, const std::string& action_id) {
+        const auto state = std::ranges::find_if(status.action_states, [&action_id](const spectra::dynamic_scene::ControlActionState& action_state) { return action_state.action_id == action_id; });
         return state != status.action_states.end() && state->enabled;
     }
 
-    [[nodiscard]] std::string_view control_action_disabled_reason(const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::string& action_id) {
-        const auto state = std::ranges::find_if(status.action_states, [&action_id](const spectra::scene_runtime::DynamicSceneControlActionState& action_state) { return action_state.action_id == action_id; });
+    [[nodiscard]] std::string_view control_action_disabled_reason(const spectra::dynamic_scene::ControlStatus& status, const std::string& action_id) {
+        const auto state = std::ranges::find_if(status.action_states, [&action_id](const spectra::dynamic_scene::ControlActionState& action_state) { return action_state.action_id == action_id; });
         if (state == status.action_states.end()) return "Action disabled by control status";
         if (state->disabled_reason.empty()) return "Action disabled by control status";
         return state->disabled_reason;
@@ -590,7 +582,7 @@ namespace {
         return ImVec4{0.68f, 0.73f, 0.80f, 1.0f};
     }
 
-    [[nodiscard]] ImVec4 control_metric_color(const spectra::scene_runtime::DynamicSceneControlMetric& metric) {
+    [[nodiscard]] ImVec4 control_metric_color(const spectra::dynamic_scene::ControlMetric& metric) {
         if (!metric.has_color) return ImVec4{0.72f, 0.79f, 0.86f, 1.0f};
         return ImVec4{metric.color[0], metric.color[1], metric.color[2], metric.color[3]};
     }
@@ -624,18 +616,18 @@ namespace {
         ImGui::TextDisabled("%s", label);
     }
 
-    void draw_dynamic_control_metric_row(const spectra::scene_runtime::DynamicSceneControlMetric& metric) {
+    void draw_dynamic_control_metric_row(const spectra::dynamic_scene::ControlMetric& metric) {
         ImGui::TextDisabled("%s", metric.label.c_str());
         ImGui::SameLine();
         ImGui::TextColored(control_metric_color(metric), "%s", metric.value.c_str());
     }
 
-    void draw_dynamic_control_summary(const spectra::scene_runtime::DynamicSceneControlStatus& status) {
-        const std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics = control_metrics_with_placement(status, spectra::scene_runtime::DynamicSceneControlPlacementPanelSummary);
+    void draw_dynamic_control_summary(const spectra::dynamic_scene::ControlStatus& status) {
+        const std::vector<const spectra::dynamic_scene::ControlMetric*> metrics = control_metrics_with_placement(status, spectra::dynamic_scene::ControlPlacementPanelSummary);
         if (metrics.empty()) return;
         if (ImGui::BeginTable("DynamicSceneControlSummaryMetrics", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
             std::size_t metric_index = 0u;
-            for (const spectra::scene_runtime::DynamicSceneControlMetric* metric : metrics) {
+            for (const spectra::dynamic_scene::ControlMetric* metric : metrics) {
                 if (metric_index % 2u == 0u) ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(static_cast<int>(metric_index % 2u));
                 ImGui::TextDisabled("%s", metric->label.c_str());
@@ -646,23 +638,23 @@ namespace {
         }
     }
 
-    void draw_dynamic_control_diagnostics(const spectra::scene_runtime::DynamicSceneControlStatus& status) {
-        const std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics = control_metrics_with_placement(status, spectra::scene_runtime::DynamicSceneControlPlacementPanelDetail);
+    void draw_dynamic_control_diagnostics(const spectra::dynamic_scene::ControlStatus& status) {
+        const std::vector<const spectra::dynamic_scene::ControlMetric*> metrics = control_metrics_with_placement(status, spectra::dynamic_scene::ControlPlacementPanelDetail);
         bool drew_metric = false;
-        for (const spectra::scene_runtime::DynamicSceneControlMetric* metric : metrics) {
-            if (metric_has_placement(*metric, spectra::scene_runtime::DynamicSceneControlPlacementPanelSummary)) continue;
+        for (const spectra::dynamic_scene::ControlMetric* metric : metrics) {
+            if (metric_has_placement(*metric, spectra::dynamic_scene::ControlPlacementPanelSummary)) continue;
             draw_dynamic_control_metric_row(*metric);
             drew_metric = true;
         }
         if (!drew_metric) ImGui::TextDisabled("%s", "No diagnostic metrics");
     }
 
-    void draw_dynamic_control_logs(const std::span<const spectra::scene_runtime::DynamicSceneControlLogEntry> logs) {
+    void draw_dynamic_control_logs(const std::span<const spectra::dynamic_scene::ControlLogEntry> logs) {
         ImGui::BeginChild("DynamicSceneControlsLogs", ImVec2{-1.0f, 180.0f}, true);
         if (logs.empty()) {
             ImGui::TextDisabled("%s", "No log entries");
         } else {
-            for (const spectra::scene_runtime::DynamicSceneControlLogEntry& entry : logs) {
+            for (const spectra::dynamic_scene::ControlLogEntry& entry : logs) {
                 const std::string line = std::format("{:>5} {:<9} {}", entry.sequence, entry.level, entry.message);
                 ImGui::TextColored(control_log_level_color(entry.level), "%s", line.c_str());
             }
@@ -671,17 +663,17 @@ namespace {
         ImGui::EndChild();
     }
 
-    [[nodiscard]] std::string control_image_cache_key(const DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlImage& image) {
+    [[nodiscard]] std::string control_image_cache_key(const DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlImage& image) {
         const std::string& controls_id = controls.active_id.empty() ? controls.plugin.id : controls.active_id;
         return std::format("scene-control-image://{}/{}", controls_id, image.id);
     }
 
-    void draw_dynamic_control_images(spectra::Spectra& application, const DynamicSceneControlsState& controls, const std::span<const spectra::scene_runtime::DynamicSceneControlImage> images) {
+    void draw_dynamic_control_images(spectra::Spectra& application, const DynamicSceneControlsState& controls, const std::span<const spectra::dynamic_scene::ControlImage> images) {
         if (images.empty()) {
             ImGui::TextDisabled("%s", "No preview images");
             return;
         }
-        for (const spectra::scene_runtime::DynamicSceneControlImage& image : images) {
+        for (const spectra::dynamic_scene::ControlImage& image : images) {
             ImGui::PushID(image.id.c_str());
             ImGui::TextUnformatted(image.label.c_str());
             if (!image.description.empty()) ImGui::TextWrapped("%s", image.description.c_str());
@@ -707,14 +699,14 @@ namespace {
         }
     }
 
-    void draw_dynamic_control_scalar_series(const std::span<const spectra::scene_runtime::DynamicSceneControlScalarSeries> series, const std::uint32_t group) {
-        const std::vector<const spectra::scene_runtime::DynamicSceneControlScalarSeries*> selected_series = scalar_series_for_group(series, group);
-        for (const spectra::scene_runtime::DynamicSceneControlScalarSeries* chart : selected_series) {
+    void draw_dynamic_control_scalar_series(const std::span<const spectra::dynamic_scene::ControlScalarSeries> series, const std::uint32_t group) {
+        const std::vector<const spectra::dynamic_scene::ControlScalarSeries*> selected_series = scalar_series_for_group(series, group);
+        for (const spectra::dynamic_scene::ControlScalarSeries* chart : selected_series) {
             if (chart->samples.empty()) continue;
             ImGui::PushID(chart->id.c_str());
             ImGui::TextUnformatted(chart->label.c_str());
             if (!chart->description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", chart->description.c_str());
-            const spectra::scene_runtime::DynamicSceneControlScalarSample& latest = chart->samples.back();
+            const spectra::dynamic_scene::ControlScalarSample& latest = chart->samples.back();
             const std::string latest_text = chart->unit.empty()
                 ? std::format("step {} | {:.6g}", latest.step, latest.value)
                 : std::format("step {} | {:.6g} {}", latest.step, latest.value, chart->unit);
@@ -729,7 +721,7 @@ namespace {
             std::vector<float> values{};
             values.reserve(chart->samples.size());
             bool values_fit_imgui = true;
-            for (const spectra::scene_runtime::DynamicSceneControlScalarSample& sample : chart->samples) {
+            for (const spectra::dynamic_scene::ControlScalarSample& sample : chart->samples) {
                 const float value = static_cast<float>(sample.value);
                 if (!std::isfinite(value)) {
                     values_fit_imgui = false;
@@ -752,13 +744,13 @@ namespace {
     }
 
     [[nodiscard]] int push_dynamic_control_action_button_style(const std::uint32_t style) {
-        if (style == spectra::scene_runtime::DynamicSceneControlActionStylePrimary) {
+        if (style == spectra::dynamic_scene::ControlActionStylePrimary) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.10f, 0.34f, 0.38f, 1.0f});
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.13f, 0.45f, 0.50f, 1.0f});
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.10f, 0.56f, 0.60f, 1.0f});
             return 3;
         }
-        if (style == spectra::scene_runtime::DynamicSceneControlActionStyleDanger) {
+        if (style == spectra::dynamic_scene::ControlActionStyleDanger) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.32f, 0.12f, 0.12f, 1.0f});
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.46f, 0.16f, 0.15f, 1.0f});
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.60f, 0.18f, 0.16f, 1.0f});
@@ -767,9 +759,9 @@ namespace {
         return 0;
     }
 
-    bool execute_dynamic_control_action_editor(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlActionEditor& editor) {
+    bool execute_dynamic_control_action_editor(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, ControlActionEditor& editor) {
         try {
-            const std::vector<spectra::scene_runtime::DynamicSceneOption> options = collect_dynamic_scene_options(editor.editors);
+            const std::vector<spectra::dynamic_scene::Option> options = collect_dynamic_scene_options(editor.editors);
             controller.execute_active_dynamic_scene_control_action(editor.action.id, options);
             controls.phase = DynamicSceneControlsPhase::Active;
             controls.error.clear();
@@ -783,7 +775,7 @@ namespace {
         }
     }
 
-    bool draw_dynamic_control_action_button(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlActionEditor& editor, const spectra::scene_runtime::DynamicSceneControlStatus& status, const ImVec2 size) {
+    bool draw_dynamic_control_action_button(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, ControlActionEditor& editor, const spectra::dynamic_scene::ControlStatus& status, const ImVec2 size) {
         ImGui::PushID(editor.action.id.c_str());
         const bool enabled = control_action_enabled(status, editor.action.id);
         const std::string_view disabled_reason = control_action_disabled_reason(status, editor.action.id);
@@ -799,7 +791,7 @@ namespace {
         return clicked;
     }
 
-    void draw_dynamic_control_action_editor(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlActionEditor& editor, const spectra::scene_runtime::DynamicSceneControlStatus& status) {
+    void draw_dynamic_control_action_editor(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, ControlActionEditor& editor, const spectra::dynamic_scene::ControlStatus& status) {
         if (editor.editors.empty()) {
             static_cast<void>(draw_dynamic_control_action_button(controller, state, controls, editor, status, ImVec2{-1.0f, 0.0f}));
             return;
@@ -824,7 +816,7 @@ namespace {
         ImGui::PopID();
     }
 
-    void draw_dynamic_control_action_button_row(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::vector<DynamicSceneControlActionEditor*>& editors) {
+    void draw_dynamic_control_action_button_row(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlStatus& status, const std::vector<ControlActionEditor*>& editors) {
         if (editors.empty()) return;
         constexpr std::size_t max_columns = 3u;
         const std::size_t columns = std::min(max_columns, editors.size());
@@ -837,15 +829,15 @@ namespace {
         }
     }
 
-    void draw_dynamic_control_action_group(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::uint32_t group) {
-        const std::vector<DynamicSceneControlActionEditor*> editors = control_action_editors_for_group(controls.action_editors, group);
+    void draw_dynamic_control_action_group(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlStatus& status, const std::uint32_t group) {
+        const std::vector<ControlActionEditor*> editors = control_action_editors_for_group(controls.action_editors, group);
         if (editors.empty()) {
             ImGui::TextDisabled("%s", "No actions");
             return;
         }
-        std::vector<DynamicSceneControlActionEditor*> immediate_editors{};
-        std::vector<DynamicSceneControlActionEditor*> form_editors{};
-        for (DynamicSceneControlActionEditor* editor : editors) {
+        std::vector<ControlActionEditor*> immediate_editors{};
+        std::vector<ControlActionEditor*> form_editors{};
+        for (ControlActionEditor* editor : editors) {
             if (editor->editors.empty()) immediate_editors.push_back(editor);
             else form_editors.push_back(editor);
         }
@@ -853,11 +845,11 @@ namespace {
             draw_dynamic_control_action_button_row(controller, state, controls, status, immediate_editors);
             if (!form_editors.empty()) ImGui::Spacing();
         }
-        for (DynamicSceneControlActionEditor* editor : form_editors) draw_dynamic_control_action_editor(controller, state, controls, *editor, status);
+        for (ControlActionEditor* editor : form_editors) draw_dynamic_control_action_editor(controller, state, controls, *editor, status);
         if (form_editors.empty() && immediate_editors.empty()) ImGui::TextDisabled("%s", "No actions");
     }
 
-    void draw_dynamic_control_setting_editor(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlSettingEditor& editor) {
+    void draw_dynamic_control_setting_editor(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlSettingEditor& editor) {
         const bool changed = draw_dynamic_scene_option_editor(editor.editor);
         if (!dynamic_scene_option_editor_should_commit(editor.editor, changed)) return;
         const std::string value = dynamic_scene_option_editor_value(editor.editor);
@@ -875,7 +867,7 @@ namespace {
         }
     }
 
-    void draw_dynamic_control_settings(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
+    void draw_dynamic_control_settings(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
         const std::vector<std::string> groups = control_setting_groups(controls.setting_editors);
         if (groups.empty()) {
             ImGui::TextDisabled("%s", "No live settings");
@@ -891,13 +883,13 @@ namespace {
         }
     }
 
-    bool draw_dynamic_scene_open_controls(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
+    bool draw_dynamic_scene_open_controls(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
         if (!controls.plugin.open_action_description.empty()) ImGui::TextWrapped("%s", controls.plugin.open_action_description.c_str());
         if (!controls.editors.empty()) draw_dynamic_scene_option_editors_grouped(controls.editors);
         if (!ImGui::Button(controls.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) return false;
         try {
             application.clear_imgui_rgba8_images("scene-control-image://");
-            spectra::scene_runtime::DynamicSceneOpenRequest request{
+            spectra::dynamic_scene::OpenRequest request{
                 .plugin_path = controls.plugin.path,
                 .options = collect_dynamic_scene_options(controls.editors),
             };
@@ -919,14 +911,14 @@ namespace {
         }
     }
 
-    void close_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
+    void close_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
         application.clear_imgui_rgba8_images("scene-control-image://");
         clear_dynamic_scene_controls(controls);
         controller.activate_empty_workspace();
         set_scene_status(state, "Closed dynamic scene controls", false);
     }
 
-    bool draw_dynamic_scene_controls_header(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus* status) {
+    bool draw_dynamic_scene_controls_header(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlStatus* status) {
         const float button_size = ImGui::GetFrameHeight();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(controls.plugin.controls_panel_title.c_str());
@@ -960,54 +952,54 @@ namespace {
         ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
     }
 
-    void draw_dynamic_scene_training_section(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status) {
+    void draw_dynamic_scene_training_section(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlStatus& status) {
         draw_dynamic_scene_section_title("Training");
-        draw_dynamic_control_action_group(controller, state, controls, status, spectra::scene_runtime::DynamicSceneControlActionGroupRun);
+        draw_dynamic_control_action_group(controller, state, controls, status, spectra::dynamic_scene::ControlActionGroupRun);
     }
 
-    void draw_dynamic_scene_preview_section(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlSnapshot& snapshot) {
+    void draw_dynamic_scene_preview_section(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlSnapshot& snapshot) {
         draw_dynamic_scene_section_title("Preview");
-        draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupPreview);
+        draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::dynamic_scene::ControlActionGroupPreview);
         if (!snapshot.images.empty()) {
             ImGui::Spacing();
             draw_dynamic_control_images(application, controls, snapshot.images);
         }
-        if (scalar_series_group_has_samples(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupPreview)) {
+        if (scalar_series_group_has_samples(snapshot.scalar_series, spectra::dynamic_scene::ControlActionGroupPreview)) {
             ImGui::Spacing();
-            draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupPreview);
+            draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::dynamic_scene::ControlActionGroupPreview);
         }
     }
 
-    void draw_dynamic_scene_diagnostics_section(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlSnapshot& snapshot) {
+    void draw_dynamic_scene_diagnostics_section(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::dynamic_scene::ControlSnapshot& snapshot) {
         draw_dynamic_scene_section_title("Diagnostics");
         draw_dynamic_control_settings(controller, state, controls);
-        const bool has_debug_actions = !control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupDebug).empty();
+        const bool has_debug_actions = !control_action_editors_for_group(controls.action_editors, spectra::dynamic_scene::ControlActionGroupDebug).empty();
         if (has_debug_actions) {
             ImGui::Spacing();
-            draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupDebug);
+            draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::dynamic_scene::ControlActionGroupDebug);
         }
-        if (!control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupUtility).empty()) {
+        if (!control_action_editors_for_group(controls.action_editors, spectra::dynamic_scene::ControlActionGroupUtility).empty()) {
             ImGui::Spacing();
             ImGui::TextDisabled("%s", "Utility");
-            draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupUtility);
+            draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::dynamic_scene::ControlActionGroupUtility);
         }
         ImGui::Spacing();
         draw_dynamic_control_diagnostics(snapshot.status);
     }
 
-    void draw_dynamic_scene_log_section(const std::span<const spectra::scene_runtime::DynamicSceneControlLogEntry> logs) {
+    void draw_dynamic_scene_log_section(const std::span<const spectra::dynamic_scene::ControlLogEntry> logs) {
         if (logs.empty()) return;
         draw_dynamic_scene_section_title("Log");
         draw_dynamic_control_logs(logs);
     }
 
-    void draw_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
+    void draw_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
         if (!dynamic_scene_controls_loaded(controls)) {
             ImGui::TextDisabled("%s", "No dynamic scene controls");
             return;
         }
 
-        std::optional<spectra::scene_runtime::DynamicSceneControlSnapshot> active_snapshot{};
+        std::optional<spectra::dynamic_scene::ControlSnapshot> active_snapshot{};
         if (controls.phase == DynamicSceneControlsPhase::Active || controls.phase == DynamicSceneControlsPhase::Error) {
             try {
                 if (controller.has_active_dynamic_scene_controls()) {
@@ -1020,7 +1012,7 @@ namespace {
             }
         }
 
-        const spectra::scene_runtime::DynamicSceneControlStatus* active_status = active_snapshot.has_value() ? &active_snapshot->status : nullptr;
+        const spectra::dynamic_scene::ControlStatus* active_status = active_snapshot.has_value() ? &active_snapshot->status : nullptr;
         if (draw_dynamic_scene_controls_header(application, controller, state, controls, active_status)) return;
         draw_dynamic_scene_controls_error(controls);
         ImGui::Spacing();
@@ -1032,26 +1024,26 @@ namespace {
             return;
         }
 
-        const spectra::scene_runtime::DynamicSceneControlSnapshot& snapshot = *active_snapshot;
+        const spectra::dynamic_scene::ControlSnapshot& snapshot = *active_snapshot;
         draw_dynamic_control_summary(snapshot.status);
         ImGui::Spacing();
         ImGui::Separator();
         draw_dynamic_scene_training_section(controller, state, controls, snapshot.status);
-        if (scalar_series_group_has_samples(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupRun)) {
+        if (scalar_series_group_has_samples(snapshot.scalar_series, spectra::dynamic_scene::ControlActionGroupRun)) {
             draw_dynamic_scene_section_title("Telemetry");
-            draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupRun);
+            draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::dynamic_scene::ControlActionGroupRun);
         }
         draw_dynamic_scene_preview_section(application, controller, state, controls, snapshot);
         draw_dynamic_scene_diagnostics_section(controller, state, controls, snapshot);
         draw_dynamic_scene_log_section(snapshot.logs);
     }
 
-    [[nodiscard]] std::string dynamic_scene_overlay_text(const spectra::scene_runtime::DynamicSceneControlStatus& status) {
+    [[nodiscard]] std::string dynamic_scene_overlay_text(const spectra::dynamic_scene::ControlStatus& status) {
         std::string text = status.phase;
         if (!status.headline.empty()) text += std::format(" | {}", status.headline);
-        const std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics = control_metrics_with_placement(status, spectra::scene_runtime::DynamicSceneControlPlacementViewportOverlay);
+        const std::vector<const spectra::dynamic_scene::ControlMetric*> metrics = control_metrics_with_placement(status, spectra::dynamic_scene::ControlPlacementViewportOverlay);
         std::size_t shown_metric_count = 0u;
-        for (const spectra::scene_runtime::DynamicSceneControlMetric* metric : metrics) {
+        for (const spectra::dynamic_scene::ControlMetric* metric : metrics) {
             if (shown_metric_count >= 5u) break;
             text += std::format(" | {} {}", metric->label, metric->value);
             ++shown_metric_count;
@@ -1061,10 +1053,10 @@ namespace {
         return text;
     }
 
-    void draw_dynamic_scene_controls_overlay(spectra::scene_runtime::SceneController& controller, DynamicSceneControlsState& controls, const ImVec2 viewport_position, const ImVec2 viewport_size) {
+    void draw_dynamic_scene_controls_overlay(spectra::scene_workspace::Controller& controller, DynamicSceneControlsState& controls, const ImVec2 viewport_position, const ImVec2 viewport_size) {
         if (!dynamic_scene_controls_loaded(controls)) return;
         if (!controller.has_active_dynamic_scene_controls()) return;
-        spectra::scene_runtime::DynamicSceneControlSnapshot snapshot{};
+        spectra::dynamic_scene::ControlSnapshot snapshot{};
         try {
             snapshot = controller.active_dynamic_scene_control_snapshot();
         } catch (const std::exception& error) {
@@ -1086,7 +1078,7 @@ namespace {
         draw_list->AddText(ImVec2{chip_min.x + padding.x, chip_min.y + padding.y}, ImGui::GetColorU32(ImVec4{0.82f, 0.92f, 0.94f, 1.0f}), text.c_str());
     }
 
-    void handle_scene_timeline_shortcuts(spectra::scene_runtime::SceneController& controller) {
+    void handle_scene_timeline_shortcuts(spectra::scene_workspace::Controller& controller) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.WantTextInput) return;
         if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
@@ -1094,18 +1086,18 @@ namespace {
         if (controller.active_scene_timeline_enabled() && ImGui::IsKeyPressed(ImGuiKey_R, false)) controller.request_active_scene_timeline_reset();
     }
 
-    [[nodiscard]] std::string scene_workspace_tooltip(const spectra::scene_runtime::SceneEntry* selected_entry, const bool pending_switch) {
+    [[nodiscard]] std::string scene_workspace_tooltip(const spectra::scene_workspace::Entry* selected_entry, const bool pending_switch) {
         if (selected_entry == nullptr) return "Empty Scene\nDrop a PBRT scene or dynamic scene plugin into the window to load it";
         return std::format(
             "{}\n{}{}\nDrop a PBRT scene or dynamic scene plugin into the window to replace it",
             selected_entry->id,
-            selected_entry->kind == spectra::scene_runtime::SceneEntryKind::Static ? "Static" : "Dynamic",
+            selected_entry->kind == spectra::scene_workspace::EntryKind::Static ? "Static" : "Dynamic",
             pending_switch ? "\nSwitching on next frame" : "");
     }
 
-    [[nodiscard]] spectra::WorkspaceTitle make_scene_workspace_title(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state) {
+    [[nodiscard]] spectra::WorkspaceTitle make_scene_workspace_title(spectra::scene_workspace::Controller& controller, SceneWorkspaceStatusState& state) {
         const std::optional<std::size_t> selected_index = controller.has_selected_entry() ? std::optional<std::size_t>{controller.selected_index()} : std::nullopt;
-        const spectra::scene_runtime::SceneEntry* selected_entry = selected_index.has_value() ? &controller.entry(*selected_index) : nullptr;
+        const spectra::scene_workspace::Entry* selected_entry = selected_index.has_value() ? &controller.entry(*selected_index) : nullptr;
         spectra::WorkspaceTitle title{
             .detail  = selected_entry != nullptr ? selected_entry->title : "Untitled",
             .tooltip = scene_workspace_tooltip(selected_entry, controller.pending_switch()),
@@ -1119,7 +1111,7 @@ namespace {
 
     class PathtracerRendererAdapter final {
     public:
-        PathtracerRendererAdapter(std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
+        PathtracerRendererAdapter(std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)) {
             if (this->scene_controller == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Pathtracer adapter requires a scene camera workspace");
             this->active_workspace = this->scene_controller->active_workspace();
@@ -1181,7 +1173,7 @@ namespace {
             this->active_workspace = std::move(current_workspace);
         }
 
-        std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller{};
+        std::shared_ptr<spectra::scene_workspace::Controller> scene_controller{};
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
         std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::pathtracer::Renderer> renderer{};
@@ -1189,12 +1181,12 @@ namespace {
 
     class RasterizerRendererAdapter final {
     public:
-        RasterizerRendererAdapter(std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host_services(std::move(dynamic_host_services)) {
+        RasterizerRendererAdapter(std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host) : scene_controller(std::move(scene_controller)), camera_workspace(std::move(camera_workspace)), dynamic_host(std::move(dynamic_host)) {
             if (this->scene_controller == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene controller");
             if (this->camera_workspace == nullptr) throw std::runtime_error("Rasterizer adapter requires a scene camera workspace");
-            if (this->dynamic_host_services == nullptr) throw std::runtime_error("Rasterizer adapter requires dynamic scene host services");
+            if (this->dynamic_host == nullptr) throw std::runtime_error("Rasterizer adapter requires dynamic scene host services");
             this->active_workspace = this->scene_controller->active_workspace();
-            this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace, this->dynamic_host_services);
+            this->renderer = std::make_unique<spectra::rasterizer::Renderer>(this->active_workspace, this->camera_workspace, this->dynamic_host);
         }
 
         RasterizerRendererAdapter(const RasterizerRendererAdapter& other) = delete;
@@ -1254,9 +1246,9 @@ namespace {
             this->active_workspace = std::move(current_workspace);
         }
 
-        std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller{};
+        std::shared_ptr<spectra::scene_workspace::Controller> scene_controller{};
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace{};
-        std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services{};
+        std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host{};
         std::shared_ptr<spectra::scene::Scene> active_workspace{};
         std::unique_ptr<spectra::rasterizer::Renderer> renderer{};
     };
@@ -1292,16 +1284,16 @@ namespace {
         return std::make_shared<spectra::scene::Scene>(std::move(document));
     }
 
-    [[nodiscard]] std::optional<spectra::scene_runtime::DynamicScenePluginInfo> load_cli_scene(spectra::scene_runtime::SceneController& controller, const std::string& scene_id) {
+    [[nodiscard]] std::optional<spectra::dynamic_scene::PluginInfo> load_cli_scene(spectra::scene_workspace::Controller& controller, const std::string& scene_id) {
         if (const std::size_t query_begin = scene_id.find('?'); query_begin != std::string::npos) {
             const std::string plugin_path_text = scene_id.substr(0u, query_begin);
-            if (!plugin_path_text.empty() && spectra::scene_runtime::is_dynamic_scene_plugin_file(std::filesystem::path{plugin_path_text})) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; pass the plugin path without query and configure it in the Scene popover");
+            if (!plugin_path_text.empty() && spectra::dynamic_scene::is_plugin_file(std::filesystem::path{plugin_path_text})) throw std::runtime_error("Dynamic scene plugin Scene URI query is not supported; pass the plugin path without query and configure it in the Scene popover");
         }
         const std::filesystem::path requested_path{scene_id};
-        if ((is_pbrt_scene_file(requested_path) || spectra::scene_runtime::is_dynamic_scene_plugin_file(requested_path)) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
-        if (spectra::scene_runtime::is_dynamic_scene_plugin_file(requested_path)) {
+        if ((is_pbrt_scene_file(requested_path) || spectra::dynamic_scene::is_plugin_file(requested_path)) && !std::filesystem::is_regular_file(requested_path)) throw std::runtime_error(std::format("{}: initial scene file does not exist", requested_path.string()));
+        if (spectra::dynamic_scene::is_plugin_file(requested_path)) {
             controller.activate_empty_workspace();
-            return spectra::scene_runtime::inspect_dynamic_scene_plugin(requested_path);
+            return spectra::dynamic_scene::inspect_plugin(requested_path);
         }
         if (std::filesystem::is_regular_file(requested_path)) {
             static_cast<void>(activate_scene_path(controller, requested_path));
@@ -1313,10 +1305,10 @@ namespace {
         return std::nullopt;
     }
 
-    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services, std::optional<spectra::scene_runtime::DynamicScenePluginInfo> initial_dynamic_scene_plugin) {
+    void register_renderers(spectra::Spectra& application, std::shared_ptr<spectra::scene_workspace::Controller> scene_controller, std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace, std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host, std::optional<spectra::dynamic_scene::PluginInfo> initial_dynamic_scene_plugin) {
         if (scene_controller == nullptr) throw std::runtime_error("Renderer registration requires a scene controller");
         if (camera_workspace == nullptr) throw std::runtime_error("Renderer registration requires a scene camera workspace");
-        if (dynamic_host_services == nullptr) throw std::runtime_error("Renderer registration requires dynamic scene host services");
+        if (dynamic_host == nullptr) throw std::runtime_error("Renderer registration requires dynamic scene host services");
         std::shared_ptr<SceneWorkspaceStatusState> scene_status_state = std::make_shared<SceneWorkspaceStatusState>();
         std::shared_ptr<DynamicSceneControlsState> dynamic_scene_controls = std::make_shared<DynamicSceneControlsState>();
         if (initial_dynamic_scene_plugin.has_value()) {
@@ -1324,17 +1316,17 @@ namespace {
             begin_dynamic_scene_controls(*dynamic_scene_controls, std::move(*initial_dynamic_scene_plugin));
             set_scene_status(*scene_status_state, std::format("Opened dynamic scene controls {}", title), false);
         }
-        application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, std::move(dynamic_host_services)});
+        application.register_renderer(RasterizerRendererAdapter{scene_controller, camera_workspace, std::move(dynamic_host)});
         application.register_renderer(PathtracerRendererAdapter{scene_controller, std::move(camera_workspace)});
-        std::shared_ptr<spectra::scene_runtime::SceneController> drop_scene_controller = scene_controller;
+        std::shared_ptr<spectra::scene_workspace::Controller> drop_scene_controller = scene_controller;
         std::shared_ptr<SceneWorkspaceStatusState> drop_scene_status_state = scene_status_state;
         std::shared_ptr<DynamicSceneControlsState> drop_dynamic_scene_controls = dynamic_scene_controls;
         spectra::Spectra* drop_application = &application;
-        std::shared_ptr<spectra::scene_runtime::SceneController> controls_scene_controller = scene_controller;
+        std::shared_ptr<spectra::scene_workspace::Controller> controls_scene_controller = scene_controller;
         std::shared_ptr<SceneWorkspaceStatusState> controls_scene_status_state = scene_status_state;
         std::shared_ptr<DynamicSceneControlsState> panel_dynamic_scene_controls = dynamic_scene_controls;
         spectra::Spectra* controls_application = &application;
-        std::shared_ptr<spectra::scene_runtime::SceneController> overlay_scene_controller = scene_controller;
+        std::shared_ptr<spectra::scene_workspace::Controller> overlay_scene_controller = scene_controller;
         std::shared_ptr<DynamicSceneControlsState> overlay_dynamic_scene_controls = dynamic_scene_controls;
         application.set_workspace_title_provider([scene_controller = std::move(scene_controller), scene_status_state = std::move(scene_status_state)] { return make_scene_workspace_title(*scene_controller, *scene_status_state); });
         application.register_file_drop_handler(spectra::FileDropHandler{
@@ -1391,15 +1383,15 @@ int main(const int argc, const char* const* const argv) {
             return 2;
         }
 
-        spectra::scene_runtime::SceneRegistry scene_registry{};
-        std::shared_ptr<spectra::scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services = std::make_shared<spectra::scene_runtime::DynamicSceneHostServiceRouter>();
-        std::shared_ptr<spectra::scene_runtime::SceneController> scene_controller = std::make_shared<spectra::scene_runtime::SceneController>(std::move(scene_registry), make_empty_scene_workspace(), dynamic_host_services);
-        std::optional<spectra::scene_runtime::DynamicScenePluginInfo> initial_dynamic_scene_plugin{};
+        spectra::scene_workspace::Registry scene_registry{};
+        std::shared_ptr<spectra::dynamic_scene::HostServiceRouter> dynamic_host = std::make_shared<spectra::dynamic_scene::HostServiceRouter>();
+        std::shared_ptr<spectra::scene_workspace::Controller> scene_controller = std::make_shared<spectra::scene_workspace::Controller>(std::move(scene_registry), make_empty_scene_workspace(), dynamic_host);
+        std::optional<spectra::dynamic_scene::PluginInfo> initial_dynamic_scene_plugin{};
         if (scene_id.has_value()) initial_dynamic_scene_plugin = load_cli_scene(*scene_controller, *scene_id);
         std::shared_ptr<spectra::scene::CameraWorkspace> camera_workspace = std::make_shared<spectra::scene::CameraWorkspace>();
 
         spectra::Spectra app{"Spectra"};
-        register_renderers(app, std::move(scene_controller), std::move(camera_workspace), std::move(dynamic_host_services), std::move(initial_dynamic_scene_plugin));
+        register_renderers(app, std::move(scene_controller), std::move(camera_workspace), std::move(dynamic_host), std::move(initial_dynamic_scene_plugin));
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

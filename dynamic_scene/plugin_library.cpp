@@ -1,38 +1,93 @@
-module spectra.scene_runtime.plugin_library;
+module;
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+module spectra.dynamic_scene.plugin_library;
 
 import std;
 import spectra.scene;
-import spectra.scene_runtime.plugin_c_abi;
-import spectra.scene_runtime.plugin_conversion;
-import spectra.scene_runtime.plugin_native_library;
-import spectra.scene_runtime.host_services;
+import spectra.dynamic_scene.plugin_abi;
+import spectra.dynamic_scene.plugin_decode;
+import spectra.dynamic_scene.plugin_library;
+import spectra.dynamic_scene.host;
 
-namespace spectra::scene_runtime {
+namespace spectra::dynamic_scene {
     namespace {
-        struct DynamicScenePluginOptionStorage {
+        class NativeLibrary final {
+        public:
+            explicit NativeLibrary(std::filesystem::path path) : path(std::move(path)) {
+#if defined(_WIN32)
+                this->handle = static_cast<void*>(::LoadLibraryW(this->path.wstring().c_str()));
+                if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load dynamic scene plugin, Win32 error {}", this->path.string(), ::GetLastError()));
+#else
+                this->handle = ::dlopen(this->path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
+                if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load dynamic scene plugin: {}", this->path.string(), ::dlerror()));
+#endif
+            }
+
+            NativeLibrary(const NativeLibrary& other) = delete;
+            NativeLibrary(NativeLibrary&& other) = delete;
+            NativeLibrary& operator=(const NativeLibrary& other) = delete;
+            NativeLibrary& operator=(NativeLibrary&& other) = delete;
+
+            ~NativeLibrary() noexcept {
+#if defined(_WIN32)
+                if (this->handle != nullptr) static_cast<void>(::FreeLibrary(static_cast<HMODULE>(this->handle)));
+#else
+                if (this->handle != nullptr) static_cast<void>(::dlclose(this->handle));
+#endif
+            }
+
+            [[nodiscard]] void* symbol(const char* name) const {
+#if defined(_WIN32)
+                void* symbol_address = reinterpret_cast<void*>(::GetProcAddress(static_cast<HMODULE>(this->handle), name));
+                if (symbol_address == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin is missing export \"{}\", Win32 error {}", this->path.string(), name, ::GetLastError()));
+                return symbol_address;
+#else
+                ::dlerror();
+                void* symbol_address = ::dlsym(this->handle, name);
+                const char* error = ::dlerror();
+                if (error != nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin is missing export \"{}\": {}", this->path.string(), name, error));
+                return symbol_address;
+#endif
+            }
+
+        private:
+            std::filesystem::path path{};
+            void* handle{};
+        };
+
+        struct PluginOptionStorage {
             std::string key{};
             std::string value{};
         };
 
-        struct DynamicScenePluginOpenRequestStorage {
+        struct PluginOpenRequestStorage {
             std::filesystem::path plugin_path{};
-            std::vector<DynamicScenePluginOptionStorage> options{};
-            std::vector<SpectraDynamicSceneOption> option_views{};
-            std::shared_ptr<DynamicSceneHostServices> host_services{};
-            SpectraDynamicSceneHostServices host_services_view{};
+            std::vector<PluginOptionStorage> options{};
+            std::vector<SpectraOption> option_views{};
+            std::shared_ptr<HostServices> host{};
+            SpectraHostServices host_view{};
             std::string source_id{};
         };
 
-        [[nodiscard]] std::uint32_t abi_gpu_resource_handle_kind(const DynamicSceneGpuResourceHandleKind kind) {
+        [[nodiscard]] std::uint32_t abi_gpu_resource_handle_kind(const GpuResourceHandleKind kind) {
             switch (kind) {
-            case DynamicSceneGpuResourceHandleKind::OpaqueWin32: return 1u;
-            case DynamicSceneGpuResourceHandleKind::OpaqueFileDescriptor: return 2u;
+            case GpuResourceHandleKind::OpaqueWin32: return 1u;
+            case GpuResourceHandleKind::OpaqueFileDescriptor: return 2u;
             }
             throw std::runtime_error("Dynamic scene GPU resource handle kind is invalid");
         }
 
-        [[nodiscard]] SpectraDynamicSceneGpuDeviceIdentity abi_gpu_device_identity(const DynamicSceneGpuDeviceIdentity& identity) {
-            SpectraDynamicSceneGpuDeviceIdentity view{
+        [[nodiscard]] SpectraGpuDeviceIdentity abi_gpu_device_identity(const GpuDeviceIdentity& identity) {
+            SpectraGpuDeviceIdentity view{
                 .vendor_id = identity.vendor_id,
                 .device_id = identity.device_id,
                 .device_node_mask = identity.device_node_mask,
@@ -44,37 +99,37 @@ namespace spectra::scene_runtime {
 
         [[nodiscard]] std::uint32_t dynamic_scene_gpu_buffer_kind_from_abi(const std::uint32_t kind, const std::string_view context) {
             switch (kind) {
-            case SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VOLUME_CHANNEL: return DynamicSceneGpuBufferKindVolumeChannel;
-            case SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID: return DynamicSceneGpuBufferKindViewportVoxelGrid;
+            case SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VOLUME_CHANNEL: return GpuBufferKindVolumeChannel;
+            case SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID: return GpuBufferKindViewportVoxelGrid;
             default: throw std::runtime_error(std::format("{} GPU buffer kind {} is unknown", context, kind));
             }
         }
 
         [[nodiscard]] std::uint32_t abi_gpu_buffer_kind(const std::uint32_t kind) {
             switch (kind) {
-            case DynamicSceneGpuBufferKindVolumeChannel: return SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VOLUME_CHANNEL;
-            case DynamicSceneGpuBufferKindViewportVoxelGrid: return SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID;
+            case GpuBufferKindVolumeChannel: return SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VOLUME_CHANNEL;
+            case GpuBufferKindViewportVoxelGrid: return SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID;
             default: throw std::runtime_error(std::format("Dynamic scene GPU buffer kind {} is invalid", kind));
             }
         }
 
         thread_local std::string dynamic_scene_host_service_callback_error{};
 
-        [[nodiscard]] SpectraDynamicSceneResult request_gpu_buffer(void* user_data, const SpectraDynamicSceneGpuBufferRequest* request, SpectraDynamicSceneGpuBufferAllocation* allocation) noexcept {
+        [[nodiscard]] SpectraResult request_gpu_buffer(void* user_data, const SpectraGpuBufferRequest* request, SpectraGpuBufferAllocation* allocation) noexcept {
             try {
                 dynamic_scene_host_service_callback_error.clear();
                 if (user_data == nullptr) throw std::runtime_error("Dynamic scene host services user data pointer is null");
                 if (request == nullptr) throw std::runtime_error("Dynamic scene GPU buffer request pointer is null");
                 if (allocation == nullptr) throw std::runtime_error("Dynamic scene GPU buffer allocation pointer is null");
-                if (request->struct_size != sizeof(SpectraDynamicSceneGpuBufferRequest)) throw std::runtime_error("Dynamic scene GPU buffer request ABI size mismatch");
-                DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
-                const DynamicSceneGpuBufferAllocation allocated = host_services.request_gpu_buffer(DynamicSceneGpuBufferRequest{
+                if (request->struct_size != sizeof(SpectraGpuBufferRequest)) throw std::runtime_error("Dynamic scene GPU buffer request ABI size mismatch");
+                HostServices& host = *static_cast<HostServices*>(user_data);
+                const GpuBufferAllocation allocated = host.request_gpu_buffer(GpuBufferRequest{
                     .kind = dynamic_scene_gpu_buffer_kind_from_abi(request->kind, "Dynamic scene host services"),
                     .byte_size = request->byte_size,
                     .debug_name = abi_string(request->debug_name, "Dynamic scene GPU buffer debug name", true),
                 });
-                *allocation = SpectraDynamicSceneGpuBufferAllocation{
-                    .struct_size = sizeof(SpectraDynamicSceneGpuBufferAllocation),
+                *allocation = SpectraGpuBufferAllocation{
+                    .struct_size = sizeof(SpectraGpuBufferAllocation),
                     .resource_id = allocated.resource_id,
                     .byte_size = allocated.byte_size,
                     .kind = abi_gpu_buffer_kind(allocated.kind),
@@ -92,12 +147,12 @@ namespace spectra::scene_runtime {
             }
         }
 
-        [[nodiscard]] SpectraDynamicSceneResult release_gpu_buffer(void* user_data, const std::uint64_t resource_id) noexcept {
+        [[nodiscard]] SpectraResult release_gpu_buffer(void* user_data, const std::uint64_t resource_id) noexcept {
             try {
                 dynamic_scene_host_service_callback_error.clear();
                 if (user_data == nullptr) throw std::runtime_error("Dynamic scene host services user data pointer is null");
-                DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
-                host_services.release_gpu_buffer(resource_id);
+                HostServices& host = *static_cast<HostServices*>(user_data);
+                host.release_gpu_buffer(resource_id);
                 return SPECTRA_DYNAMIC_SCENE_RESULT_OK;
             } catch (const std::exception& error) {
                 dynamic_scene_host_service_callback_error = error.what();
@@ -108,10 +163,10 @@ namespace spectra::scene_runtime {
             }
         }
 
-        [[nodiscard]] const char* dynamic_scene_host_services_last_error(void* user_data) noexcept {
+        [[nodiscard]] const char* dynamic_scene_host_last_error(void* user_data) noexcept {
             if (user_data == nullptr) return dynamic_scene_host_service_callback_error.c_str();
-            DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
-            const std::string_view service_error = host_services.last_error();
+            HostServices& host = *static_cast<HostServices*>(user_data);
+            const std::string_view service_error = host.last_error();
             thread_local std::string host_service_error_text{};
             if (!service_error.empty()) {
                 host_service_error_text = service_error;
@@ -120,13 +175,13 @@ namespace spectra::scene_runtime {
             return dynamic_scene_host_service_callback_error.c_str();
         }
 
-        [[nodiscard]] SpectraDynamicSceneHostServices make_host_services_view(DynamicSceneHostServices& host_services) {
-            return SpectraDynamicSceneHostServices{
-                .struct_size = sizeof(SpectraDynamicSceneHostServices),
-                .user_data = &host_services,
+        [[nodiscard]] SpectraHostServices make_host_view(HostServices& host) {
+            return SpectraHostServices{
+                .struct_size = sizeof(SpectraHostServices),
+                .user_data = &host,
                 .request_gpu_buffer = request_gpu_buffer,
                 .release_gpu_buffer = release_gpu_buffer,
-                .last_error = dynamic_scene_host_services_last_error,
+                .last_error = dynamic_scene_host_last_error,
             };
         }
 
@@ -161,12 +216,12 @@ namespace spectra::scene_runtime {
             return hash;
         }
 
-        [[nodiscard]] std::string make_dynamic_scene_source_id(const std::filesystem::path& plugin_path, const std::vector<DynamicScenePluginOptionStorage>& options) {
-            std::vector<DynamicScenePluginOptionStorage> sorted_options = options;
-            std::ranges::sort(sorted_options, {}, &DynamicScenePluginOptionStorage::key);
+        [[nodiscard]] std::string make_dynamic_scene_source_id(const std::filesystem::path& plugin_path, const std::vector<PluginOptionStorage>& options) {
+            std::vector<PluginOptionStorage> sorted_options = options;
+            std::ranges::sort(sorted_options, {}, &PluginOptionStorage::key);
             std::uint64_t hash = 14695981039346656037ull;
             hash = fnv1a64_append(hash, plugin_path.string());
-            for (const DynamicScenePluginOptionStorage& option : sorted_options) {
+            for (const PluginOptionStorage& option : sorted_options) {
                 hash = fnv1a64_append(hash, "\n");
                 hash = fnv1a64_append(hash, option.key);
                 hash = fnv1a64_append(hash, "=");
@@ -175,27 +230,27 @@ namespace spectra::scene_runtime {
             return std::format("{}#dynamic-open-{:016x}", plugin_path.string(), hash);
         }
 
-        [[nodiscard]] DynamicScenePluginOpenRequestStorage make_plugin_open_request_storage(std::filesystem::path plugin_path, std::vector<DynamicSceneOption> options, std::shared_ptr<DynamicSceneHostServices> host_services) {
-            DynamicScenePluginOpenRequestStorage storage{
+        [[nodiscard]] PluginOpenRequestStorage make_plugin_open_request_storage(std::filesystem::path plugin_path, std::vector<Option> options, std::shared_ptr<HostServices> host) {
+            PluginOpenRequestStorage storage{
                 .plugin_path = normalized_dynamic_scene_plugin_path(plugin_path),
             };
-            if (host_services == nullptr) throw std::runtime_error("Dynamic scene open request requires host services");
-            storage.host_services = std::move(host_services);
-            storage.host_services_view = make_host_services_view(*storage.host_services);
+            if (host == nullptr) throw std::runtime_error("Dynamic scene open request requires host services");
+            storage.host = std::move(host);
+            storage.host_view = make_host_view(*storage.host);
             std::set<std::string> option_keys{};
             storage.options.reserve(options.size());
-            for (DynamicSceneOption& option : options) {
+            for (Option& option : options) {
                 if (option.key.empty()) throw std::runtime_error("Dynamic scene open option key must not be empty");
                 if (!option_keys.insert(option.key).second) throw std::runtime_error(std::format("Dynamic scene open option '{}' is duplicated", option.key));
-                storage.options.push_back(DynamicScenePluginOptionStorage{
+                storage.options.push_back(PluginOptionStorage{
                     .key = std::move(option.key),
                     .value = std::move(option.value),
                 });
             }
             storage.source_id = make_dynamic_scene_source_id(storage.plugin_path, storage.options);
             storage.option_views.reserve(storage.options.size());
-            for (const DynamicScenePluginOptionStorage& option : storage.options) {
-                storage.option_views.push_back(SpectraDynamicSceneOption{
+            for (const PluginOptionStorage& option : storage.options) {
+                storage.option_views.push_back(SpectraOption{
                     .key = option.key.c_str(),
                     .value = option.value.c_str(),
                 });
@@ -204,8 +259,8 @@ namespace spectra::scene_runtime {
         }
 
 
-        [[nodiscard]] DynamicScenePluginOpenRequestStorage make_plugin_inspect_request_storage(std::filesystem::path plugin_path) {
-            DynamicScenePluginOpenRequestStorage storage{
+        [[nodiscard]] PluginOpenRequestStorage make_plugin_inspect_request_storage(std::filesystem::path plugin_path) {
+            PluginOpenRequestStorage storage{
                 .plugin_path = normalized_dynamic_scene_plugin_path(plugin_path),
             };
             storage.source_id = make_dynamic_scene_source_id(storage.plugin_path, storage.options);
@@ -213,10 +268,10 @@ namespace spectra::scene_runtime {
         }
     } // namespace
 
-    struct DynamicScenePluginLibrary::Impl final {
-            explicit Impl(DynamicScenePluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-                void* entry_address = this->native.symbol("spectra_dynamic_scene_plugin");
-                const SpectraDynamicScenePluginEntryFn entry = reinterpret_cast<SpectraDynamicScenePluginEntryFn>(entry_address);
+    struct PluginLibrary::Impl final {
+            explicit Impl(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
+                void* entry_address = this->native.symbol("spectra_dynamic_scene_plugin_v29");
+                const SpectraPluginEntryFn entry = reinterpret_cast<SpectraPluginEntryFn>(entry_address);
                 this->plugin = entry();
                 if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin entry returned null", this->open_request.plugin_path.string()));
                 this->validate_plugin_descriptor();
@@ -258,19 +313,15 @@ namespace spectra::scene_runtime {
                 return this->open_request.plugin_path;
             }
 
-            [[nodiscard]] const std::filesystem::path& directory() const {
-                return this->plugin_directory;
-            }
-
-            [[nodiscard]] std::vector<DynamicSceneOptionSchema> open_options() const {
+            [[nodiscard]] std::vector<OptionSchema> open_options() const {
                 return make_open_option_schemas(this->plugin->open_options, "Dynamic scene plugin open option schema");
             }
 
-            [[nodiscard]] std::vector<DynamicSceneControlAction> control_actions() const {
+            [[nodiscard]] std::vector<ControlAction> control_actions() const {
                 return make_control_actions(this->plugin->control_actions, "Dynamic scene plugin controls action");
             }
 
-            [[nodiscard]] std::vector<DynamicSceneOptionSchema> control_settings() const {
+            [[nodiscard]] std::vector<OptionSchema> control_settings() const {
                 return make_control_setting_schemas(this->plugin->control_settings, "Dynamic scene plugin controls setting schema");
             }
 
@@ -305,7 +356,7 @@ namespace spectra::scene_runtime {
                 return document;
             }
 
-            void check_result(const SpectraDynamicSceneResult result, SpectraDynamicSceneInstance* instance, const std::string_view action) const {
+            void check_result(const SpectraResult result, SpectraInstance* instance, const std::string_view action) const {
                 if (result == SPECTRA_DYNAMIC_SCENE_RESULT_OK) return;
                 if (result != SPECTRA_DYNAMIC_SCENE_RESULT_ERROR) throw std::runtime_error(std::format("{} returned an unknown result code {}", action, static_cast<int>(result)));
                 std::string error = abi_string(this->plugin->last_error(instance), std::format("{} error message", action), true);
@@ -313,35 +364,35 @@ namespace spectra::scene_runtime {
                 throw std::runtime_error(std::format("{} failed: {}", action, error));
             }
 
-            [[nodiscard]] SpectraDynamicSceneInstance* create_instance() const {
-                if (this->open_request.host_services == nullptr) throw std::runtime_error("Dynamic scene plugin instance creation requires host services");
-                SpectraDynamicSceneInstance* instance{};
+            [[nodiscard]] SpectraInstance* create_instance() const {
+                if (this->open_request.host == nullptr) throw std::runtime_error("Dynamic scene plugin instance creation requires host services");
+                SpectraInstance* instance{};
                 const std::string plugin_path_text = this->open_request.plugin_path.string();
-                const SpectraDynamicSceneOpenInfo open_info{
-                    .struct_size = sizeof(SpectraDynamicSceneOpenInfo),
+                const SpectraOpenInfo open_info{
+                    .struct_size = sizeof(SpectraOpenInfo),
                     .plugin_path = plugin_path_text.c_str(),
-                    .options = SpectraDynamicSceneOptionSpan{
+                    .options = SpectraOptionSpan{
                         .data = this->open_request.option_views.empty() ? nullptr : this->open_request.option_views.data(),
                         .count = static_cast<std::uint64_t>(this->open_request.option_views.size()),
                     },
-                    .host_services = &this->open_request.host_services_view,
+                    .host_services = &this->open_request.host_view,
                 };
                 this->check_result(this->plugin->create(&open_info, &instance), nullptr, "Dynamic scene plugin create");
                 if (instance == nullptr) throw std::runtime_error("Dynamic scene plugin create returned a null instance");
                 return instance;
             }
 
-            void destroy_instance(SpectraDynamicSceneInstance* instance) const noexcept {
+            void destroy_instance(SpectraInstance* instance) const noexcept {
                 if (instance != nullptr) this->plugin->destroy(instance);
             }
 
-            void reset(SpectraDynamicSceneInstance* instance) const {
+            void reset(SpectraInstance* instance) const {
                 this->check_result(this->plugin->reset(instance), instance, "Dynamic scene plugin reset");
             }
 
-            void update(SpectraDynamicSceneInstance* instance, const DynamicSceneUpdateInfo& update) const {
-                const SpectraDynamicSceneUpdateInfo update_info{
-                    .struct_size = sizeof(SpectraDynamicSceneUpdateInfo),
+            void update(SpectraInstance* instance, const UpdateInfo& update) const {
+                const SpectraUpdateInfo update_info{
+                    .struct_size = sizeof(SpectraUpdateInfo),
                     .wall_delta_seconds = update.wall_delta_seconds,
                     .scene_delta_seconds = update.scene_delta_seconds,
                     .time_seconds = update.time_seconds,
@@ -352,33 +403,31 @@ namespace spectra::scene_runtime {
                 this->check_result(this->plugin->update(instance, &update_info), instance, "Dynamic scene plugin update");
             }
 
-            [[nodiscard]] std::uint64_t scene_revision(SpectraDynamicSceneInstance* instance) const {
-                if (!this->has_controls()) return 0u;
+            [[nodiscard]] std::uint64_t scene_revision(SpectraInstance* instance) const {
                 std::uint64_t revision{};
                 this->check_result(this->plugin->scene_revision(instance, &revision), instance, "Dynamic scene plugin controls scene revision");
                 if (revision == 0u) throw std::runtime_error("Dynamic scene plugin controls scene revision must not be zero");
                 return revision;
             }
 
-            void control_action(SpectraDynamicSceneInstance* instance, const std::string_view action_id, const std::span<const DynamicSceneOption> options) const {
-                if (!this->has_controls()) throw std::runtime_error("Dynamic scene plugin does not expose controls");
+            void control_action(SpectraInstance* instance, const std::string_view action_id, const std::span<const Option> options) const {
                 if (action_id.empty()) throw std::runtime_error("Dynamic scene plugin controls action id must not be empty");
                 const std::string action_id_text{action_id};
-                std::vector<DynamicScenePluginOptionStorage> option_storage{};
-                std::vector<SpectraDynamicSceneOption> option_views{};
+                std::vector<PluginOptionStorage> option_storage{};
+                std::vector<SpectraOption> option_views{};
                 std::set<std::string> option_keys{};
                 option_storage.reserve(options.size());
                 option_views.reserve(options.size());
-                for (const DynamicSceneOption& option : options) {
+                for (const Option& option : options) {
                     if (option.key.empty()) throw std::runtime_error("Dynamic scene controls action option key must not be empty");
                     if (!option_keys.insert(option.key).second) throw std::runtime_error(std::format("Dynamic scene controls action option '{}' is duplicated", option.key));
-                    option_storage.push_back(DynamicScenePluginOptionStorage{
+                    option_storage.push_back(PluginOptionStorage{
                         .key = option.key,
                         .value = option.value,
                     });
                 }
-                for (const DynamicScenePluginOptionStorage& option : option_storage) {
-                    option_views.push_back(SpectraDynamicSceneOption{
+                for (const PluginOptionStorage& option : option_storage) {
+                    option_views.push_back(SpectraOption{
                         .key = option.key.c_str(),
                         .value = option.value.c_str(),
                     });
@@ -387,7 +436,7 @@ namespace spectra::scene_runtime {
                     this->plugin->control_action(
                         instance,
                         action_id_text.c_str(),
-                        SpectraDynamicSceneOptionSpan{
+                        SpectraOptionSpan{
                             .data = option_views.empty() ? nullptr : option_views.data(),
                             .count = static_cast<std::uint64_t>(option_views.size()),
                         }),
@@ -395,50 +444,37 @@ namespace spectra::scene_runtime {
                     std::format("Dynamic scene plugin controls action '{}'", action_id));
             }
 
-            void control_setting_update(SpectraDynamicSceneInstance* instance, const std::string_view key, const std::string_view value) const {
-                if (!this->has_controls()) throw std::runtime_error("Dynamic scene plugin does not expose controls");
+            void control_setting_update(SpectraInstance* instance, const std::string_view key, const std::string_view value) const {
                 if (key.empty()) throw std::runtime_error("Dynamic scene plugin controls setting key must not be empty");
                 const std::string key_text{key};
                 const std::string value_text{value};
                 this->check_result(this->plugin->control_setting_update(instance, key_text.c_str(), value_text.c_str()), instance, std::format("Dynamic scene plugin controls setting '{}'", key));
             }
 
-            [[nodiscard]] DynamicSceneControlSnapshot control_snapshot(SpectraDynamicSceneInstance* instance) const {
-                if (!this->has_controls()) {
-                    return DynamicSceneControlSnapshot{
-                        .status = DynamicSceneControlStatus{
-                            .phase = "Active",
-                            .headline = "Dynamic scene active",
-                        },
-                    };
-                }
-                SpectraDynamicSceneControlSnapshotView view{};
+            [[nodiscard]] ControlSnapshot control_snapshot(SpectraInstance* instance) const {
+                SpectraControlSnapshotView view{};
                 this->check_result(this->plugin->control_snapshot(instance, &view), instance, "Dynamic scene plugin controls snapshot");
-                const std::vector<DynamicSceneControlAction> actions = this->control_actions();
-                const std::vector<DynamicSceneOptionSchema> settings = this->control_settings();
+                const std::vector<ControlAction> actions = this->control_actions();
+                const std::vector<OptionSchema> settings = this->control_settings();
                 return make_control_snapshot(view, actions, settings, "Dynamic scene plugin controls snapshot");
             }
 
-            [[nodiscard]] SpectraDynamicSceneDocumentView document(SpectraDynamicSceneInstance* instance) const {
-                SpectraDynamicSceneDocumentView view{};
+            [[nodiscard]] SpectraDocumentView document(SpectraInstance* instance) const {
+                SpectraDocumentView view{};
                 this->check_result(this->plugin->document(instance, &view), instance, "Dynamic scene plugin document");
                 return view;
             }
 
-            [[nodiscard]] SpectraDynamicSceneFrameView frame(SpectraDynamicSceneInstance* instance, const scene::Scene::FrameInfo& frame_info) const {
-                SpectraDynamicSceneFrameView view{};
-                this->check_result(this->plugin->frame(instance, SpectraDynamicSceneFrameInfo{.delta_seconds = frame_info.delta_seconds, .time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Dynamic scene plugin frame");
+            [[nodiscard]] SpectraFrameView frame(SpectraInstance* instance, const scene::Scene::FrameInfo& frame_info) const {
+                SpectraFrameView view{};
+                this->check_result(this->plugin->frame(instance, SpectraFrameInfo{.delta_seconds = frame_info.delta_seconds, .time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Dynamic scene plugin frame");
                 return view;
             }
 
         private:
-            [[nodiscard]] bool has_controls() const {
-                return this->plugin->scene_revision != nullptr || this->plugin->control_action != nullptr || this->plugin->control_setting_update != nullptr || this->plugin->control_snapshot != nullptr || this->plugin->control_actions.count != 0u || this->plugin->control_settings.count != 0u;
-            }
-
             void validate_plugin_descriptor() const {
                 if (this->plugin->abi_version != plugin_abi_version) throw std::runtime_error(std::format("{}: dynamic scene plugin ABI version {} does not match host ABI version {}", this->open_request.plugin_path.string(), this->plugin->abi_version, plugin_abi_version));
-                if (this->plugin->struct_size != sizeof(SpectraDynamicScenePlugin)) throw std::runtime_error(std::format("{}: dynamic scene plugin descriptor size mismatch", this->open_request.plugin_path.string()));
+                if (this->plugin->struct_size != sizeof(SpectraPlugin)) throw std::runtime_error(std::format("{}: dynamic scene plugin descriptor size mismatch", this->open_request.plugin_path.string()));
                 static_cast<void>(this->id());
                 static_cast<void>(this->title());
                 static_cast<void>(this->controls_panel_title());
@@ -460,7 +496,6 @@ namespace spectra::scene_runtime {
             }
 
             void validate_controls_api() const {
-                if (!this->has_controls()) return;
                 if (this->plugin->scene_revision == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin controls scene_revision function is null", this->open_request.plugin_path.string()));
                 if (this->plugin->control_action == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin controls control_action function is null", this->open_request.plugin_path.string()));
                 if (this->plugin->control_setting_update == nullptr) throw std::runtime_error(std::format("{}: dynamic scene plugin controls control_setting_update function is null", this->open_request.plugin_path.string()));
@@ -469,25 +504,25 @@ namespace spectra::scene_runtime {
                 static_cast<void>(this->control_settings());
             }
 
-            DynamicScenePluginOpenRequestStorage open_request{};
+            PluginOpenRequestStorage open_request{};
             std::filesystem::path plugin_directory{};
             NativeLibrary native;
-            const SpectraDynamicScenePlugin* plugin{};
+            const SpectraPlugin* plugin{};
         };
 
-        class DynamicScenePluginSourceInstance final : public DynamicSceneSourceInstance {
+        class PluginSourceInstance final : public SourceInstance {
         public:
-            explicit DynamicScenePluginSourceInstance(std::shared_ptr<DynamicScenePluginLibrary> plugin) : plugin(std::move(plugin)) {
+            explicit PluginSourceInstance(std::shared_ptr<PluginLibrary> plugin) : plugin(std::move(plugin)) {
                 if (this->plugin == nullptr) throw std::runtime_error("Dynamic scene plugin source requires a plugin library");
                 this->instance = this->plugin->impl->create_instance();
             }
 
-            DynamicScenePluginSourceInstance(const DynamicScenePluginSourceInstance& other) = delete;
-            DynamicScenePluginSourceInstance(DynamicScenePluginSourceInstance&& other) = delete;
-            DynamicScenePluginSourceInstance& operator=(const DynamicScenePluginSourceInstance& other) = delete;
-            DynamicScenePluginSourceInstance& operator=(DynamicScenePluginSourceInstance&& other) = delete;
+            PluginSourceInstance(const PluginSourceInstance& other) = delete;
+            PluginSourceInstance(PluginSourceInstance&& other) = delete;
+            PluginSourceInstance& operator=(const PluginSourceInstance& other) = delete;
+            PluginSourceInstance& operator=(PluginSourceInstance&& other) = delete;
 
-            ~DynamicScenePluginSourceInstance() noexcept override {
+            ~PluginSourceInstance() noexcept override {
                 this->plugin->impl->destroy_instance(this->instance);
                 this->instance = nullptr;
             }
@@ -496,7 +531,7 @@ namespace spectra::scene_runtime {
                 this->plugin->impl->reset(this->instance);
             }
 
-            void update(const DynamicSceneUpdateInfo& update) override {
+            void update(const UpdateInfo& update) override {
                 this->plugin->impl->update(this->instance, update);
             }
 
@@ -504,7 +539,7 @@ namespace spectra::scene_runtime {
                 return this->plugin->impl->scene_revision(this->instance);
             }
 
-            void execute_control_action(const std::string_view action_id, const std::span<const DynamicSceneOption> options) override {
+            void execute_control_action(const std::string_view action_id, const std::span<const Option> options) override {
                 this->plugin->impl->control_action(this->instance, action_id, options);
             }
 
@@ -512,7 +547,7 @@ namespace spectra::scene_runtime {
                 this->plugin->impl->control_setting_update(this->instance, key, value);
             }
 
-            [[nodiscard]] DynamicSceneControlSnapshot control_snapshot() const override {
+            [[nodiscard]] ControlSnapshot control_snapshot() const override {
                 return this->plugin->impl->control_snapshot(this->instance);
             }
 
@@ -536,58 +571,58 @@ namespace spectra::scene_runtime {
             }
 
         private:
-            std::shared_ptr<DynamicScenePluginLibrary> plugin{};
-            SpectraDynamicSceneInstance* instance{};
+            std::shared_ptr<PluginLibrary> plugin{};
+            SpectraInstance* instance{};
             mutable std::set<std::string> material_names{};
             mutable bool document_validated{};
         };
-    DynamicScenePluginLibrary::DynamicScenePluginLibrary(std::filesystem::path plugin_path) : impl(std::make_unique<Impl>(make_plugin_inspect_request_storage(std::move(plugin_path)))) {}
+    PluginLibrary::PluginLibrary(std::filesystem::path plugin_path) : impl(std::make_unique<Impl>(make_plugin_inspect_request_storage(std::move(plugin_path)))) {}
 
-    DynamicScenePluginLibrary::DynamicScenePluginLibrary(std::filesystem::path plugin_path, std::vector<DynamicSceneOption> options, std::shared_ptr<DynamicSceneHostServices> host_services) : impl(std::make_unique<Impl>(make_plugin_open_request_storage(std::move(plugin_path), std::move(options), std::move(host_services)))) {}
+    PluginLibrary::PluginLibrary(std::filesystem::path plugin_path, std::vector<Option> options, std::shared_ptr<HostServices> host) : impl(std::make_unique<Impl>(make_plugin_open_request_storage(std::move(plugin_path), std::move(options), std::move(host)))) {}
 
-    DynamicScenePluginLibrary::~DynamicScenePluginLibrary() noexcept = default;
+    PluginLibrary::~PluginLibrary() noexcept = default;
 
-    std::string DynamicScenePluginLibrary::id() const {
+    std::string PluginLibrary::id() const {
         return this->impl->id();
     }
 
-    std::string DynamicScenePluginLibrary::title() const {
+    std::string PluginLibrary::title() const {
         return this->impl->title();
     }
 
-    std::string DynamicScenePluginLibrary::controls_panel_title() const {
+    std::string PluginLibrary::controls_panel_title() const {
         return this->impl->controls_panel_title();
     }
 
-    std::string DynamicScenePluginLibrary::open_action_label() const {
+    std::string PluginLibrary::open_action_label() const {
         return this->impl->open_action_label();
     }
 
-    std::string DynamicScenePluginLibrary::open_action_description() const {
+    std::string PluginLibrary::open_action_description() const {
         return this->impl->open_action_description();
     }
 
-    std::string DynamicScenePluginLibrary::source_id() const {
+    std::string PluginLibrary::source_id() const {
         return this->impl->source_id();
     }
 
-    const std::filesystem::path& DynamicScenePluginLibrary::path() const {
+    const std::filesystem::path& PluginLibrary::path() const {
         return this->impl->path();
     }
 
-    std::vector<DynamicSceneOptionSchema> DynamicScenePluginLibrary::open_options() const {
+    std::vector<OptionSchema> PluginLibrary::open_options() const {
         return this->impl->open_options();
     }
 
-    std::vector<DynamicSceneControlAction> DynamicScenePluginLibrary::control_actions() const {
+    std::vector<ControlAction> PluginLibrary::control_actions() const {
         return this->impl->control_actions();
     }
 
-    std::vector<DynamicSceneOptionSchema> DynamicScenePluginLibrary::control_settings() const {
+    std::vector<OptionSchema> PluginLibrary::control_settings() const {
         return this->impl->control_settings();
     }
 
-    std::unique_ptr<DynamicSceneSourceInstance> make_dynamic_scene_plugin_source_instance(std::shared_ptr<DynamicScenePluginLibrary> plugin) {
-        return std::make_unique<DynamicScenePluginSourceInstance>(std::move(plugin));
+    std::unique_ptr<SourceInstance> make_plugin_source_instance(std::shared_ptr<PluginLibrary> plugin) {
+        return std::make_unique<PluginSourceInstance>(std::move(plugin));
     }
-} // namespace spectra::scene_runtime
+} // namespace spectra::dynamic_scene

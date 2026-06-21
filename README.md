@@ -54,13 +54,14 @@ metrics may also appear as compact viewport overlay chips.
 
 Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
 link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
-Inside Spectra, dynamic plugin lifetime is owned by `spectra.scene_runtime`; the rasterizer only supplies the
-Vulkan-backed host-service implementation and preview draw passes.
+Inside Spectra, `spectra.dynamic_scene` owns the plugin protocol, host services, and DLL loading;
+`spectra.scene_workspace` owns static/dynamic scene activation, timeline update, and workspace switching. The
+rasterizer only supplies the Vulkan-backed host-service implementation and preview draw passes.
 
 A dynamic scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_dynamic_scene_plugin()`.
+2. Export `spectra_dynamic_scene_plugin_v29()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -76,8 +77,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `27`.
-- Exported symbol: `spectra_dynamic_scene_plugin`.
+- ABI version: `29`.
+- Exported symbol: `spectra_dynamic_scene_plugin_v29`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -105,10 +106,10 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_DYNAMIC_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra_dynamic_scene_plugin(void);
+extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraPlugin* spectra_dynamic_scene_plugin_v29(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `28` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `29` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are optional as a group. If any controls callback or controls schema is present, all controls
 callbacks must be present.
@@ -117,15 +118,11 @@ callbacks must be present.
 
 - `id`, `title`, material names, light names, camera name, primitive names, and material references must be non-empty.
 - `frames_per_second` must be finite and positive.
-- Scene document and frame payloads are published through `SpectraDynamicSceneTypedSpan { kind, item_size, data, count }`
-  arrays. `kind` must be one item from the table below, `item_size` must equal `sizeof(payload_struct_for_kind)`,
-  `count` must be non-zero, and `data` must be non-null. Omit unused or empty item kinds instead of publishing empty
-  spans. A document or frame view must not contain duplicate item kinds. Document views may publish material, light,
-  camera, mesh, sphere, point cloud, volume grid, viewport segment set, viewport voxel grid, and viewport camera visual
-  items. Frame views may publish camera, mesh, sphere, point cloud, volume grid, viewport segment set, viewport voxel
-  grid, and viewport camera visual items; material and light items are document-only.
-- Scene item kind values: `0` material, `1` light, `2` camera, `3` mesh, `4` sphere, `5` point cloud, `6` volume grid,
-  `100` viewport segment set, `101` viewport voxel grid, and `102` viewport camera visual.
+- Scene document and frame payloads are published through named `SpectraSceneItems` spans: `materials`, `lights`,
+  `cameras`, `meshes`, `spheres`, `point_clouds`, `volumes`, `viewport_segment_sets`, `viewport_voxel_grids`, and
+  `viewport_camera_visuals`. Empty spans use `{ nullptr, 0 }`. Non-empty spans must provide non-null `data`.
+  Document views may publish every named span. Frame views may publish cameras, renderable entities, and viewport
+  attachments; materials and lights are document-only.
 - A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or
   `VolumeGrid`. Cameras, lights, controls telemetry, and debug attachments do not count as renderable scene entities.
 - `default_coordinate_system` may be empty or one of `SpectraYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
@@ -184,11 +181,10 @@ callbacks must be present.
   kinds are only valid for open options or explicit action options. Setting keys and labels must be non-empty and unique
   in the descriptor. A snapshot setting item returns only `{ key, value }`; each key must match a declared setting and
   the value must parse according to that setting schema.
-- If controls are present, `control_snapshot` returns a typed item array. Control item kind values are `0` settings,
-  `1` status, `2` log entries, `3` preview images, and `4` scalar series. `item_size` must match the payload struct for
-  the kind. Duplicate item kinds and unknown item kinds are errors. The status item is required and must have count `1`;
-  the settings item is required when the descriptor declares control setting schemas and must provide one value for each
-  schema. Log, image, and scalar-series items may be omitted when empty.
+- If controls are present, `control_snapshot` returns named fields directly: `settings`, `status`, `logs`, `images`,
+  and `scalar_series`. `status.struct_size` must match `SpectraControlStatusView`. Empty optional arrays use
+  `{ nullptr, 0 }`. When the descriptor declares control settings, `settings` must provide one value for each schema.
+  Log, image, and scalar-series spans may be empty.
 - Status phase, headline, metric keys/labels/values, action state ids, log levels, and log messages must be non-empty.
   Each action state id must refer to a declared control action. Every declared control action must have exactly one
   action state. Disabled actions must set `enabled = 0` and provide a non-empty `disabled_reason`; enabled actions must
@@ -213,7 +209,7 @@ callbacks must be present.
 
 ### Callback Rules
 
-- Descriptor `create` receives a non-null `host_services` pointer in `SpectraDynamicSceneOpenInfo`.
+- Descriptor `create` receives a non-null `host_services` pointer in `SpectraOpenInfo`.
 - Host services `request_gpu_buffer` allocates a Spectra-owned external Vulkan storage buffer and returns `resource_id`,
   `byte_size`, buffer `kind`, `handle_kind`, an OS external memory handle, and Vulkan device identity. Buffer kind values
   are `0` true `VolumeGrid` channel storage and `1` viewport voxel debug storage. Handle kinds are `1` opaque Win32
@@ -233,17 +229,19 @@ callbacks must be present.
 - Descriptor `create` returns a plugin-owned instance pointer.
 - Descriptor `destroy` releases that instance.
 - Descriptor `reset` resets dynamic scene state and rebuilds internal visualization buffers.
-- Descriptor `update` receives a `SpectraDynamicSceneUpdateInfo` once per GUI frame. `wall_delta_seconds`
+- Descriptor `update` receives a `SpectraUpdateInfo` once per GUI frame. `wall_delta_seconds`
   is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
   when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
   `frame_index` describe the host timeline state. Long-running source updates must honor `scene_delta_seconds` so
   Space/record/playback controls stay synchronized with source actions, telemetry, and preview availability.
-- Descriptor `document` returns static scene data as typed item spans: materials, lights, cameras, static renderable
+- Descriptor `document` returns static scene data as named spans: materials, lights, cameras, static renderable
   entities, and static debug attachments.
-- Descriptor `frame` returns dynamic typed item spans for the requested frame cursor: dynamic cameras, renderable
-  entities, and debug attachments.
+- Descriptor `frame` returns dynamic named spans for the requested frame cursor: dynamic cameras, renderable entities,
+  and debug attachments.
 - Descriptor `last_error` returns the most recent instance-local error string; it may be empty. Controls callbacks use
   the same instance error channel.
+- All descriptor function pointers listed in this section are mandatory for ABI v29. Missing callbacks are rejected
+  during plugin inspection/loading.
 - Descriptor `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
   `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as
   logs, scalar charts, and preview images must not increment it.
@@ -251,9 +249,9 @@ callbacks must be present.
 - Descriptor `control_setting_update` applies one changed setting key/value pair; it must validate the value strictly and increase
   `scene_revision` if the change modifies scene entities or debug attachments.
 - Descriptor `control_snapshot` returns the current plugin-owned live setting values, phase/headline/detail, metrics,
-  action states, log snapshot, borrowed CPU RGBA8 preview images, and scalar charts as typed control item spans. Spectra
-  copies logs and scalar samples for display. Preview images are uploaded to UI textures but are not copied into
-  `scene::Scene`, exported to PBRT, or exposed to the pathtracer scene.
+  action states, log snapshot, borrowed CPU RGBA8 preview images, and scalar charts as named spans. Spectra copies logs
+  and scalar samples for display. Preview images are uploaded to UI textures but are not copied into `scene::Scene`,
+  exported to PBRT, or exposed to the pathtracer scene.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.

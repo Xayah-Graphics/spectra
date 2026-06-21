@@ -12,7 +12,7 @@ module;
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
-export import spectra.scene_runtime.host_services;
+export import spectra.dynamic_scene.host;
 export import spectra.scene;
 
 import std;
@@ -22,7 +22,7 @@ namespace spectra::rasterizer {
     public:
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
-        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services);
+        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -359,17 +359,17 @@ namespace spectra::rasterizer {
         void destroy_device_buffer(DeviceGpuBuffer& buffer) noexcept;
         void ensure_host_buffer(GpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
         void ensure_device_buffer(DeviceGpuBuffer& buffer, vk::DeviceSize required_size, vk::BufferUsageFlags usage);
-        [[nodiscard]] scene_runtime::DynamicSceneGpuResourceHandleKind external_storage_handle_kind() const;
+        [[nodiscard]] dynamic_scene::GpuResourceHandleKind external_storage_handle_kind() const;
         [[nodiscard]] ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context);
         [[nodiscard]] const ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context) const;
-        [[nodiscard]] scene_runtime::DynamicSceneGpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
+        [[nodiscard]] dynamic_scene::GpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
         void release_external_storage_buffer(std::uint64_t resource_id, std::string_view context);
-        [[nodiscard]] scene_runtime::DynamicSceneGpuBufferAllocation request_dynamic_gpu_buffer(const scene_runtime::DynamicSceneGpuBufferRequest& request);
+        [[nodiscard]] dynamic_scene::GpuBufferAllocation request_dynamic_gpu_buffer(const dynamic_scene::GpuBufferRequest& request);
         void release_dynamic_gpu_buffer(std::uint64_t resource_id);
         void ensure_viewport_voxel_buffer_descriptor(std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor);
         void ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command);
-        void connect_dynamic_scene_host_services();
-        void disconnect_dynamic_scene_host_services() noexcept;
+        void connect_dynamic_scene_host();
+        void disconnect_dynamic_scene_host() noexcept;
         void create_image_2d(GpuImage2D& image, vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect);
         void destroy_image_2d(GpuImage2D& image) noexcept;
         void create_volume_image(GpuImage3D& image, vk::Extent3D extent, vk::Format format);
@@ -512,7 +512,7 @@ namespace spectra::rasterizer {
             std::shared_ptr<scene::Scene> workspace{};
             std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
             scene::CameraRevision observed_camera_revision{};
-            std::shared_ptr<scene_runtime::DynamicSceneHostServiceRouter> dynamic_host_services{};
+            std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host{};
         } scene;
 
         struct {

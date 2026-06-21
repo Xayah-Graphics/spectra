@@ -131,34 +131,46 @@ set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
 
 # ============================================================================
-# Scene Runtime
+# Dynamic Scene
 # ============================================================================
-add_library(spectra_scene_runtime)
-add_library(spectra::scene_runtime ALIAS spectra_scene_runtime)
+add_library(spectra_dynamic_scene)
+add_library(spectra::dynamic_scene ALIAS spectra_dynamic_scene)
 target_sources(
-        spectra_scene_runtime
+        spectra_dynamic_scene
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        scene_runtime/contracts.ixx
-        scene_runtime/host_services.ixx
-        scene_runtime/controller.ixx
-        scene_runtime/plugin.ixx
+        dynamic_scene/contracts.ixx
+        dynamic_scene/host.ixx
+        dynamic_scene/loader.ixx
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
-        scene_runtime/plugin_c_abi.ixx
-        scene_runtime/plugin_conversion.ixx
-        scene_runtime/plugin_native_library.ixx
-        scene_runtime/plugin_library.ixx
+        dynamic_scene/plugin_abi.ixx
+        dynamic_scene/plugin_decode.ixx
+        dynamic_scene/plugin_library.ixx
         PRIVATE
-        scene_runtime/controller.cpp
-        scene_runtime/host_services.cpp
-        scene_runtime/plugin.cpp
-        scene_runtime/plugin_conversion.cpp
-        scene_runtime/plugin_native_library.cpp
-        scene_runtime/plugin_library.cpp
+        dynamic_scene/host.cpp
+        dynamic_scene/loader.cpp
+        dynamic_scene/plugin_decode.cpp
+        dynamic_scene/plugin_library.cpp
 )
-target_link_libraries(spectra_scene_runtime PUBLIC spectra::scene PRIVATE ${CMAKE_DL_LIBS})
-set_property(TARGET spectra_scene_runtime PROPERTY CXX_MODULE_STD ON)
+target_link_libraries(spectra_dynamic_scene PUBLIC spectra::scene PRIVATE ${CMAKE_DL_LIBS})
+set_property(TARGET spectra_dynamic_scene PROPERTY CXX_MODULE_STD ON)
+
+# ============================================================================
+# Scene Workspace
+# ============================================================================
+add_library(spectra_scene_workspace)
+add_library(spectra::scene_workspace ALIAS spectra_scene_workspace)
+target_sources(
+        spectra_scene_workspace
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        scene_workspace/controller.ixx
+        PRIVATE
+        scene_workspace/controller.cpp
+)
+target_link_libraries(spectra_scene_workspace PUBLIC spectra::scene spectra::dynamic_scene)
+set_property(TARGET spectra_scene_workspace PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================
 # Pathtracer Configuration
@@ -626,7 +638,7 @@ target_sources(
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene spectra::scene_runtime)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene spectra::dynamic_scene)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 
@@ -644,7 +656,8 @@ target_link_libraries(
         PRIVATE
         spectra::core
         spectra::scene
-        spectra::scene_runtime
+        spectra::dynamic_scene
+        spectra::scene_workspace
         spectra::pathtracer
         spectra::rasterizer
         xayah-util-xcli
