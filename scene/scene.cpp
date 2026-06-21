@@ -1905,9 +1905,8 @@ namespace spectra::scene {
     void Scene::open_plugin_scene(ScenePluginOpenRequest request) {
         if (request.host == nullptr) request.host = this->host;
         std::shared_ptr<PluginLibrary> plugin = std::make_shared<PluginLibrary>(std::move(request.plugin_path), std::move(request.options), std::move(request.host));
-        const std::string id = plugin->scene_id();
-        const std::string title = plugin->title();
-        this->attach_driver(id, title, make_plugin_driver(std::move(plugin)));
+        std::string scene_id = plugin->scene_id();
+        this->attach_driver(std::move(scene_id), {}, make_plugin_driver(std::move(plugin)));
     }
 
     void Scene::advance(const std::uint64_t frame_number, const double delta_seconds) {
@@ -2116,17 +2115,7 @@ namespace spectra::scene {
 
     ScenePluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {
         PluginLibrary plugin{plugin_path};
-        return ScenePluginInfo{
-            .id = plugin.id(),
-            .title = plugin.title(),
-            .controls_panel_title = plugin.controls_panel_title(),
-            .open_action_label = plugin.open_action_label(),
-            .open_action_description = plugin.open_action_description(),
-            .path = plugin.path(),
-            .open_options = plugin.open_options(),
-            .control_actions = plugin.control_actions(),
-            .control_settings = plugin.control_settings(),
-        };
+        return plugin.info();
     }
 
     namespace {
@@ -3602,27 +3591,12 @@ namespace spectra::scene {
             Scene::SourceLocation source{};
         };
 
-        [[nodiscard]] std::string Lowercase(std::string value) {
-            for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-            return value;
-        }
-
         [[nodiscard]] std::string SourceString(const Scene::SourceLocation& source) {
             return std::format("{}:{}:{}", source.filename, source.line, source.column);
         }
 
         [[nodiscard]] std::runtime_error ParseError(const Scene::SourceLocation& source, const std::string_view message) {
             return std::runtime_error(std::format("{}: {}", SourceString(source), message));
-        }
-
-        [[nodiscard]] bool HasExtension(const std::filesystem::path& path, const std::string_view extension) {
-            return Lowercase(path.extension().string()) == Lowercase(std::string(extension));
-        }
-
-        [[nodiscard]] bool IsSceneFile(const std::filesystem::path& path) {
-            if (HasExtension(path, ".pbrt")) return true;
-            if (!HasExtension(path, ".gz")) return false;
-            return HasExtension(path.stem(), ".pbrt");
         }
 
         [[nodiscard]] bool IsAbsolutePathString(const std::string& value) {
@@ -3676,7 +3650,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] std::string ReadSceneFile(const std::filesystem::path& path) {
-            if (HasExtension(path, ".gz")) return ReadGzipFile(path);
+            if (path_extension_is(path, ".gz")) return ReadGzipFile(path);
             return ReadPlainFile(path);
         }
 
@@ -4113,7 +4087,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] Scene::ColorSpace ParseColorSpaceName(const std::string& name, const Scene::SourceLocation& source) {
-            const std::string lower = Lowercase(name);
+            const std::string lower = lowercase_ascii(name);
             if (lower == "srgb") return Scene::ColorSpace::sRGB;
             if (lower == "dci-p3") return Scene::ColorSpace::DCI_P3;
             if (lower == "rec2020") return Scene::ColorSpace::Rec2020;
@@ -4855,25 +4829,14 @@ namespace spectra::scene {
             return std::filesystem::absolute(std::filesystem::path(SPECTRA_SCENES_ROOT)).lexically_normal();
         }
 
-        [[nodiscard]] std::filesystem::path SceneFilenameStem(const std::filesystem::path& path) {
-            std::filesystem::path filename = path.filename();
-            if (HasExtension(filename, ".gz")) filename = filename.stem();
-            if (HasExtension(filename, ".pbrt")) filename = filename.stem();
-            return filename;
-        }
-
-        [[nodiscard]] std::string SceneDisplayName(const std::filesystem::path& relativePath) {
-            return SceneFilenameStem(relativePath).string();
-        }
-
         [[nodiscard]] std::filesystem::path ResolveScenePathByUniqueStem(const std::filesystem::path& root, const std::string& name) {
             std::optional<std::filesystem::path> match;
             if (!std::filesystem::exists(root)) throw std::runtime_error(std::format("{}: scene root does not exist", root.string()));
             for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(root)) {
                 if (!entry.is_regular_file()) continue;
                 const std::filesystem::path path = entry.path();
-                if (!IsSceneFile(path)) continue;
-                if (SceneFilenameStem(path).string() != name) continue;
+                if (!is_pbrt_scene_file(path)) continue;
+                if (scene_file_title(path) != name) continue;
                 if (match.has_value()) throw std::runtime_error(std::format("Scene alias \"{}\" is ambiguous; pass a scene-root-relative .pbrt path", name));
                 match = path;
             }
@@ -4902,12 +4865,12 @@ namespace spectra::scene {
             if (scenePath.empty()) throw std::runtime_error("PBRT scene file path must not be empty");
             const std::filesystem::path absolutePath = std::filesystem::absolute(scenePath).lexically_normal();
             if (!std::filesystem::is_regular_file(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolutePath.string()));
-            if (!IsSceneFile(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file must use .pbrt or .pbrt.gz", absolutePath.string()));
+            if (!is_pbrt_scene_file(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file must use .pbrt or .pbrt.gz", absolutePath.string()));
 
             ScenePbrtBuilder builder(absolutePath);
             Scene::ResolvedScene scene = builder.Parse();
             scene.name = std::move(sceneName);
-            scene.title = SceneDisplayName(absolutePath);
+            scene.title = scene_file_title(absolutePath);
             if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
             return Scene{std::move(scene)};
         }

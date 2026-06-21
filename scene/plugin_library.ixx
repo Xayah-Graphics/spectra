@@ -16,20 +16,12 @@ namespace spectra::scene {
         PluginLibrary& operator=(PluginLibrary&& other) = delete;
         ~PluginLibrary() noexcept;
 
-        [[nodiscard]] std::string id() const;
-        [[nodiscard]] std::string title() const;
-        [[nodiscard]] std::string controls_panel_title() const;
-        [[nodiscard]] std::string open_action_label() const;
-        [[nodiscard]] std::string open_action_description() const;
+        [[nodiscard]] ScenePluginInfo info() const;
         [[nodiscard]] std::string scene_id() const;
-        [[nodiscard]] const std::filesystem::path& path() const;
-        [[nodiscard]] std::vector<ControlOptionSchema> open_options() const;
-        [[nodiscard]] std::vector<ControlAction> control_actions() const;
-        [[nodiscard]] std::vector<ControlOptionSchema> control_settings() const;
 
     private:
-        struct Impl;
-        std::unique_ptr<Impl> impl{};
+        struct State;
+        std::unique_ptr<State> state{};
 
         friend class PluginSceneDriver;
     };

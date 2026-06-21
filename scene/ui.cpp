@@ -65,29 +65,6 @@ namespace spectra::scene {
 
     namespace {
 
-        [[nodiscard]] std::string lowercase_ascii(std::string value) {
-            for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-            return value;
-        }
-
-        [[nodiscard]] bool path_extension_is(const std::filesystem::path& path, const std::string_view extension) {
-            return lowercase_ascii(path.extension().string()) == lowercase_ascii(std::string{extension});
-        }
-
-        [[nodiscard]] bool is_pbrt_scene_file(const std::filesystem::path& path) {
-            if (path_extension_is(path, ".pbrt")) return true;
-            if (!path_extension_is(path, ".gz")) return false;
-            return path_extension_is(path.stem(), ".pbrt");
-        }
-
-        [[nodiscard]] std::string scene_file_title(const std::filesystem::path& path) {
-            std::filesystem::path filename = path.filename();
-            if (path_extension_is(filename, ".gz")) filename = filename.stem();
-            if (path_extension_is(filename, ".pbrt")) filename = filename.stem();
-            if (filename.empty()) throw std::runtime_error("Scene path has an empty filename");
-            return filename.string();
-        }
-
         void set_scene_status(StatusState& status, std::string text, const bool error) {
             status.status_text = std::move(text);
             status.status_error = error;
@@ -926,9 +903,8 @@ namespace spectra::scene {
                 application.open_command_popover("scene.controls");
                 return;
             }
-            if (!is_pbrt_scene_file(scene_path)) throw std::runtime_error("Scene file must be .pbrt, .pbrt.gz, or a scene plugin library");
             scene_instance.open_pbrt_file(scene_path);
-            set_scene_status(status, std::format("Loaded {}", scene_file_title(scene_path)), false);
+            set_scene_status(status, std::format("Loaded {}", scene_instance.descriptor().title), false);
             application.clear_imgui_rgba8_images("scene-control-image://");
             controls = ControlsState{};
             application.close_command_popover("scene.controls");
