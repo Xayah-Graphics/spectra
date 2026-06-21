@@ -1112,11 +1112,11 @@ namespace spectra::pathtracer {
     class Renderer::Impl {
     public:
         Impl(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
-        Impl(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+        Impl(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         ~Impl() noexcept;
 
         void attach(HostView host);
-        void set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+        void set_scene(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
         void detach() noexcept;
         void before_imgui_shutdown() noexcept;
         void after_imgui_created();
@@ -1157,7 +1157,7 @@ namespace spectra::pathtracer {
         [[nodiscard]] const scene::Scene::ResolvedScene& active_scene_snapshot() const;
         [[nodiscard]] std::string active_scene_id() const;
         [[nodiscard]] std::vector<float> materialize_external_volume_channel(const scene::Scene::VolumeGrid& volume, const scene::Scene::VolumeChannel& channel) const;
-        void sync_scene_workspace(double delta_seconds);
+        void sync_scene_source(double delta_seconds);
         void load_source_scene();
 
         void draw_viewport_window();
@@ -1205,7 +1205,7 @@ namespace spectra::pathtracer {
         bool overlays_visible{true};
         std::move_only_function<void(ImVec2, ImVec2)> draw_external_viewport_overlays{};
         std::shared_ptr<const scene::Scene> source_scene{};
-        scene::SceneWorkspaceSource scene_workspace_source{};
+        scene::SceneSource scene_source{};
         std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
         struct {
             bool viewport_known{false};
@@ -1286,7 +1286,7 @@ namespace spectra::pathtracer {
 
     Renderer::Renderer(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(source_scene), std::move(camera_workspace))) {}
 
-    Renderer::Renderer(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(scene_workspace_source), std::move(camera_workspace))) {}
+    Renderer::Renderer(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : impl(std::make_unique<Impl>(std::move(scene_source), std::move(camera_workspace))) {}
 
     Renderer::~Renderer() noexcept = default;
 
@@ -1294,8 +1294,8 @@ namespace spectra::pathtracer {
 
     Renderer& Renderer::operator=(Renderer&& other) noexcept = default;
 
-    void Renderer::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
-        this->impl->set_scene_workspace(std::move(source_scene), std::move(camera_workspace));
+    void Renderer::set_scene(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
+        this->impl->set_scene(std::move(source_scene), std::move(camera_workspace));
     }
 
     std::string_view Renderer::name() {
@@ -1361,9 +1361,9 @@ namespace spectra::pathtracer {
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
     }
 
-    Renderer::Impl::Impl(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : source_scene(std::move(scene_workspace_source.initial_workspace)), scene_workspace_source(std::move(scene_workspace_source)), camera_workspace(std::move(camera_workspace)) {
+    Renderer::Impl::Impl(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace) : source_scene(std::move(scene_source.initial_scene)), scene_source(std::move(scene_source)), camera_workspace(std::move(camera_workspace)) {
         if (this->source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
-        if (!this->scene_workspace_source.update) throw std::runtime_error("Spectra pathtracer scene workspace source requires an update callback");
+        if (!this->scene_source.update) throw std::runtime_error("Spectra pathtracer scene source requires an update callback");
         if (this->camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
     }
 
@@ -1371,7 +1371,7 @@ namespace spectra::pathtracer {
         this->destroy_screenshot_resources_noexcept();
     }
 
-    void Renderer::Impl::set_scene_workspace(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
+    void Renderer::Impl::set_scene(std::shared_ptr<const scene::Scene> source_scene, std::shared_ptr<scene::CameraWorkspace> camera_workspace) {
         if (source_scene == nullptr) throw std::runtime_error("Spectra pathtracer requires a source scene");
         if (camera_workspace == nullptr) throw std::runtime_error("Spectra pathtracer requires a scene camera workspace");
         if (this->source_scene == source_scene && this->camera_workspace == camera_workspace) return;
@@ -1381,11 +1381,11 @@ namespace spectra::pathtracer {
         this->camera_workspace = std::move(camera_workspace);
     }
 
-    void Renderer::Impl::sync_scene_workspace(const double delta_seconds) {
-        if (!this->scene_workspace_source.update) return;
-        std::shared_ptr<scene::Scene> current_workspace = this->scene_workspace_source.current(delta_seconds);
-        if (this->source_scene == current_workspace) return;
-        this->set_scene_workspace(std::move(current_workspace), this->camera_workspace);
+    void Renderer::Impl::sync_scene_source(const double delta_seconds) {
+        if (!this->scene_source.update) return;
+        std::shared_ptr<scene::Scene> current_scene = this->scene_source.current(delta_seconds);
+        if (this->source_scene == current_scene) return;
+        this->set_scene(std::move(current_scene), this->camera_workspace);
     }
 
     void Renderer::Impl::detach_noexcept() noexcept {
@@ -1509,7 +1509,7 @@ namespace spectra::pathtracer {
     }
 
     FrameResult Renderer::Impl::begin_frame(HostView host, const FrameContext& frame) {
-        this->sync_scene_workspace(frame.delta_seconds);
+        this->sync_scene_source(frame.delta_seconds);
         this->update_host(host.physical_device(), host.device(), host.frame_count(), host.swapchain_extent());
         this->consume_completed_screenshot(frame.frame_index);
         this->load_source_scene();

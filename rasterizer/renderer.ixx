@@ -22,8 +22,8 @@ namespace spectra::rasterizer {
     public:
         static constexpr std::uint32_t MaxViewportDirectLights = 8u;
 
-        Renderer(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
-        Renderer(scene::SceneWorkspaceSource scene_workspace_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
+        Renderer(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
+        Renderer(scene::SceneSource scene_source, std::shared_ptr<scene::CameraWorkspace> camera_workspace, std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host);
         ~Renderer() noexcept;
 
         Renderer(const Renderer& other) = delete;
@@ -32,7 +32,7 @@ namespace spectra::rasterizer {
         Renderer& operator=(Renderer&& other) = delete;
 
         [[nodiscard]] static std::string_view name();
-        void set_scene_workspace(std::shared_ptr<scene::Scene> scene_workspace, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
+        void set_scene(std::shared_ptr<scene::Scene> scene_instance, std::shared_ptr<scene::CameraWorkspace> camera_workspace);
 
         void attach(HostView host);
         template <Host HostType>
@@ -420,7 +420,7 @@ namespace spectra::rasterizer {
         [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
-        void sync_scene_workspace(double delta_seconds);
+        void sync_scene_source(double delta_seconds);
         void rebuild_scene_ui_cache_if_needed();
         void prune_scene_selection_to_cache();
         [[nodiscard]] const SceneObjectRecord* scene_object_record(const SceneObjectKey& key) const;
@@ -530,8 +530,8 @@ namespace spectra::rasterizer {
         } lifecycle;
 
         struct {
-            std::shared_ptr<scene::Scene> workspace{};
-            scene::SceneWorkspaceSource workspace_source{};
+            std::shared_ptr<scene::Scene> instance{};
+            scene::SceneSource source{};
             std::shared_ptr<scene::CameraWorkspace> camera_workspace{};
             scene::CameraRevision observed_camera_revision{};
             std::shared_ptr<dynamic_scene::HostServiceRouter> dynamic_host{};

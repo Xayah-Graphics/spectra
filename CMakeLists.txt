@@ -157,20 +157,20 @@ target_link_libraries(spectra_dynamic_scene PUBLIC spectra::scene PRIVATE ${CMAK
 set_property(TARGET spectra_dynamic_scene PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================
-# Scene Workspace
+# Scene Session
 # ============================================================================
-add_library(spectra_scene_workspace)
-add_library(spectra::scene_workspace ALIAS spectra_scene_workspace)
+add_library(spectra_scene_session)
+add_library(spectra::scene_session ALIAS spectra_scene_session)
 target_sources(
-        spectra_scene_workspace
+        spectra_scene_session
         PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        scene_workspace/controller.ixx
+        scene_session/session.ixx
         PRIVATE
-        scene_workspace/controller.cpp
+        scene_session/session.cpp
 )
-target_link_libraries(spectra_scene_workspace PUBLIC spectra::scene spectra::dynamic_scene)
-set_property(TARGET spectra_scene_workspace PROPERTY CXX_MODULE_STD ON)
+target_link_libraries(spectra_scene_session PUBLIC spectra::scene spectra::dynamic_scene)
+set_property(TARGET spectra_scene_session PROPERTY CXX_MODULE_STD ON)
 
 # ============================================================================
 # Pathtracer Configuration
@@ -657,7 +657,7 @@ target_link_libraries(
         spectra::core
         spectra::scene
         spectra::dynamic_scene
-        spectra::scene_workspace
+        spectra::scene_session
         spectra::pathtracer
         spectra::rasterizer
         xayah-util-xcli

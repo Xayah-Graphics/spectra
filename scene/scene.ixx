@@ -540,14 +540,14 @@ namespace spectra::scene {
         std::optional<ResolvedScene> canonical_scene{};
     };
 
-    export struct SceneWorkspaceSource {
-        std::shared_ptr<Scene> initial_workspace{};
+    export struct SceneSource {
+        std::shared_ptr<Scene> initial_scene{};
         std::move_only_function<std::shared_ptr<Scene>(double)> update{};
 
         [[nodiscard]] std::shared_ptr<Scene> current(const double delta_seconds) {
-            if (!this->update) throw std::runtime_error("Scene workspace source requires an update callback");
+            if (!this->update) throw std::runtime_error("Scene source requires an update callback");
             std::shared_ptr<Scene> workspace = this->update(delta_seconds);
-            if (workspace == nullptr) throw std::runtime_error("Scene workspace source returned null");
+            if (workspace == nullptr) throw std::runtime_error("Scene source returned null");
             return workspace;
         }
     };

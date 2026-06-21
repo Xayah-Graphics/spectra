@@ -55,7 +55,7 @@ metrics may also appear as compact viewport overlay chips.
 Spectra loads dynamic scenes from platform dynamic libraries. External projects do not need to include Spectra headers,
 link Spectra libraries, import Spectra modules, or use Spectra CMake helpers.
 Inside Spectra, `spectra.dynamic_scene` owns the plugin protocol, host services, and DLL loading;
-`spectra.scene_workspace` owns static/dynamic scene activation, timeline update, and workspace switching. The
+`spectra.scene_session` owns the current static/dynamic scene session, timeline update, and active scene lifetime. The
 rasterizer only supplies the Vulkan-backed host-service implementation and preview draw passes.
 
 A dynamic scene plugin only needs to:
