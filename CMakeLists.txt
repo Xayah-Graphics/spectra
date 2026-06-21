@@ -145,12 +145,12 @@ target_sources(
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         dynamic_scene/plugin_abi.ixx
-        dynamic_scene/plugin_decode.ixx
+        dynamic_scene/plugin_codec.ixx
         dynamic_scene/plugin_library.ixx
         PRIVATE
         dynamic_scene/host.cpp
         dynamic_scene/loader.cpp
-        dynamic_scene/plugin_decode.cpp
+        dynamic_scene/plugin_codec.cpp
         dynamic_scene/plugin_library.cpp
 )
 target_link_libraries(spectra_dynamic_scene PUBLIC spectra::scene PRIVATE ${CMAKE_DL_LIBS})

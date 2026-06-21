@@ -1,12 +1,13 @@
 module spectra.dynamic_scene.loader;
 
 import std;
-import spectra.dynamic_scene.plugin_decode;
+import spectra.dynamic_scene.plugin_codec;
 import spectra.dynamic_scene.plugin_library;
 
 namespace spectra::dynamic_scene {
     bool is_plugin_file(const std::filesystem::path& path) {
-        return plugin_file_extension_supported(path);
+        const PluginAbiCodec codec{};
+        return codec.accepts_plugin_path(path);
     }
 
     PluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {

@@ -1,4 +1,4 @@
-module spectra.dynamic_scene.plugin_decode;
+module spectra.dynamic_scene.plugin_codec;
 
 import std;
 import spectra.scene;
@@ -23,6 +23,41 @@ namespace spectra::dynamic_scene {
 #else
             return path_extension_is(path, ".so");
 #endif
+        }
+
+        [[nodiscard]] std::uint32_t abi_gpu_resource_handle_kind(const GpuResourceHandleKind kind) {
+            switch (kind) {
+            case GpuResourceHandleKind::OpaqueWin32: return 1u;
+            case GpuResourceHandleKind::OpaqueFileDescriptor: return 2u;
+            }
+            throw std::runtime_error("Dynamic scene GPU resource handle kind is invalid");
+        }
+
+        [[nodiscard]] SpectraGpuDeviceIdentity abi_gpu_device_identity(const GpuDeviceIdentity& identity) {
+            SpectraGpuDeviceIdentity result{
+                .vendor_id = identity.vendor_id,
+                .device_id = identity.device_id,
+                .device_node_mask = identity.device_node_mask,
+            };
+            for (std::size_t index = 0u; index < identity.device_uuid.size(); ++index) result.device_uuid[index] = identity.device_uuid[index];
+            for (std::size_t index = 0u; index < identity.device_luid.size(); ++index) result.device_luid[index] = identity.device_luid[index];
+            return result;
+        }
+
+        [[nodiscard]] std::uint32_t dynamic_scene_gpu_buffer_kind_from_abi(const std::uint32_t kind, const std::string_view context) {
+            switch (kind) {
+            case SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VOLUME_CHANNEL: return GpuBufferKindVolumeChannel;
+            case SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID: return GpuBufferKindViewportVoxelGrid;
+            default: throw std::runtime_error(std::format("{} GPU buffer kind {} is unknown", context, kind));
+            }
+        }
+
+        [[nodiscard]] std::uint32_t abi_gpu_buffer_kind(const std::uint32_t kind) {
+            switch (kind) {
+            case GpuBufferKindVolumeChannel: return SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VOLUME_CHANNEL;
+            case GpuBufferKindViewportVoxelGrid: return SPECTRA_DYNAMIC_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID;
+            default: throw std::runtime_error(std::format("Dynamic scene GPU buffer kind {} is invalid", kind));
+            }
         }
 
         [[nodiscard]] std::string abi_string(const char* value, const std::string_view context, const bool allow_empty) {
@@ -901,4 +936,67 @@ namespace spectra::dynamic_scene {
                 if (!action_state_ids.contains(action_id)) throw std::runtime_error(std::format("{} status did not provide a state for action '{}'", context, action_id));
             return snapshot;
         }
+
+    bool PluginAbiCodec::accepts_plugin_path(const std::filesystem::path& path) const {
+        return plugin_file_extension_supported(path);
+    }
+
+    PluginAbiCodec::Descriptor PluginAbiCodec::decode_descriptor(const SpectraPlugin& plugin) const {
+        return Descriptor{
+            .id = abi_string(plugin.id, "Dynamic scene plugin id", false),
+            .title = abi_string(plugin.title, "Dynamic scene plugin title", false),
+            .controls_panel_title = abi_string(plugin.controls_panel_title, "Dynamic scene plugin controls panel title", false),
+            .open_action_label = abi_string(plugin.open_action_label, "Dynamic scene plugin open action label", false),
+            .open_action_description = abi_string(plugin.open_action_description, "Dynamic scene plugin open action description", true),
+            .base_pbrt_path = abi_string(plugin.base_pbrt_path, "Dynamic scene plugin base PBRT path", true),
+            .frames_per_second = finite_double(plugin.frames_per_second, "Dynamic scene plugin frame rate"),
+            .open_options = make_open_option_schemas(plugin.open_options, "Dynamic scene plugin open option schema"),
+            .control_actions = make_control_actions(plugin.control_actions, "Dynamic scene plugin controls action"),
+            .control_settings = make_control_setting_schemas(plugin.control_settings, "Dynamic scene plugin controls setting schema"),
+        };
+    }
+
+    std::string PluginAbiCodec::decode_last_error(const SpectraPlugin& plugin, SpectraInstance* instance, const std::string_view action) const {
+        return abi_string(plugin.last_error(instance), std::format("{} error message", action), true);
+    }
+
+    GpuBufferRequest PluginAbiCodec::decode_gpu_buffer_request(const SpectraGpuBufferRequest& request, const std::string_view context) const {
+        if (request.struct_size != sizeof(SpectraGpuBufferRequest)) throw std::runtime_error(std::format("{} GPU buffer request ABI size mismatch", context));
+        return GpuBufferRequest{
+            .kind = dynamic_scene_gpu_buffer_kind_from_abi(request.kind, context),
+            .byte_size = request.byte_size,
+            .debug_name = abi_string(request.debug_name, std::format("{} GPU buffer debug name", context), true),
+        };
+    }
+
+    SpectraGpuBufferAllocation PluginAbiCodec::encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation) const {
+        return SpectraGpuBufferAllocation{
+            .struct_size = sizeof(SpectraGpuBufferAllocation),
+            .resource_id = allocation.resource_id,
+            .byte_size = allocation.byte_size,
+            .kind = abi_gpu_buffer_kind(allocation.kind),
+            .handle_kind = abi_gpu_resource_handle_kind(allocation.handle_kind),
+            .handle = allocation.handle,
+            .device_identity = abi_gpu_device_identity(allocation.device_identity),
+        };
+    }
+
+    PluginAbiCodec::SceneSymbols PluginAbiCodec::collect_scene_symbols(const scene::Scene::Document& document) const {
+        return SceneSymbols{
+            .material_names = collect_material_names(document),
+            .light_names = collect_light_names(document),
+        };
+    }
+
+    void PluginAbiCodec::append_document(scene::Scene::Document& document, const SpectraDocumentView& view, SceneSymbols& symbols) const {
+        append_document_view(document, view, symbols.material_names, symbols.light_names);
+    }
+
+    scene::Scene::FrameSnapshot PluginAbiCodec::decode_frame(const SpectraFrameView& view, const scene::Scene::FrameInfo& frame, const SceneSymbols& symbols) const {
+        return make_frame_snapshot(view, frame, symbols.material_names);
+    }
+
+    ControlSnapshot PluginAbiCodec::decode_control_snapshot(const SpectraControlSnapshotView& view, const std::span<const ControlAction> actions, const std::span<const OptionSchema> setting_schemas, const std::string_view context) const {
+        return make_control_snapshot(view, actions, setting_schemas, context);
+    }
 } // namespace spectra::dynamic_scene
