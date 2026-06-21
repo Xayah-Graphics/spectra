@@ -65,7 +65,7 @@ namespace {
     };
 
     struct DynamicSceneControlSettingEditor {
-        spectra::scene_runtime::DynamicSceneControlSetting setting{};
+        spectra::scene_runtime::DynamicSceneOptionSchema schema{};
         DynamicSceneOptionEditor editor{};
         std::string committed_value{};
     };
@@ -169,28 +169,13 @@ namespace {
         return editor;
     }
 
-    [[nodiscard]] spectra::scene_runtime::DynamicSceneOptionSchema setting_as_option_schema(const spectra::scene_runtime::DynamicSceneControlSetting& setting) {
-        return spectra::scene_runtime::DynamicSceneOptionSchema{
-            .key = setting.key,
-            .label = setting.label,
-            .description = setting.description,
-            .kind = setting.kind,
-            .required = true,
-            .default_value = setting.value,
-            .group = setting.group,
-            .advanced = setting.advanced,
-            .priority = setting.priority,
-            .choices = setting.choices,
-        };
-    }
-
-    [[nodiscard]] DynamicSceneControlSettingEditor make_control_setting_editor(spectra::scene_runtime::DynamicSceneControlSetting setting) {
-        const std::string value = setting.value;
-        spectra::scene_runtime::DynamicSceneOptionSchema schema = setting_as_option_schema(setting);
+    [[nodiscard]] DynamicSceneControlSettingEditor make_control_setting_editor(spectra::scene_runtime::DynamicSceneOptionSchema schema, std::string value) {
+        schema.default_value = value;
+        schema.required = true;
         DynamicSceneControlSettingEditor editor{};
-        editor.setting = std::move(setting);
+        editor.schema = schema;
         editor.editor = make_dynamic_scene_option_editor(std::move(schema));
-        editor.committed_value = value;
+        editor.committed_value = std::move(value);
         return editor;
     }
 
@@ -325,6 +310,14 @@ namespace {
             return left.action.id < right.action.id;
         });
         controls.setting_editors.clear();
+        controls.setting_editors.reserve(controls.plugin.control_settings.size());
+        for (const spectra::scene_runtime::DynamicSceneOptionSchema& schema : controls.plugin.control_settings) controls.setting_editors.push_back(make_control_setting_editor(schema, schema.default_value));
+        std::ranges::stable_sort(controls.setting_editors, [](const DynamicSceneControlSettingEditor& left, const DynamicSceneControlSettingEditor& right) {
+            if (left.schema.advanced != right.schema.advanced) return !left.schema.advanced && right.schema.advanced;
+            if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
+            if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
+            return left.schema.key < right.schema.key;
+        });
         controls.error.clear();
         controls.active_title.clear();
         controls.active_id.clear();
@@ -390,13 +383,13 @@ namespace {
     }
 
     [[nodiscard]] std::string control_setting_group_label(const DynamicSceneControlSettingEditor& editor) {
-        return editor.setting.group.empty() ? "Settings" : editor.setting.group;
+        return editor.schema.group.empty() ? "Settings" : editor.schema.group;
     }
 
     [[nodiscard]] std::vector<std::string> control_setting_groups(const std::span<const DynamicSceneControlSettingEditor> editors, const bool advanced) {
         std::vector<std::string> groups{};
         for (const DynamicSceneControlSettingEditor& editor : editors) {
-            if (editor.setting.advanced != advanced) continue;
+            if (editor.schema.advanced != advanced) continue;
             const std::string group = control_setting_group_label(editor);
             if (!std::ranges::contains(groups, group)) groups.push_back(group);
         }
@@ -405,33 +398,22 @@ namespace {
 
     void sort_control_setting_editors(std::vector<DynamicSceneControlSettingEditor>& editors) {
         std::ranges::stable_sort(editors, [](const DynamicSceneControlSettingEditor& left, const DynamicSceneControlSettingEditor& right) {
-            if (left.setting.advanced != right.setting.advanced) return !left.setting.advanced && right.setting.advanced;
-            if (left.setting.priority != right.setting.priority) return left.setting.priority < right.setting.priority;
-            if (left.setting.group != right.setting.group) return left.setting.group < right.setting.group;
-            return left.setting.key < right.setting.key;
+            if (left.schema.advanced != right.schema.advanced) return !left.schema.advanced && right.schema.advanced;
+            if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
+            if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
+            return left.schema.key < right.schema.key;
         });
     }
 
-    void sync_dynamic_control_setting_editors(DynamicSceneControlsState& controls, const std::span<const spectra::scene_runtime::DynamicSceneControlSetting> settings) {
-        std::vector<DynamicSceneControlSettingEditor> next{};
-        next.reserve(settings.size());
-        for (const spectra::scene_runtime::DynamicSceneControlSetting& setting : settings) {
-            const auto existing = std::ranges::find_if(controls.setting_editors, [&setting](const DynamicSceneControlSettingEditor& editor) { return editor.setting.key == setting.key; });
-            if (existing == controls.setting_editors.end()) {
-                next.push_back(make_control_setting_editor(setting));
-                continue;
+    void sync_dynamic_control_setting_editors(DynamicSceneControlsState& controls, const std::span<const spectra::scene_runtime::DynamicSceneControlSettingValue> settings) {
+        for (const spectra::scene_runtime::DynamicSceneControlSettingValue& setting : settings) {
+            const auto editor = std::ranges::find_if(controls.setting_editors, [&setting](const DynamicSceneControlSettingEditor& candidate) { return candidate.schema.key == setting.key; });
+            if (editor == controls.setting_editors.end()) continue;
+            if (editor->committed_value != setting.value || dynamic_scene_option_editor_value(editor->editor) != setting.value) {
+                set_dynamic_scene_option_editor_value(editor->editor, setting.value);
+                editor->committed_value = setting.value;
             }
-            DynamicSceneControlSettingEditor editor = std::move(*existing);
-            editor.setting = setting;
-            editor.editor.schema = setting_as_option_schema(setting);
-            if (editor.committed_value != setting.value || dynamic_scene_option_editor_value(editor.editor) != setting.value) {
-                set_dynamic_scene_option_editor_value(editor.editor, setting.value);
-                editor.committed_value = setting.value;
-            }
-            next.push_back(std::move(editor));
         }
-        sort_control_setting_editors(next);
-        controls.setting_editors = std::move(next);
     }
 
     [[nodiscard]] std::string open_dynamic_scene_controls(spectra::scene_runtime::SceneController& controller, DynamicSceneControlsState& controls, const std::filesystem::path& plugin_path) {
@@ -552,13 +534,15 @@ namespace {
     }
 
     [[nodiscard]] bool control_action_enabled(const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::string& action_id) {
-        return std::ranges::any_of(status.enabled_action_ids, [&action_id](const std::string& enabled_action_id) { return enabled_action_id == action_id; });
+        const auto state = std::ranges::find_if(status.action_states, [&action_id](const spectra::scene_runtime::DynamicSceneControlActionState& action_state) { return action_state.action_id == action_id; });
+        return state != status.action_states.end() && state->enabled;
     }
 
     [[nodiscard]] std::string_view control_action_disabled_reason(const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::string& action_id) {
-        const auto reason = std::ranges::find_if(status.disabled_actions, [&action_id](const spectra::scene_runtime::DynamicSceneControlDisabledAction& disabled_action) { return disabled_action.action_id == action_id; });
-        if (reason == status.disabled_actions.end()) return "Action disabled by control status";
-        return reason->reason;
+        const auto state = std::ranges::find_if(status.action_states, [&action_id](const spectra::scene_runtime::DynamicSceneControlActionState& action_state) { return action_state.action_id == action_id; });
+        if (state == status.action_states.end()) return "Action disabled by control status";
+        if (state->disabled_reason.empty()) return "Action disabled by control status";
+        return state->disabled_reason;
     }
 
     [[nodiscard]] ImVec4 control_log_level_color(const std::string& level) {
@@ -827,12 +811,11 @@ namespace {
         if (!dynamic_scene_option_editor_should_commit(editor.editor, changed)) return;
         const std::string value = dynamic_scene_option_editor_value(editor.editor);
         try {
-            controller.update_active_dynamic_scene_control_setting(editor.setting.key, value);
+            controller.update_active_dynamic_scene_control_setting(editor.schema.key, value);
             editor.committed_value = value;
-            editor.setting.value = value;
             controls.phase = DynamicSceneControlsPhase::Active;
             controls.error.clear();
-            set_scene_status(state, std::format("Updated {}", editor.setting.label), false);
+            set_scene_status(state, std::format("Updated {}", editor.schema.label), false);
         } catch (const std::exception& error) {
             set_dynamic_scene_option_editor_value(editor.editor, editor.committed_value);
             controls.phase = DynamicSceneControlsPhase::Error;
@@ -850,7 +833,7 @@ namespace {
         for (const std::string& group : groups) {
             ImGui::TextDisabled("%s", group.c_str());
             for (DynamicSceneControlSettingEditor& editor : controls.setting_editors) {
-                if (editor.setting.advanced != advanced) continue;
+                if (editor.schema.advanced != advanced) continue;
                 if (control_setting_group_label(editor) != group) continue;
                 draw_dynamic_control_setting_editor(controller, state, controls, editor);
                 ImGui::Spacing();
@@ -977,7 +960,7 @@ namespace {
             }
             if (ImGui::BeginTabItem("Debug")) {
                 draw_dynamic_control_settings(controller, state, controls, false);
-                if (std::ranges::any_of(controls.setting_editors, [](const DynamicSceneControlSettingEditor& editor) { return editor.setting.advanced; }) && ImGui::CollapsingHeader("Advanced Settings")) draw_dynamic_control_settings(controller, state, controls, true);
+                if (std::ranges::any_of(controls.setting_editors, [](const DynamicSceneControlSettingEditor& editor) { return editor.schema.advanced; }) && ImGui::CollapsingHeader("Advanced Settings")) draw_dynamic_control_settings(controller, state, controls, true);
                 const bool has_debug_actions = !control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupDebug).empty();
                 if (has_debug_actions) {
                     ImGui::Spacing();

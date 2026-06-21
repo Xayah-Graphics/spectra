@@ -362,12 +362,10 @@ namespace spectra::rasterizer {
         [[nodiscard]] scene_runtime::DynamicSceneGpuResourceHandleKind external_storage_handle_kind() const;
         [[nodiscard]] ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context);
         [[nodiscard]] const ExternalStorageBuffer& external_storage_buffer(std::uint64_t resource_id, std::string_view context) const;
-        [[nodiscard]] scene_runtime::DynamicSceneViewportVoxelBufferAllocation request_external_storage_buffer(std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
+        [[nodiscard]] scene_runtime::DynamicSceneGpuBufferAllocation request_external_storage_buffer(std::uint32_t kind, std::uint64_t byte_size, std::string_view debug_name, std::string_view context);
         void release_external_storage_buffer(std::uint64_t resource_id, std::string_view context);
-        [[nodiscard]] scene_runtime::DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request);
-        [[nodiscard]] scene_runtime::DynamicSceneVolumeBufferAllocation request_volume_buffer(const scene_runtime::DynamicSceneVolumeBufferRequest& request);
-        void release_viewport_voxel_buffer(std::uint64_t resource_id);
-        void release_volume_buffer(std::uint64_t resource_id);
+        [[nodiscard]] scene_runtime::DynamicSceneGpuBufferAllocation request_dynamic_gpu_buffer(const scene_runtime::DynamicSceneGpuBufferRequest& request);
+        void release_dynamic_gpu_buffer(std::uint64_t resource_id);
         void ensure_viewport_voxel_buffer_descriptor(std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor);
         void ensure_viewport_voxel_grid_compaction_resource(const ViewportVoxelGridDrawCommand& draw_command);
         void connect_dynamic_scene_host_services();

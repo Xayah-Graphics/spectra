@@ -1178,7 +1178,7 @@ namespace spectra::rasterizer {
         return found->second;
     }
 
-    scene_runtime::DynamicSceneViewportVoxelBufferAllocation Renderer::request_external_storage_buffer(const std::uint64_t byte_size, const std::string_view debug_name, const std::string_view context) {
+    scene_runtime::DynamicSceneGpuBufferAllocation Renderer::request_external_storage_buffer(const std::uint32_t kind, const std::uint64_t byte_size, const std::string_view debug_name, const std::string_view context) {
         static_cast<void>(debug_name);
         if (byte_size == 0u) throw std::runtime_error(std::format("{} byte size must be positive", context));
         if (byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error(std::format("{} byte size exceeds Vulkan device size range", context));
@@ -1223,9 +1223,10 @@ namespace spectra::rasterizer {
         const std::uintptr_t exported_handle_value = static_cast<std::uintptr_t>(exported_handle);
 #endif
 
-        scene_runtime::DynamicSceneViewportVoxelBufferAllocation allocation{
+        scene_runtime::DynamicSceneGpuBufferAllocation allocation{
             .resource_id = resource_id,
             .byte_size = static_cast<std::uint64_t>(memory_requirements.size),
+            .kind = kind,
             .handle_kind = this->external_storage_handle_kind(),
             .handle = exported_handle_value,
             .device_identity = make_dynamic_scene_gpu_device_identity(*this->host.physical_device),
@@ -1243,49 +1244,41 @@ namespace spectra::rasterizer {
         this->external_storage.buffers.erase(found);
     }
 
-    scene_runtime::DynamicSceneViewportVoxelBufferAllocation Renderer::request_viewport_voxel_buffer(const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request) {
-        scene_runtime::DynamicSceneViewportVoxelBufferAllocation allocation = this->request_external_storage_buffer(request.byte_size, request.debug_name, "Dynamic scene viewport voxel buffer");
-        ViewportVoxelBufferDescriptor descriptor{};
-        this->ensure_viewport_voxel_buffer_descriptor(allocation.resource_id, descriptor);
-        const std::pair<std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator, bool> inserted = this->viewport_voxel_grid_pass.buffer_descriptors.emplace(allocation.resource_id, std::move(descriptor));
-        if (!inserted.second) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer descriptor {} already exists", allocation.resource_id));
-        return allocation;
-    }
-
-    scene_runtime::DynamicSceneVolumeBufferAllocation Renderer::request_volume_buffer(const scene_runtime::DynamicSceneVolumeBufferRequest& request) {
-        const scene_runtime::DynamicSceneViewportVoxelBufferAllocation allocation = this->request_external_storage_buffer(request.byte_size, request.debug_name, "Dynamic scene volume buffer");
-        return scene_runtime::DynamicSceneVolumeBufferAllocation{
-            .resource_id = allocation.resource_id,
-            .byte_size = allocation.byte_size,
-            .handle_kind = allocation.handle_kind,
-            .handle = allocation.handle,
-            .device_identity = allocation.device_identity,
-        };
-    }
-
-    void Renderer::release_viewport_voxel_buffer(const std::uint64_t resource_id) {
-        const std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(resource_id);
-        if (descriptor == this->viewport_voxel_grid_pass.buffer_descriptors.end()) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer descriptor {} does not exist", resource_id));
-        if (this->host.device != nullptr) this->host.device->waitIdle();
-        for (FrameViewportVoxelGridResources& frame_voxel_grids : this->viewport_voxel_grid_pass.frame_voxel_grids) {
-            std::erase_if(frame_voxel_grids.drawCommands, [resource_id](const ViewportVoxelGridDrawCommand& draw_command) {
-                return draw_command.bufferId == resource_id;
-            });
+    scene_runtime::DynamicSceneGpuBufferAllocation Renderer::request_dynamic_gpu_buffer(const scene_runtime::DynamicSceneGpuBufferRequest& request) {
+        if (request.kind == scene_runtime::DynamicSceneGpuBufferKindViewportVoxelGrid) {
+            scene_runtime::DynamicSceneGpuBufferAllocation allocation = this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Dynamic scene viewport voxel buffer");
+            ViewportVoxelBufferDescriptor descriptor{};
+            this->ensure_viewport_voxel_buffer_descriptor(allocation.resource_id, descriptor);
+            const std::pair<std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator, bool> inserted = this->viewport_voxel_grid_pass.buffer_descriptors.emplace(allocation.resource_id, std::move(descriptor));
+            if (!inserted.second) throw std::runtime_error(std::format("Dynamic scene viewport voxel buffer descriptor {} already exists", allocation.resource_id));
+            return allocation;
         }
-        for (std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>::iterator compaction = this->viewport_voxel_grid_pass.compactions.begin(); compaction != this->viewport_voxel_grid_pass.compactions.end();) {
-            if (compaction->first.bufferId != resource_id) {
-                ++compaction;
-                continue;
+        if (request.kind == scene_runtime::DynamicSceneGpuBufferKindVolumeChannel) return this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Dynamic scene volume buffer");
+        throw std::runtime_error(std::format("Dynamic scene GPU buffer kind {} is unsupported by the rasterizer", request.kind));
+    }
+
+    void Renderer::release_dynamic_gpu_buffer(const std::uint64_t resource_id) {
+        const bool viewport_voxel_buffer = this->viewport_voxel_grid_pass.buffer_descriptors.contains(resource_id);
+        if (viewport_voxel_buffer) {
+            const std::map<std::uint64_t, ViewportVoxelBufferDescriptor>::iterator descriptor = this->viewport_voxel_grid_pass.buffer_descriptors.find(resource_id);
+            if (this->host.device != nullptr) this->host.device->waitIdle();
+            for (FrameViewportVoxelGridResources& frame_voxel_grids : this->viewport_voxel_grid_pass.frame_voxel_grids) {
+                std::erase_if(frame_voxel_grids.drawCommands, [resource_id](const ViewportVoxelGridDrawCommand& draw_command) {
+                    return draw_command.bufferId == resource_id;
+                });
             }
-            this->destroy_viewport_voxel_grid_compaction_resource(compaction->second);
-            compaction = this->viewport_voxel_grid_pass.compactions.erase(compaction);
+            for (std::map<ViewportVoxelGridCompactionKey, ViewportVoxelGridCompactionResource>::iterator compaction = this->viewport_voxel_grid_pass.compactions.begin(); compaction != this->viewport_voxel_grid_pass.compactions.end();) {
+                if (compaction->first.bufferId != resource_id) {
+                    ++compaction;
+                    continue;
+                }
+                this->destroy_viewport_voxel_grid_compaction_resource(compaction->second);
+                compaction = this->viewport_voxel_grid_pass.compactions.erase(compaction);
+            }
+            this->viewport_voxel_grid_pass.buffer_descriptors.erase(descriptor);
+            this->release_external_storage_buffer(resource_id, "Dynamic scene viewport voxel buffer");
+            return;
         }
-        this->viewport_voxel_grid_pass.buffer_descriptors.erase(descriptor);
-        this->release_external_storage_buffer(resource_id, "Dynamic scene viewport voxel buffer");
-    }
-
-    void Renderer::release_volume_buffer(const std::uint64_t resource_id) {
-        if (this->viewport_voxel_grid_pass.buffer_descriptors.contains(resource_id)) throw std::runtime_error(std::format("Dynamic scene volume buffer {} is registered as a viewport voxel debug buffer", resource_id));
         this->release_external_storage_buffer(resource_id, "Dynamic scene volume buffer");
     }
 
@@ -1372,27 +1365,17 @@ namespace spectra::rasterizer {
 
     void Renderer::connect_dynamic_scene_host_services() {
         if (this->scene.dynamic_host_services == nullptr) throw std::runtime_error("Spectra rasterizer dynamic scene host services are not initialized");
-        this->scene.dynamic_host_services->set_viewport_voxel_buffer_backend(
-            [this](const scene_runtime::DynamicSceneViewportVoxelBufferRequest& request) {
-                return this->request_viewport_voxel_buffer(request);
+        this->scene.dynamic_host_services->set_gpu_buffer_backend(
+            [this](const scene_runtime::DynamicSceneGpuBufferRequest& request) {
+                return this->request_dynamic_gpu_buffer(request);
             },
             [this](const std::uint64_t resource_id) {
-                this->release_viewport_voxel_buffer(resource_id);
-            });
-        this->scene.dynamic_host_services->set_volume_buffer_backend(
-            [this](const scene_runtime::DynamicSceneVolumeBufferRequest& request) {
-                return this->request_volume_buffer(request);
-            },
-            [this](const std::uint64_t resource_id) {
-                this->release_volume_buffer(resource_id);
+                this->release_dynamic_gpu_buffer(resource_id);
             });
     }
 
     void Renderer::disconnect_dynamic_scene_host_services() noexcept {
-        if (this->scene.dynamic_host_services != nullptr) {
-            this->scene.dynamic_host_services->clear_viewport_voxel_buffer_backend();
-            this->scene.dynamic_host_services->clear_volume_buffer_backend();
-        }
+        if (this->scene.dynamic_host_services != nullptr) this->scene.dynamic_host_services->clear_gpu_buffer_backend();
     }
 
     void Renderer::create_image_2d(GpuImage2D& image, const vk::Extent2D extent, const vk::Format format, const vk::ImageUsageFlags usage, const vk::ImageAspectFlags aspect) {

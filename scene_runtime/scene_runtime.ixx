@@ -55,27 +55,19 @@ namespace spectra::scene_runtime {
         std::uint32_t device_node_mask{};
     };
 
-    export struct DynamicSceneViewportVoxelBufferRequest {
+    export inline constexpr std::uint32_t DynamicSceneGpuBufferKindVolumeChannel = 0u;
+    export inline constexpr std::uint32_t DynamicSceneGpuBufferKindViewportVoxelGrid = 1u;
+
+    export struct DynamicSceneGpuBufferRequest {
+        std::uint32_t kind{};
         std::uint64_t byte_size{};
         std::string debug_name{};
     };
 
-    export struct DynamicSceneViewportVoxelBufferAllocation {
+    export struct DynamicSceneGpuBufferAllocation {
         std::uint64_t resource_id{};
         std::uint64_t byte_size{};
-        DynamicSceneGpuResourceHandleKind handle_kind{DynamicSceneGpuResourceHandleKind::OpaqueWin32};
-        std::uintptr_t handle{};
-        DynamicSceneGpuDeviceIdentity device_identity{};
-    };
-
-    export struct DynamicSceneVolumeBufferRequest {
-        std::uint64_t byte_size{};
-        std::string debug_name{};
-    };
-
-    export struct DynamicSceneVolumeBufferAllocation {
-        std::uint64_t resource_id{};
-        std::uint64_t byte_size{};
+        std::uint32_t kind{};
         DynamicSceneGpuResourceHandleKind handle_kind{DynamicSceneGpuResourceHandleKind::OpaqueWin32};
         std::uintptr_t handle{};
         DynamicSceneGpuDeviceIdentity device_identity{};
@@ -90,10 +82,8 @@ namespace spectra::scene_runtime {
         DynamicSceneHostServices& operator=(DynamicSceneHostServices&& other) = delete;
         virtual ~DynamicSceneHostServices() noexcept = default;
 
-        [[nodiscard]] virtual DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) = 0;
-        virtual void release_viewport_voxel_buffer(std::uint64_t resource_id) = 0;
-        [[nodiscard]] virtual DynamicSceneVolumeBufferAllocation request_volume_buffer(const DynamicSceneVolumeBufferRequest& request) = 0;
-        virtual void release_volume_buffer(std::uint64_t resource_id) = 0;
+        [[nodiscard]] virtual DynamicSceneGpuBufferAllocation request_gpu_buffer(const DynamicSceneGpuBufferRequest& request) = 0;
+        virtual void release_gpu_buffer(std::uint64_t resource_id) = 0;
         [[nodiscard]] virtual std::string_view last_error() const = 0;
     };
 
@@ -106,22 +96,16 @@ namespace spectra::scene_runtime {
         DynamicSceneHostServiceRouter& operator=(DynamicSceneHostServiceRouter&& other) = delete;
         ~DynamicSceneHostServiceRouter() noexcept override = default;
 
-        void set_viewport_voxel_buffer_backend(std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
-        void clear_viewport_voxel_buffer_backend() noexcept;
-        void set_volume_buffer_backend(std::move_only_function<DynamicSceneVolumeBufferAllocation(const DynamicSceneVolumeBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
-        void clear_volume_buffer_backend() noexcept;
-        [[nodiscard]] DynamicSceneViewportVoxelBufferAllocation request_viewport_voxel_buffer(const DynamicSceneViewportVoxelBufferRequest& request) override;
-        void release_viewport_voxel_buffer(std::uint64_t resource_id) override;
-        [[nodiscard]] DynamicSceneVolumeBufferAllocation request_volume_buffer(const DynamicSceneVolumeBufferRequest& request) override;
-        void release_volume_buffer(std::uint64_t resource_id) override;
+        void set_gpu_buffer_backend(std::move_only_function<DynamicSceneGpuBufferAllocation(const DynamicSceneGpuBufferRequest&)> request_callback, std::move_only_function<void(std::uint64_t)> release_callback);
+        void clear_gpu_buffer_backend() noexcept;
+        [[nodiscard]] DynamicSceneGpuBufferAllocation request_gpu_buffer(const DynamicSceneGpuBufferRequest& request) override;
+        void release_gpu_buffer(std::uint64_t resource_id) override;
         [[nodiscard]] std::string_view last_error() const override;
 
     private:
-        std::move_only_function<DynamicSceneViewportVoxelBufferAllocation(const DynamicSceneViewportVoxelBufferRequest&)> request_viewport_voxel_buffer_callback{};
-        std::move_only_function<void(std::uint64_t)> release_viewport_voxel_buffer_callback{};
-        std::move_only_function<DynamicSceneVolumeBufferAllocation(const DynamicSceneVolumeBufferRequest&)> request_volume_buffer_callback{};
-        std::move_only_function<void(std::uint64_t)> release_volume_buffer_callback{};
-        std::map<std::uint64_t, DynamicSceneVolumeBufferAllocation> volume_buffer_allocations{};
+        std::move_only_function<DynamicSceneGpuBufferAllocation(const DynamicSceneGpuBufferRequest&)> request_gpu_buffer_callback{};
+        std::move_only_function<void(std::uint64_t)> release_gpu_buffer_callback{};
+        std::map<std::uint64_t, DynamicSceneGpuBufferAllocation> gpu_buffer_allocations{};
         std::string last_error_message{};
     };
 
@@ -152,16 +136,9 @@ namespace spectra::scene_runtime {
         std::vector<DynamicSceneOptionSchema> options{};
     };
 
-    export struct DynamicSceneControlSetting {
+    export struct DynamicSceneControlSettingValue {
         std::string key{};
-        std::string label{};
-        std::string description{};
-        DynamicSceneOptionKind kind{DynamicSceneOptionKind::Bool};
         std::string value{};
-        std::string group{};
-        bool advanced{};
-        std::int32_t priority{};
-        std::vector<DynamicSceneOptionChoice> choices{};
     };
 
     export struct DynamicSceneControlMetric {
@@ -174,9 +151,10 @@ namespace spectra::scene_runtime {
         std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
     };
 
-    export struct DynamicSceneControlDisabledAction {
+    export struct DynamicSceneControlActionState {
         std::string action_id{};
-        std::string reason{};
+        bool enabled{};
+        std::string disabled_reason{};
     };
 
     export struct DynamicSceneControlStatus {
@@ -184,8 +162,7 @@ namespace spectra::scene_runtime {
         std::string headline{};
         std::string detail{};
         std::vector<DynamicSceneControlMetric> metrics{};
-        std::vector<std::string> enabled_action_ids{};
-        std::vector<DynamicSceneControlDisabledAction> disabled_actions{};
+        std::vector<DynamicSceneControlActionState> action_states{};
     };
 
     export struct DynamicSceneControlLogEntry {
@@ -240,7 +217,7 @@ namespace spectra::scene_runtime {
 
     export struct DynamicSceneControlSnapshot {
         DynamicSceneControlStatus status{};
-        std::vector<DynamicSceneControlSetting> settings{};
+        std::vector<DynamicSceneControlSettingValue> settings{};
         std::vector<DynamicSceneControlLogEntry> logs{};
         std::vector<DynamicSceneControlImage> images{};
         std::vector<DynamicSceneControlScalarSeries> scalar_series{};
@@ -303,6 +280,7 @@ namespace spectra::scene_runtime {
         std::filesystem::path path{};
         std::vector<DynamicSceneOptionSchema> open_options{};
         std::vector<DynamicSceneControlAction> control_actions{};
+        std::vector<DynamicSceneOptionSchema> control_settings{};
     };
 
     export class SceneRegistry final {
