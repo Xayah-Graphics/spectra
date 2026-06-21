@@ -9,7 +9,7 @@ namespace spectra::scene_runtime {
         Dynamic,
     };
 
-    export enum class DynamicSceneOpenOptionKind {
+    export enum class DynamicSceneOptionKind {
         Text,
         DirectoryPath,
         FilePath,
@@ -19,25 +19,25 @@ namespace spectra::scene_runtime {
         UnsignedInteger,
     };
 
-    export struct DynamicSceneOpenOptionChoice {
+    export struct DynamicSceneOptionChoice {
         std::string value{};
         std::string label{};
     };
 
-    export struct DynamicSceneOpenOptionSchema {
+    export struct DynamicSceneOptionSchema {
         std::string key{};
         std::string label{};
         std::string description{};
-        DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Text};
+        DynamicSceneOptionKind kind{DynamicSceneOptionKind::Text};
         bool required{};
         std::string default_value{};
         std::string group{};
         bool advanced{};
         std::int32_t priority{};
-        std::vector<DynamicSceneOpenOptionChoice> choices{};
+        std::vector<DynamicSceneOptionChoice> choices{};
     };
 
-    export struct DynamicSceneOpenOption {
+    export struct DynamicSceneOption {
         std::string key{};
         std::string value{};
     };
@@ -127,7 +127,7 @@ namespace spectra::scene_runtime {
 
     export struct DynamicSceneOpenRequest {
         std::filesystem::path plugin_path{};
-        std::vector<DynamicSceneOpenOption> options{};
+        std::vector<DynamicSceneOption> options{};
         std::shared_ptr<DynamicSceneHostServices> host_services{};
     };
 
@@ -149,19 +149,19 @@ namespace spectra::scene_runtime {
         std::uint32_t group{};
         std::int32_t priority{};
         std::uint32_t style{};
-        std::vector<DynamicSceneOpenOptionSchema> options{};
+        std::vector<DynamicSceneOptionSchema> options{};
     };
 
     export struct DynamicSceneControlSetting {
         std::string key{};
         std::string label{};
         std::string description{};
-        DynamicSceneOpenOptionKind kind{DynamicSceneOpenOptionKind::Bool};
+        DynamicSceneOptionKind kind{DynamicSceneOptionKind::Bool};
         std::string value{};
         std::string group{};
         bool advanced{};
         std::int32_t priority{};
-        std::vector<DynamicSceneOpenOptionChoice> choices{};
+        std::vector<DynamicSceneOptionChoice> choices{};
     };
 
     export struct DynamicSceneControlMetric {
@@ -229,13 +229,21 @@ namespace spectra::scene_runtime {
         Playback = 2u,
     };
 
-    export struct DynamicSceneControlUpdateInfo {
+    export struct DynamicSceneUpdateInfo {
         double wall_delta_seconds{};
         double scene_delta_seconds{};
         double time_seconds{};
         std::uint64_t frame_index{};
         DynamicSceneControlTimelineMode timeline_mode{DynamicSceneControlTimelineMode::Live};
         bool timeline_playing{};
+    };
+
+    export struct DynamicSceneControlSnapshot {
+        DynamicSceneControlStatus status{};
+        std::vector<DynamicSceneControlSetting> settings{};
+        std::vector<DynamicSceneControlLogEntry> logs{};
+        std::vector<DynamicSceneControlImage> images{};
+        std::vector<DynamicSceneControlScalarSeries> scalar_series{};
     };
 
     export class DynamicSceneSourceInstance {
@@ -249,16 +257,11 @@ namespace spectra::scene_runtime {
         virtual ~DynamicSceneSourceInstance() noexcept = default;
 
         virtual void reset() = 0;
-        virtual void step(float delta_seconds) = 0;
-        virtual void update_controls(const DynamicSceneControlUpdateInfo& update) = 0;
+        virtual void update(const DynamicSceneUpdateInfo& update) = 0;
         [[nodiscard]] virtual std::uint64_t scene_revision() const = 0;
-        virtual void execute_control_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options) = 0;
-        [[nodiscard]] virtual std::vector<DynamicSceneControlSetting> control_settings() const = 0;
+        virtual void execute_control_action(std::string_view action_id, std::span<const DynamicSceneOption> options) = 0;
         virtual void update_control_setting(std::string_view key, std::string_view value) = 0;
-        [[nodiscard]] virtual DynamicSceneControlStatus control_status() const = 0;
-        [[nodiscard]] virtual std::vector<DynamicSceneControlLogEntry> control_logs() const = 0;
-        [[nodiscard]] virtual std::vector<DynamicSceneControlImage> control_images() const = 0;
-        [[nodiscard]] virtual std::vector<DynamicSceneControlScalarSeries> control_scalar_series() const = 0;
+        [[nodiscard]] virtual DynamicSceneControlSnapshot control_snapshot() const = 0;
         [[nodiscard]] virtual scene::Scene::Document create_scene_document() const = 0;
         [[nodiscard]] virtual scene::Scene::FrameSnapshot create_scene_frame(const scene::Scene::FrameInfo& frame) const = 0;
     };
@@ -298,7 +301,7 @@ namespace spectra::scene_runtime {
         std::string open_action_label{};
         std::string open_action_description{};
         std::filesystem::path path{};
-        std::vector<DynamicSceneOpenOptionSchema> open_options{};
+        std::vector<DynamicSceneOptionSchema> open_options{};
         std::vector<DynamicSceneControlAction> control_actions{};
     };
 
@@ -349,11 +352,7 @@ namespace spectra::scene_runtime {
         [[nodiscard]] std::shared_ptr<DynamicSceneHostServices> dynamic_host_services() const;
         [[nodiscard]] bool active_scene_timeline_enabled();
         [[nodiscard]] bool active_scene_timeline_streaming_enabled();
-        [[nodiscard]] DynamicSceneControlStatus active_dynamic_scene_control_status();
-        [[nodiscard]] std::vector<DynamicSceneControlLogEntry> active_dynamic_scene_control_logs();
-        [[nodiscard]] std::vector<DynamicSceneControlImage> active_dynamic_scene_control_images();
-        [[nodiscard]] std::vector<DynamicSceneControlScalarSeries> active_dynamic_scene_control_scalar_series();
-        [[nodiscard]] std::vector<DynamicSceneControlSetting> active_dynamic_scene_control_settings();
+        [[nodiscard]] DynamicSceneControlSnapshot active_dynamic_scene_control_snapshot();
         void activate_empty_workspace();
         void request_activate(std::size_t index);
         [[nodiscard]] bool activate_static_scene(std::string id, std::string title, std::move_only_function<std::shared_ptr<scene::Scene>()> load_scene);
@@ -361,9 +360,8 @@ namespace spectra::scene_runtime {
         [[nodiscard]] bool apply_pending_scene();
         void toggle_active_scene_timeline_playback();
         void request_active_scene_timeline_reset();
-        void update_active_scene_controls(double delta_seconds);
         void update_active_scene(double delta_seconds);
-        void execute_active_dynamic_scene_control_action(std::string_view action_id, std::span<const DynamicSceneOpenOption> options);
+        void execute_active_dynamic_scene_control_action(std::string_view action_id, std::span<const DynamicSceneOption> options);
         void update_active_dynamic_scene_control_setting(std::string_view key, std::string_view value);
 
     private:

@@ -161,33 +161,34 @@ unsupported optional APIs. The scene API is required; missing it is an error.
   be empty. Spectra uses these hints only for generic form layout and does not assign project-specific meaning to them.
 - Control action UI hints: `group` values are `0` Run, `1` Preview, `2` Debug, and `3` Utility. `style` values are `0`
   Secondary, `1` Primary, and `2` Danger. `priority` sorts actions within a group. Unknown values are errors.
-- If the controls API is present, `control_settings` and `control_setting_update` are required. Settings are live
+- If the controls API is present, `control_snapshot` and `control_setting_update` are required. Settings are live
   editable controls for active dynamic scenes; Spectra submits a changed setting immediately and then checks
   `scene_revision` to refresh changed scene/debug data. Setting kinds are restricted to `3` choice, `4` bool,
   `5` float, and `6` unsigned integer. Text and path kinds are only valid for open options or explicit action options.
   Setting keys and labels must be non-empty and unique in one view. Setting values must parse according to kind; choice
   settings must provide non-empty unique choices and the current value must be one of those choices. Setting
   `group`, `advanced`, and `priority` use the same generic layout hints as option schemas.
-- If the controls API is present, `control_status` phase, headline, metric keys/labels/values, enabled action ids, log
+- If the controls API is present, `control_snapshot` returns settings, status, logs, preview images, and scalar series in
+  one borrowed view. Status phase, headline, metric keys/labels/values, enabled action ids, log
   levels, and log messages must be non-empty. Enabled action ids and disabled action ids must refer to declared control
   actions. Disabled action reasons must be non-empty. The same action must not appear in both enabled and disabled
   action lists in one status view.
 - Control metric presentation flags are bit flags: `1` ViewportOverlay, `2` PanelSummary, and `4` PanelDetail. Unknown
   bits are errors. Metric `priority` sorts metrics within a placement. `has_color` must be `0` or `1`; if set, `color`
   must contain finite RGBA values. Spectra uses these hints only for generic dashboard and viewport overlay layout.
-- If the controls API is present, `control_images` is required. It may return an empty span. Non-empty control image
+- If the controls API is present, the snapshot image span may be empty. Non-empty control image
   outputs must have unique non-empty `id`, non-empty `label`, positive `width` and `height`, non-null tightly packed
   RGBA8 pixels with byte count `width * height * 4`, and non-zero `revision`. Spectra uploads these images to the
   Scene popover texture cache and reuses the texture while pointer, byte size, dimensions, and revision are unchanged.
-- If the controls API is present, `control_scalar_series` is required. It may return an empty span. Non-empty scalar
+- If the controls API is present, the snapshot scalar-series span may be empty. Non-empty scalar
   series outputs must have unique non-empty `id`, non-empty `label`, finite `color`, and non-zero `revision`. Samples
   must have finite `time_seconds` and `value`, and must be ordered by nondecreasing `step`. Spectra copies scalar
   samples for Scene popover charts only; scalar series do not enter `scene::Scene`, PBRT export, rasterizer scene
   passes, or the pathtracer scene. Scalar series `group` values follow the same Run/Preview/Debug/Utility constants as
   actions, and `priority` sorts charts within a group.
-- Open option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
+- Option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
   `6` unsigned integer.
-- Open option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
+- Option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
   options must not declare choices. Bool defaults must be `true` or `false`.
 
 ### Capability Tables
@@ -204,7 +205,7 @@ unsupported optional APIs. The scene API is required; missing it is an error.
   kinds are `1` opaque Win32 handle and `2` opaque file descriptor.
 - The producer may import that external memory into CUDA or another GPU runtime and write either compacted `uint32_t`
   viewport voxel cell indices or a dense bitfield, according to `source_kind`. The producer owns synchronization in
-  v24: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
+  v25: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
   There is no CPU voxel copy path and no semaphore fallback.
 - Host services `release_viewport_voxel_buffer` releases the Spectra resource. Producers must release imported
   GPU mappings and then release every requested resource before instance destruction or reset.
@@ -219,33 +220,26 @@ unsupported optional APIs. The scene API is required; missing it is an error.
 - Scene API `create` returns a plugin-owned instance pointer.
 - Scene API `destroy` releases that instance.
 - Scene API `reset` resets dynamic scene state and rebuilds internal visualization buffers.
-- Scene API `step` advances dynamic scene state by `delta_seconds`.
+- Scene API `update` receives a `SpectraDynamicSceneUpdateInfo` once per GUI frame. `wall_delta_seconds`
+  is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
+  when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
+  `frame_index` describe the host timeline state. Long-running source updates must honor `scene_delta_seconds` so
+  Space/record/playback controls stay synchronized with source actions, telemetry, and preview availability.
 - Scene API `document` returns static scene data: materials, lights, camera, static primitives, and static debug
   attachments.
 - Scene API `frame` returns dynamic primitives and dynamic debug attachments for the requested frame cursor.
 - Scene API `last_error` returns the most recent instance-local error string; it may be empty. Controls API callbacks use
   the same instance error channel.
-- Controls API `controls_update` receives a `SpectraDynamicSceneControlUpdateInfo` once per GUI frame. `wall_delta_seconds`
-  is the elapsed host UI time. `scene_delta_seconds` is the delta that long-running source-owned scene work may consume;
-  it is `0` when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`,
-  and `frame_index` describe the host timeline state. Controls update is independent from scene timeline `step`, but it
-  must honor `scene_delta_seconds` so Space/record/playback controls stay synchronized with plugin actions, telemetry,
-  and preview availability.
 - Controls API `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
   `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as
   logs, scalar charts, and preview images must not increment it.
 - Controls API `control_action` executes one plugin-declared action with strict key/value options.
-- Controls API `control_settings` returns the current plugin-owned live setting schema/value list. Controls API
-  `control_setting_update` applies one changed setting key/value pair; it must validate the value strictly and increase
+- Controls API `control_setting_update` applies one changed setting key/value pair; it must validate the value strictly and increase
   `scene_revision` if the change modifies scene entities or debug attachments.
-- Controls API `control_status` returns the current plugin-defined phase, headline, detail, metrics, and currently
-  enabled actions plus plugin-defined reasons for disabled actions.
-- Controls API `control_logs` returns a plugin-owned log snapshot. Spectra copies log entries for display.
-- Controls API `control_images` returns plugin-owned borrowed CPU RGBA8 preview images for the Scene popover. Spectra
-  does not copy them into `scene::Scene`, does not export them to PBRT, and does not expose them to the pathtracer scene.
-- Controls API `control_scalar_series` returns plugin-owned scalar control charts for the Scene popover.
-  Spectra copies scalar samples for display and does not expose them to `scene::Scene`, PBRT, rasterizer scene passes,
-  or the pathtracer scene.
+- Controls API `control_snapshot` returns the current plugin-owned live settings, phase/headline/detail, metrics, enabled
+  and disabled actions, log snapshot, borrowed CPU RGBA8 preview images, and scalar charts. Spectra copies logs and scalar
+  samples for display. Preview images are uploaded to UI textures but are not copied into `scene::Scene`, exported to PBRT,
+  or exposed to the pathtracer scene.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_DYNAMIC_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.
