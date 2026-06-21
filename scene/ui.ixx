@@ -20,7 +20,7 @@ namespace spectra::scene {
         void open_startup_file(Spectra& application, const std::optional<std::string>& initial_scene_path);
 
     private:
-        struct Impl;
-        std::shared_ptr<Impl> impl{};
+        struct State;
+        std::shared_ptr<State> state{};
     };
 } // namespace spectra::scene

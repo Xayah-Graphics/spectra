@@ -56,7 +56,7 @@ namespace spectra::scene {
         std::string active_id{};
     };
 
-    struct SceneUi::Impl {
+    struct SceneUi::State {
         std::shared_ptr<Scene> scene_instance{std::make_shared<Scene>()};
         std::shared_ptr<CameraWorkspace> camera_workspace{std::make_shared<CameraWorkspace>()};
         StatusState status{};
@@ -935,17 +935,17 @@ namespace spectra::scene {
         }
     } // namespace
 
-    SceneUi::SceneUi() : impl(std::make_shared<Impl>()) {}
+    SceneUi::SceneUi() : state(std::make_shared<State>()) {}
     SceneUi::SceneUi(SceneUi&& other) noexcept = default;
     SceneUi& SceneUi::operator=(SceneUi&& other) noexcept = default;
     SceneUi::~SceneUi() noexcept = default;
 
     std::shared_ptr<Scene> SceneUi::scene() const {
-        return this->impl->scene_instance;
+        return this->state->scene_instance;
     }
 
     std::shared_ptr<CameraWorkspace> SceneUi::camera_workspace() const {
-        return this->impl->camera_workspace;
+        return this->state->camera_workspace;
     }
 
     WorkspaceTitle make_workspace_title(Scene& scene_instance, StatusState& status) {
@@ -975,7 +975,7 @@ namespace spectra::scene {
     }
 
     void SceneUi::register_to(Spectra& application) {
-        const std::shared_ptr<Impl> state = this->impl;
+        const std::shared_ptr<State> state = this->state;
         application.set_workspace_title_provider([state] {
             return make_workspace_title(*state->scene_instance, state->status);
         });
@@ -1017,7 +1017,7 @@ namespace spectra::scene {
 
     void SceneUi::open_startup_file(Spectra& application, const std::optional<std::string>& initial_scene_path) {
         if (!initial_scene_path.has_value()) return;
-        const std::shared_ptr<Impl> state = this->impl;
+        const std::shared_ptr<State> state = this->state;
         const std::array<std::filesystem::path, 1u> paths{std::filesystem::path{*initial_scene_path}};
         open_scene_files(application, *state->scene_instance, state->status, state->controls, std::span<const std::filesystem::path>{paths.data(), paths.size()});
     }
