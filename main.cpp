@@ -288,7 +288,6 @@ namespace {
         controls.editors.reserve(controls.plugin.open_options.size());
         for (spectra::scene_runtime::DynamicSceneOptionSchema& schema : controls.plugin.open_options) controls.editors.push_back(make_dynamic_scene_option_editor(std::move(schema)));
         std::ranges::stable_sort(controls.editors, [](const DynamicSceneOptionEditor& left, const DynamicSceneOptionEditor& right) {
-            if (left.schema.advanced != right.schema.advanced) return !left.schema.advanced && right.schema.advanced;
             if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
             if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
             return left.schema.key < right.schema.key;
@@ -298,7 +297,6 @@ namespace {
         for (const spectra::scene_runtime::DynamicSceneControlAction& action : controls.plugin.control_actions) {
             controls.action_editors.push_back(make_control_action_editor(action));
             std::ranges::stable_sort(controls.action_editors.back().editors, [](const DynamicSceneOptionEditor& left, const DynamicSceneOptionEditor& right) {
-                if (left.schema.advanced != right.schema.advanced) return !left.schema.advanced && right.schema.advanced;
                 if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
                 if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
                 return left.schema.key < right.schema.key;
@@ -313,7 +311,6 @@ namespace {
         controls.setting_editors.reserve(controls.plugin.control_settings.size());
         for (const spectra::scene_runtime::DynamicSceneOptionSchema& schema : controls.plugin.control_settings) controls.setting_editors.push_back(make_control_setting_editor(schema, schema.default_value));
         std::ranges::stable_sort(controls.setting_editors, [](const DynamicSceneControlSettingEditor& left, const DynamicSceneControlSettingEditor& right) {
-            if (left.schema.advanced != right.schema.advanced) return !left.schema.advanced && right.schema.advanced;
             if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
             if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
             return left.schema.key < right.schema.key;
@@ -324,18 +321,13 @@ namespace {
         controls.phase = DynamicSceneControlsPhase::PluginLoaded;
     }
 
-    [[nodiscard]] bool dynamic_scene_option_editor_has_advanced_state(const std::span<const DynamicSceneOptionEditor> editors, const bool advanced) {
-        return std::ranges::any_of(editors, [advanced](const DynamicSceneOptionEditor& editor) { return editor.schema.advanced == advanced; });
-    }
-
     [[nodiscard]] std::string dynamic_scene_option_editor_group_label(const DynamicSceneOptionEditor& editor) {
         return editor.schema.group.empty() ? "Options" : editor.schema.group;
     }
 
-    [[nodiscard]] std::vector<std::string> dynamic_scene_option_editor_groups(const std::span<const DynamicSceneOptionEditor> editors, const bool advanced) {
+    [[nodiscard]] std::vector<std::string> dynamic_scene_option_editor_groups(const std::span<const DynamicSceneOptionEditor> editors) {
         std::vector<std::string> groups{};
         for (const DynamicSceneOptionEditor& editor : editors) {
-            if (editor.schema.advanced != advanced) continue;
             const std::string group = dynamic_scene_option_editor_group_label(editor);
             if (!std::ranges::contains(groups, group)) groups.push_back(group);
         }
@@ -382,14 +374,18 @@ namespace {
         return selected;
     }
 
+    [[nodiscard]] bool scalar_series_group_has_samples(const std::span<const spectra::scene_runtime::DynamicSceneControlScalarSeries> series, const std::uint32_t group) {
+        const std::vector<const spectra::scene_runtime::DynamicSceneControlScalarSeries*> selected_series = scalar_series_for_group(series, group);
+        return std::ranges::any_of(selected_series, [](const spectra::scene_runtime::DynamicSceneControlScalarSeries* chart) { return !chart->samples.empty(); });
+    }
+
     [[nodiscard]] std::string control_setting_group_label(const DynamicSceneControlSettingEditor& editor) {
         return editor.schema.group.empty() ? "Settings" : editor.schema.group;
     }
 
-    [[nodiscard]] std::vector<std::string> control_setting_groups(const std::span<const DynamicSceneControlSettingEditor> editors, const bool advanced) {
+    [[nodiscard]] std::vector<std::string> control_setting_groups(const std::span<const DynamicSceneControlSettingEditor> editors) {
         std::vector<std::string> groups{};
         for (const DynamicSceneControlSettingEditor& editor : editors) {
-            if (editor.schema.advanced != advanced) continue;
             const std::string group = control_setting_group_label(editor);
             if (!std::ranges::contains(groups, group)) groups.push_back(group);
         }
@@ -398,7 +394,6 @@ namespace {
 
     void sort_control_setting_editors(std::vector<DynamicSceneControlSettingEditor>& editors) {
         std::ranges::stable_sort(editors, [](const DynamicSceneControlSettingEditor& left, const DynamicSceneControlSettingEditor& right) {
-            if (left.schema.advanced != right.schema.advanced) return !left.schema.advanced && right.schema.advanced;
             if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
             if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
             return left.schema.key < right.schema.key;
@@ -453,16 +448,8 @@ namespace {
         return true;
     }
 
-    bool draw_dynamic_scene_option_editor(DynamicSceneOptionEditor& editor) {
+    bool draw_dynamic_scene_option_editor_value(DynamicSceneOptionEditor& editor) {
         bool changed{};
-        ImGui::PushID(editor.schema.key.c_str());
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(editor.schema.label.c_str());
-        if (!editor.schema.required && editor.schema.default_value.empty()) {
-            ImGui::SameLine();
-            changed = ImGui::Checkbox("Set", &editor.enabled) || changed;
-        }
-        if (!editor.schema.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", editor.schema.description.c_str());
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::BeginDisabled(!editor.enabled);
         switch (editor.schema.kind) {
@@ -495,6 +482,40 @@ namespace {
                 break;
         }
         ImGui::EndDisabled();
+        return changed;
+    }
+
+    bool draw_dynamic_scene_option_editor(DynamicSceneOptionEditor& editor) {
+        bool changed{};
+        ImGui::PushID(editor.schema.key.c_str());
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(editor.schema.label.c_str());
+        const bool label_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        if (!editor.schema.required && editor.schema.default_value.empty()) {
+            ImGui::SameLine();
+            changed = ImGui::Checkbox("Set", &editor.enabled) || changed;
+        }
+        if (!editor.schema.description.empty() && label_hovered) ImGui::SetTooltip("%s", editor.schema.description.c_str());
+        changed = draw_dynamic_scene_option_editor_value(editor) || changed;
+        ImGui::PopID();
+        return changed;
+    }
+
+    bool draw_dynamic_scene_option_editor_compact(DynamicSceneOptionEditor& editor) {
+        bool changed{};
+        ImGui::PushID(editor.schema.key.c_str());
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s", editor.schema.label.c_str());
+        const bool label_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        if (!editor.schema.required && editor.schema.default_value.empty()) {
+            ImGui::SameLine();
+            changed = ImGui::Checkbox("Set", &editor.enabled) || changed;
+        }
+        if (!editor.schema.description.empty() && label_hovered) ImGui::SetTooltip("%s", editor.schema.description.c_str());
+        ImGui::TableSetColumnIndex(1);
+        changed = draw_dynamic_scene_option_editor_value(editor) || changed;
         ImGui::PopID();
         return changed;
     }
@@ -510,16 +531,33 @@ namespace {
         return true;
     }
 
-    void draw_dynamic_scene_option_editors_grouped(const std::span<DynamicSceneOptionEditor> editors, const bool advanced) {
-        const std::vector<std::string> groups = dynamic_scene_option_editor_groups(editors, advanced);
+    void draw_dynamic_scene_option_editors_grouped(const std::span<DynamicSceneOptionEditor> editors) {
+        const std::vector<std::string> groups = dynamic_scene_option_editor_groups(editors);
         for (const std::string& group : groups) {
             ImGui::TextDisabled("%s", group.c_str());
             for (DynamicSceneOptionEditor& editor : editors) {
-                if (editor.schema.advanced != advanced) continue;
                 if (dynamic_scene_option_editor_group_label(editor) != group) continue;
                 static_cast<void>(draw_dynamic_scene_option_editor(editor));
                 ImGui::Spacing();
             }
+        }
+    }
+
+    void draw_dynamic_scene_option_editors_compact_grouped(const std::span<DynamicSceneOptionEditor> editors) {
+        const std::vector<std::string> groups = dynamic_scene_option_editor_groups(editors);
+        for (const std::string& group : groups) {
+            if (groups.size() > 1u) ImGui::TextDisabled("%s", group.c_str());
+            ImGui::PushID(group.c_str());
+            if (ImGui::BeginTable("DynamicSceneOptionCompactTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+                for (DynamicSceneOptionEditor& editor : editors) {
+                    if (dynamic_scene_option_editor_group_label(editor) != group) continue;
+                    static_cast<void>(draw_dynamic_scene_option_editor_compact(editor));
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopID();
         }
     }
 
@@ -556,45 +594,69 @@ namespace {
         return ImVec4{metric.color[0], metric.color[1], metric.color[2], metric.color[3]};
     }
 
+    [[nodiscard]] ImVec4 dynamic_scene_control_phase_color(const std::string_view phase) {
+        if (phase == "Error") return ImVec4{1.0f, 0.42f, 0.36f, 1.0f};
+        if (phase == "Running") return ImVec4{0.16f, 0.86f, 0.55f, 1.0f};
+        if (phase == "Complete") return ImVec4{0.55f, 0.85f, 1.0f, 1.0f};
+        if (phase == "Paused") return ImVec4{1.0f, 0.78f, 0.32f, 1.0f};
+        if (phase == "Ready" || phase == "Active") return ImVec4{0.50f, 0.82f, 0.76f, 1.0f};
+        return ImVec4{0.72f, 0.79f, 0.86f, 1.0f};
+    }
+
+    void draw_dynamic_scene_status_pill(const std::string_view text) {
+        const ImVec4 color = dynamic_scene_control_phase_color(text);
+        const ImVec2 text_size = ImGui::CalcTextSize(text.data(), text.data() + text.size());
+        const ImVec2 padding{8.0f, 3.0f};
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+        const ImVec2 size{text_size.x + padding.x * 2.0f, text_size.y + padding.y * 2.0f};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const ImVec4 fill{color.x * 0.18f, color.y * 0.18f, color.z * 0.18f, 0.78f};
+        const ImVec4 border{color.x, color.y, color.z, 0.42f};
+        draw_list->AddRectFilled(cursor, ImVec2{cursor.x + size.x, cursor.y + size.y}, ImGui::GetColorU32(fill), 6.0f);
+        draw_list->AddRect(cursor, ImVec2{cursor.x + size.x, cursor.y + size.y}, ImGui::GetColorU32(border), 6.0f);
+        draw_list->AddText(ImVec2{cursor.x + padding.x, cursor.y + padding.y}, ImGui::GetColorU32(color), text.data(), text.data() + text.size());
+        ImGui::Dummy(size);
+    }
+
+    void draw_dynamic_scene_section_title(const char* label) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", label);
+    }
+
     void draw_dynamic_control_metric_row(const spectra::scene_runtime::DynamicSceneControlMetric& metric) {
         ImGui::TextDisabled("%s", metric.label.c_str());
         ImGui::SameLine();
         ImGui::TextColored(control_metric_color(metric), "%s", metric.value.c_str());
     }
 
-    void draw_dynamic_control_metrics(const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::uint32_t placement, const char* empty_text) {
-        const std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics = control_metrics_with_placement(status, placement);
-        if (metrics.empty()) {
-            ImGui::TextDisabled("%s", empty_text);
-            return;
-        }
-        for (const spectra::scene_runtime::DynamicSceneControlMetric* metric : metrics) draw_dynamic_control_metric_row(*metric);
-    }
-
     void draw_dynamic_control_summary(const spectra::scene_runtime::DynamicSceneControlStatus& status) {
-        ImGui::TextColored(ImVec4{0.50f, 0.82f, 0.76f, 1.0f}, "%s", status.phase.c_str());
-        if (!status.headline.empty()) {
-            ImGui::SameLine();
-            ImGui::TextWrapped("%s", status.headline.c_str());
-        }
-        if (!status.detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", status.detail.c_str());
         const std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics = control_metrics_with_placement(status, spectra::scene_runtime::DynamicSceneControlPlacementPanelSummary);
         if (metrics.empty()) return;
-        ImGui::Spacing();
-        if (ImGui::BeginTable("DynamicSceneControlSummaryMetrics", 2, ImGuiTableFlags_SizingStretchProp)) {
+        if (ImGui::BeginTable("DynamicSceneControlSummaryMetrics", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
+            std::size_t metric_index = 0u;
             for (const spectra::scene_runtime::DynamicSceneControlMetric* metric : metrics) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
+                if (metric_index % 2u == 0u) ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(static_cast<int>(metric_index % 2u));
                 ImGui::TextDisabled("%s", metric->label.c_str());
-                ImGui::TableSetColumnIndex(1);
                 ImGui::TextColored(control_metric_color(*metric), "%s", metric->value.c_str());
+                ++metric_index;
             }
             ImGui::EndTable();
         }
     }
 
+    void draw_dynamic_control_diagnostics(const spectra::scene_runtime::DynamicSceneControlStatus& status) {
+        const std::vector<const spectra::scene_runtime::DynamicSceneControlMetric*> metrics = control_metrics_with_placement(status, spectra::scene_runtime::DynamicSceneControlPlacementPanelDetail);
+        bool drew_metric = false;
+        for (const spectra::scene_runtime::DynamicSceneControlMetric* metric : metrics) {
+            if (metric_has_placement(*metric, spectra::scene_runtime::DynamicSceneControlPlacementPanelSummary)) continue;
+            draw_dynamic_control_metric_row(*metric);
+            drew_metric = true;
+        }
+        if (!drew_metric) ImGui::TextDisabled("%s", "No diagnostic metrics");
+    }
+
     void draw_dynamic_control_logs(const std::span<const spectra::scene_runtime::DynamicSceneControlLogEntry> logs) {
-        ImGui::TextDisabled("%s", "Log");
         ImGui::BeginChild("DynamicSceneControlsLogs", ImVec2{-1.0f, 180.0f}, true);
         if (logs.empty()) {
             ImGui::TextDisabled("%s", "No log entries");
@@ -614,7 +676,6 @@ namespace {
     }
 
     void draw_dynamic_control_images(spectra::Spectra& application, const DynamicSceneControlsState& controls, const std::span<const spectra::scene_runtime::DynamicSceneControlImage> images) {
-        ImGui::TextDisabled("%s", "Preview");
         if (images.empty()) {
             ImGui::TextDisabled("%s", "No preview images");
             return;
@@ -647,21 +708,11 @@ namespace {
 
     void draw_dynamic_control_scalar_series(const std::span<const spectra::scene_runtime::DynamicSceneControlScalarSeries> series, const std::uint32_t group) {
         const std::vector<const spectra::scene_runtime::DynamicSceneControlScalarSeries*> selected_series = scalar_series_for_group(series, group);
-        if (selected_series.empty()) {
-            ImGui::TextDisabled("%s", "No chart series");
-            return;
-        }
         for (const spectra::scene_runtime::DynamicSceneControlScalarSeries* chart : selected_series) {
+            if (chart->samples.empty()) continue;
             ImGui::PushID(chart->id.c_str());
             ImGui::TextUnformatted(chart->label.c_str());
             if (!chart->description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", chart->description.c_str());
-            if (chart->samples.empty()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", "No chart samples");
-                ImGui::Spacing();
-                ImGui::PopID();
-                continue;
-            }
             const spectra::scene_runtime::DynamicSceneControlScalarSample& latest = chart->samples.back();
             const std::string latest_text = chart->unit.empty()
                 ? std::format("step {} | {:.6g}", latest.step, latest.value)
@@ -756,9 +807,8 @@ namespace {
         const bool enabled = control_action_enabled(status, editor.action.id);
         const std::string_view disabled_reason = control_action_disabled_reason(status, editor.action.id);
         ImGui::TextUnformatted(editor.action.label.c_str());
-        if (!editor.action.description.empty()) ImGui::TextWrapped("%s", editor.action.description.c_str());
-        draw_dynamic_scene_option_editors_grouped(editor.editors, false);
-        if (dynamic_scene_option_editor_has_advanced_state(editor.editors, true) && ImGui::CollapsingHeader("Advanced Options")) draw_dynamic_scene_option_editors_grouped(editor.editors, true);
+        if (!editor.action.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", editor.action.description.c_str());
+        draw_dynamic_scene_option_editors_compact_grouped(editor.editors);
         ImGui::BeginDisabled(!enabled);
         const std::string button_label = std::format("{}##execute", editor.action.label);
         const int style_color_count = push_dynamic_control_action_button_style(editor.action.style);
@@ -786,7 +836,7 @@ namespace {
         }
     }
 
-    void draw_dynamic_control_action_group(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::uint32_t group, const bool include_immediate_actions = true) {
+    void draw_dynamic_control_action_group(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status, const std::uint32_t group) {
         const std::vector<DynamicSceneControlActionEditor*> editors = control_action_editors_for_group(controls.action_editors, group);
         if (editors.empty()) {
             ImGui::TextDisabled("%s", "No actions");
@@ -798,12 +848,12 @@ namespace {
             if (editor->editors.empty()) immediate_editors.push_back(editor);
             else form_editors.push_back(editor);
         }
-        if (include_immediate_actions && !immediate_editors.empty()) {
+        if (!immediate_editors.empty()) {
             draw_dynamic_control_action_button_row(controller, state, controls, status, immediate_editors);
             if (!form_editors.empty()) ImGui::Spacing();
         }
         for (DynamicSceneControlActionEditor* editor : form_editors) draw_dynamic_control_action_editor(controller, state, controls, *editor, status);
-        if (form_editors.empty() && include_immediate_actions && immediate_editors.empty()) ImGui::TextDisabled("%s", "No actions");
+        if (form_editors.empty() && immediate_editors.empty()) ImGui::TextDisabled("%s", "No actions");
     }
 
     void draw_dynamic_control_setting_editor(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, DynamicSceneControlSettingEditor& editor) {
@@ -824,16 +874,15 @@ namespace {
         }
     }
 
-    void draw_dynamic_control_settings(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const bool advanced) {
-        const std::vector<std::string> groups = control_setting_groups(controls.setting_editors, advanced);
+    void draw_dynamic_control_settings(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
+        const std::vector<std::string> groups = control_setting_groups(controls.setting_editors);
         if (groups.empty()) {
-            if (!advanced) ImGui::TextDisabled("%s", "No live settings");
+            ImGui::TextDisabled("%s", "No live settings");
             return;
         }
         for (const std::string& group : groups) {
             ImGui::TextDisabled("%s", group.c_str());
             for (DynamicSceneControlSettingEditor& editor : controls.setting_editors) {
-                if (editor.schema.advanced != advanced) continue;
                 if (control_setting_group_label(editor) != group) continue;
                 draw_dynamic_control_setting_editor(controller, state, controls, editor);
                 ImGui::Spacing();
@@ -841,24 +890,9 @@ namespace {
         }
     }
 
-    [[nodiscard]] std::vector<DynamicSceneControlActionEditor*> dashboard_quick_actions(DynamicSceneControlsState& controls) {
-        std::vector<DynamicSceneControlActionEditor*> candidates{};
-        for (DynamicSceneControlActionEditor& editor : controls.action_editors) {
-            if (editor.action.group != spectra::scene_runtime::DynamicSceneControlActionGroupRun) continue;
-            if (!editor.editors.empty()) continue;
-            candidates.push_back(&editor);
-        }
-        std::ranges::stable_sort(candidates, [](const DynamicSceneControlActionEditor* left, const DynamicSceneControlActionEditor* right) {
-            if (left->action.priority != right->action.priority) return left->action.priority < right->action.priority;
-            return left->action.id < right->action.id;
-        });
-        return candidates;
-    }
-
     bool draw_dynamic_scene_open_controls(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
         if (!controls.plugin.open_action_description.empty()) ImGui::TextWrapped("%s", controls.plugin.open_action_description.c_str());
-        if (dynamic_scene_option_editor_has_advanced_state(controls.editors, false)) draw_dynamic_scene_option_editors_grouped(controls.editors, false);
-        if (dynamic_scene_option_editor_has_advanced_state(controls.editors, true) && ImGui::CollapsingHeader("Advanced Options")) draw_dynamic_scene_option_editors_grouped(controls.editors, true);
+        if (!controls.editors.empty()) draw_dynamic_scene_option_editors_grouped(controls.editors);
         if (!ImGui::Button(controls.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) return false;
         try {
             application.clear_imgui_rgba8_images("scene-control-image://");
@@ -884,12 +918,86 @@ namespace {
         }
     }
 
-    void draw_dynamic_scene_controls_dashboard(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status) {
-        draw_dynamic_control_summary(status);
-        const std::vector<DynamicSceneControlActionEditor*> quick_actions = dashboard_quick_actions(controls);
-        if (quick_actions.empty()) return;
+    void close_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
+        application.clear_imgui_rgba8_images("scene-control-image://");
+        clear_dynamic_scene_controls(controls);
+        controller.activate_empty_workspace();
+        set_scene_status(state, "Closed dynamic scene controls", false);
+    }
+
+    bool draw_dynamic_scene_controls_header(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus* status) {
+        const float button_size = ImGui::GetFrameHeight();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(controls.plugin.controls_panel_title.c_str());
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", controls.plugin.path.string().c_str());
+        const float close_x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - button_size;
+        if (ImGui::GetCursorPosX() < close_x) ImGui::SameLine(close_x);
+        if (ImGui::Button(ICON_MS_CLOSE "##close_dynamic_scene", ImVec2{button_size, button_size})) {
+            close_dynamic_scene_controls_panel(application, controller, state, controls);
+            return true;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Close Scene");
+
+        const std::string phase = status != nullptr ? status->phase : dynamic_scene_controls_phase_text(controls.phase);
+        const std::string headline = status != nullptr ? status->headline : controls.plugin.title;
+        draw_dynamic_scene_status_pill(phase);
+        if (!headline.empty()) {
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextWrapped("%s", headline.c_str());
+            if (status != nullptr && !status->detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", status->detail.c_str());
+        }
+        if (!controls.active_title.empty() && controls.active_title != controls.plugin.controls_panel_title) {
+            ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", controls.active_title.c_str());
+        }
+        return false;
+    }
+
+    void draw_dynamic_scene_controls_error(const DynamicSceneControlsState& controls) {
+        if (controls.error.empty()) return;
         ImGui::Spacing();
-        draw_dynamic_control_action_button_row(controller, state, controls, status, quick_actions);
+        ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
+    }
+
+    void draw_dynamic_scene_training_section(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlStatus& status) {
+        draw_dynamic_scene_section_title("Training");
+        draw_dynamic_control_action_group(controller, state, controls, status, spectra::scene_runtime::DynamicSceneControlActionGroupRun);
+    }
+
+    void draw_dynamic_scene_preview_section(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlSnapshot& snapshot) {
+        draw_dynamic_scene_section_title("Preview");
+        draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupPreview);
+        if (!snapshot.images.empty()) {
+            ImGui::Spacing();
+            draw_dynamic_control_images(application, controls, snapshot.images);
+        }
+        if (scalar_series_group_has_samples(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupPreview)) {
+            ImGui::Spacing();
+            draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupPreview);
+        }
+    }
+
+    void draw_dynamic_scene_diagnostics_section(spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls, const spectra::scene_runtime::DynamicSceneControlSnapshot& snapshot) {
+        draw_dynamic_scene_section_title("Diagnostics");
+        draw_dynamic_control_settings(controller, state, controls);
+        const bool has_debug_actions = !control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupDebug).empty();
+        if (has_debug_actions) {
+            ImGui::Spacing();
+            draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupDebug);
+        }
+        if (!control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupUtility).empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", "Utility");
+            draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupUtility);
+        }
+        ImGui::Spacing();
+        draw_dynamic_control_diagnostics(snapshot.status);
+    }
+
+    void draw_dynamic_scene_log_section(const std::span<const spectra::scene_runtime::DynamicSceneControlLogEntry> logs) {
+        if (logs.empty()) return;
+        draw_dynamic_scene_section_title("Log");
+        draw_dynamic_control_logs(logs);
     }
 
     void draw_dynamic_scene_controls_panel(spectra::Spectra& application, spectra::scene_runtime::SceneController& controller, SceneWorkspaceStatusState& state, DynamicSceneControlsState& controls) {
@@ -911,88 +1019,30 @@ namespace {
             }
         }
 
-        ImGui::TextUnformatted(controls.plugin.controls_panel_title.c_str());
-        ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", controls.plugin.title.c_str());
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", controls.plugin.path.string().c_str());
-        ImGui::Spacing();
-        ImGui::TextDisabled("%s", dynamic_scene_controls_phase_text(controls.phase));
-        if (!controls.active_title.empty()) {
-            ImGui::SameLine();
-            ImGui::TextWrapped("%s", controls.active_title.c_str());
-        }
+        const spectra::scene_runtime::DynamicSceneControlStatus* active_status = active_snapshot.has_value() ? &active_snapshot->status : nullptr;
+        if (draw_dynamic_scene_controls_header(application, controller, state, controls, active_status)) return;
+        draw_dynamic_scene_controls_error(controls);
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
         if (!active_snapshot.has_value()) {
             static_cast<void>(draw_dynamic_scene_open_controls(application, controller, state, controls));
-            if (!controls.error.empty()) {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
-            }
-            ImGui::Spacing();
-            if (ImGui::Button("Close Scene", ImVec2{-1.0f, 0.0f})) {
-                application.clear_imgui_rgba8_images("scene-control-image://");
-                clear_dynamic_scene_controls(controls);
-                controller.activate_empty_workspace();
-                set_scene_status(state, "Closed dynamic scene controls", false);
-            }
             return;
         }
 
         const spectra::scene_runtime::DynamicSceneControlSnapshot& snapshot = *active_snapshot;
-        draw_dynamic_scene_controls_dashboard(controller, state, controls, snapshot.status);
+        draw_dynamic_control_summary(snapshot.status);
         ImGui::Spacing();
-        if (ImGui::BeginTabBar("DynamicSceneControlsTabs")) {
-            if (ImGui::BeginTabItem("Run")) {
-                draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupRun, false);
-                ImGui::Spacing();
-                if (ImGui::CollapsingHeader("Charts", ImGuiTreeNodeFlags_DefaultOpen)) draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupRun);
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Preview")) {
-                draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupPreview);
-                ImGui::Spacing();
-                draw_dynamic_control_images(application, controls, snapshot.images);
-                ImGui::Spacing();
-                if (ImGui::CollapsingHeader("Charts")) draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupPreview);
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Debug")) {
-                draw_dynamic_control_settings(controller, state, controls, false);
-                if (std::ranges::any_of(controls.setting_editors, [](const DynamicSceneControlSettingEditor& editor) { return editor.schema.advanced; }) && ImGui::CollapsingHeader("Advanced Settings")) draw_dynamic_control_settings(controller, state, controls, true);
-                const bool has_debug_actions = !control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupDebug).empty();
-                if (has_debug_actions) {
-                    ImGui::Spacing();
-                    draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupDebug);
-                }
-                if (!control_action_editors_for_group(controls.action_editors, spectra::scene_runtime::DynamicSceneControlActionGroupUtility).empty()) {
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("%s", "Utility");
-                    draw_dynamic_control_action_group(controller, state, controls, snapshot.status, spectra::scene_runtime::DynamicSceneControlActionGroupUtility);
-                }
-                ImGui::Spacing();
-                if (ImGui::CollapsingHeader("Details")) draw_dynamic_control_metrics(snapshot.status, spectra::scene_runtime::DynamicSceneControlPlacementPanelDetail, "No detail metrics");
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Log")) {
-                draw_dynamic_control_logs(snapshot.logs);
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
+        ImGui::Separator();
+        draw_dynamic_scene_training_section(controller, state, controls, snapshot.status);
+        if (scalar_series_group_has_samples(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupRun)) {
+            draw_dynamic_scene_section_title("Telemetry");
+            draw_dynamic_control_scalar_series(snapshot.scalar_series, spectra::scene_runtime::DynamicSceneControlActionGroupRun);
         }
-
-        if (!controls.error.empty()) {
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
-        }
-        ImGui::Spacing();
-        if (ImGui::Button("Close Scene", ImVec2{-1.0f, 0.0f})) {
-            application.clear_imgui_rgba8_images("scene-control-image://");
-            clear_dynamic_scene_controls(controls);
-            controller.activate_empty_workspace();
-            set_scene_status(state, "Closed dynamic scene controls", false);
-        }
+        draw_dynamic_scene_preview_section(application, controller, state, controls, snapshot);
+        draw_dynamic_scene_diagnostics_section(controller, state, controls, snapshot);
+        draw_dynamic_scene_log_section(snapshot.logs);
     }
 
     [[nodiscard]] std::string dynamic_scene_overlay_text(const spectra::scene_runtime::DynamicSceneControlStatus& status) {
