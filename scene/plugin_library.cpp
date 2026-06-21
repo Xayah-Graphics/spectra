@@ -15,7 +15,6 @@ import std;
 import spectra.scene;
 import spectra.scene.plugin_abi;
 import spectra.scene.plugin_codec;
-import spectra.scene.plugin_library;
 
 namespace spectra::scene {
     namespace {
