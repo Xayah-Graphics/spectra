@@ -185,16 +185,32 @@ namespace spectra::dynamic_scene {
             };
         }
 
+        [[nodiscard]] scene::Scene::Camera make_host_inspection_camera() {
+            return scene::Scene::Camera{
+                .name = "Spectra Inspector Camera",
+                .view = scene::camera_view_from_look_at(
+                    scene::Vector3{0.0f, 1.0f, 5.0f},
+                    scene::Vector3{0.0f, 0.0f, 0.0f},
+                    scene::Vector3{0.0f, 1.0f, 0.0f},
+                    scene::CameraProjection{
+                        .kind = scene::CameraProjectionKind::Perspective,
+                        .vertical_fov_degrees = 45.0f,
+                        .near_plane = 0.01f,
+                        .far_plane = 200.0f,
+                    }
+                ),
+            };
+        }
 
-
-        [[nodiscard]] bool dynamic_scene_plugin_path_extension_supported(const std::filesystem::path& path) {
-#if defined(_WIN32)
-            return path_extension_is(path, ".dll");
-#elif defined(__APPLE__)
-            return path_extension_is(path, ".dylib");
-#else
-            return path_extension_is(path, ".so");
-#endif
+        void ensure_dynamic_scene_camera(scene::Scene::Document& document, const std::string_view plugin_id) {
+            if (document.cameras.empty()) {
+                document.cameras.push_back(make_host_inspection_camera());
+                document.active_camera_name = document.cameras.back().name;
+                return;
+            }
+            if (!document.active_camera_name.empty()) return;
+            if (document.cameras.size() != 1u) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" provided {} cameras but no active camera name", plugin_id, document.cameras.size()));
+            document.active_camera_name = document.cameras.front().name;
         }
 
         [[nodiscard]] std::filesystem::path normalized_dynamic_scene_plugin_path(const std::filesystem::path& plugin_path) {
@@ -204,7 +220,7 @@ namespace spectra::dynamic_scene {
             const std::filesystem::path absolute_path = std::filesystem::absolute(plugin_path).lexically_normal();
             if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a dynamic scene plugin library, not a folder");
             if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file does not exist", absolute_path.string()));
-            if (!dynamic_scene_plugin_path_extension_supported(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file extension is not supported on this platform", absolute_path.string()));
+            if (!plugin_file_extension_supported(absolute_path)) throw std::runtime_error(std::format("{}: dynamic scene plugin file extension is not supported on this platform", absolute_path.string()));
             return absolute_path;
         }
 
@@ -556,8 +572,7 @@ namespace spectra::dynamic_scene {
                 std::set<std::string> material_names = collect_material_names(document);
                 std::set<std::string> light_names = collect_light_names(document);
                 append_document_view(document, this->plugin->impl->document(this->instance), material_names, light_names);
-                if (document.active_camera_name.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide an active camera name", this->plugin->impl->id()));
-                if (document.cameras.empty()) throw std::runtime_error(std::format("Dynamic scene plugin \"{}\" did not provide a camera or base PBRT camera", this->plugin->impl->id()));
+                ensure_dynamic_scene_camera(document, this->plugin->impl->id());
                 document.timeline_enabled = true;
                 document.frames_per_second = this->plugin->impl->frames_per_second();
                 this->material_names = std::move(material_names);

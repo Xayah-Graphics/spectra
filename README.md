@@ -236,8 +236,14 @@ callbacks must be present.
   Space/record/playback controls stay synchronized with source actions, telemetry, and preview availability.
 - Descriptor `document` returns static scene data as named spans: materials, lights, cameras, static renderable
   entities, and static debug attachments.
+- Cameras are optional scene items. If a plugin provides no cameras and no base PBRT camera, Spectra injects a
+  host-owned `Spectra Inspector Camera`. If a plugin provides exactly one camera, `active_camera_name` may be empty and
+  that camera becomes active. Plugins that provide multiple cameras must declare `active_camera_name`.
 - Descriptor `frame` returns dynamic named spans for the requested frame cursor: dynamic cameras, renderable entities,
   and debug attachments.
+- Frame items with the same name as document items override the document item for that frame. A plugin can publish a
+  static object in `document`, then publish the same named object with a changed transform in `frame` to express dynamic
+  transform animation without a separate transform callback ABI.
 - Descriptor `last_error` returns the most recent instance-local error string; it may be empty. Controls callbacks use
   the same instance error channel.
 - All descriptor function pointers listed in this section are mandatory for ABI v29. Missing callbacks are rejected

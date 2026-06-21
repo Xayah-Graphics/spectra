@@ -6,13 +6,7 @@ import spectra.dynamic_scene.plugin_library;
 
 namespace spectra::dynamic_scene {
     bool is_plugin_file(const std::filesystem::path& path) {
-#if defined(_WIN32)
-        return path_extension_is(path, ".dll");
-#elif defined(__APPLE__)
-        return path_extension_is(path, ".dylib");
-#else
-        return path_extension_is(path, ".so");
-#endif
+        return plugin_file_extension_supported(path);
     }
 
     PluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {

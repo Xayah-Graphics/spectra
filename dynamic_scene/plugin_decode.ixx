@@ -5,8 +5,7 @@ export import spectra.dynamic_scene.plugin_abi;
 import std;
 
 namespace spectra::dynamic_scene {
-    export [[nodiscard]] std::string lowercase_ascii(std::string value);
-    export [[nodiscard]] bool path_extension_is(const std::filesystem::path& path, std::string_view extension);
+    export [[nodiscard]] bool plugin_file_extension_supported(const std::filesystem::path& path);
     export [[nodiscard]] std::string abi_string(const char* value, std::string_view context, bool allow_empty);
     export [[nodiscard]] double finite_double(double value, std::string_view context);
     export [[nodiscard]] std::set<std::string> collect_material_names(const scene::Scene::Document& document);

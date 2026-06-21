@@ -15,6 +15,16 @@ namespace spectra::dynamic_scene {
             return lowercase_ascii(path.extension().string()) == lowercase_ascii(std::string{extension});
         }
 
+        [[nodiscard]] bool plugin_file_extension_supported(const std::filesystem::path& path) {
+#if defined(_WIN32)
+            return path_extension_is(path, ".dll");
+#elif defined(__APPLE__)
+            return path_extension_is(path, ".dylib");
+#else
+            return path_extension_is(path, ".so");
+#endif
+        }
+
         [[nodiscard]] std::string abi_string(const char* value, const std::string_view context, const bool allow_empty) {
             const std::string_view view = value == nullptr ? std::string_view{} : std::string_view{value};
             if (!allow_empty && view.empty()) throw std::runtime_error(std::format("{} must not be empty", context));
