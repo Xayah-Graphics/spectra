@@ -890,8 +890,8 @@ namespace spectra {
         if (data == nullptr) throw std::runtime_error("Cannot upload Spectra ImGui RGBA8 texture from null data");
         const std::uint64_t expected_byte_count = checked_rgba8_byte_count(texture.source.width, texture.source.height, "Spectra ImGui RGBA8 texture");
         if (texture.source.byte_size != expected_byte_count) throw std::runtime_error("Spectra ImGui RGBA8 texture byte size must be width * height * 4");
-        if (texture.source.byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error("Spectra ImGui RGBA8 texture byte size exceeds Vulkan device size range");
-        const auto texture_bytes = static_cast<vk::DeviceSize>(texture.source.byte_size);
+        if (texture.source.byte_size > std::numeric_limits<vk::DeviceSize>::max()) throw std::runtime_error("Spectra ImGui RGBA8 texture byte size exceeds Vulkan device size range");
+        const auto texture_bytes = texture.source.byte_size;
 
         const vk::BufferCreateInfo staging_buffer_create_info{{}, texture_bytes, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive};
         vk::raii::Buffer staging_buffer{this->context.device, staging_buffer_create_info};
@@ -901,9 +901,9 @@ namespace spectra {
         vk::raii::DeviceMemory staging_memory{this->context.device, staging_memory_allocate_info};
         staging_buffer.bindMemory(*staging_memory, 0);
         void* mapped{};
-        if (const VkResult result = vkMapMemory(static_cast<VkDevice>(*this->context.device), static_cast<VkDeviceMemory>(*staging_memory), 0, texture_bytes, 0, &mapped); result != VK_SUCCESS) throw std::runtime_error(std::format("Failed to map Spectra ImGui RGBA8 staging texture memory: {}", static_cast<int>(result)));
-        std::memcpy(mapped, data, static_cast<std::size_t>(texture_bytes));
-        vkUnmapMemory(static_cast<VkDevice>(*this->context.device), static_cast<VkDeviceMemory>(*staging_memory));
+        if (const VkResult result = vkMapMemory(*this->context.device, *staging_memory, 0, texture_bytes, 0, &mapped); result != VK_SUCCESS) throw std::runtime_error(std::format("Failed to map Spectra ImGui RGBA8 staging texture memory: {}", static_cast<int>(result)));
+        std::memcpy(mapped, data, texture_bytes);
+        vkUnmapMemory(*this->context.device, *staging_memory);
 
         const vk::ImageCreateInfo image_create_info{{}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Unorm, vk::Extent3D{texture.source.width, texture.source.height, 1u}, 1u, 1u, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::SharingMode::eExclusive, {}, vk::ImageLayout::eUndefined};
         texture.image = vk::raii::Image{this->context.device, image_create_info};
@@ -931,7 +931,7 @@ namespace spectra {
         this->context.graphics_queue.submit2(submit_info);
         this->context.graphics_queue.waitIdle();
         texture.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        texture.descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*texture.sampler), static_cast<VkImageView>(*texture.view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        texture.descriptor = ImGui_ImplVulkan_AddTexture(*texture.sampler, *texture.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         if (texture.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra ImGui RGBA8 texture descriptor");
     }
 
@@ -962,9 +962,9 @@ namespace spectra {
     }
 
     void Spectra::draw_imgui_rgba8_image(const std::string_view cache_key, const Rgba8ImageSource& source, const ImVec2 display_size) {
-        ImGuiRgba8Texture& texture = this->ensure_imgui_rgba8_texture(cache_key, source);
+        const ImGuiRgba8Texture& texture = this->ensure_imgui_rgba8_texture(cache_key, source);
         if (texture.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra ImGui RGBA8 texture descriptor is null");
-        ImGui::Image(reinterpret_cast<ImTextureID>(texture.descriptor), display_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
+        ImGui::Image(texture.descriptor, display_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
     }
 
     void Spectra::destroy_frame_sync() noexcept {
