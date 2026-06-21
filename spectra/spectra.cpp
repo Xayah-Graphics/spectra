@@ -22,6 +22,7 @@ module;
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
 
+#include <ranges>
 #include <vulkan/vulkan_raii.hpp>
 
 module spectra;
@@ -215,15 +216,15 @@ namespace {
 
 #if defined(_WIN32)
     [[nodiscard]] HICON load_spectra_window_icon(const int size) {
-        const HINSTANCE instance = GetModuleHandleW(nullptr);
+        HINSTANCE__* const instance = GetModuleHandleW(nullptr);
         if (instance == nullptr) throw std::runtime_error("Failed to get Spectra executable module for window icon");
-        HICON icon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR | LR_SHARED));
+        const auto icon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR | LR_SHARED));
         if (icon == nullptr) throw std::runtime_error("Failed to load Spectra window icon resource");
         return icon;
     }
 
     void apply_spectra_window_icon(GLFWwindow* window) {
-        HWND native_window = glfwGetWin32Window(window);
+        HWND__* const native_window = glfwGetWin32Window(window);
         if (native_window == nullptr) throw std::runtime_error("Failed to get Spectra Win32 window handle");
         SendMessageW(native_window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(load_spectra_window_icon(GetSystemMetrics(SM_CXSMICON))));
         SendMessageW(native_window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(load_spectra_window_icon(GetSystemMetrics(SM_CXICON))));
@@ -356,7 +357,7 @@ namespace spectra {
         glfwSetWindowUserPointer(this->surface.window.get(), this);
         glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
         glfwSetDropCallback(this->surface.window.get(), [](GLFWwindow* window, const int path_count, const char** paths) {
-            Spectra* spectra = static_cast<Spectra*>(glfwGetWindowUserPointer(window));
+            const auto spectra = static_cast<Spectra*>(glfwGetWindowUserPointer(window));
             if (spectra == nullptr) return;
             spectra->queue_file_drop(path_count, paths);
         });
@@ -368,7 +369,7 @@ namespace spectra {
         this->surface.surface = vk::raii::SurfaceKHR{this->context.instance, surface};
     }
 
-    void Spectra::validate_initial_framebuffer_extent() {
+    void Spectra::validate_initial_framebuffer_extent() const {
         int width  = 0;
         int height = 0;
         glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
@@ -482,11 +483,11 @@ namespace spectra {
         std::uint32_t image_count = surface_capabilities.minImageCount + 1;
         if (surface_capabilities.maxImageCount > 0) image_count = std::min(image_count, surface_capabilities.maxImageCount);
         if (image_count < 2) throw std::runtime_error("Swapchain requires at least two images");
-        const vk::ImageUsageFlags swapchain_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+        constexpr vk::ImageUsageFlags swapchain_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
         if ((surface_capabilities.supportedUsageFlags & swapchain_usage) != swapchain_usage) throw std::runtime_error("Vulkan surface does not support required swapchain image usage");
 
         const vk::SurfaceTransformFlagBitsKHR pre_transform     = surface_capabilities.currentTransform;
-        constexpr vk::CompositeAlphaFlagBitsKHR composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+        constexpr auto composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
         this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
 
@@ -544,11 +545,12 @@ namespace spectra {
                 vk::DescriptorPoolSize{vk::DescriptorType::eStorageBufferDynamic, 1000},
                 vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment, 1000},
             };
+            // ReSharper disable once CppVariableCanBeMadeConstexpr
             const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1000u * static_cast<std::uint32_t>(descriptor_pool_sizes.size()), static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
             this->imgui.descriptor_pool               = vk::raii::DescriptorPool{this->context.device, descriptor_pool_create_info};
             const vk::Format imgui_color_format       = this->swapchain.format;
             const std::uint32_t imgui_min_image_count = std::max(2u, this->sync.frame_count);
-            const std::uint32_t imgui_image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
+            const auto imgui_image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (imgui_image_count < imgui_min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
 
             IMGUI_CHECKVERSION();
@@ -648,13 +650,13 @@ namespace spectra {
             .frame_number     = frame.frame_number,
             .delta_seconds    = frame.delta_seconds,
         };
-        FrameResult frame_result = this->renderer_registry.slots[this->renderer_registry.active_index].begin_frame(*this, frame_info);
+        const FrameResult frame_result = this->renderer_registry.slots[this->renderer_registry.active_index].begin_frame(*this, frame_info);
         if (frame_result.completion_semaphore.has_value()) {
             if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
             frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
         }
         if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-        if (frame_result.window_detail.has_value()) this->window_title.detail = std::move(*frame_result.window_detail);
+        if (frame_result.window_detail.has_value()) this->window_title.detail = *frame_result.window_detail;
         return true;
     }
 
@@ -692,8 +694,8 @@ namespace spectra {
         }
         this->swapchain.image_layouts[frame.image_index] = vk::ImageLayout::eColorAttachmentOptimal;
 
-        constexpr std::array<float, 4> clear_color{0.02f, 0.02f, 0.025f, 1.0f};
-        const vk::ClearValue color_clear_value{vk::ClearColorValue{clear_color}};
+        constexpr std::array clear_color{0.02f, 0.02f, 0.025f, 1.0f};
+        constexpr vk::ClearValue color_clear_value{vk::ClearColorValue{clear_color}};
         const vk::RenderingAttachmentInfo color_attachment{
             *this->swapchain.image_views[frame.image_index],
             vk::ImageLayout::eColorAttachmentOptimal,
@@ -743,28 +745,27 @@ namespace spectra {
         const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
         const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
         bool frame_presented = true;
-        try {
-            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result == vk::Result::eSuboptimalKHR)
+        const auto set_present_result = [&frame, &frame_presented](const vk::Result present_result) {
+            if (present_result == vk::Result::eSuboptimalKHR || present_result == vk::Result::eErrorOutOfDateKHR) {
                 frame.recreate_after_present = true;
-            else if (present_result == vk::Result::eErrorSurfaceLostKHR) {
+                return;
+            }
+            if (present_result == vk::Result::eErrorSurfaceLostKHR) {
                 frame.recreate_after_present = true;
                 frame_presented              = false;
-            } else if (present_result != vk::Result::eSuccess)
-                throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+                return;
+            }
+            throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
+        };
+        try {
+            if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result != vk::Result::eSuccess) set_present_result(present_result);
         } catch (const vk::OutOfDateKHRError&) {
             frame.recreate_after_present = true;
             frame_presented              = false;
         } catch (const vk::SystemError& error) {
-            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR)) {
-                frame.recreate_after_present = true;
-                frame_presented              = false;
-            } else if (error.code().value() == static_cast<int>(vk::Result::eSuboptimalKHR))
-                frame.recreate_after_present = true;
-            else if (error.code().value() == static_cast<int>(vk::Result::eErrorSurfaceLostKHR)) {
-                frame.recreate_after_present = true;
-                frame_presented              = false;
-            } else
-                throw;
+            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR)) frame_presented = false;
+            if (error.code().value() != static_cast<int>(vk::Result::eErrorSurfaceLostKHR) && error.code().value() != static_cast<int>(vk::Result::eSuboptimalKHR) && error.code().value() != static_cast<int>(vk::Result::eErrorOutOfDateKHR)) throw;
+            set_present_result(static_cast<vk::Result>(error.code().value()));
         }
         if (frame.recreate_after_present) this->recreate_swapchain();
         if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
@@ -807,8 +808,8 @@ namespace spectra {
 
     void Spectra::detach_renderers() noexcept {
         this->notify_renderers_before_imgui_shutdown();
-        for (auto renderer = this->renderer_registry.slots.rbegin(); renderer != this->renderer_registry.slots.rend(); ++renderer) {
-            renderer->detach();
+        for (auto & slot : std::views::reverse(this->renderer_registry.slots)) {
+            slot.detach();
         }
         this->renderer_registry.slots.clear();
         this->workspace.panels.clear();
@@ -826,13 +827,13 @@ namespace spectra {
     void Spectra::notify_renderers_before_imgui_shutdown() noexcept {
         if (this->imgui.renderers_notified_before_shutdown) return;
         this->wait_device_idle_for_cleanup();
-        for (auto renderer = this->renderer_registry.slots.rbegin(); renderer != this->renderer_registry.slots.rend(); ++renderer) {
-            renderer->before_imgui_shutdown();
+        for (auto & slot : std::views::reverse(this->renderer_registry.slots)) {
+            slot.before_imgui_shutdown();
         }
         this->imgui.renderers_notified_before_shutdown = true;
     }
 
-    void Spectra::wait_device_idle_for_cleanup() noexcept {
+    void Spectra::wait_device_idle_for_cleanup() const noexcept {
         try {
             if (*this->context.device) this->context.device.waitIdle();
         } catch (...) {
@@ -852,7 +853,7 @@ namespace spectra {
         this->workspace.dock_layout_initialized = false;
     }
 
-    void Spectra::destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) noexcept {
+    void Spectra::destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) const noexcept {
         try {
             if (texture.descriptor != VK_NULL_HANDLE && this->imgui.initialized) ImGui_ImplVulkan_RemoveTexture(texture.descriptor);
         } catch (...) {
@@ -867,12 +868,12 @@ namespace spectra {
     }
 
     void Spectra::destroy_imgui_rgba8_textures() noexcept {
-        for (std::pair<const std::string, ImGuiRgba8Texture>& texture : this->imgui.rgba8_textures) this->destroy_imgui_rgba8_texture(texture.second);
+        for (auto& val : this->imgui.rgba8_textures | std::views::values) this->destroy_imgui_rgba8_texture(val);
         this->imgui.rgba8_textures.clear();
     }
 
     void Spectra::clear_imgui_rgba8_images(const std::string_view cache_key_prefix) {
-        for (std::map<std::string, ImGuiRgba8Texture>::iterator texture = this->imgui.rgba8_textures.begin(); texture != this->imgui.rgba8_textures.end();) {
+        for (auto texture = this->imgui.rgba8_textures.begin(); texture != this->imgui.rgba8_textures.end();) {
             const std::string_view key_view{texture->first.data(), texture->first.size()};
             if (!cache_key_prefix.empty() && !key_view.starts_with(cache_key_prefix)) {
                 ++texture;
@@ -883,14 +884,14 @@ namespace spectra {
         }
     }
 
-    void Spectra::upload_imgui_rgba8_texture(ImGuiRgba8Texture& texture, const std::uint8_t* const data) {
+    void Spectra::upload_imgui_rgba8_texture(ImGuiRgba8Texture& texture, const std::uint8_t* const data) const {
         if (!this->imgui.initialized) throw std::runtime_error("Cannot upload Spectra ImGui RGBA8 texture before ImGui is initialized");
         if (!*this->context.device || !*this->context.physical_device || !*this->context.command_pool || !*this->context.graphics_queue) throw std::runtime_error("Cannot upload Spectra ImGui RGBA8 texture before Vulkan context is initialized");
         if (data == nullptr) throw std::runtime_error("Cannot upload Spectra ImGui RGBA8 texture from null data");
         const std::uint64_t expected_byte_count = checked_rgba8_byte_count(texture.source.width, texture.source.height, "Spectra ImGui RGBA8 texture");
         if (texture.source.byte_size != expected_byte_count) throw std::runtime_error("Spectra ImGui RGBA8 texture byte size must be width * height * 4");
         if (texture.source.byte_size > static_cast<std::uint64_t>(std::numeric_limits<vk::DeviceSize>::max())) throw std::runtime_error("Spectra ImGui RGBA8 texture byte size exceeds Vulkan device size range");
-        const vk::DeviceSize texture_bytes = static_cast<vk::DeviceSize>(texture.source.byte_size);
+        const auto texture_bytes = static_cast<vk::DeviceSize>(texture.source.byte_size);
 
         const vk::BufferCreateInfo staging_buffer_create_info{{}, texture_bytes, vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive};
         vk::raii::Buffer staging_buffer{this->context.device, staging_buffer_create_info};
@@ -913,7 +914,7 @@ namespace spectra {
         texture.image.bindMemory(*texture.memory, 0);
         const vk::ImageViewCreateInfo image_view_create_info{{}, *texture.image, vk::ImageViewType::e2D, vk::Format::eR8G8B8A8Unorm, {}, {vk::ImageAspectFlagBits::eColor, 0u, 1u, 0u, 1u}};
         texture.view = vk::raii::ImageView{this->context.device, image_view_create_info};
-        const vk::SamplerCreateInfo sampler_create_info{{}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, 0.0f, false, 1.0f, false, vk::CompareOp::eNever, 0.0f, 0.0f, vk::BorderColor::eFloatTransparentBlack, false};
+        constexpr vk::SamplerCreateInfo sampler_create_info{{}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, 0.0f, false, 1.0f, false, vk::CompareOp::eNever, 0.0f, 0.0f, vk::BorderColor::eFloatTransparentBlack, false};
         texture.sampler = vk::raii::Sampler{this->context.device, sampler_create_info};
 
         const vk::CommandBufferAllocateInfo command_buffer_allocate_info{*this->context.command_pool, vk::CommandBufferLevel::ePrimary, 1u};
@@ -934,7 +935,7 @@ namespace spectra {
         if (texture.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra ImGui RGBA8 texture descriptor");
     }
 
-    Spectra::ImGuiRgba8Texture& Spectra::ensure_imgui_rgba8_texture(const std::string_view cache_key, const Rgba8ImageSource source) {
+    Spectra::ImGuiRgba8Texture& Spectra::ensure_imgui_rgba8_texture(const std::string_view cache_key, const Rgba8ImageSource& source) {
         if (cache_key.empty()) throw std::runtime_error("Spectra ImGui RGBA8 texture cache key must not be empty");
         if (source.data == nullptr) throw std::runtime_error("Spectra ImGui RGBA8 image data pointer must not be null");
         if (source.revision == 0u) throw std::runtime_error("Spectra ImGui RGBA8 image revision must not be zero");
@@ -948,7 +949,7 @@ namespace spectra {
             .revision = source.revision,
         };
         const std::string key{cache_key};
-        std::map<std::string, ImGuiRgba8Texture>::iterator texture = this->imgui.rgba8_textures.find(key);
+        auto texture = this->imgui.rgba8_textures.find(key);
         if (texture != this->imgui.rgba8_textures.end() && texture->second.source == texture_source && texture->second.descriptor != VK_NULL_HANDLE) return texture->second;
         if (texture != this->imgui.rgba8_textures.end()) {
             this->destroy_imgui_rgba8_texture(texture->second);
@@ -960,7 +961,7 @@ namespace spectra {
         return texture->second;
     }
 
-    void Spectra::draw_imgui_rgba8_image(const std::string_view cache_key, const Rgba8ImageSource source, const ImVec2 display_size) {
+    void Spectra::draw_imgui_rgba8_image(const std::string_view cache_key, const Rgba8ImageSource& source, const ImVec2 display_size) {
         ImGuiRgba8Texture& texture = this->ensure_imgui_rgba8_texture(cache_key, source);
         if (texture.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra ImGui RGBA8 texture descriptor is null");
         ImGui::Image(reinterpret_cast<ImTextureID>(texture.descriptor), display_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
@@ -1106,7 +1107,7 @@ namespace spectra {
         throw std::runtime_error(std::string{"Unknown Spectra command popover id: "} + id);
     }
 
-    void Spectra::close_command_popover(std::string id) {
+    void Spectra::close_command_popover(const std::string& id) {
         if (id.empty()) throw std::runtime_error("Spectra command popover id must not be empty");
         if (this->workspace.active_command_popover_id == id) this->workspace.command_popover_open = false;
     }
@@ -1149,9 +1150,9 @@ namespace spectra {
 
     void Spectra::dispatch_file_drops() {
         if (this->file_drop.pending_batches.empty()) return;
-        std::vector<std::vector<std::filesystem::path>> pending_batches = std::exchange(this->file_drop.pending_batches, {});
+        const std::vector<std::vector<std::filesystem::path>> pending_batches = std::exchange(this->file_drop.pending_batches, {});
         for (const std::vector<std::filesystem::path>& batch : pending_batches) {
-            const std::span<const std::filesystem::path> paths{batch.data(), batch.size()};
+            const std::span paths{batch.data(), batch.size()};
             for (FileDropHandler& handler : this->file_drop.handlers) {
                 if (!this->contribution_belongs_to_active_renderer(handler.owner_renderer)) continue;
                 if (handler.handle(paths)) break;
@@ -1161,7 +1162,7 @@ namespace spectra {
 
     std::string Spectra::resolve_contribution_owner(std::string owner_renderer) const {
         if (!owner_renderer.empty()) {
-            if (this->renderer_registry.registering_name.has_value() && owner_renderer != *this->renderer_registry.registering_name) throw std::runtime_error(std::format("Spectra UI owner \"{}\" does not match renderer registration scope \"{}\"", owner_renderer, *this->renderer_registry.registering_name));
+            if (this->renderer_registry.registering_name.has_value() && owner_renderer != *this->renderer_registry.registering_name) throw std::runtime_error(std::format(R"(Spectra UI owner "{}" does not match renderer registration scope "{}")", owner_renderer, *this->renderer_registry.registering_name));
             if (!this->renderer_registry.registering_name.has_value()) {
                 const bool owner_found = std::ranges::any_of(this->renderer_registry.slots, [&owner_renderer](const RendererSlot& renderer) { return renderer.name == owner_renderer; });
                 if (!owner_found) throw std::runtime_error(std::format("Spectra UI owner \"{}\" does not match a registered renderer", owner_renderer));
@@ -1202,7 +1203,7 @@ namespace spectra {
     }
 
     void Spectra::process_command_bar_shortcuts() {
-        ImGuiIO& io = ImGui::GetIO();
+        const ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput) {
             for (Panel& panel : this->workspace.panels) {
                 if (!this->contribution_belongs_to_active_renderer(panel.owner_renderer)) continue;
@@ -1311,7 +1312,7 @@ namespace spectra {
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine(0.0f, 6.0f);
         std::size_t button_index = 0;
-        for (CommandPopover* popover : visible_popovers) {
+        for (const CommandPopover* popover : visible_popovers) {
             const bool selected = this->workspace.command_popover_open && popover->id == this->workspace.active_command_popover_id;
             const char* label   = popover->icon.empty() ? popover->title.c_str() : popover->icon.c_str();
             push_toolbar_button_style(selected);

@@ -203,9 +203,9 @@ namespace spectra {
             requires ToolbarActionLike<ToolbarActionContribution>
         void register_toolbar_action(ToolbarActionContribution action);
         void open_command_popover(std::string id);
-        void close_command_popover(std::string id);
+        void close_command_popover(const std::string& id);
         void draw_viewport_overlays(ImVec2 viewport_position, ImVec2 viewport_size);
-        void draw_imgui_rgba8_image(std::string_view cache_key, Rgba8ImageSource source, ImVec2 display_size);
+        void draw_imgui_rgba8_image(std::string_view cache_key, const Rgba8ImageSource& source, ImVec2 display_size);
         void clear_imgui_rgba8_images(std::string_view cache_key_prefix = {});
         void set_workspace_title_provider(std::move_only_function<WorkspaceTitle()> provider);
         template <typename FileDropHandlerContribution>
@@ -220,7 +220,7 @@ namespace spectra {
         void create_debug_messenger();
         void create_window(std::string_view app_name, std::uint32_t window_width, std::uint32_t window_height);
         void create_surface();
-        void validate_initial_framebuffer_extent();
+        void validate_initial_framebuffer_extent() const;
         void select_physical_device();
         void create_logical_device();
         void create_command_pool();
@@ -237,7 +237,7 @@ namespace spectra {
         void shutdown_runtime() noexcept;
         void detach_renderers() noexcept;
         void notify_renderers_before_imgui_shutdown() noexcept;
-        void wait_device_idle_for_cleanup() noexcept;
+        void wait_device_idle_for_cleanup() const noexcept;
         void destroy_imgui() noexcept;
         void destroy_frame_sync() noexcept;
         void destroy_swapchain() noexcept;
@@ -317,10 +317,10 @@ namespace spectra {
             vk::ImageLayout layout{vk::ImageLayout::eUndefined};
         };
 
-        void destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) noexcept;
+        void destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) const noexcept;
         void destroy_imgui_rgba8_textures() noexcept;
-        [[nodiscard]] ImGuiRgba8Texture& ensure_imgui_rgba8_texture(std::string_view cache_key, Rgba8ImageSource source);
-        void upload_imgui_rgba8_texture(ImGuiRgba8Texture& texture, const std::uint8_t* data);
+        [[nodiscard]] ImGuiRgba8Texture& ensure_imgui_rgba8_texture(std::string_view cache_key, const Rgba8ImageSource& source);
+        void upload_imgui_rgba8_texture(ImGuiRgba8Texture& texture, const std::uint8_t* data) const;
 
         struct {
             vk::raii::Context context{};
