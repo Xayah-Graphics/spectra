@@ -372,34 +372,38 @@ namespace {
         }
     }
 
-    [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::scene_session::Session& session, SceneSessionStatusState& state, DynamicSceneControlsState& controls, const std::span<const std::filesystem::path> paths) {
-        if (paths.empty()) {
-            set_scene_status(state, "Drop a PBRT scene or dynamic scene plugin to load it", true);
-            return true;
-        }
-        if (paths.size() != 1u) {
-            set_scene_status(state, "Drop exactly one scene file or dynamic scene plugin", true);
-            return true;
-        }
-        try {
-            const std::filesystem::path& scene_path = paths.front();
-            if (spectra::dynamic_scene::is_plugin_file(scene_path)) {
-                application.clear_imgui_rgba8_images("scene-control-image://");
-                spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(scene_path);
-                set_scene_status(state, std::format("Opened dynamic scene controls {}", plugin.title), false);
-                session.close_scene();
-                begin_dynamic_scene_controls(controls, std::move(plugin));
-                application.open_command_popover("scene.dynamic-controls");
-                return true;
-            }
-            set_scene_status(state, std::format("Loaded {}", open_pbrt_scene_path(session, scene_path)), false);
+    void open_scene_files(spectra::Spectra& application, spectra::scene_session::Session& session, SceneSessionStatusState& state, DynamicSceneControlsState& controls, const std::span<const std::filesystem::path> paths) {
+        if (paths.empty()) throw std::runtime_error("Drop a PBRT scene file or dynamic scene plugin to load it");
+        if (paths.size() != 1u) throw std::runtime_error("Drop exactly one scene file or dynamic scene plugin");
+        const std::filesystem::path& scene_path = paths.front();
+        if (spectra::dynamic_scene::is_plugin_file(scene_path)) {
             application.clear_imgui_rgba8_images("scene-control-image://");
-            controls = DynamicSceneControlsState{};
-            application.close_command_popover("scene.dynamic-controls");
+            spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(scene_path);
+            set_scene_status(state, std::format("Opened dynamic scene controls {}", plugin.title), false);
+            session.close_scene();
+            begin_dynamic_scene_controls(controls, std::move(plugin));
+            application.open_command_popover("scene.dynamic-controls");
+            return;
+        }
+        set_scene_status(state, std::format("Loaded {}", open_pbrt_scene_path(session, scene_path)), false);
+        application.clear_imgui_rgba8_images("scene-control-image://");
+        controls = DynamicSceneControlsState{};
+        application.close_command_popover("scene.dynamic-controls");
+    }
+
+    [[nodiscard]] bool handle_scene_file_drop(spectra::Spectra& application, spectra::scene_session::Session& session, SceneSessionStatusState& state, DynamicSceneControlsState& controls, const std::span<const std::filesystem::path> paths) {
+        try {
+            open_scene_files(application, session, state, controls, paths);
         } catch (const std::exception& error) {
             set_scene_status(state, error.what(), true);
         }
         return true;
+    }
+
+    void open_startup_scene_file(spectra::Spectra& application, spectra::scene_session::Session& session, SceneSessionStatusState& state, DynamicSceneControlsState& controls, const std::optional<std::string>& initial_scene_path) {
+        if (!initial_scene_path.has_value()) return;
+        const std::array<std::filesystem::path, 1u> paths{std::filesystem::path{*initial_scene_path}};
+        open_scene_files(application, session, state, controls, std::span<const std::filesystem::path>{paths.data(), paths.size()});
     }
 
     bool draw_dynamic_scene_option_editor_value(OptionEditor& editor) {
@@ -1041,9 +1045,9 @@ namespace {
     }
 
     [[nodiscard]] std::string scene_session_tooltip(const spectra::scene_session::SceneDescriptor* active_scene) {
-        if (active_scene == nullptr) return "Empty Scene\nDrop a PBRT scene or dynamic scene plugin into the window to load it";
+        if (active_scene == nullptr) return "Empty Scene\nDrop a PBRT scene file or dynamic scene plugin into the window to load it";
         return std::format(
-            "{}\n{}\nDrop a PBRT scene or dynamic scene plugin into the window to replace it",
+            "{}\n{}\nDrop a PBRT scene file or dynamic scene plugin into the window to replace it",
             active_scene->id,
             active_scene->kind == spectra::scene_session::SceneKind::Static ? "Static" : "Dynamic");
     }
@@ -1108,11 +1112,10 @@ namespace {
 int main(const int argc, const char* const* const argv) {
     try {
         const std::span arguments{argv, static_cast<std::size_t>(argc)};
-        std::optional<std::string> scene_id{};
+        std::optional<std::string> initial_scene_path{};
         xayah::util::Command command =
             xayah::util::Command{"Open the Spectra visualization workspace."}
-            | xayah::util::option({.long_name = "scene", .value_name = "scene-id-or-path", .description = "PBRT scene id/path or dynamic scene plugin path", .show_default = false}, scene_id)
-            | xayah::util::example("--scene default")
+            | xayah::util::option({.long_name = "scene", .value_name = "scene-file-or-plugin-path", .description = "PBRT scene file or dynamic scene plugin path", .show_default = false}, initial_scene_path)
             | xayah::util::example("--scene path/to/scene.pbrt")
             | xayah::util::example("--scene path/to/plugin.dll");
         const std::string usage = command.help(arguments);
@@ -1159,22 +1162,7 @@ int main(const int argc, const char* const* const argv) {
             .priority       = 0,
             .draw           = [scene_session, dynamic_scene_controls](const ImVec2 viewport_position, const ImVec2 viewport_size) { draw_dynamic_scene_controls_overlay(*scene_session, *dynamic_scene_controls, viewport_position, viewport_size); },
         });
-        if (scene_id.has_value()) {
-            const std::filesystem::path requested_path{*scene_id};
-            if (spectra::dynamic_scene::is_plugin_file(requested_path)) {
-                scene_session->close_scene();
-                spectra::dynamic_scene::PluginInfo plugin = spectra::dynamic_scene::inspect_plugin(requested_path);
-                set_scene_status(*scene_status_state, std::format("Opened dynamic scene controls {}", plugin.title), false);
-                begin_dynamic_scene_controls(*dynamic_scene_controls, std::move(plugin));
-                app.open_command_popover("scene.dynamic-controls");
-            } else if (is_pbrt_scene_file(requested_path) || std::filesystem::is_regular_file(requested_path)) {
-                static_cast<void>(open_pbrt_scene_path(*scene_session, requested_path));
-            } else {
-                auto scene = std::make_shared<spectra::scene::Scene>(spectra::scene::Scene::parse_pbrt(*scene_id));
-                const std::string title = scene->info().title;
-                if (!scene_session->open_static_scene(*scene_id, title, [scene = std::move(scene)] { return scene; })) throw std::runtime_error(scene_session->activation_error());
-            }
-        }
+        open_startup_scene_file(app, *scene_session, *scene_status_state, *dynamic_scene_controls, initial_scene_path);
         app.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;

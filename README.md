@@ -30,14 +30,14 @@ cmake --build build --parallel
 
 ## Usage
 
-You may load PBRT scenes and dynamic scene plugins directly from the command line.
+You may load PBRT scene files and dynamic scene plugins directly from the command line.
 
 ```bash
 ./build/spectra_gui --scene /path/to/scene.pbrt
 ./build/spectra_gui --scene /path/to/plugin.dll
 ```
 
-You may also load PBRT scenes and dynamic scene plugins through the GUI.
+You may also load PBRT scene files and dynamic scene plugins through the GUI.
 
 ```bash
 ./build/spectra_gui
