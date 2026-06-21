@@ -16,7 +16,7 @@ import spectra.scene;
 
 namespace spectra::scene_runtime {
     namespace {
-        constexpr std::uint32_t plugin_abi_version = 25u;
+        constexpr std::uint32_t plugin_abi_version = 26u;
         constexpr std::string_view scene_api_name = "spectra.dynamic_scene.scene";
         constexpr std::string_view controls_api_name = "spectra.dynamic_scene.controls";
         constexpr std::uint32_t scene_api_version = 1u;
@@ -24,19 +24,13 @@ namespace spectra::scene_runtime {
 
         typedef void SpectraDynamicSceneInstance;
 
-        enum SpectraDynamicSceneResult {
-            SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0,
-            SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1,
-        };
-
-        struct SpectraDynamicSceneString {
-            const char* data{};
-            std::uint64_t size{};
-        };
+        typedef std::uint32_t SpectraDynamicSceneResult;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_RESULT_OK = 0u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_RESULT_ERROR = 1u;
 
         struct SpectraDynamicSceneOption {
-            SpectraDynamicSceneString key{};
-            SpectraDynamicSceneString value{};
+            const char* key{};
+            const char* value{};
         };
 
         struct SpectraDynamicSceneOptionSpan {
@@ -44,19 +38,17 @@ namespace spectra::scene_runtime {
             std::uint64_t count{};
         };
 
-        enum SpectraDynamicSceneOptionKind {
-            SPECTRA_DYNAMIC_SCENE_OPTION_TEXT = 0,
-            SPECTRA_DYNAMIC_SCENE_OPTION_DIRECTORY_PATH = 1,
-            SPECTRA_DYNAMIC_SCENE_OPTION_FILE_PATH = 2,
-            SPECTRA_DYNAMIC_SCENE_OPTION_CHOICE = 3,
-            SPECTRA_DYNAMIC_SCENE_OPTION_BOOL = 4,
-            SPECTRA_DYNAMIC_SCENE_OPTION_FLOAT = 5,
-            SPECTRA_DYNAMIC_SCENE_OPTION_UNSIGNED_INTEGER = 6,
-        };
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_TEXT = 0u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_DIRECTORY_PATH = 1u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_FILE_PATH = 2u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_CHOICE = 3u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_BOOL = 4u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_FLOAT = 5u;
+        constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_OPTION_UNSIGNED_INTEGER = 6u;
 
         struct SpectraDynamicSceneOptionChoice {
-            SpectraDynamicSceneString value{};
-            SpectraDynamicSceneString label{};
+            const char* value{};
+            const char* label{};
         };
 
         struct SpectraDynamicSceneOptionChoiceSpan {
@@ -65,13 +57,13 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneOptionSchema {
-            SpectraDynamicSceneString key{};
-            SpectraDynamicSceneString label{};
-            SpectraDynamicSceneString description{};
+            const char* key{};
+            const char* label{};
+            const char* description{};
             std::uint32_t kind{};
             std::uint32_t required{};
-            SpectraDynamicSceneString default_value{};
-            SpectraDynamicSceneString group{};
+            const char* default_value{};
+            const char* group{};
             std::uint32_t advanced{};
             std::int32_t priority{};
             SpectraDynamicSceneOptionChoiceSpan choices{};
@@ -82,15 +74,10 @@ namespace spectra::scene_runtime {
             std::uint64_t count{};
         };
 
-        struct SpectraDynamicSceneStringSpan {
-            const SpectraDynamicSceneString* data{};
-            std::uint64_t count{};
-        };
-
         struct SpectraDynamicSceneControlAction {
-            SpectraDynamicSceneString id{};
-            SpectraDynamicSceneString label{};
-            SpectraDynamicSceneString description{};
+            const char* id{};
+            const char* label{};
+            const char* description{};
             std::uint32_t group{};
             std::int32_t priority{};
             std::uint32_t style{};
@@ -103,12 +90,12 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneControlSetting {
-            SpectraDynamicSceneString key{};
-            SpectraDynamicSceneString label{};
-            SpectraDynamicSceneString description{};
+            const char* key{};
+            const char* label{};
+            const char* description{};
             std::uint32_t kind{};
-            SpectraDynamicSceneString value{};
-            SpectraDynamicSceneString group{};
+            const char* value{};
+            const char* group{};
             std::uint32_t advanced{};
             std::int32_t priority{};
             SpectraDynamicSceneOptionChoiceSpan choices{};
@@ -125,9 +112,9 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneControlMetric {
-            SpectraDynamicSceneString key{};
-            SpectraDynamicSceneString label{};
-            SpectraDynamicSceneString value{};
+            const char* key{};
+            const char* label{};
+            const char* value{};
             std::uint32_t placement_flags{};
             std::int32_t priority{};
             std::uint32_t has_color{};
@@ -140,8 +127,8 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneControlDisabledAction {
-            SpectraDynamicSceneString action_id{};
-            SpectraDynamicSceneString reason{};
+            const char* action_id{};
+            const char* reason{};
         };
 
         struct SpectraDynamicSceneControlDisabledActionSpan {
@@ -151,18 +138,19 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneControlStatusView {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneString phase{};
-            SpectraDynamicSceneString headline{};
-            SpectraDynamicSceneString detail{};
+            const char* phase{};
+            const char* headline{};
+            const char* detail{};
             SpectraDynamicSceneControlMetricSpan metrics{};
-            SpectraDynamicSceneStringSpan enabled_action_ids{};
+            const char* const* enabled_action_ids{};
+            std::uint64_t enabled_action_id_count{};
             SpectraDynamicSceneControlDisabledActionSpan disabled_actions{};
         };
 
         struct SpectraDynamicSceneControlLogEntry {
             std::uint64_t sequence{};
-            SpectraDynamicSceneString level{};
-            SpectraDynamicSceneString message{};
+            const char* level{};
+            const char* message{};
         };
 
         struct SpectraDynamicSceneControlLogEntrySpan {
@@ -176,9 +164,9 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneControlImage {
-            SpectraDynamicSceneString id{};
-            SpectraDynamicSceneString label{};
-            SpectraDynamicSceneString description{};
+            const char* id{};
+            const char* label{};
+            const char* description{};
             const std::uint8_t* rgba8{};
             std::uint64_t rgba8_size{};
             std::uint64_t revision{};
@@ -208,10 +196,10 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneControlScalarSeries {
-            SpectraDynamicSceneString id{};
-            SpectraDynamicSceneString label{};
-            SpectraDynamicSceneString description{};
-            SpectraDynamicSceneString unit{};
+            const char* id{};
+            const char* label{};
+            const char* description{};
+            const char* unit{};
             float color[4]{};
             std::uint32_t group{};
             std::int32_t priority{};
@@ -259,7 +247,7 @@ namespace spectra::scene_runtime {
         struct SpectraDynamicSceneViewportVoxelBufferRequest {
             std::uint64_t struct_size{};
             std::uint64_t byte_size{};
-            SpectraDynamicSceneString debug_name{};
+            const char* debug_name{};
         };
 
         struct SpectraDynamicSceneViewportVoxelBufferAllocation {
@@ -277,7 +265,7 @@ namespace spectra::scene_runtime {
         struct SpectraDynamicSceneVolumeBufferRequest {
             std::uint64_t struct_size{};
             std::uint64_t byte_size{};
-            SpectraDynamicSceneString debug_name{};
+            const char* debug_name{};
         };
 
         struct SpectraDynamicSceneVolumeBufferAllocation {
@@ -291,7 +279,7 @@ namespace spectra::scene_runtime {
 
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneRequestVolumeBufferFn)(void* user_data, const SpectraDynamicSceneVolumeBufferRequest* request, SpectraDynamicSceneVolumeBufferAllocation* allocation);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneReleaseVolumeBufferFn)(void* user_data, std::uint64_t resource_id);
-        typedef SpectraDynamicSceneString (*SpectraDynamicSceneHostLastErrorFn)(void* user_data);
+        typedef const char* (*SpectraDynamicSceneHostLastErrorFn)(void* user_data);
 
         struct SpectraDynamicSceneHostServices {
             std::uint64_t struct_size{};
@@ -305,7 +293,7 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneOpenInfo {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneString plugin_path{};
+            const char* plugin_path{};
             SpectraDynamicSceneOptionSpan options{};
             const SpectraDynamicSceneHostServices* host_services{};
         };
@@ -317,9 +305,9 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneMaterial {
-            SpectraDynamicSceneString name{};
-            SpectraDynamicSceneString model{};
-            SpectraDynamicSceneString alpha_mode{};
+            const char* name{};
+            const char* model{};
+            const char* alpha_mode{};
             float base_color[4]{};
             float emission_color[3]{};
             float emission_strength{};
@@ -336,8 +324,8 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneLight {
-            SpectraDynamicSceneString name{};
-            SpectraDynamicSceneString kind{};
+            const char* name{};
+            const char* kind{};
             SpectraDynamicSceneTransform transform{};
             float color[3]{};
             float intensity{};
@@ -350,8 +338,8 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneCamera {
-            SpectraDynamicSceneString name{};
-            SpectraDynamicSceneString local_coordinate_system{};
+            const char* name{};
+            const char* local_coordinate_system{};
             SpectraDynamicSceneTransform transform{};
             float target[3]{};
             float up[3]{};
@@ -388,10 +376,10 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneMesh {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             SpectraDynamicSceneMeshVertexSpan vertices{};
             SpectraDynamicSceneUInt32Span indices{};
-            SpectraDynamicSceneString material_name{};
+            const char* material_name{};
             SpectraDynamicSceneTransform transform{};
         };
 
@@ -401,9 +389,9 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneSphere {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             float radius{};
-            SpectraDynamicSceneString material_name{};
+            const char* material_name{};
             SpectraDynamicSceneTransform transform{};
         };
 
@@ -425,9 +413,9 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicScenePointCloud {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             SpectraDynamicScenePointSpan points{};
-            SpectraDynamicSceneString material_name{};
+            const char* material_name{};
             SpectraDynamicSceneTransform transform{};
         };
 
@@ -442,7 +430,7 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneVolumeChannel {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             std::uint32_t dimensions[3]{};
             SpectraDynamicSceneFloatSpan values{};
             std::uint32_t format{};
@@ -460,12 +448,12 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneVolume {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             std::uint32_t dimensions[3]{};
             float origin[3]{};
             float voxel_size[3]{};
             SpectraDynamicSceneVolumeChannelSpan channels{};
-            SpectraDynamicSceneString material_name{};
+            const char* material_name{};
         };
 
         struct SpectraDynamicSceneVolumeSpan {
@@ -475,7 +463,7 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneEntityRef {
             std::uint32_t kind{};
-            SpectraDynamicSceneString name{};
+            const char* name{};
         };
 
         struct SpectraDynamicSceneViewportSegment {
@@ -498,7 +486,7 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneViewportSegmentSet {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             SpectraDynamicSceneEntityRef owner{};
             SpectraDynamicSceneViewportSegmentSpan segments{};
             SpectraDynamicSceneColorSpan colors{};
@@ -515,7 +503,7 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneViewportVoxelGrid {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             SpectraDynamicSceneEntityRef owner{};
             std::uint32_t dimensions[3]{};
             float origin[3]{};
@@ -547,7 +535,7 @@ namespace spectra::scene_runtime {
         };
 
         struct SpectraDynamicSceneViewportCameraVisual {
-            SpectraDynamicSceneString name{};
+            const char* name{};
             SpectraDynamicSceneEntityRef owner{};
             float color[4]{};
             float width{};
@@ -572,8 +560,8 @@ namespace spectra::scene_runtime {
 
         struct SpectraDynamicSceneDocumentView {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneString default_coordinate_system{};
-            SpectraDynamicSceneString active_camera_name{};
+            const char* default_coordinate_system{};
+            const char* active_camera_name{};
             SpectraDynamicSceneCameraSpan cameras{};
             SpectraDynamicSceneMaterialSpan materials{};
             SpectraDynamicSceneLightSpan lights{};
@@ -607,15 +595,15 @@ namespace spectra::scene_runtime {
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneDocumentFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneDocumentView* document);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneFrameFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneFrameInfo frame, SpectraDynamicSceneFrameView* snapshot);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneSceneRevisionFn)(SpectraDynamicSceneInstance* instance, std::uint64_t* revision);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlActionFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneString action_id, SpectraDynamicSceneOptionSpan options);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlSettingUpdateFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneString key, SpectraDynamicSceneString value);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlActionFn)(SpectraDynamicSceneInstance* instance, const char* action_id, SpectraDynamicSceneOptionSpan options);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlSettingUpdateFn)(SpectraDynamicSceneInstance* instance, const char* key, const char* value);
         typedef SpectraDynamicSceneResult (*SpectraDynamicSceneControlSnapshotFn)(SpectraDynamicSceneInstance* instance, SpectraDynamicSceneControlSnapshotView* snapshot);
-        typedef SpectraDynamicSceneString (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
-        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneGetApiFn)(SpectraDynamicSceneString api_name, std::uint32_t api_version, const void** api);
+        typedef const char* (*SpectraDynamicSceneLastErrorFn)(SpectraDynamicSceneInstance* instance);
+        typedef SpectraDynamicSceneResult (*SpectraDynamicSceneGetApiFn)(const char* api_name, std::uint32_t api_version, const void** api);
 
         struct SpectraDynamicSceneSceneApi {
             std::uint64_t struct_size{};
-            SpectraDynamicSceneString base_pbrt_path{};
+            const char* base_pbrt_path{};
             double frames_per_second{};
             SpectraDynamicSceneCreateFn create{};
             SpectraDynamicSceneDestroyFn destroy{};
@@ -638,11 +626,11 @@ namespace spectra::scene_runtime {
         struct SpectraDynamicScenePlugin {
             std::uint32_t abi_version{};
             std::uint64_t struct_size{};
-            SpectraDynamicSceneString id{};
-            SpectraDynamicSceneString title{};
-            SpectraDynamicSceneString controls_panel_title{};
-            SpectraDynamicSceneString open_action_label{};
-            SpectraDynamicSceneString open_action_description{};
+            const char* id{};
+            const char* title{};
+            const char* controls_panel_title{};
+            const char* open_action_label{};
+            const char* open_action_description{};
             SpectraDynamicSceneOptionSchemaSpan open_options{};
             SpectraDynamicSceneGetApiFn get_api{};
         };
@@ -658,15 +646,8 @@ namespace spectra::scene_runtime {
             return lowercase_ascii(path.extension().string()) == lowercase_ascii(std::string{extension});
         }
 
-        [[nodiscard]] std::string_view abi_string_view(const SpectraDynamicSceneString value, const std::string_view context) {
-            if (value.data == nullptr && value.size == 0u) return {};
-            if (value.data == nullptr) throw std::runtime_error(std::format("{} string pointer is null", context));
-            if (value.size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) throw std::runtime_error(std::format("{} string is too large", context));
-            return std::string_view{value.data, static_cast<std::size_t>(value.size)};
-        }
-
-        [[nodiscard]] std::string abi_string(const SpectraDynamicSceneString value, const std::string_view context, const bool allow_empty) {
-            const std::string_view view = abi_string_view(value, context);
+        [[nodiscard]] std::string abi_string(const char* value, const std::string_view context, const bool allow_empty) {
+            const std::string_view view = value == nullptr ? std::string_view{} : std::string_view{value};
             if (!allow_empty && view.empty()) throw std::runtime_error(std::format("{} must not be empty", context));
             return std::string{view};
         }
@@ -679,59 +660,12 @@ namespace spectra::scene_runtime {
             return std::span<const Value>{data, static_cast<std::size_t>(count)};
         }
 
-        [[nodiscard]] std::span<const SpectraDynamicSceneMaterial> abi_span(const SpectraDynamicSceneMaterialSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneLight> abi_span(const SpectraDynamicSceneLightSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneCamera> abi_span(const SpectraDynamicSceneCameraSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneMesh> abi_span(const SpectraDynamicSceneMeshSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneSphere> abi_span(const SpectraDynamicSceneSphereSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicScenePointCloud> abi_span(const SpectraDynamicScenePointCloudSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneVolume> abi_span(const SpectraDynamicSceneVolumeSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneViewportSegment> abi_span(const SpectraDynamicSceneViewportSegmentSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneColor> abi_span(const SpectraDynamicSceneColorSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneViewportSegmentSet> abi_span(const SpectraDynamicSceneViewportSegmentSetSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneViewportVoxelGrid> abi_span(const SpectraDynamicSceneViewportVoxelGridSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneViewportCameraVisual> abi_span(const SpectraDynamicSceneViewportCameraVisualSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneControlScalarSample> abi_span(const SpectraDynamicSceneControlScalarSampleSpan span, const std::string_view context) {
-            return abi_span(span.data, span.count, context);
-        }
-
-        [[nodiscard]] std::span<const SpectraDynamicSceneControlScalarSeries> abi_span(const SpectraDynamicSceneControlScalarSeriesSpan span, const std::string_view context) {
+        template <typename Span>
+            requires requires(const Span& span) {
+                span.data;
+                span.count;
+            }
+        [[nodiscard]] auto abi_span(const Span& span, const std::string_view context) {
             return abi_span(span.data, span.count, context);
         }
 
@@ -887,8 +821,8 @@ namespace spectra::scene_runtime {
             const std::string name = abi_string(material.name, "Dynamic scene material name", false);
             return scene::Scene::PreviewMaterial{
                 .name = name,
-                .surface_kind = preview_surface_kind_from_string(abi_string_view(material.model, std::format("Dynamic scene material \"{}\" model", name)), name),
-                .alpha_mode = preview_alpha_mode_from_string(abi_string_view(material.alpha_mode, std::format("Dynamic scene material \"{}\" alpha mode", name)), name),
+                .surface_kind = preview_surface_kind_from_string(abi_string(material.model, std::format("Dynamic scene material \"{}\" model", name), true), name),
+                .alpha_mode = preview_alpha_mode_from_string(abi_string(material.alpha_mode, std::format("Dynamic scene material \"{}\" alpha mode", name), true), name),
                 .base_color = make_vector4(material.base_color, std::format("Dynamic scene material \"{}\" base color", name)),
                 .emission_color = make_vector3(material.emission_color, std::format("Dynamic scene material \"{}\" emission color", name)),
                 .emission_strength = finite_float(material.emission_strength, std::format("Dynamic scene material \"{}\" emission strength", name)),
@@ -904,7 +838,7 @@ namespace spectra::scene_runtime {
             const std::string name = abi_string(light.name, "Dynamic scene light name", false);
             return scene::Scene::PreviewLight{
                 .name = name,
-                .kind = light_kind_from_string(abi_string_view(light.kind, std::format("Dynamic scene light \"{}\" kind", name)), name),
+                .kind = light_kind_from_string(abi_string(light.kind, std::format("Dynamic scene light \"{}\" kind", name), true), name),
                 .transform = make_transform(light.transform, std::format("Dynamic scene light \"{}\"", name)),
                 .color = make_vector3(light.color, std::format("Dynamic scene light \"{}\" color", name)),
                 .intensity = finite_float(light.intensity, std::format("Dynamic scene light \"{}\" intensity", name)),
@@ -1276,14 +1210,6 @@ namespace spectra::scene_runtime {
             std::string source_id{};
         };
 
-        [[nodiscard]] SpectraDynamicSceneString abi_text(const std::string& value) {
-            return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
-        }
-
-        [[nodiscard]] SpectraDynamicSceneString abi_text(const std::string_view value) {
-            return SpectraDynamicSceneString{.data = value.data(), .size = static_cast<std::uint64_t>(value.size())};
-        }
-
         [[nodiscard]] std::uint32_t abi_gpu_resource_handle_kind(const DynamicSceneGpuResourceHandleKind kind) {
             switch (kind) {
             case DynamicSceneGpuResourceHandleKind::OpaqueWin32: return 1u;
@@ -1397,12 +1323,16 @@ namespace spectra::scene_runtime {
             }
         }
 
-        [[nodiscard]] SpectraDynamicSceneString dynamic_scene_host_services_last_error(void* user_data) noexcept {
-            if (user_data == nullptr) return abi_text(dynamic_scene_host_service_callback_error);
+        [[nodiscard]] const char* dynamic_scene_host_services_last_error(void* user_data) noexcept {
+            if (user_data == nullptr) return dynamic_scene_host_service_callback_error.c_str();
             DynamicSceneHostServices& host_services = *static_cast<DynamicSceneHostServices*>(user_data);
             const std::string_view service_error = host_services.last_error();
-            if (!service_error.empty()) return abi_text(service_error);
-            return abi_text(dynamic_scene_host_service_callback_error);
+            thread_local std::string host_service_error_text{};
+            if (!service_error.empty()) {
+                host_service_error_text = service_error;
+                return host_service_error_text.c_str();
+            }
+            return dynamic_scene_host_service_callback_error.c_str();
         }
 
         [[nodiscard]] SpectraDynamicSceneHostServices make_host_services_view(DynamicSceneHostServices& host_services) {
@@ -1495,8 +1425,8 @@ namespace spectra::scene_runtime {
             storage.option_views.reserve(storage.options.size());
             for (const DynamicScenePluginOptionStorage& option : storage.options) {
                 storage.option_views.push_back(SpectraDynamicSceneOption{
-                    .key = abi_text(option.key),
-                    .value = abi_text(option.value),
+                    .key = option.key.c_str(),
+                    .value = option.value.c_str(),
                 });
             }
             return storage;
@@ -1689,7 +1619,7 @@ namespace spectra::scene_runtime {
                 if (!metric_keys.insert(converted.key).second) throw std::runtime_error(std::format("{} metric '{}' is duplicated", context, converted.key));
                 status.metrics.push_back(std::move(converted));
             }
-            const std::span<const SpectraDynamicSceneString> enabled_action_ids = abi_span(view.enabled_action_ids.data, view.enabled_action_ids.count, std::format("{} enabled action ids", context));
+            const std::span<const char* const> enabled_action_ids = abi_span(view.enabled_action_ids, view.enabled_action_id_count, std::format("{} enabled action ids", context));
             std::set<std::string> enabled_ids{};
             status.enabled_action_ids.reserve(enabled_action_ids.size());
             for (std::size_t enabled_index = 0u; enabled_index < enabled_action_ids.size(); ++enabled_index) {
@@ -1968,7 +1898,7 @@ namespace spectra::scene_runtime {
                 const std::string plugin_path_text = this->open_request.plugin_path.string();
                 const SpectraDynamicSceneOpenInfo open_info{
                     .struct_size = sizeof(SpectraDynamicSceneOpenInfo),
-                    .plugin_path = abi_text(plugin_path_text),
+                    .plugin_path = plugin_path_text.c_str(),
                     .options = SpectraDynamicSceneOptionSpan{
                         .data = this->open_request.option_views.empty() ? nullptr : this->open_request.option_views.data(),
                         .count = static_cast<std::uint64_t>(this->open_request.option_views.size()),
@@ -2012,6 +1942,7 @@ namespace spectra::scene_runtime {
             void control_action(SpectraDynamicSceneInstance* instance, const std::string_view action_id, const std::span<const DynamicSceneOption> options) const {
                 if (this->controls_api == nullptr) throw std::runtime_error("Dynamic scene plugin does not expose a controls API");
                 if (action_id.empty()) throw std::runtime_error("Dynamic scene plugin controls action id must not be empty");
+                const std::string action_id_text{action_id};
                 std::vector<DynamicScenePluginOptionStorage> option_storage{};
                 std::vector<SpectraDynamicSceneOption> option_views{};
                 std::set<std::string> option_keys{};
@@ -2027,14 +1958,14 @@ namespace spectra::scene_runtime {
                 }
                 for (const DynamicScenePluginOptionStorage& option : option_storage) {
                     option_views.push_back(SpectraDynamicSceneOption{
-                        .key = abi_text(option.key),
-                        .value = abi_text(option.value),
+                        .key = option.key.c_str(),
+                        .value = option.value.c_str(),
                     });
                 }
                 this->check_result(
                     this->controls_api->control_action(
                         instance,
-                        abi_text(action_id),
+                        action_id_text.c_str(),
                         SpectraDynamicSceneOptionSpan{
                             .data = option_views.empty() ? nullptr : option_views.data(),
                             .count = static_cast<std::uint64_t>(option_views.size()),
@@ -2046,7 +1977,9 @@ namespace spectra::scene_runtime {
             void control_setting_update(SpectraDynamicSceneInstance* instance, const std::string_view key, const std::string_view value) const {
                 if (this->controls_api == nullptr) throw std::runtime_error("Dynamic scene plugin does not expose a controls API");
                 if (key.empty()) throw std::runtime_error("Dynamic scene plugin controls setting key must not be empty");
-                this->check_result(this->controls_api->control_setting_update(instance, abi_text(key), abi_text(value)), instance, std::format("Dynamic scene plugin controls setting '{}'", key));
+                const std::string key_text{key};
+                const std::string value_text{value};
+                this->check_result(this->controls_api->control_setting_update(instance, key_text.c_str(), value_text.c_str()), instance, std::format("Dynamic scene plugin controls setting '{}'", key));
             }
 
             [[nodiscard]] DynamicSceneControlSnapshot control_snapshot(SpectraDynamicSceneInstance* instance) const {
@@ -2093,7 +2026,8 @@ namespace spectra::scene_runtime {
             template <typename Api>
             [[nodiscard]] const Api* api(std::string_view name, const std::uint32_t version) const {
                 const void* api_pointer{};
-                const SpectraDynamicSceneResult result = this->plugin->get_api(abi_text(name), version, &api_pointer);
+                const std::string api_name{name};
+                const SpectraDynamicSceneResult result = this->plugin->get_api(api_name.c_str(), version, &api_pointer);
                 if (result == SPECTRA_DYNAMIC_SCENE_RESULT_OK) return static_cast<const Api*>(api_pointer);
                 if (result != SPECTRA_DYNAMIC_SCENE_RESULT_ERROR) throw std::runtime_error(std::format("{}: dynamic scene plugin get_api returned an unknown result code {}", this->open_request.plugin_path.string(), static_cast<int>(result)));
                 throw std::runtime_error(std::format("{}: dynamic scene plugin get_api({}, {}) failed", this->open_request.plugin_path.string(), name, version));

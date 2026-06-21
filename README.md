@@ -63,7 +63,9 @@ A dynamic scene plugin only needs to:
 2. Export `spectra_dynamic_scene_plugin()`.
 3. Declare the ABI structs exactly as documented below.
 
-The plugin owns all returned string and array views. Scene metadata is copied into Spectra scene storage during
+ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
+optional; required strings must be non-empty. Numeric categories are `uint32_t` values constrained by the tables below,
+not ABI enum types. The plugin owns all returned string and array views. Scene metadata is copied into Spectra scene storage during
 conversion, but camera visual pixels, control preview pixels, viewport voxel grid GPU payloads, and external volume
 channel GPU payloads are borrowed.
 Camera visual and control preview RGBA8 pointers must stay valid for the plugin instance lifetime, and `revision` must
@@ -74,9 +76,11 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `24`.
+- ABI version: `26`.
 - Exported symbol: `spectra_dynamic_scene_plugin`.
 - Windows export: `extern "C" __declspec(dllexport)`.
+- Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, entity kinds, projection kinds,
+  channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum declarations.
 - Other platforms: `extern "C" __attribute__((visibility("default")))`.
 - Use the platform default C calling convention.
 - Do not use `#pragma pack`, custom alignment, C++ standard library types, C++ exceptions, RTTI objects, allocators, or
@@ -103,7 +107,7 @@ extern "C" SPECTRA_DYNAMIC_SCENE_EXPORT const SpectraDynamicScenePlugin* spectra
 ```
 
 The returned descriptor and every capability table returned by `get_api` must stay valid while the library is loaded.
-Set `abi_version` to `24`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
+Set `abi_version` to `26`, set each `struct_size` to the exact matching ABI struct size, and return `OK + null` for
 unsupported optional APIs. The scene API is required; missing it is an error.
 
 ### Data Rules
@@ -205,7 +209,7 @@ unsupported optional APIs. The scene API is required; missing it is an error.
   kinds are `1` opaque Win32 handle and `2` opaque file descriptor.
 - The producer may import that external memory into CUDA or another GPU runtime and write either compacted `uint32_t`
   viewport voxel cell indices or a dense bitfield, according to `source_kind`. The producer owns synchronization in
-  v25: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
+  v26: GPU writes must be complete before the callback that published the corresponding `ViewportVoxelGrid` returns.
   There is no CPU voxel copy path and no semaphore fallback.
 - Host services `release_viewport_voxel_buffer` releases the Spectra resource. Producers must release imported
   GPU mappings and then release every requested resource before instance destruction or reset.
