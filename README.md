@@ -187,7 +187,8 @@ callbacks must be present.
 - If controls are present, `control_snapshot` returns a typed item array. Control item kind values are `0` settings,
   `1` status, `2` log entries, `3` preview images, and `4` scalar series. `item_size` must match the payload struct for
   the kind. Duplicate item kinds and unknown item kinds are errors. The status item is required and must have count `1`;
-  other items may be empty.
+  the settings item is required when the descriptor declares control setting schemas and must provide one value for each
+  schema. Log, image, and scalar-series items may be omitted when empty.
 - Status phase, headline, metric keys/labels/values, action state ids, log levels, and log messages must be non-empty.
   Each action state id must refer to a declared control action. Every declared control action must have exactly one
   action state. Disabled actions must set `enabled = 0` and provide a non-empty `disabled_reason`; enabled actions must

@@ -102,11 +102,6 @@ namespace spectra::scene_runtime {
             const char* value{};
         };
 
-        struct SpectraDynamicSceneControlSettingValueSpan {
-            const SpectraDynamicSceneControlSettingValue* data{};
-            std::uint64_t count{};
-        };
-
         struct SpectraDynamicSceneControlMetric {
             const char* key{};
             const char* label{};
@@ -148,11 +143,6 @@ namespace spectra::scene_runtime {
             const char* message{};
         };
 
-        struct SpectraDynamicSceneControlLogEntrySpan {
-            const SpectraDynamicSceneControlLogEntry* data{};
-            std::uint64_t count{};
-        };
-
         struct SpectraDynamicSceneControlImage {
             const char* id{};
             const char* label{};
@@ -162,11 +152,6 @@ namespace spectra::scene_runtime {
             std::uint64_t revision{};
             std::uint32_t width{};
             std::uint32_t height{};
-        };
-
-        struct SpectraDynamicSceneControlImageSpan {
-            const SpectraDynamicSceneControlImage* data{};
-            std::uint64_t count{};
         };
 
         struct SpectraDynamicSceneControlScalarSample {
@@ -190,11 +175,6 @@ namespace spectra::scene_runtime {
             std::int32_t priority{};
             std::uint64_t revision{};
             SpectraDynamicSceneControlScalarSampleSpan samples{};
-        };
-
-        struct SpectraDynamicSceneControlScalarSeriesSpan {
-            const SpectraDynamicSceneControlScalarSeries* data{};
-            std::uint64_t count{};
         };
 
         constexpr std::uint32_t SPECTRA_DYNAMIC_SCENE_CONTROL_ITEM_SETTINGS = 0u;
@@ -1723,6 +1703,7 @@ namespace spectra::scene_runtime {
             const std::span<const SpectraDynamicSceneControlTypedSpan> items = abi_span(view.items, view.item_count, std::format("{} items", context));
             std::set<std::uint32_t> item_kinds{};
             bool has_status{};
+            bool has_settings{};
             for (std::size_t item_index = 0u; item_index < items.size(); ++item_index) {
                 const SpectraDynamicSceneControlTypedSpan& item = items[item_index];
                 if (!item_kinds.insert(item.kind).second) throw std::runtime_error(std::format("{} item kind {} is duplicated", context, item.kind));
@@ -1732,6 +1713,7 @@ namespace spectra::scene_runtime {
                         const std::span<const SpectraDynamicSceneControlSettingValue> settings = abi_span(static_cast<const SpectraDynamicSceneControlSettingValue*>(item.data), item.count, std::format("{} settings", context));
                         snapshot.settings = make_control_setting_values(settings, setting_schemas, std::format("{} settings", context));
                         if (snapshot.settings.size() != setting_schemas.size()) throw std::runtime_error(std::format("{} settings must provide one value for each declared control setting", context));
+                        has_settings = true;
                         break;
                     }
                     case SPECTRA_DYNAMIC_SCENE_CONTROL_ITEM_STATUS: {
@@ -1762,6 +1744,8 @@ namespace spectra::scene_runtime {
                 }
             }
             if (!has_status) throw std::runtime_error(std::format("{} must include a status item", context));
+            if (!setting_schemas.empty() && !has_settings) throw std::runtime_error(std::format("{} must include a settings item because the plugin declared control settings", context));
+            if (setting_schemas.empty() && has_settings) throw std::runtime_error(std::format("{} must not include a settings item because the plugin declared no control settings", context));
 
             std::set<std::string> action_ids{};
             for (const DynamicSceneControlAction& action : actions) action_ids.insert(action.id);
