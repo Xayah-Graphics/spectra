@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 1u;
+    constexpr std::uint32_t plugin_abi_version = 2u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -40,6 +40,16 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
+    struct SpectraSceneControlSection {
+        const char* id{};
+        const char* label{};
+    };
+
+    struct SpectraSceneControlSectionSpan {
+        const SpectraSceneControlSection* data{};
+        std::uint64_t count{};
+    };
+
     struct SpectraSceneControlOptionSchema {
         const char* key{};
         const char* label{};
@@ -47,9 +57,7 @@ export namespace spectra::scene {
         std::uint32_t kind{};
         std::uint32_t required{};
         const char* default_value{};
-        const char* group{};
-        std::uint32_t advanced{};
-        std::int32_t priority{};
+        const char* section_id{};
         SpectraSceneControlOptionChoiceSpan choices{};
     };
 
@@ -62,8 +70,7 @@ export namespace spectra::scene {
         const char* id{};
         const char* label{};
         const char* description{};
-        std::uint32_t group{};
-        std::int32_t priority{};
+        const char* section_id{};
         std::uint32_t style{};
         SpectraSceneControlOptionSchemaSpan options{};
     };
@@ -87,8 +94,8 @@ export namespace spectra::scene {
         const char* key{};
         const char* label{};
         const char* value{};
+        const char* section_id{};
         std::uint32_t placement_flags{};
-        std::int32_t priority{};
         std::uint32_t has_color{};
         float color[4]{};
     };
@@ -133,6 +140,7 @@ export namespace spectra::scene {
         const char* id{};
         const char* label{};
         const char* description{};
+        const char* section_id{};
         const std::uint8_t* rgba8{};
         std::uint64_t rgba8_size{};
         std::uint64_t revision{};
@@ -162,8 +170,7 @@ export namespace spectra::scene {
         const char* description{};
         const char* unit{};
         float color[4]{};
-        std::uint32_t group{};
-        std::int32_t priority{};
+        const char* section_id{};
         std::uint64_t revision{};
         SpectraSceneControlScalarSampleSpan samples{};
     };
@@ -538,11 +545,11 @@ export namespace spectra::scene {
         std::uint64_t struct_size{};
         const char* id{};
         const char* title{};
-        const char* controls_panel_title{};
         const char* open_action_label{};
         const char* open_action_description{};
         const char* base_pbrt_path{};
         double frames_per_second{};
+        SpectraSceneControlSectionSpan sections{};
         SpectraSceneControlOptionSchemaSpan open_options{};
         SpectraSceneControlActionSpan control_actions{};
         SpectraSceneControlOptionSchemaSpan control_settings{};

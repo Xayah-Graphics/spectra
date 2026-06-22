@@ -1827,7 +1827,7 @@ namespace spectra::scene {
         this->driver_runtime.observed_clear_recording_request_serial = 0u;
         this->driver_runtime.observed_scene_revision = 0u;
         this->driver_runtime.committed_playback_frame_index.reset();
-        this->driver_runtime.advanced_frame_number.reset();
+        this->driver_runtime.updated_frame_number.reset();
     }
 
     SceneDriver& Scene::active_driver() const {
@@ -1911,7 +1911,7 @@ namespace spectra::scene {
 
     void Scene::advance(const std::uint64_t frame_number, const double delta_seconds) {
         if (this->kind() == SceneKind::Static) return;
-        if (this->driver_runtime.advanced_frame_number.has_value() && *this->driver_runtime.advanced_frame_number == frame_number) return;
+        if (this->driver_runtime.updated_frame_number.has_value() && *this->driver_runtime.updated_frame_number == frame_number) return;
         SceneDriver& driver = this->active_driver();
         const std::shared_ptr<const Scene::Document> document = this->document();
         if (!document->timeline_enabled) throw std::runtime_error("Plugin-driven scene must enable timeline");
@@ -1919,14 +1919,14 @@ namespace spectra::scene {
         Scene::Timeline timeline = this->timeline();
         if (timeline.frames_per_second <= 0.0) throw std::runtime_error("Scene timeline frame rate must be positive");
         const double fixed_delta_seconds = 1.0 / timeline.frames_per_second;
-        const auto mark_advanced = [this, frame_number] {
-            this->driver_runtime.advanced_frame_number = frame_number;
+        const auto mark_updated = [this, frame_number] {
+            this->driver_runtime.updated_frame_number = frame_number;
         };
         if (timeline.reset_request_serial != this->driver_runtime.observed_reset_request_serial) {
             this->reset_driver_scene(std::move(timeline));
             this->driver_runtime.observed_reset_request_serial = this->timeline().reset_request_serial;
             this->driver_runtime.committed_playback_frame_index.reset();
-            mark_advanced();
+            mark_updated();
             return;
         }
         if (timeline.clear_recording_request_serial != this->driver_runtime.observed_clear_recording_request_serial) {
@@ -1935,24 +1935,24 @@ namespace spectra::scene {
             commit_scene_timeline(*this, std::move(timeline));
             this->driver_runtime.observed_clear_recording_request_serial = this->timeline().clear_recording_request_serial;
             this->driver_runtime.committed_playback_frame_index.reset();
-            mark_advanced();
+            mark_updated();
             return;
         }
         if (timeline.mode == Scene::TimelineMode::Playback) {
             if (timeline.recorded_frames.empty()) {
-                mark_advanced();
+                mark_updated();
                 return;
             }
             if (timeline.selected_frame_index >= timeline.recorded_frames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
             if (this->driver_runtime.committed_playback_frame_index.has_value() && *this->driver_runtime.committed_playback_frame_index == timeline.selected_frame_index) {
-                mark_advanced();
+                mark_updated();
                 return;
             }
             Scene::FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
             commit_scene_frame(*this, std::move(selected_frame));
             validate_scene_renderable_entities(*this, "Scene playback frame");
             this->driver_runtime.committed_playback_frame_index = timeline.selected_frame_index;
-            mark_advanced();
+            mark_updated();
             return;
         }
         this->driver_runtime.committed_playback_frame_index.reset();
@@ -1967,11 +1967,11 @@ namespace spectra::scene {
         });
         this->commit_driver_revision("Scene update");
         if (!timeline.playing) {
-            mark_advanced();
+            mark_updated();
             return;
         }
         this->driver_runtime.frame_accumulator_seconds += delta_seconds;
-        bool advanced = false;
+        bool updated = false;
         Scene::FrameSnapshot snapshot{};
         while (this->driver_runtime.frame_accumulator_seconds >= fixed_delta_seconds) {
             this->driver_runtime.frame_accumulator_seconds -= fixed_delta_seconds;
@@ -1982,10 +1982,10 @@ namespace spectra::scene {
                 .time_seconds = this->driver_runtime.stream_time_seconds,
                 .frame_index = this->driver_runtime.stream_frame_index,
             });
-            advanced = true;
+            updated = true;
         }
-        if (!advanced) {
-            mark_advanced();
+        if (!updated) {
+            mark_updated();
             return;
         }
         if (timeline.mode == Scene::TimelineMode::Record) {
@@ -1993,12 +1993,12 @@ namespace spectra::scene {
             timeline.selected_frame_index = timeline.recorded_frames.size() - 1u;
             commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
             validate_scene_renderable_entities(*this, "Scene recorded frame");
-            mark_advanced();
+            mark_updated();
             return;
         }
         commit_scene_frame(*this, std::move(snapshot));
         validate_scene_renderable_entities(*this, "Scene live frame");
-        mark_advanced();
+        mark_updated();
     }
 
     void Scene::toggle_timeline_playback() {
@@ -2007,7 +2007,7 @@ namespace spectra::scene {
         if (timeline.mode == Scene::TimelineMode::Playback) throw std::runtime_error("Scene playback can only be toggled in Live or Record mode");
         timeline.playing = !timeline.playing;
         commit_scene_timeline(*this, std::move(timeline));
-        this->driver_runtime.advanced_frame_number.reset();
+        this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::request_timeline_reset() {
@@ -2015,21 +2015,21 @@ namespace spectra::scene {
         Scene::Timeline timeline = this->timeline();
         ++timeline.reset_request_serial;
         commit_scene_timeline(*this, std::move(timeline));
-        this->driver_runtime.advanced_frame_number.reset();
+        this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::execute_control_action(const std::string_view action_id, const std::span<const ControlOption> options) {
         if (action_id.empty()) throw std::runtime_error("Scene control action id must not be empty");
         this->active_driver().execute_control_action(action_id, options);
         this->commit_driver_revision("Scene control action");
-        this->driver_runtime.advanced_frame_number.reset();
+        this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::update_control_setting(const std::string_view key, const std::string_view value) {
         if (key.empty()) throw std::runtime_error("Scene control setting key must not be empty");
         this->active_driver().update_control_setting(key, value);
         this->commit_driver_revision("Scene control setting");
-        this->driver_runtime.advanced_frame_number.reset();
+        this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::commit_driver_revision(const std::string_view context) {

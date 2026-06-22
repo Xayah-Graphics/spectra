@@ -236,7 +236,7 @@ namespace spectra::scene {
 
     struct PluginLibrary::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v1");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v2");
             const SpectraScenePluginEntryFn entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -256,10 +256,10 @@ namespace spectra::scene {
             return ScenePluginInfo{
                 .id = this->descriptor.id,
                 .title = this->descriptor.title,
-                .controls_panel_title = this->descriptor.controls_panel_title,
                 .open_action_label = this->descriptor.open_action_label,
                 .open_action_description = this->descriptor.open_action_description,
                 .path = this->open_request.plugin_path,
+                .sections = this->descriptor.sections,
                 .open_options = this->descriptor.open_options,
                 .control_actions = this->descriptor.control_actions,
                 .control_settings = this->descriptor.control_settings,
@@ -395,7 +395,7 @@ namespace spectra::scene {
         [[nodiscard]] ControlSnapshot control_snapshot(SpectraSceneInstance* instance) const {
             SpectraSceneControlSnapshotView view{};
             this->check_result(this->plugin->control_snapshot(instance, &view), instance, "Scene plugin controls snapshot");
-            return this->codec.decode_control_snapshot(view, this->descriptor.control_actions, this->descriptor.control_settings, "Scene plugin controls snapshot");
+            return this->codec.decode_control_snapshot(view, this->descriptor.sections, this->descriptor.control_actions, this->descriptor.control_settings, "Scene plugin controls snapshot");
         }
 
         [[nodiscard]] SpectraSceneDocumentView document(SpectraSceneInstance* instance) const {

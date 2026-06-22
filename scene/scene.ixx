@@ -25,6 +25,11 @@ namespace spectra::scene {
         std::string label{};
     };
 
+    export struct ControlSection {
+        std::string id{};
+        std::string label{};
+    };
+
     export struct ControlOptionSchema {
         std::string key{};
         std::string label{};
@@ -32,9 +37,7 @@ namespace spectra::scene {
         ControlOptionKind kind{ControlOptionKind::Text};
         bool required{};
         std::string default_value{};
-        std::string group{};
-        bool advanced{};
-        std::int32_t priority{};
+        std::string section_id{};
         std::vector<ControlOptionChoice> choices{};
     };
 
@@ -113,10 +116,6 @@ namespace spectra::scene {
     export inline constexpr std::uint32_t ControlPlacementViewportOverlay = 1u << 0u;
     export inline constexpr std::uint32_t ControlPlacementPanelSummary = 1u << 1u;
     export inline constexpr std::uint32_t ControlPlacementPanelDetail = 1u << 2u;
-    export inline constexpr std::uint32_t ControlActionGroupRun = 0u;
-    export inline constexpr std::uint32_t ControlActionGroupPreview = 1u;
-    export inline constexpr std::uint32_t ControlActionGroupDebug = 2u;
-    export inline constexpr std::uint32_t ControlActionGroupUtility = 3u;
     export inline constexpr std::uint32_t ControlActionStyleSecondary = 0u;
     export inline constexpr std::uint32_t ControlActionStylePrimary = 1u;
     export inline constexpr std::uint32_t ControlActionStyleDanger = 2u;
@@ -125,8 +124,7 @@ namespace spectra::scene {
         std::string id{};
         std::string label{};
         std::string description{};
-        std::uint32_t group{};
-        std::int32_t priority{};
+        std::string section_id{};
         std::uint32_t style{};
         std::vector<ControlOptionSchema> options{};
     };
@@ -140,8 +138,8 @@ namespace spectra::scene {
         std::string key{};
         std::string label{};
         std::string value{};
+        std::string section_id{};
         std::uint32_t placement_flags{};
-        std::int32_t priority{};
         bool has_color{};
         std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
     };
@@ -170,6 +168,7 @@ namespace spectra::scene {
         std::string id{};
         std::string label{};
         std::string description{};
+        std::string section_id{};
         const std::uint8_t* rgba8{};
         std::uint64_t rgba8_size{};
         std::uint64_t revision{};
@@ -189,8 +188,7 @@ namespace spectra::scene {
         std::string description{};
         std::string unit{};
         std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
-        std::uint32_t group{};
-        std::int32_t priority{};
+        std::string section_id{};
         std::uint64_t revision{};
         std::vector<ControlScalarSample> samples{};
     };
@@ -240,10 +238,10 @@ namespace spectra::scene {
     export struct ScenePluginInfo {
         std::string id{};
         std::string title{};
-        std::string controls_panel_title{};
         std::string open_action_label{};
         std::string open_action_description{};
         std::filesystem::path path{};
+        std::vector<ControlSection> sections{};
         std::vector<ControlOptionSchema> open_options{};
         std::vector<ControlAction> control_actions{};
         std::vector<ControlOptionSchema> control_settings{};
@@ -802,7 +800,7 @@ namespace spectra::scene {
             std::uint64_t observed_clear_recording_request_serial{};
             std::uint64_t observed_scene_revision{};
             std::optional<std::uint64_t> committed_playback_frame_index{};
-            std::optional<std::uint64_t> advanced_frame_number{};
+            std::optional<std::uint64_t> updated_frame_number{};
         };
 
         [[nodiscard]] const Document& preview_document() const;

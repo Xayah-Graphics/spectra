@@ -10,11 +10,11 @@ namespace spectra::scene {
         struct Descriptor {
             std::string id{};
             std::string title{};
-            std::string controls_panel_title{};
             std::string open_action_label{};
             std::string open_action_description{};
             std::string base_pbrt_path{};
             double frames_per_second{};
+            std::vector<ControlSection> sections{};
             std::vector<ControlOptionSchema> open_options{};
             std::vector<ControlAction> control_actions{};
             std::vector<ControlOptionSchema> control_settings{};
@@ -33,6 +33,6 @@ namespace spectra::scene {
         [[nodiscard]] SceneSymbols collect_scene_symbols(const scene::Scene::Document& document) const;
         void append_document(scene::Scene::Document& document, const SpectraSceneDocumentView& view, SceneSymbols& symbols) const;
         [[nodiscard]] scene::Scene::FrameSnapshot decode_frame(const SpectraSceneFrameView& view, const scene::Scene::FrameInfo& frame, const SceneSymbols& symbols) const;
-        [[nodiscard]] ControlSnapshot decode_control_snapshot(const SpectraSceneControlSnapshotView& view, std::span<const ControlAction> actions, std::span<const ControlOptionSchema> setting_schemas, std::string_view context) const;
+        [[nodiscard]] ControlSnapshot decode_control_snapshot(const SpectraSceneControlSnapshotView& view, std::span<const ControlSection> sections, std::span<const ControlAction> actions, std::span<const ControlOptionSchema> setting_schemas, std::string_view context) const;
     };
 } // namespace spectra::scene

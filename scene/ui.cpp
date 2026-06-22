@@ -201,11 +201,6 @@ namespace spectra::scene {
             ActionEditor editor{.action = std::move(action)};
             editor.options.reserve(editor.action.options.size());
             for (const ControlOptionSchema& schema : editor.action.options) editor.options.push_back(make_option_editor(schema));
-            std::ranges::stable_sort(editor.options, [](const OptionEditor& left, const OptionEditor& right) {
-                if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
-                if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
-                return left.schema.key < right.schema.key;
-            });
             return editor;
         }
 
@@ -239,41 +234,29 @@ namespace spectra::scene {
             std::vector<const ControlMetric*> metrics{};
             for (const ControlMetric& metric : status.metrics)
                 if (metric_has_placement(metric, placement)) metrics.push_back(&metric);
-            std::ranges::stable_sort(metrics, [](const ControlMetric* left, const ControlMetric* right) {
-                if (left->priority != right->priority) return left->priority < right->priority;
-                return left->key < right->key;
-            });
             return metrics;
         }
 
-        [[nodiscard]] std::vector<ActionEditor*> action_editors_for_group(std::vector<ActionEditor>& editors, const std::uint32_t group) {
+        [[nodiscard]] std::vector<ActionEditor*> action_editors_for_section(std::vector<ActionEditor>& editors, const std::string_view section_id) {
             std::vector<ActionEditor*> selected{};
             for (ActionEditor& editor : editors)
-                if (editor.action.group == group) selected.push_back(&editor);
-            std::ranges::stable_sort(selected, [](const ActionEditor* left, const ActionEditor* right) {
-                if (left->action.priority != right->action.priority) return left->action.priority < right->action.priority;
-                return left->action.id < right->action.id;
-            });
+                if (editor.action.section_id == section_id) selected.push_back(&editor);
             return selected;
         }
 
-        [[nodiscard]] bool action_group_has_editors(const std::span<const ActionEditor> editors, const std::uint32_t group) {
-            return std::ranges::any_of(editors, [group](const ActionEditor& editor) { return editor.action.group == group; });
+        [[nodiscard]] bool action_section_has_editors(const std::span<const ActionEditor> editors, const std::string_view section_id) {
+            return std::ranges::any_of(editors, [section_id](const ActionEditor& editor) { return editor.action.section_id == section_id; });
         }
 
-        [[nodiscard]] std::vector<const ControlScalarSeries*> scalar_series_for_group(const std::span<const ControlScalarSeries> series, const std::uint32_t group) {
+        [[nodiscard]] std::vector<const ControlScalarSeries*> scalar_series_for_section(const std::span<const ControlScalarSeries> series, const std::string_view section_id) {
             std::vector<const ControlScalarSeries*> selected{};
             for (const ControlScalarSeries& chart : series)
-                if (chart.group == group && !chart.samples.empty()) selected.push_back(&chart);
-            std::ranges::stable_sort(selected, [](const ControlScalarSeries* left, const ControlScalarSeries* right) {
-                if (left->priority != right->priority) return left->priority < right->priority;
-                return left->id < right->id;
-            });
+                if (chart.section_id == section_id && !chart.samples.empty()) selected.push_back(&chart);
             return selected;
         }
 
-        [[nodiscard]] bool scalar_series_group_has_samples(const std::span<const ControlScalarSeries> series, const std::uint32_t group) {
-            return std::ranges::any_of(series, [group](const ControlScalarSeries& chart) { return chart.group == group && !chart.samples.empty(); });
+        [[nodiscard]] bool scalar_series_section_has_samples(const std::span<const ControlScalarSeries> series, const std::string_view section_id) {
+            return std::ranges::any_of(series, [section_id](const ControlScalarSeries& chart) { return chart.section_id == section_id && !chart.samples.empty(); });
         }
 
         [[nodiscard]] ImVec4 control_log_level_color(const std::string& level) {
@@ -366,42 +349,45 @@ namespace spectra::scene {
             return changed;
         }
 
-        [[nodiscard]] std::string option_group_label(const OptionEditor& editor) {
-            return editor.schema.group.empty() ? "Options" : editor.schema.group;
+        [[nodiscard]] bool option_section_has_editors(const std::span<const OptionEditor> editors, const std::string_view section_id) {
+            return std::ranges::any_of(editors, [section_id](const OptionEditor& editor) { return editor.schema.section_id == section_id; });
         }
 
-        [[nodiscard]] std::vector<std::string> option_groups(const std::span<const OptionEditor> editors) {
-            std::vector<std::string> groups{};
-            for (const OptionEditor& editor : editors) {
-                const std::string group = option_group_label(editor);
-                if (!std::ranges::contains(groups, group)) groups.push_back(group);
+        [[nodiscard]] std::size_t option_section_count(const ScenePluginInfo& plugin, const std::span<const OptionEditor> editors) {
+            std::size_t count{};
+            for (const ControlSection& section : plugin.sections)
+                if (option_section_has_editors(editors, section.id)) ++count;
+            return count;
+        }
+
+        void draw_option_section(const std::span<OptionEditor> editors, const std::string_view section_id, const bool compact) {
+            if (!compact) {
+                for (OptionEditor& editor : editors) {
+                    if (editor.schema.section_id != section_id) continue;
+                    static_cast<void>(draw_option_editor(editor, false));
+                    ImGui::Spacing();
+                }
+                return;
             }
-            return groups;
+            ImGui::PushID(section_id.data(), section_id.data() + section_id.size());
+            if (ImGui::BeginTable("OptionTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+                for (OptionEditor& editor : editors) {
+                    if (editor.schema.section_id != section_id) continue;
+                    static_cast<void>(draw_option_editor(editor, true));
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopID();
         }
 
-        void draw_option_groups(const std::span<OptionEditor> editors, const bool compact) {
-            const std::vector<std::string> groups = option_groups(editors);
-            for (const std::string& group : groups) {
-                if (groups.size() > 1u) ImGui::TextDisabled("%s", group.c_str());
-                if (!compact) {
-                    for (OptionEditor& editor : editors) {
-                        if (option_group_label(editor) != group) continue;
-                        static_cast<void>(draw_option_editor(editor, false));
-                        ImGui::Spacing();
-                    }
-                    continue;
-                }
-                ImGui::PushID(group.c_str());
-                if (ImGui::BeginTable("OptionTable", 2, ImGuiTableFlags_SizingStretchProp)) {
-                    ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
-                    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
-                    for (OptionEditor& editor : editors) {
-                        if (option_group_label(editor) != group) continue;
-                        static_cast<void>(draw_option_editor(editor, true));
-                    }
-                    ImGui::EndTable();
-                }
-                ImGui::PopID();
+        void draw_option_sections(const ScenePluginInfo& plugin, const std::span<OptionEditor> editors, const bool compact) {
+            const std::size_t section_count = option_section_count(plugin, editors);
+            for (const ControlSection& section : plugin.sections) {
+                if (!option_section_has_editors(editors, section.id)) continue;
+                if (section_count > 1u) ImGui::TextDisabled("%s", section.label.c_str());
+                draw_option_section(editors, section.id, compact);
             }
         }
 
@@ -462,8 +448,8 @@ namespace spectra::scene {
             return clicked;
         }
 
-        void draw_action_group(Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlStatus& control_status, const std::uint32_t group) {
-            const std::vector<ActionEditor*> editors = action_editors_for_group(controls.actions, group);
+        void draw_action_section(Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlStatus& control_status, const std::string_view section_id) {
+            const std::vector<ActionEditor*> editors = action_editors_for_section(controls.actions, section_id);
             if (editors.empty()) return;
             std::vector<ActionEditor*> immediate{};
             std::vector<ActionEditor*> forms{};
@@ -487,30 +473,21 @@ namespace spectra::scene {
                 ImGui::PushID(editor->action.id.c_str());
                 ImGui::TextUnformatted(editor->action.label.c_str());
                 if (!editor->action.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", editor->action.description.c_str());
-                draw_option_groups(editor->options, true);
+                draw_option_sections(controls.plugin, editor->options, true);
                 static_cast<void>(draw_action_button(scene_instance, status, controls, *editor, control_status, ImVec2{-1.0f, 0.0f}));
                 ImGui::PopID();
                 ImGui::Spacing();
             }
         }
 
-        [[nodiscard]] std::string setting_group_label(const SettingEditor& editor) {
-            return editor.schema.group.empty() ? "Settings" : editor.schema.group;
-        }
-
-        [[nodiscard]] std::vector<std::string> setting_groups(const std::span<const SettingEditor> editors) {
-            std::vector<std::string> groups{};
-            for (const SettingEditor& editor : editors) {
-                const std::string group = setting_group_label(editor);
-                if (!std::ranges::contains(groups, group)) groups.push_back(group);
-            }
-            return groups;
+        [[nodiscard]] bool setting_section_has_editors(const std::span<const SettingEditor> editors, const std::string_view section_id) {
+            return std::ranges::any_of(editors, [section_id](const SettingEditor& editor) { return editor.schema.section_id == section_id; });
         }
 
         void sync_setting_editors(ControlsState& controls, const std::span<const ControlSettingValue> settings);
-        void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls);
-        void draw_control_images(Spectra& application, const ControlsState& controls, std::span<const ControlImage> images);
-        void draw_scalar_series(std::span<const ControlScalarSeries> series, std::uint32_t group);
+        void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, std::string_view section_id);
+        void draw_control_images(Spectra& application, const ControlsState& controls, std::span<const ControlImage> images, std::string_view section_id);
+        void draw_scalar_series(std::span<const ControlScalarSeries> series, std::string_view section_id);
         bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_panel(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, ImVec2 viewport_position, ImVec2 viewport_size);
@@ -523,29 +500,14 @@ namespace spectra::scene {
             controls.open_options.clear();
             controls.open_options.reserve(controls.plugin.open_options.size());
             for (ControlOptionSchema& schema : controls.plugin.open_options) controls.open_options.push_back(make_option_editor(std::move(schema)));
-            std::ranges::stable_sort(controls.open_options, [](const OptionEditor& left, const OptionEditor& right) {
-                if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
-                if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
-                return left.schema.key < right.schema.key;
-            });
 
             controls.actions.clear();
             controls.actions.reserve(controls.plugin.control_actions.size());
             for (const ControlAction& action : controls.plugin.control_actions) controls.actions.push_back(make_action_editor(action));
-            std::ranges::stable_sort(controls.actions, [](const ActionEditor& left, const ActionEditor& right) {
-                if (left.action.group != right.action.group) return left.action.group < right.action.group;
-                if (left.action.priority != right.action.priority) return left.action.priority < right.action.priority;
-                return left.action.id < right.action.id;
-            });
 
             controls.settings.clear();
             controls.settings.reserve(controls.plugin.control_settings.size());
             for (const ControlOptionSchema& schema : controls.plugin.control_settings) controls.settings.push_back(make_setting_editor(schema, schema.default_value));
-            std::ranges::stable_sort(controls.settings, [](const SettingEditor& left, const SettingEditor& right) {
-                if (left.schema.priority != right.schema.priority) return left.schema.priority < right.schema.priority;
-                if (left.schema.group != right.schema.group) return left.schema.group < right.schema.group;
-                return left.schema.key < right.schema.key;
-            });
 
             controls.error.clear();
             controls.active_title.clear();
@@ -580,28 +542,24 @@ namespace spectra::scene {
             }
         }
 
-        void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls) {
-            const std::vector<std::string> groups = setting_groups(controls.settings);
-            for (const std::string& group : groups) {
-                if (groups.size() > 1u) ImGui::TextDisabled("%s", group.c_str());
-                for (SettingEditor& editor : controls.settings) {
-                    if (setting_group_label(editor) != group) continue;
-                    if (!option_editor_should_commit(editor.option, draw_option_editor(editor.option, false))) continue;
-                    const std::string value = option_editor_value(editor.option);
-                    try {
-                        scene_instance.update_control_setting(editor.schema.key, value);
-                        editor.committed_value = value;
-                        controls.phase = SceneControlsPhase::Active;
-                        controls.error.clear();
-                        set_scene_status(status, std::format("Updated {}", editor.schema.label), false);
-                    } catch (const std::exception& error) {
-                        set_option_editor_value(editor.option, editor.committed_value);
-                        controls.phase = SceneControlsPhase::Error;
-                        controls.error = error.what();
-                        set_scene_status(status, controls.error, true);
-                    }
-                    ImGui::Spacing();
+        void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, const std::string_view section_id) {
+            for (SettingEditor& editor : controls.settings) {
+                if (editor.schema.section_id != section_id) continue;
+                if (!option_editor_should_commit(editor.option, draw_option_editor(editor.option, false))) continue;
+                const std::string value = option_editor_value(editor.option);
+                try {
+                    scene_instance.update_control_setting(editor.schema.key, value);
+                    editor.committed_value = value;
+                    controls.phase = SceneControlsPhase::Active;
+                    controls.error.clear();
+                    set_scene_status(status, std::format("Updated {}", editor.schema.label), false);
+                } catch (const std::exception& error) {
+                    set_option_editor_value(editor.option, editor.committed_value);
+                    controls.phase = SceneControlsPhase::Error;
+                    controls.error = error.what();
+                    set_scene_status(status, controls.error, true);
                 }
+                ImGui::Spacing();
             }
         }
 
@@ -610,8 +568,13 @@ namespace spectra::scene {
             return std::format("scene-control-image://{}/{}", controls_id, image.id);
         }
 
-        void draw_control_images(Spectra& application, const ControlsState& controls, const std::span<const ControlImage> images) {
+        [[nodiscard]] bool control_images_section_has_images(const std::span<const ControlImage> images, const std::string_view section_id) {
+            return std::ranges::any_of(images, [section_id](const ControlImage& image) { return image.section_id == section_id; });
+        }
+
+        void draw_control_images(Spectra& application, const ControlsState& controls, const std::span<const ControlImage> images, const std::string_view section_id) {
             for (const ControlImage& image : images) {
+                if (image.section_id != section_id) continue;
                 ImGui::PushID(image.id.c_str());
                 ImGui::TextUnformatted(image.label.c_str());
                 if (!image.description.empty()) ImGui::TextWrapped("%s", image.description.c_str());
@@ -637,8 +600,8 @@ namespace spectra::scene {
             }
         }
 
-        void draw_scalar_series(const std::span<const ControlScalarSeries> series, const std::uint32_t group) {
-            const std::vector<const ControlScalarSeries*> selected = scalar_series_for_group(series, group);
+        void draw_scalar_series(const std::span<const ControlScalarSeries> series, const std::string_view section_id) {
+            const std::vector<const ControlScalarSeries*> selected = scalar_series_for_section(series, section_id);
             for (const ControlScalarSeries* chart : selected) {
                 ImGui::PushID(chart->id.c_str());
                 ImGui::TextUnformatted(chart->label.c_str());
@@ -689,9 +652,10 @@ namespace spectra::scene {
             return true;
         }
 
-        void draw_detail_metrics(const ControlStatus& status) {
+        void draw_detail_metrics(const ControlStatus& status, const std::string_view section_id) {
             const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(status, ControlPlacementPanelDetail);
             for (const ControlMetric* metric : metrics) {
+                if (metric->section_id != section_id) continue;
                 if (metric_has_placement(*metric, ControlPlacementPanelSummary)) continue;
                 ImGui::TextDisabled("%s", metric->label.c_str());
                 ImGui::SameLine();
@@ -699,9 +663,9 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] bool has_detail_metrics(const ControlStatus& status) {
-            return std::ranges::any_of(status.metrics, [](const ControlMetric& metric) {
-                return metric_has_placement(metric, ControlPlacementPanelDetail) && !metric_has_placement(metric, ControlPlacementPanelSummary);
+        [[nodiscard]] bool section_has_detail_metrics(const ControlStatus& status, const std::string_view section_id) {
+            return std::ranges::any_of(status.metrics, [section_id](const ControlMetric& metric) {
+                return metric.section_id == section_id && metric_has_placement(metric, ControlPlacementPanelDetail) && !metric_has_placement(metric, ControlPlacementPanelSummary);
             });
         }
 
@@ -719,7 +683,7 @@ namespace spectra::scene {
 
         bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls) {
             if (!controls.plugin.open_action_description.empty()) ImGui::TextWrapped("%s", controls.plugin.open_action_description.c_str());
-            if (!controls.open_options.empty()) draw_option_groups(controls.open_options, false);
+            if (!controls.open_options.empty()) draw_option_sections(controls.plugin, controls.open_options, false);
             if (!ImGui::Button(controls.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) return false;
             try {
                 application.clear_imgui_rgba8_images("scene-control-image://");
@@ -749,7 +713,7 @@ namespace spectra::scene {
         [[nodiscard]] bool draw_header(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlStatus* control_status) {
             const float button_size = ImGui::GetFrameHeight();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(controls.plugin.controls_panel_title.c_str());
+            ImGui::TextUnformatted(controls.plugin.title.c_str());
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", controls.plugin.path.string().c_str());
             const float close_x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - button_size;
             if (ImGui::GetCursorPosX() < close_x) ImGui::SameLine(close_x);
@@ -771,7 +735,7 @@ namespace spectra::scene {
                 ImGui::TextWrapped("%s", headline.c_str());
                 if (control_status != nullptr && !control_status->detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", control_status->detail.c_str());
             }
-            if (!controls.active_title.empty() && controls.active_title != controls.plugin.controls_panel_title) ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", controls.active_title.c_str());
+            if (!controls.active_title.empty() && controls.active_title != controls.plugin.title) ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", controls.active_title.c_str());
             return false;
         }
 
@@ -814,35 +778,20 @@ namespace spectra::scene {
                 ImGui::Separator();
             }
 
-            if (action_group_has_editors(controls.actions, ControlActionGroupRun)) {
-                ImGui::TextDisabled("%s", "Training");
-                draw_action_group(scene_instance, status, controls, snapshot->status, ControlActionGroupRun);
-            }
-            if (scalar_series_group_has_samples(snapshot->scalar_series, ControlActionGroupRun)) {
+            for (const ControlSection& section : controls.plugin.sections) {
+                const bool has_actions = action_section_has_editors(controls.actions, section.id);
+                const bool has_settings = setting_section_has_editors(controls.settings, section.id);
+                const bool has_images = control_images_section_has_images(snapshot->images, section.id);
+                const bool has_charts = scalar_series_section_has_samples(snapshot->scalar_series, section.id);
+                const bool has_metrics = section_has_detail_metrics(snapshot->status, section.id);
+                if (!has_actions && !has_settings && !has_images && !has_charts && !has_metrics) continue;
                 ImGui::Spacing();
-                ImGui::TextDisabled("%s", "Telemetry");
-                draw_scalar_series(snapshot->scalar_series, ControlActionGroupRun);
-            }
-
-            const bool has_preview_actions = action_group_has_editors(controls.actions, ControlActionGroupPreview);
-            const bool has_preview_charts = scalar_series_group_has_samples(snapshot->scalar_series, ControlActionGroupPreview);
-            if (has_preview_actions || !snapshot->images.empty() || has_preview_charts) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("%s", "Preview");
-                if (has_preview_actions) draw_action_group(scene_instance, status, controls, snapshot->status, ControlActionGroupPreview);
-                if (!snapshot->images.empty()) draw_control_images(application, controls, snapshot->images);
-                if (has_preview_charts) draw_scalar_series(snapshot->scalar_series, ControlActionGroupPreview);
-            }
-
-            const bool has_debug_actions = action_group_has_editors(controls.actions, ControlActionGroupDebug);
-            const bool has_utility_actions = action_group_has_editors(controls.actions, ControlActionGroupUtility);
-            if (!controls.settings.empty() || has_debug_actions || has_utility_actions || has_detail_metrics(snapshot->status)) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("%s", "Diagnostics");
-                if (!controls.settings.empty()) draw_settings(scene_instance, status, controls);
-                if (has_debug_actions) draw_action_group(scene_instance, status, controls, snapshot->status, ControlActionGroupDebug);
-                if (has_utility_actions) draw_action_group(scene_instance, status, controls, snapshot->status, ControlActionGroupUtility);
-                if (has_detail_metrics(snapshot->status)) draw_detail_metrics(snapshot->status);
+                ImGui::TextDisabled("%s", section.label.c_str());
+                if (has_actions) draw_action_section(scene_instance, status, controls, snapshot->status, section.id);
+                if (has_settings) draw_settings(scene_instance, status, controls, section.id);
+                if (has_images) draw_control_images(application, controls, snapshot->images, section.id);
+                if (has_charts) draw_scalar_series(snapshot->scalar_series, section.id);
+                if (has_metrics) draw_detail_metrics(snapshot->status, section.id);
             }
 
             if (!snapshot->logs.empty()) {
@@ -983,7 +932,6 @@ namespace spectra::scene {
             .id = "scene.controls-overlay",
             .title = "Scene Controls Overlay",
             .owner_renderer = {},
-            .priority = 0,
             .draw = [state](const ImVec2 viewport_position, const ImVec2 viewport_size) {
                 handle_timeline_shortcuts(*state->scene_instance);
                 draw_controls_overlay(*state->scene_instance, state->controls, viewport_position, viewport_size);

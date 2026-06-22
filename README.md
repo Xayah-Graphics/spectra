@@ -59,7 +59,7 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v1()`.
+2. Export `spectra_scene_plugin_v2()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -75,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `1`.
-- Exported symbol: `spectra_scene_plugin_v1`.
+- ABI version: `2`.
+- Exported symbol: `spectra_scene_plugin_v2`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -104,13 +104,12 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v1(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v2(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `1` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `2` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
-Controls callbacks are optional as a group. If any controls callback or controls schema is present, all controls
-callbacks must be present.
+Controls callbacks are required; missing callbacks are errors.
 
 ### Data Rules
 
@@ -165,14 +164,15 @@ callbacks must be present.
 - Camera projection values: `0` perspective, `1` pinhole intrinsics.
 - Viewport camera visual RGBA8 images are borrowed pointers with tightly packed `width * height * 4` bytes.
 - `base_pbrt_path` may be empty. If non-empty, it must be relative to the plugin library directory.
-- `controls_panel_title` and `open_action_label` must be non-empty. `open_action_description` may be empty.
-- The controls API is optional. If present, `control_actions` may be empty, but every declared action id and label must be
-  non-empty and unique. Action option schemas use the same option kind and validation rules as open options.
-- Option schemas may declare UI hints: `group`, `advanced`, and `priority`. `advanced` must be `0` or `1`; `group` may
-  be empty. Spectra uses these hints only for generic form layout and does not assign project-specific meaning to them.
-- Control action UI hints: `group` values are `0` Run, `1` Preview, `2` Debug, and `3` Utility. `style` values are `0`
-  Secondary, `1` Primary, and `2` Danger. `priority` sorts actions within a group. Unknown values are errors.
-- If controls are present, `control_snapshot` and `control_setting_update` are required. Settings are live editable
+- `open_action_label` must be non-empty. `open_action_description` may be empty.
+- `sections` declares generic control panel sections. Each section id and label must be non-empty and unique. Section
+  declaration order is the display order. Open options, control settings, control actions, status metrics, control
+  images, and scalar series must each reference a declared `section_id`. Within a section, item order is the order of
+  the corresponding descriptor or snapshot span.
+- `control_actions` may be empty, but every declared action id and label must be non-empty and unique. Action option
+  schemas use the same option kind and validation rules as open options.
+- Control action `style` values are `0` Secondary, `1` Primary, and `2` Danger. Unknown values are errors.
+- `control_snapshot` and `control_setting_update` are required. Settings are live editable
   controls for active plugin-driven scenes; Spectra submits a changed setting immediately and then checks `scene_revision` to
   refresh changed scene/debug data. Setting schemas are declared once in the plugin descriptor through normal option
   schemas. Setting kinds are restricted to `3` choice, `4` bool, `5` float, and `6` unsigned integer. Text and path
@@ -188,18 +188,17 @@ callbacks must be present.
   action state. Disabled actions must set `enabled = 0` and provide a non-empty `disabled_reason`; enabled actions must
   set `enabled = 1` and provide an empty `disabled_reason`.
 - Control metric presentation flags are bit flags: `1` ViewportOverlay, `2` PanelSummary, and `4` PanelDetail. Unknown
-  bits are errors. Metric `priority` sorts metrics within a placement. `has_color` must be `0` or `1`; if set, `color`
-  must contain finite RGBA values. Spectra uses these hints only for generic dashboard and viewport overlay layout.
-- If the controls API is present, the snapshot image span may be empty. Non-empty control image
+  bits are errors. Metric order is the snapshot metric span order. `has_color` must be `0` or `1`; if set, `color` must
+  contain finite RGBA values. Spectra uses these hints only for generic dashboard and viewport overlay layout.
+- The snapshot image span may be empty. Non-empty control image
   outputs must have unique non-empty `id`, non-empty `label`, positive `width` and `height`, non-null tightly packed
   RGBA8 pixels with byte count `width * height * 4`, and non-zero `revision`. Spectra uploads these images to the
   Scene popover texture cache and reuses the texture while pointer, byte size, dimensions, and revision are unchanged.
-- If the controls API is present, the snapshot scalar-series span may be empty. Non-empty scalar
+- The snapshot scalar-series span may be empty. Non-empty scalar
   series outputs must have unique non-empty `id`, non-empty `label`, finite `color`, and non-zero `revision`. Samples
   must have finite `time_seconds` and `value`, and must be ordered by nondecreasing `step`. Spectra copies scalar
   samples for Scene popover charts only; scalar series do not enter `scene::Scene`, PBRT export, rasterizer scene
-  passes, or the pathtracer scene. Scalar series `group` values follow the same Run/Preview/Debug/Utility constants as
-  actions, and `priority` sorts charts within a group.
+  passes, or the pathtracer scene. Scalar-series display order is the snapshot scalar-series span order.
 - Option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
   `6` unsigned integer.
 - Option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
