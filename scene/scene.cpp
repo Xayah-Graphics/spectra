@@ -10,8 +10,7 @@ module;
 module spectra.scene;
 
 import std;
-import spectra.scene.plugin_codec;
-import spectra.scene.plugin_library;
+import spectra.scene.plugin_host;
 
 namespace spectra::scene {
     [[nodiscard]] Scene::Document make_preview_document_from_pbrt(const Scene::ResolvedScene& scene);
@@ -1767,22 +1766,31 @@ namespace spectra::scene {
         return describe_scene(this->resolved_scene());
     }
 
-    SceneKind Scene::kind() const {
+    Kind Scene::kind() const {
         if (this->descriptor_valid) return this->current_descriptor.kind;
-        return SceneKind::Static;
+        return Kind::Static;
     }
 
     bool Scene::has_descriptor() const {
         return this->descriptor_valid;
     }
 
-    const SceneDescriptor& Scene::descriptor() const {
+    const Descriptor& Scene::descriptor() const {
         if (!this->descriptor_valid) throw std::runtime_error("Scene has no active descriptor");
         return this->current_descriptor;
     }
 
     bool Scene::has_controls() const {
-        return this->descriptor_valid && this->current_descriptor.kind == SceneKind::Dynamic && this->driver_runtime.driver != nullptr;
+        return this->descriptor_valid && this->current_descriptor.kind == Kind::Dynamic && this->driver_runtime.driver != nullptr;
+    }
+
+    bool Scene::has_plugin_info() const {
+        return this->plugin_info_valid;
+    }
+
+    const PluginInfo& Scene::plugin_info() const {
+        if (!this->plugin_info_valid) throw std::runtime_error("Scene has no active plugin info");
+        return this->current_plugin_info;
     }
 
     std::shared_ptr<HostServiceRouter> Scene::host_services() const {
@@ -1814,6 +1822,8 @@ namespace spectra::scene {
         }
         this->current_descriptor = std::move(scene.current_descriptor);
         this->descriptor_valid = scene.descriptor_valid;
+        this->current_plugin_info = std::move(scene.current_plugin_info);
+        this->plugin_info_valid = scene.plugin_info_valid;
         this->driver_runtime = std::move(scene.driver_runtime);
         this->host = preserved_host == nullptr ? std::make_shared<HostServiceRouter>() : preserved_host;
     }
@@ -1831,7 +1841,7 @@ namespace spectra::scene {
     }
 
     SceneDriver& Scene::active_driver() const {
-        if (!this->descriptor_valid || this->current_descriptor.kind != SceneKind::Dynamic) throw std::runtime_error("Active scene is not plugin-driven");
+        if (!this->descriptor_valid || this->current_descriptor.kind != Kind::Dynamic) throw std::runtime_error("Active scene is not plugin-driven");
         if (this->driver_runtime.driver == nullptr) throw std::runtime_error("Active scene has no driver");
         return *this->driver_runtime.driver;
     }
@@ -1840,6 +1850,8 @@ namespace spectra::scene {
         this->reset_driver_runtime();
         this->replace_with_scene(Scene{});
         this->descriptor_valid = false;
+        this->plugin_info_valid = false;
+        this->current_plugin_info = {};
     }
 
     void Scene::open_static_scene(std::string id, std::string title, Scene scene) {
@@ -1848,12 +1860,14 @@ namespace spectra::scene {
         if (title.empty()) throw std::runtime_error("Static scene title must not be empty");
         this->reset_driver_runtime();
         this->replace_with_scene(std::move(scene));
-        this->current_descriptor = SceneDescriptor{
+        this->current_descriptor = Descriptor{
             .id = std::move(id),
             .title = std::move(title),
-            .kind = SceneKind::Static,
+            .kind = Kind::Static,
         };
         this->descriptor_valid = true;
+        this->plugin_info_valid = false;
+        this->current_plugin_info = {};
     }
 
     void Scene::open_pbrt_file(const std::filesystem::path& scene_path) {
@@ -1894,23 +1908,27 @@ namespace spectra::scene {
         this->replace_with_scene(std::move(scene_instance));
         this->driver_runtime.driver = std::move(driver);
         this->driver_runtime.observed_scene_revision = scene_revision;
-        this->current_descriptor = SceneDescriptor{
+        this->current_descriptor = Descriptor{
             .id = std::move(id),
             .title = std::move(title),
-            .kind = SceneKind::Dynamic,
+            .kind = Kind::Dynamic,
         };
         this->descriptor_valid = true;
+        this->plugin_info_valid = false;
+        this->current_plugin_info = {};
     }
 
-    void Scene::open_plugin_scene(ScenePluginOpenRequest request) {
-        if (request.host == nullptr) request.host = this->host;
-        std::shared_ptr<PluginLibrary> plugin = std::make_shared<PluginLibrary>(std::move(request.plugin_path), std::move(request.options), std::move(request.host));
+    void Scene::open_plugin(PluginOpenRequest request) {
+        std::shared_ptr<PluginHost> plugin = std::make_shared<PluginHost>(std::move(request.plugin_path), std::move(request.options), this->host);
+        PluginInfo plugin_info = plugin->info();
         std::string scene_id = plugin->scene_id();
-        this->attach_driver(std::move(scene_id), {}, make_plugin_driver(std::move(plugin)));
+        this->attach_driver(std::move(scene_id), {}, plugin->create_driver());
+        this->current_plugin_info = std::move(plugin_info);
+        this->plugin_info_valid = true;
     }
 
     void Scene::advance(const std::uint64_t frame_number, const double delta_seconds) {
-        if (this->kind() == SceneKind::Static) return;
+        if (this->kind() == Kind::Static) return;
         if (this->driver_runtime.updated_frame_number.has_value() && *this->driver_runtime.updated_frame_number == frame_number) return;
         SceneDriver& driver = this->active_driver();
         const std::shared_ptr<const Scene::Document> document = this->document();
@@ -2109,12 +2127,11 @@ namespace spectra::scene {
     }
 
     bool is_plugin_file(const std::filesystem::path& path) {
-        const PluginAbiCodec codec{};
-        return codec.accepts_plugin_path(path);
+        return PluginHost::accepts_path(path);
     }
 
-    ScenePluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {
-        PluginLibrary plugin{plugin_path};
+    PluginInfo inspect_plugin(const std::filesystem::path& plugin_path) {
+        PluginHost plugin{plugin_path};
         return plugin.info();
     }
 

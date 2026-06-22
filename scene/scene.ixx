@@ -168,26 +168,25 @@ namespace spectra::scene {
         bool timeline_playing{};
     };
 
-    export enum class SceneKind {
+    export enum class Kind {
         Static,
         Dynamic,
     };
 
-    export struct SceneDescriptor {
+    export struct Descriptor {
         std::string id{};
         std::string title{};
-        SceneKind kind{SceneKind::Static};
+        Kind kind{Kind::Static};
     };
 
     export class SceneDriver;
 
-    export struct ScenePluginOpenRequest {
+    export struct PluginOpenRequest {
         std::filesystem::path plugin_path{};
         std::vector<ControlOption> options{};
-        std::shared_ptr<HostServices> host{};
     };
 
-    export struct ScenePluginInfo {
+    export struct PluginInfo {
         std::string id{};
         std::string title{};
         std::string open_action_label{};
@@ -712,17 +711,19 @@ namespace spectra::scene {
         [[nodiscard]] ResolvedScene resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const;
         [[nodiscard]] Info info() const;
         [[nodiscard]] DirtyFlags commit(Edit edit);
-        [[nodiscard]] SceneKind kind() const;
+        [[nodiscard]] Kind kind() const;
         [[nodiscard]] bool has_descriptor() const;
-        [[nodiscard]] const SceneDescriptor& descriptor() const;
+        [[nodiscard]] const Descriptor& descriptor() const;
         [[nodiscard]] bool has_controls() const;
+        [[nodiscard]] bool has_plugin_info() const;
+        [[nodiscard]] const PluginInfo& plugin_info() const;
         [[nodiscard]] std::shared_ptr<HostServiceRouter> host_services() const;
         [[nodiscard]] ControlState control_state() const;
         void close();
         void open_static_scene(std::string id, std::string title, Scene scene);
         void open_pbrt_file(const std::filesystem::path& scene_path);
         void attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver);
-        void open_plugin_scene(ScenePluginOpenRequest request);
+        void open_plugin(PluginOpenRequest request);
         void advance(std::uint64_t frame_number, double delta_seconds);
         void toggle_timeline_playback();
         void request_timeline_reset();
@@ -766,8 +767,10 @@ namespace spectra::scene {
         mutable std::shared_ptr<const Document> current_document{};
         Timeline current_timeline{};
         std::optional<ResolvedScene> canonical_scene{};
-        SceneDescriptor current_descriptor{};
+        Descriptor current_descriptor{};
         bool descriptor_valid{};
+        PluginInfo current_plugin_info{};
+        bool plugin_info_valid{};
         std::shared_ptr<HostServiceRouter> host{std::make_shared<HostServiceRouter>()};
         DriverRuntime driver_runtime{};
     };
@@ -793,6 +796,6 @@ namespace spectra::scene {
     };
 
     export [[nodiscard]] bool is_plugin_file(const std::filesystem::path& path);
-    export [[nodiscard]] ScenePluginInfo inspect_plugin(const std::filesystem::path& plugin_path);
+    export [[nodiscard]] PluginInfo inspect_plugin(const std::filesystem::path& plugin_path);
     export void WritePbrtScene(const Scene::ResolvedScene& scene, const std::filesystem::path& path);
 } // namespace spectra::scene

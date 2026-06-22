@@ -124,13 +124,11 @@ target_sources(
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         scene/plugin_abi.ixx
-        scene/plugin_codec.ixx
-        scene/plugin_library.ixx
+        scene/plugin_host.ixx
         PRIVATE
         scene/spatial.cpp
         scene/scene.cpp
-        scene/plugin_codec.cpp
-        scene/plugin_library.cpp
+        scene/plugin_host.cpp
 )
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
 target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB vendor::lodepng ${CMAKE_DL_LIBS})

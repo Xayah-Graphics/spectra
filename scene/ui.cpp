@@ -47,13 +47,12 @@ namespace spectra::scene {
 
     struct ControlsState {
         SceneControlsPhase phase{SceneControlsPhase::None};
-        ScenePluginInfo plugin{};
+        std::optional<PluginInfo> pending_plugin{};
         std::vector<OptionEditor> open_options{};
         std::vector<ActionEditor> actions{};
         std::vector<SettingEditor> settings{};
         std::string error{};
-        std::string active_title{};
-        std::string active_id{};
+        std::string editor_plugin_key{};
     };
 
     struct SceneUi::State {
@@ -214,7 +213,7 @@ namespace spectra::scene {
             return editor;
         }
 
-        void begin_scene_controls(ControlsState& controls, ScenePluginInfo plugin);
+        void begin_pending_plugin_controls(ControlsState& controls, PluginInfo plugin);
 
         [[nodiscard]] const char* phase_text(const SceneControlsPhase phase) {
             switch (phase) {
@@ -336,7 +335,7 @@ namespace spectra::scene {
             return std::ranges::any_of(editors, [section_id](const OptionEditor& editor) { return editor.schema.section_id == section_id; });
         }
 
-        [[nodiscard]] std::size_t option_section_count(const ScenePluginInfo& plugin, const std::span<const OptionEditor> editors) {
+        [[nodiscard]] std::size_t option_section_count(const PluginInfo& plugin, const std::span<const OptionEditor> editors) {
             std::size_t count{};
             for (const ControlSection& section : plugin.sections)
                 if (option_section_has_editors(editors, section.id)) ++count;
@@ -365,7 +364,7 @@ namespace spectra::scene {
             ImGui::PopID();
         }
 
-        void draw_option_sections(const ScenePluginInfo& plugin, const std::span<OptionEditor> editors, const bool compact) {
+        void draw_option_sections(const PluginInfo& plugin, const std::span<OptionEditor> editors, const bool compact) {
             const std::size_t section_count = option_section_count(plugin, editors);
             for (const ControlSection& section : plugin.sections) {
                 if (!option_section_has_editors(editors, section.id)) continue;
@@ -431,7 +430,7 @@ namespace spectra::scene {
             return clicked;
         }
 
-        void draw_action_section(Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlState& control_state, const std::string_view section_id) {
+        void draw_action_section(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin, const ControlState& control_state, const std::string_view section_id) {
             const std::vector<ActionEditor*> editors = action_editors_for_section(controls.actions, section_id);
             if (editors.empty()) return;
             std::vector<ActionEditor*> immediate{};
@@ -456,7 +455,7 @@ namespace spectra::scene {
                 ImGui::PushID(editor->action.id.c_str());
                 ImGui::TextUnformatted(editor->action.label.c_str());
                 if (!editor->action.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", editor->action.description.c_str());
-                draw_option_sections(controls.plugin, editor->options, true);
+                draw_option_sections(plugin, editor->options, true);
                 static_cast<void>(draw_action_button(scene_instance, status, controls, *editor, control_state, ImVec2{-1.0f, 0.0f}));
                 ImGui::PopID();
                 ImGui::Spacing();
@@ -468,31 +467,54 @@ namespace spectra::scene {
         }
 
         void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, std::string_view section_id);
-        bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
-        void draw_controls_panel(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
+        bool draw_open_controls(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin);
+        void draw_controls_panel(Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, ImVec2 viewport_position, ImVec2 viewport_size);
         void open_scene_files(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls, std::span<const std::filesystem::path> paths);
     } // namespace
 
     namespace {
-        void begin_scene_controls(ControlsState& controls, ScenePluginInfo plugin) {
-            controls.plugin = std::move(plugin);
-            controls.open_options.clear();
-            controls.open_options.reserve(controls.plugin.open_options.size());
-            for (ControlOptionSchema& schema : controls.plugin.open_options) controls.open_options.push_back(make_option_editor(std::move(schema)));
+        [[nodiscard]] std::string plugin_editor_key(const PluginInfo& plugin) {
+            return std::format("{}|{}", plugin.id, plugin.path.string());
+        }
 
+        void build_action_and_setting_editors(ControlsState& controls, const PluginInfo& plugin) {
             controls.actions.clear();
-            controls.actions.reserve(controls.plugin.control_actions.size());
-            for (const ControlAction& action : controls.plugin.control_actions) controls.actions.push_back(make_action_editor(action));
+            controls.actions.reserve(plugin.control_actions.size());
+            for (const ControlAction& action : plugin.control_actions) controls.actions.push_back(make_action_editor(action));
 
             controls.settings.clear();
-            controls.settings.reserve(controls.plugin.control_settings.size());
-            for (const ControlOptionSchema& schema : controls.plugin.control_settings) controls.settings.push_back(make_setting_editor(schema, schema.default_value));
+            controls.settings.reserve(plugin.control_settings.size());
+            for (const ControlOptionSchema& schema : plugin.control_settings) controls.settings.push_back(make_setting_editor(schema, schema.default_value));
 
+            controls.editor_plugin_key = plugin_editor_key(plugin);
+        }
+
+        void begin_pending_plugin_controls(ControlsState& controls, PluginInfo plugin) {
+            controls.pending_plugin = std::move(plugin);
+            const PluginInfo& pending_plugin = *controls.pending_plugin;
+            controls.open_options.clear();
+            controls.open_options.reserve(pending_plugin.open_options.size());
+            for (const ControlOptionSchema& schema : pending_plugin.open_options) controls.open_options.push_back(make_option_editor(schema));
+
+            controls.actions.clear();
+            controls.settings.clear();
+            controls.editor_plugin_key.clear();
             controls.error.clear();
-            controls.active_title.clear();
-            controls.active_id.clear();
             controls.phase = SceneControlsPhase::PluginLoaded;
+        }
+
+        void begin_active_plugin_controls(ControlsState& controls, const PluginInfo& plugin) {
+            controls.pending_plugin.reset();
+            controls.open_options.clear();
+            build_action_and_setting_editors(controls, plugin);
+            controls.error.clear();
+            controls.phase = SceneControlsPhase::Active;
+        }
+
+        void ensure_active_plugin_controls(ControlsState& controls, const PluginInfo& plugin) {
+            if (controls.editor_plugin_key == plugin_editor_key(plugin)) return;
+            begin_active_plugin_controls(controls, plugin);
         }
 
         bool execute_action(Scene& scene_instance, StatusState& status, ControlsState& controls, ActionEditor& editor) {
@@ -565,44 +587,36 @@ namespace spectra::scene {
             });
         }
 
-        bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls) {
-            if (!controls.plugin.open_action_description.empty()) ImGui::TextWrapped("%s", controls.plugin.open_action_description.c_str());
-            if (!controls.open_options.empty()) draw_option_sections(controls.plugin, controls.open_options, false);
-            if (!ImGui::Button(controls.plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) return false;
+        bool draw_open_controls(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin) {
+            if (!plugin.open_action_description.empty()) ImGui::TextWrapped("%s", plugin.open_action_description.c_str());
+            if (!controls.open_options.empty()) draw_option_sections(plugin, controls.open_options, false);
+            if (!ImGui::Button(plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) return false;
             try {
-                application.clear_imgui_rgba8_images("scene-control-image://");
-                scene_instance.open_plugin_scene(ScenePluginOpenRequest{
-                    .plugin_path = controls.plugin.path,
+                scene_instance.open_plugin(PluginOpenRequest{
+                    .plugin_path = plugin.path,
                     .options = collect_options(controls.open_options),
-                    .host = scene_instance.host_services(),
                 });
-                const SceneDescriptor& descriptor = scene_instance.descriptor();
-                controls.active_id = descriptor.id;
-                controls.active_title = descriptor.title;
-                controls.phase = SceneControlsPhase::Active;
-                controls.error.clear();
-                set_scene_status(status, std::format("Loaded {}", controls.active_title), false);
+                const Descriptor& descriptor = scene_instance.descriptor();
+                begin_active_plugin_controls(controls, scene_instance.plugin_info());
+                set_scene_status(status, std::format("Loaded {}", descriptor.title), false);
                 return true;
             } catch (const std::exception& error) {
                 controls.phase = SceneControlsPhase::Error;
                 controls.error = error.what();
-                controls.active_title.clear();
-                controls.active_id.clear();
                 scene_instance.close();
                 set_scene_status(status, controls.error, true);
                 return false;
             }
         }
 
-        [[nodiscard]] bool draw_header(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlState* control_state) {
+        [[nodiscard]] bool draw_header(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin, const ControlState* control_state) {
             const float button_size = ImGui::GetFrameHeight();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(controls.plugin.title.c_str());
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", controls.plugin.path.string().c_str());
+            ImGui::TextUnformatted(plugin.title.c_str());
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", plugin.path.string().c_str());
             const float close_x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - button_size;
             if (ImGui::GetCursorPosX() < close_x) ImGui::SameLine(close_x);
             if (ImGui::Button(ICON_MS_CLOSE "##close_scene_plugin", ImVec2{button_size, button_size})) {
-                application.clear_imgui_rgba8_images("scene-control-image://");
                 controls = ControlsState{};
                 scene_instance.close();
                 set_scene_status(status, "Closed scene plugin controls", false);
@@ -611,7 +625,7 @@ namespace spectra::scene {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Close Scene");
 
             const std::string phase = control_state != nullptr ? control_state->phase : phase_text(controls.phase);
-            const std::string headline = control_state != nullptr ? control_state->headline : controls.plugin.title;
+            const std::string headline = control_state != nullptr ? control_state->headline : plugin.title;
             draw_status_pill(phase);
             if (!headline.empty()) {
                 ImGui::SameLine(0.0f, 8.0f);
@@ -619,12 +633,28 @@ namespace spectra::scene {
                 ImGui::TextWrapped("%s", headline.c_str());
                 if (control_state != nullptr && !control_state->detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", control_state->detail.c_str());
             }
-            if (!controls.active_title.empty() && controls.active_title != controls.plugin.title) ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", controls.active_title.c_str());
+            if (scene_instance.has_descriptor()) {
+                const Descriptor& descriptor = scene_instance.descriptor();
+                if (descriptor.title != plugin.title) ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", descriptor.title.c_str());
+            }
             return false;
         }
 
-        void draw_controls_panel(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls) {
+        void draw_controls_panel(Scene& scene_instance, StatusState& status, ControlsState& controls) {
             if (controls.phase == SceneControlsPhase::None) {
+                ImGui::TextDisabled("%s", "No scene plugin controls");
+                return;
+            }
+
+            const PluginInfo* plugin{};
+            if (scene_instance.has_plugin_info()) {
+                plugin = &scene_instance.plugin_info();
+                ensure_active_plugin_controls(controls, *plugin);
+            } else if (controls.pending_plugin.has_value()) {
+                plugin = &*controls.pending_plugin;
+            }
+            if (plugin == nullptr) {
+                controls = ControlsState{};
                 ImGui::TextDisabled("%s", "No scene plugin controls");
                 return;
             }
@@ -640,7 +670,7 @@ namespace spectra::scene {
             }
 
             const ControlState* state = control_state.has_value() ? &*control_state : nullptr;
-            if (draw_header(application, scene_instance, status, controls, state)) return;
+            if (draw_header(scene_instance, status, controls, *plugin, state)) return;
             if (!controls.error.empty()) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
@@ -650,7 +680,8 @@ namespace spectra::scene {
             ImGui::Spacing();
 
             if (!control_state.has_value()) {
-                static_cast<void>(draw_open_controls(application, scene_instance, status, controls));
+                if (scene_instance.has_plugin_info()) return;
+                static_cast<void>(draw_open_controls(scene_instance, status, controls, *plugin));
                 return;
             }
 
@@ -659,14 +690,14 @@ namespace spectra::scene {
                 ImGui::Separator();
             }
 
-            for (const ControlSection& section : controls.plugin.sections) {
+            for (const ControlSection& section : plugin->sections) {
                 const bool has_actions = action_section_has_editors(controls.actions, section.id);
                 const bool has_settings = setting_section_has_editors(controls.settings, section.id);
                 const bool has_metrics = section_has_detail_metrics(*control_state, section.id);
                 if (!has_actions && !has_settings && !has_metrics) continue;
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", section.label.c_str());
-                if (has_actions) draw_action_section(scene_instance, status, controls, *control_state, section.id);
+                if (has_actions) draw_action_section(scene_instance, status, controls, *plugin, *control_state, section.id);
                 if (has_settings) draw_settings(scene_instance, status, controls, section.id);
                 if (has_metrics) draw_detail_metrics(*control_state, section.id);
             }
@@ -716,17 +747,15 @@ namespace spectra::scene {
             if (paths.size() != 1u) throw std::runtime_error("Drop exactly one scene file or scene plugin");
             const std::filesystem::path& scene_path = paths.front();
             if (is_plugin_file(scene_path)) {
-                application.clear_imgui_rgba8_images("scene-control-image://");
-                ScenePluginInfo plugin = inspect_plugin(scene_path);
+                PluginInfo plugin = inspect_plugin(scene_path);
                 set_scene_status(status, std::format("Opened scene plugin controls {}", plugin.title), false);
                 scene_instance.close();
-                begin_scene_controls(controls, std::move(plugin));
+                begin_pending_plugin_controls(controls, std::move(plugin));
                 application.open_command_popover("scene.controls");
                 return;
             }
             scene_instance.open_pbrt_file(scene_path);
             set_scene_status(status, std::format("Loaded {}", scene_instance.descriptor().title), false);
-            application.clear_imgui_rgba8_images("scene-control-image://");
             controls = ControlsState{};
             application.close_command_popover("scene.controls");
         }
@@ -746,12 +775,12 @@ namespace spectra::scene {
     }
 
     WorkspaceTitle make_workspace_title(Scene& scene_instance, StatusState& status) {
-        const SceneDescriptor* descriptor = scene_instance.has_descriptor() ? &scene_instance.descriptor() : nullptr;
+        const Descriptor* descriptor = scene_instance.has_descriptor() ? &scene_instance.descriptor() : nullptr;
         WorkspaceTitle title{
             .detail = descriptor != nullptr ? descriptor->title : "Untitled",
             .tooltip = descriptor == nullptr
                 ? "Empty Scene\nDrop a PBRT scene file or scene plugin into the window to load it"
-                : std::format("{}\n{}\nDrop a PBRT scene file or scene plugin into the window to replace it", descriptor->id, descriptor->kind == SceneKind::Static ? "Static" : "Dynamic"),
+                : std::format("{}\n{}\nDrop a PBRT scene file or scene plugin into the window to replace it", descriptor->id, descriptor->kind == Kind::Static ? "Static" : "Dynamic"),
         };
         if (scene_status_visible(status)) {
             title.status_text = status.status_text;
@@ -796,8 +825,8 @@ namespace spectra::scene {
             .owner_renderer = {},
             .shortcut_label = "F9",
             .shortcut_key = ImGuiKey_F9,
-            .draw = [application = &application, state] {
-                draw_controls_panel(*application, *state->scene_instance, state->status, state->controls);
+            .draw = [state] {
+                draw_controls_panel(*state->scene_instance, state->status, state->controls);
             },
         });
         application.register_viewport_overlay(ViewportOverlay{
