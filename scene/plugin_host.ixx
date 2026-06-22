@@ -19,7 +19,6 @@ namespace spectra::scene {
         [[nodiscard]] PluginInfo info() const;
         [[nodiscard]] std::string scene_id() const;
         [[nodiscard]] std::unique_ptr<SceneDriver> create_driver();
-        [[nodiscard]] static bool accepts_path(const std::filesystem::path& path);
 
     private:
         struct State;

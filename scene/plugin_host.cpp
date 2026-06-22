@@ -32,41 +32,16 @@ namespace spectra::scene {
             std::vector<ControlOptionSchema> control_settings{};
         };
 
-        struct SceneSymbols {
-            std::set<std::string> material_names{};
-            std::set<std::string> light_names{};
-        };
-
-        [[nodiscard]] bool accepts_plugin_path(const std::filesystem::path& path) const;
         [[nodiscard]] Descriptor decode_descriptor(const SpectraScenePlugin& plugin) const;
         [[nodiscard]] std::string decode_last_error(const SpectraScenePlugin& plugin, SpectraSceneInstance* instance, std::string_view action) const;
         [[nodiscard]] GpuBufferRequest decode_gpu_buffer_request(const SpectraSceneGpuBufferRequest& request, std::string_view context) const;
         [[nodiscard]] SpectraSceneGpuBufferAllocation encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation) const;
-        [[nodiscard]] SceneSymbols collect_scene_symbols(const scene::Scene::Document& document) const;
-        void append_document(scene::Scene::Document& document, const SpectraSceneDocumentView& view, SceneSymbols& symbols) const;
-        [[nodiscard]] scene::Scene::FrameSnapshot decode_frame(const SpectraSceneFrameView& view, const scene::Scene::FrameInfo& frame, const SceneSymbols& symbols) const;
-        [[nodiscard]] ControlState decode_control_state(const SpectraSceneControlStateView& view, std::span<const ControlSection> sections, std::span<const ControlAction> actions, std::string_view context) const;
         };
 
-
-        [[nodiscard]] std::string lowercase_ascii(std::string value) {
-            for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-            return value;
-        }
-
-        [[nodiscard]] bool path_extension_is(const std::filesystem::path& path, const std::string_view extension) {
-            return lowercase_ascii(path.extension().string()) == lowercase_ascii(std::string{extension});
-        }
-
-        [[nodiscard]] bool plugin_file_extension_supported(const std::filesystem::path& path) {
-#if defined(_WIN32)
-            return path_extension_is(path, ".dll");
-#elif defined(__APPLE__)
-            return path_extension_is(path, ".dylib");
-#else
-            return path_extension_is(path, ".so");
-#endif
-        }
+        struct SceneSymbols {
+            std::set<std::string> material_names{};
+            std::set<std::string> light_names{};
+        };
 
         [[nodiscard]] std::uint32_t abi_gpu_resource_handle_kind(const GpuResourceHandleKind kind) {
             switch (kind) {
@@ -896,10 +871,6 @@ namespace spectra::scene {
             return state;
         }
 
-    bool AbiCodec::accepts_plugin_path(const std::filesystem::path& path) const {
-        return plugin_file_extension_supported(path);
-    }
-
     AbiCodec::Descriptor AbiCodec::decode_descriptor(const SpectraScenePlugin& plugin) const {
         Descriptor descriptor{
             .id = abi_string(plugin.id, "Scene plugin id", false),
@@ -940,25 +911,6 @@ namespace spectra::scene {
             .handle = allocation.handle,
             .device_identity = abi_gpu_device_identity(allocation.device_identity),
         };
-    }
-
-    AbiCodec::SceneSymbols AbiCodec::collect_scene_symbols(const scene::Scene::Document& document) const {
-        return SceneSymbols{
-            .material_names = collect_material_names(document),
-            .light_names = collect_light_names(document),
-        };
-    }
-
-    void AbiCodec::append_document(scene::Scene::Document& document, const SpectraSceneDocumentView& view, SceneSymbols& symbols) const {
-        append_document_view(document, view, symbols.material_names, symbols.light_names);
-    }
-
-    scene::Scene::FrameSnapshot AbiCodec::decode_frame(const SpectraSceneFrameView& view, const scene::Scene::FrameInfo& frame, const SceneSymbols& symbols) const {
-        return make_frame_snapshot(view, frame, symbols.material_names);
-    }
-
-    ControlState AbiCodec::decode_control_state(const SpectraSceneControlStateView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::string_view context) const {
-        return make_checked_control_state(view, sections, actions, context);
     }
 
         class NativeLibrary final {
@@ -1112,8 +1064,7 @@ namespace spectra::scene {
             const std::filesystem::path absolute_path = std::filesystem::absolute(plugin_path).lexically_normal();
             if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Drop a Scene plugin library, not a folder");
             if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: Scene plugin file does not exist", absolute_path.string()));
-            const AbiCodec codec{};
-            if (!codec.accepts_plugin_path(absolute_path)) throw std::runtime_error(std::format("{}: Scene plugin file extension is not supported on this platform", absolute_path.string()));
+            if (!is_plugin_file(absolute_path)) throw std::runtime_error(std::format("{}: Scene plugin file extension is not supported on this platform", absolute_path.string()));
             return absolute_path;
         }
 
@@ -1338,7 +1289,7 @@ namespace spectra::scene {
         [[nodiscard]] ControlState control_state(SpectraSceneInstance* instance) const {
             SpectraSceneControlStateView view{};
             this->check_result(this->plugin->control_state(instance, &view), instance, "Scene plugin controls state");
-            return this->codec.decode_control_state(view, this->descriptor.sections, this->descriptor.control_actions, "Scene plugin controls state");
+            return make_checked_control_state(view, this->descriptor.sections, this->descriptor.control_actions, "Scene plugin controls state");
         }
 
         [[nodiscard]] SpectraSceneDocumentView document(SpectraSceneInstance* instance) const {
@@ -1429,9 +1380,11 @@ namespace spectra::scene {
 
         [[nodiscard]] scene::Scene::Document create_scene_document() const override {
             scene::Scene::Document document = this->plugin->state->make_base_document();
-            const AbiCodec codec{};
-            AbiCodec::SceneSymbols symbols = codec.collect_scene_symbols(document);
-            codec.append_document(document, this->plugin->state->document(this->instance), symbols);
+            SceneSymbols symbols{
+                .material_names = collect_material_names(document),
+                .light_names = collect_light_names(document),
+            };
+            append_document_view(document, this->plugin->state->document(this->instance), symbols.material_names, symbols.light_names);
             ensure_scene_camera(document, document.name);
             document.timeline_enabled = true;
             this->scene_symbols = std::move(symbols);
@@ -1441,14 +1394,13 @@ namespace spectra::scene {
 
         [[nodiscard]] scene::Scene::FrameSnapshot create_scene_frame(const scene::Scene::FrameInfo& frame) const override {
             if (!this->document_validated) throw std::runtime_error("Scene plugin frame was requested before document material validation");
-            const AbiCodec codec{};
-            return codec.decode_frame(this->plugin->state->frame(this->instance, frame), frame, this->scene_symbols);
+            return make_frame_snapshot(this->plugin->state->frame(this->instance, frame), frame, this->scene_symbols.material_names);
         }
 
     private:
         std::shared_ptr<PluginHost> plugin{};
         SpectraSceneInstance* instance{};
-        mutable AbiCodec::SceneSymbols scene_symbols{};
+        mutable SceneSymbols scene_symbols{};
         mutable bool document_validated{};
     };
 
@@ -1470,7 +1422,4 @@ namespace spectra::scene {
         return std::make_unique<PluginSceneDriver>(this->shared_from_this());
     }
 
-    bool PluginHost::accepts_path(const std::filesystem::path& path) {
-        return plugin_file_extension_supported(path);
-    }
 } // namespace spectra::scene
