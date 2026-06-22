@@ -1789,8 +1789,8 @@ namespace spectra::scene {
         return this->host;
     }
 
-    ControlSnapshot Scene::control_snapshot() const {
-        return this->active_driver().control_snapshot();
+    ControlState Scene::control_state() const {
+        return this->active_driver().control_state();
     }
 
     void Scene::replace_with_scene(Scene scene) {

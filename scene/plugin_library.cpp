@@ -236,7 +236,7 @@ namespace spectra::scene {
 
     struct PluginLibrary::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v3");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v4");
             const SpectraScenePluginEntryFn entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -392,10 +392,10 @@ namespace spectra::scene {
             this->check_result(this->plugin->control_setting_update(instance, key_text.c_str(), value_text.c_str()), instance, std::format("Scene plugin controls setting '{}'", key));
         }
 
-        [[nodiscard]] ControlSnapshot control_snapshot(SpectraSceneInstance* instance) const {
-            SpectraSceneControlSnapshotView view{};
-            this->check_result(this->plugin->control_snapshot(instance, &view), instance, "Scene plugin controls snapshot");
-            return this->codec.decode_control_snapshot(view, this->descriptor.sections, this->descriptor.control_actions, this->descriptor.control_settings, "Scene plugin controls snapshot");
+        [[nodiscard]] ControlState control_state(SpectraSceneInstance* instance) const {
+            SpectraSceneControlStateView view{};
+            this->check_result(this->plugin->control_state(instance, &view), instance, "Scene plugin controls state");
+            return this->codec.decode_control_state(view, this->descriptor.sections, this->descriptor.control_actions, "Scene plugin controls state");
         }
 
         [[nodiscard]] SpectraSceneDocumentView document(SpectraSceneInstance* instance) const {
@@ -432,7 +432,7 @@ namespace spectra::scene {
             if (this->plugin->scene_revision == nullptr) throw std::runtime_error(std::format("{}: Scene plugin controls scene_revision function is null", this->open_request.plugin_path.string()));
             if (this->plugin->control_action == nullptr) throw std::runtime_error(std::format("{}: Scene plugin controls control_action function is null", this->open_request.plugin_path.string()));
             if (this->plugin->control_setting_update == nullptr) throw std::runtime_error(std::format("{}: Scene plugin controls control_setting_update function is null", this->open_request.plugin_path.string()));
-            if (this->plugin->control_snapshot == nullptr) throw std::runtime_error(std::format("{}: Scene plugin controls control_snapshot function is null", this->open_request.plugin_path.string()));
+            if (this->plugin->control_state == nullptr) throw std::runtime_error(std::format("{}: Scene plugin controls control_state function is null", this->open_request.plugin_path.string()));
         }
 
         PluginOpenRequestStorage open_request{};
@@ -480,8 +480,8 @@ namespace spectra::scene {
             this->plugin->state->control_setting_update(this->instance, key, value);
         }
 
-        [[nodiscard]] ControlSnapshot control_snapshot() const override {
-            return this->plugin->state->control_snapshot(this->instance);
+        [[nodiscard]] ControlState control_state() const override {
+            return this->plugin->state->control_state(this->instance);
         }
 
         [[nodiscard]] scene::Scene::Document create_scene_document() const override {

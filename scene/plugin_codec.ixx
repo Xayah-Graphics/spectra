@@ -33,6 +33,6 @@ namespace spectra::scene {
         [[nodiscard]] SceneSymbols collect_scene_symbols(const scene::Scene::Document& document) const;
         void append_document(scene::Scene::Document& document, const SpectraSceneDocumentView& view, SceneSymbols& symbols) const;
         [[nodiscard]] scene::Scene::FrameSnapshot decode_frame(const SpectraSceneFrameView& view, const scene::Scene::FrameInfo& frame, const SceneSymbols& symbols) const;
-        [[nodiscard]] ControlSnapshot decode_control_snapshot(const SpectraSceneControlSnapshotView& view, std::span<const ControlSection> sections, std::span<const ControlAction> actions, std::span<const ControlOptionSchema> setting_schemas, std::string_view context) const;
+        [[nodiscard]] ControlState decode_control_state(const SpectraSceneControlStateView& view, std::span<const ControlSection> sections, std::span<const ControlAction> actions, std::string_view context) const;
     };
 } // namespace spectra::scene

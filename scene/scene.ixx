@@ -129,11 +129,6 @@ namespace spectra::scene {
         std::vector<ControlOptionSchema> options{};
     };
 
-    export struct ControlSettingValue {
-        std::string key{};
-        std::string value{};
-    };
-
     export struct ControlMetric {
         std::string key{};
         std::string label{};
@@ -150,24 +145,12 @@ namespace spectra::scene {
         std::string disabled_reason{};
     };
 
-    export struct ControlStatus {
+    export struct ControlState {
         std::string phase{};
         std::string headline{};
         std::string detail{};
         std::vector<ControlMetric> metrics{};
         std::vector<ControlActionState> action_states{};
-    };
-
-    export struct ControlImage {
-        std::string id{};
-        std::string label{};
-        std::string description{};
-        std::string section_id{};
-        const std::uint8_t* rgba8{};
-        std::uint64_t rgba8_size{};
-        std::uint64_t revision{};
-        std::uint32_t width{};
-        std::uint32_t height{};
     };
 
     export enum class ControlTimelineMode : std::uint32_t {
@@ -183,12 +166,6 @@ namespace spectra::scene {
         std::uint64_t frame_index{};
         ControlTimelineMode timeline_mode{ControlTimelineMode::Live};
         bool timeline_playing{};
-    };
-
-    export struct ControlSnapshot {
-        ControlStatus status{};
-        std::vector<ControlSettingValue> settings{};
-        std::vector<ControlImage> images{};
     };
 
     export enum class SceneKind {
@@ -740,7 +717,7 @@ namespace spectra::scene {
         [[nodiscard]] const SceneDescriptor& descriptor() const;
         [[nodiscard]] bool has_controls() const;
         [[nodiscard]] std::shared_ptr<HostServiceRouter> host_services() const;
-        [[nodiscard]] ControlSnapshot control_snapshot() const;
+        [[nodiscard]] ControlState control_state() const;
         void close();
         void open_static_scene(std::string id, std::string title, Scene scene);
         void open_pbrt_file(const std::filesystem::path& scene_path);
@@ -810,7 +787,7 @@ namespace spectra::scene {
         [[nodiscard]] virtual std::uint64_t scene_revision() const = 0;
         virtual void execute_control_action(std::string_view action_id, std::span<const ControlOption> options) = 0;
         virtual void update_control_setting(std::string_view key, std::string_view value) = 0;
-        [[nodiscard]] virtual ControlSnapshot control_snapshot() const = 0;
+        [[nodiscard]] virtual ControlState control_state() const = 0;
         [[nodiscard]] virtual Scene::Document create_scene_document() const = 0;
         [[nodiscard]] virtual Scene::FrameSnapshot create_scene_frame(const Scene::FrameInfo& frame) const = 0;
     };

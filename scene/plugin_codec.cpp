@@ -742,6 +742,7 @@ namespace spectra::scene {
         void validate_control_setting_schema(const ControlOptionSchema& setting, const std::string_view context) {
             if (!control_setting_kind_supported(setting.kind)) throw std::runtime_error(std::format("{} setting '{}' must use Bool, Choice, Float, or UnsignedInteger", context, setting.key));
             if (setting.required) throw std::runtime_error(std::format("{} setting '{}' must not be required; settings always have a current value", context, setting.key));
+            if (setting.default_value.empty()) throw std::runtime_error(std::format("{} setting '{}' must provide a default value", context, setting.key));
         }
 
         void validate_control_setting_value(const ControlOptionSchema& schema, const std::string& value, const std::string_view context) {
@@ -767,41 +768,21 @@ namespace spectra::scene {
             std::vector<ControlOptionSchema> converted = make_open_option_schemas(schemas, context);
             for (const ControlOptionSchema& setting : converted) {
                 validate_control_setting_schema(setting, context);
-                if (!setting.default_value.empty()) validate_control_setting_value(setting, setting.default_value, context);
+                validate_control_setting_value(setting, setting.default_value, context);
             }
             return converted;
         }
 
-        [[nodiscard]] std::vector<ControlSettingValue> make_control_setting_values(const std::span<const SpectraSceneControlSettingValue> setting_span, const std::span<const ControlOptionSchema> schemas, const std::string_view context) {
-            std::set<std::string> setting_keys{};
-            std::map<std::string, const ControlOptionSchema*> schema_by_key{};
-            for (const ControlOptionSchema& schema : schemas) schema_by_key.emplace(schema.key, &schema);
-            std::vector<ControlSettingValue> converted{};
-            converted.reserve(setting_span.size());
-            for (std::size_t setting_index = 0u; setting_index < setting_span.size(); ++setting_index) {
-                ControlSettingValue setting{
-                    .key = abi_string(setting_span[setting_index].key, std::format("{} setting {} key", context, setting_index), false),
-                    .value = abi_string(setting_span[setting_index].value, std::format("{} setting {} value", context, setting_index), false),
-                };
-                if (!setting_keys.insert(setting.key).second) throw std::runtime_error(std::format("{} setting '{}' is duplicated", context, setting.key));
-                const auto schema = schema_by_key.find(setting.key);
-                if (schema == schema_by_key.end()) throw std::runtime_error(std::format("{} setting '{}' is not declared in the plugin descriptor", context, setting.key));
-                validate_control_setting_value(*schema->second, setting.value, context);
-                converted.push_back(std::move(setting));
-            }
-            return converted;
-        }
-
-        [[nodiscard]] ControlStatus make_control_status(const SpectraSceneControlStatusView& view, const std::string_view context) {
-            if (view.struct_size != sizeof(SpectraSceneControlStatusView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
-            ControlStatus status{
+        [[nodiscard]] ControlState make_control_state(const SpectraSceneControlStateView& view, const std::string_view context) {
+            if (view.struct_size != sizeof(SpectraSceneControlStateView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
+            ControlState state{
                 .phase = abi_string(view.phase, std::format("{} phase", context), false),
                 .headline = abi_string(view.headline, std::format("{} headline", context), false),
                 .detail = abi_string(view.detail, std::format("{} detail", context), true),
             };
             const std::span<const SpectraSceneControlMetric> metrics = abi_span(view.metrics.data, view.metrics.count, std::format("{} metrics", context));
             std::set<std::string> metric_keys{};
-            status.metrics.reserve(metrics.size());
+            state.metrics.reserve(metrics.size());
             for (std::size_t metric_index = 0u; metric_index < metrics.size(); ++metric_index) {
                 const SpectraSceneControlMetric& metric = metrics[metric_index];
                 ControlMetric converted{
@@ -821,11 +802,11 @@ namespace spectra::scene {
                 if ((converted.placement_flags & ~(ControlPlacementViewportOverlay | ControlPlacementPanelSummary | ControlPlacementPanelDetail)) != 0u) throw std::runtime_error(std::format("{} metric '{}' has unknown placement flags {}", context, converted.key, converted.placement_flags));
                 if (metric.has_color != 0u && metric.has_color != 1u) throw std::runtime_error(std::format("{} metric '{}' has_color flag must be 0 or 1", context, converted.key));
                 if (!metric_keys.insert(converted.key).second) throw std::runtime_error(std::format("{} metric '{}' is duplicated", context, converted.key));
-                status.metrics.push_back(std::move(converted));
+                state.metrics.push_back(std::move(converted));
             }
             const std::span<const SpectraSceneControlActionState> action_states = abi_span(view.action_states.data, view.action_states.count, std::format("{} action states", context));
             std::set<std::string> action_ids{};
-            status.action_states.reserve(action_states.size());
+            state.action_states.reserve(action_states.size());
             for (std::size_t action_index = 0u; action_index < action_states.size(); ++action_index) {
                 const SpectraSceneControlActionState& action = action_states[action_index];
                 ControlActionState converted{
@@ -837,45 +818,9 @@ namespace spectra::scene {
                 if (!action_ids.insert(converted.action_id).second) throw std::runtime_error(std::format("{} action state '{}' is duplicated", context, converted.action_id));
                 if (!converted.enabled && converted.disabled_reason.empty()) throw std::runtime_error(std::format("{} disabled action '{}' must provide disabled_reason", context, converted.action_id));
                 if (converted.enabled && !converted.disabled_reason.empty()) throw std::runtime_error(std::format("{} enabled action '{}' must not provide disabled_reason", context, converted.action_id));
-                status.action_states.push_back(std::move(converted));
+                state.action_states.push_back(std::move(converted));
             }
-            return status;
-        }
-
-        [[nodiscard]] std::uint64_t checked_control_image_rgba8_byte_count(const ControlImage& image, const std::string_view context) {
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} image '{}' dimensions must be non-zero", context, image.id));
-            const std::uint64_t width = image.width;
-            const std::uint64_t height = image.height;
-            if (width > std::numeric_limits<std::uint64_t>::max() / height / 4u) throw std::runtime_error(std::format("{} image '{}' dimensions overflow RGBA8 byte count", context, image.id));
-            return width * height * 4u;
-        }
-
-        [[nodiscard]] std::vector<ControlImage> make_control_images(const std::span<const SpectraSceneControlImage> images, const std::string_view context) {
-            std::set<std::string> image_ids{};
-            std::vector<ControlImage> converted{};
-            converted.reserve(images.size());
-            for (std::size_t image_index = 0u; image_index < images.size(); ++image_index) {
-                const SpectraSceneControlImage& image = images[image_index];
-                ControlImage converted_image{
-                    .id = abi_string(image.id, std::format("{} image {} id", context, image_index), false),
-                    .label = abi_string(image.label, std::format("{} image {} label", context, image_index), false),
-                    .description = abi_string(image.description, std::format("{} image {} description", context, image_index), true),
-                    .section_id = abi_string(image.section_id, std::format("{} image {} section_id", context, image_index), false),
-                    .rgba8 = image.rgba8,
-                    .rgba8_size = image.rgba8_size,
-                    .revision = image.revision,
-                    .width = image.width,
-                    .height = image.height,
-                };
-                if (!image_ids.insert(converted_image.id).second) throw std::runtime_error(std::format("{} image '{}' is duplicated", context, converted_image.id));
-                const std::uint64_t expected_byte_count = checked_control_image_rgba8_byte_count(converted_image, context);
-                if (converted_image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("{} image '{}' RGBA8 byte count must be width * height * 4", context, converted_image.id));
-                if (converted_image.rgba8 == nullptr) throw std::runtime_error(std::format("{} image '{}' RGBA8 pointer must not be null", context, converted_image.id));
-                if (converted_image.revision == 0u) throw std::runtime_error(std::format("{} image '{}' revision must not be zero", context, converted_image.id));
-                static_cast<void>(abi_span(converted_image.rgba8, converted_image.rgba8_size, std::format("{} image '{}' RGBA8 data", context, converted_image.id)));
-                converted.push_back(std::move(converted_image));
-            }
-            return converted;
+            return state;
         }
 
         void validate_descriptor_section_references(const PluginAbiCodec::Descriptor& descriptor, const std::string_view context) {
@@ -888,32 +833,24 @@ namespace spectra::scene {
             for (const ControlOptionSchema& setting : descriptor.control_settings) require_known_section_id(section_ids, setting.section_id, std::format("{} setting '{}'", context, setting.key));
         }
 
-        void validate_snapshot_section_references(const ControlSnapshot& snapshot, const std::span<const ControlSection> sections, const std::string_view context) {
+        void validate_state_section_references(const ControlState& state, const std::span<const ControlSection> sections, const std::string_view context) {
             const std::set<std::string> section_ids = make_section_id_set(sections);
-            for (const ControlMetric& metric : snapshot.status.metrics) require_known_section_id(section_ids, metric.section_id, std::format("{} metric '{}'", context, metric.key));
-            for (const ControlImage& image : snapshot.images) require_known_section_id(section_ids, image.section_id, std::format("{} image '{}'", context, image.id));
+            for (const ControlMetric& metric : state.metrics) require_known_section_id(section_ids, metric.section_id, std::format("{} metric '{}'", context, metric.key));
         }
 
-        [[nodiscard]] ControlSnapshot make_control_snapshot(const SpectraSceneControlSnapshotView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::span<const ControlOptionSchema> setting_schemas, const std::string_view context) {
-            if (view.struct_size != sizeof(SpectraSceneControlSnapshotView)) throw std::runtime_error(std::format("{} ABI size mismatch", context));
-            ControlSnapshot snapshot{
-                .status = make_control_status(view.status, std::format("{} status", context)),
-                .settings = make_control_setting_values(abi_span(view.settings, std::format("{} settings", context)), setting_schemas, std::format("{} settings", context)),
-                .images = make_control_images(abi_span(view.images, std::format("{} images", context)), std::format("{} images", context)),
-            };
-            if (snapshot.settings.size() != setting_schemas.size()) throw std::runtime_error(std::format("{} settings must provide one value for each declared control setting", context));
-
+        [[nodiscard]] ControlState make_checked_control_state(const SpectraSceneControlStateView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::string_view context) {
+            ControlState state = make_control_state(view, context);
             std::set<std::string> action_ids{};
             for (const ControlAction& action : actions) action_ids.insert(action.id);
             std::set<std::string> action_state_ids{};
-            for (const ControlActionState& state : snapshot.status.action_states) {
-                if (!action_ids.contains(state.action_id)) throw std::runtime_error(std::format("{} status references unknown action '{}'", context, state.action_id));
-                action_state_ids.insert(state.action_id);
+            for (const ControlActionState& action_state : state.action_states) {
+                if (!action_ids.contains(action_state.action_id)) throw std::runtime_error(std::format("{} state references unknown action '{}'", context, action_state.action_id));
+                action_state_ids.insert(action_state.action_id);
             }
             for (const std::string& action_id : action_ids)
-                if (!action_state_ids.contains(action_id)) throw std::runtime_error(std::format("{} status did not provide a state for action '{}'", context, action_id));
-            validate_snapshot_section_references(snapshot, sections, context);
-            return snapshot;
+                if (!action_state_ids.contains(action_id)) throw std::runtime_error(std::format("{} did not provide a state for action '{}'", context, action_id));
+            validate_state_section_references(state, sections, context);
+            return state;
         }
 
     bool PluginAbiCodec::accepts_plugin_path(const std::filesystem::path& path) const {
@@ -977,7 +914,7 @@ namespace spectra::scene {
         return make_frame_snapshot(view, frame, symbols.material_names);
     }
 
-    ControlSnapshot PluginAbiCodec::decode_control_snapshot(const SpectraSceneControlSnapshotView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::span<const ControlOptionSchema> setting_schemas, const std::string_view context) const {
-        return make_control_snapshot(view, sections, actions, setting_schemas, context);
+    ControlState PluginAbiCodec::decode_control_state(const SpectraSceneControlStateView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::string_view context) const {
+        return make_checked_control_state(view, sections, actions, context);
     }
 } // namespace spectra::scene

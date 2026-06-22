@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 3u;
+    constexpr std::uint32_t plugin_abi_version = 4u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -80,16 +80,6 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
-    struct SpectraSceneControlSettingValue {
-        const char* key{};
-        const char* value{};
-    };
-
-    struct SpectraSceneControlSettingValueSpan {
-        const SpectraSceneControlSettingValue* data{};
-        std::uint64_t count{};
-    };
-
     struct SpectraSceneControlMetric {
         const char* key{};
         const char* label{};
@@ -116,37 +106,13 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
-    struct SpectraSceneControlStatusView {
+    struct SpectraSceneControlStateView {
         std::uint64_t struct_size{};
         const char* phase{};
         const char* headline{};
         const char* detail{};
         SpectraSceneControlMetricSpan metrics{};
         SpectraSceneControlActionStateSpan action_states{};
-    };
-
-    struct SpectraSceneControlImage {
-        const char* id{};
-        const char* label{};
-        const char* description{};
-        const char* section_id{};
-        const std::uint8_t* rgba8{};
-        std::uint64_t rgba8_size{};
-        std::uint64_t revision{};
-        std::uint32_t width{};
-        std::uint32_t height{};
-    };
-
-    struct SpectraSceneControlImageSpan {
-        const SpectraSceneControlImage* data{};
-        std::uint64_t count{};
-    };
-
-    struct SpectraSceneControlSnapshotView {
-        std::uint64_t struct_size{};
-        SpectraSceneControlSettingValueSpan settings{};
-        SpectraSceneControlStatusView status{};
-        SpectraSceneControlImageSpan images{};
     };
 
     struct SpectraSceneUpdateInfo {
@@ -497,7 +463,7 @@ export namespace spectra::scene {
     typedef SpectraSceneResult (*SpectraSceneRevisionFn)(SpectraSceneInstance* instance, std::uint64_t* revision);
     typedef SpectraSceneResult (*SpectraSceneControlActionFn)(SpectraSceneInstance* instance, const char* action_id, SpectraSceneOptionSpan options);
     typedef SpectraSceneResult (*SpectraSceneControlSettingUpdateFn)(SpectraSceneInstance* instance, const char* key, const char* value);
-    typedef SpectraSceneResult (*SpectraSceneControlSnapshotFn)(SpectraSceneInstance* instance, SpectraSceneControlSnapshotView* snapshot);
+    typedef SpectraSceneResult (*SpectraSceneControlStateFn)(SpectraSceneInstance* instance, SpectraSceneControlStateView* state);
     typedef const char* (*SpectraSceneLastErrorFn)(SpectraSceneInstance* instance);
 
     struct SpectraScenePlugin {
@@ -522,7 +488,7 @@ export namespace spectra::scene {
         SpectraSceneRevisionFn scene_revision{};
         SpectraSceneControlActionFn control_action{};
         SpectraSceneControlSettingUpdateFn control_setting_update{};
-        SpectraSceneControlSnapshotFn control_snapshot{};
+        SpectraSceneControlStateFn control_state{};
         SpectraSceneLastErrorFn last_error{};
     };
 

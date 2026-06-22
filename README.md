@@ -46,7 +46,7 @@ You may also load PBRT scene files and scene plugins through the GUI.
 then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
 empty scene plugin controls workspace first; the Scene popover renders the generic form declared by the plugin
 descriptor and creates the dynamic scene only when the plugin-declared open action is pressed. After creation, the same
-popover displays plugin-declared control actions, status metrics, and preview images, while selected
+popover displays plugin-declared control actions and control-state metrics, while selected
 metrics may also appear as compact viewport overlay chips.
 
 
@@ -59,24 +59,24 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v3()`.
+2. Export `spectra_scene_plugin_v4()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
 optional; required strings must be non-empty. Numeric categories are `uint32_t` values constrained by the tables below,
 not ABI enum types. The plugin owns all returned string and array views. Scene metadata is copied into Spectra scene storage during
-conversion, but camera visual pixels, control preview pixels, viewport voxel grid GPU payloads, and external volume
+conversion, but camera visual pixels, viewport voxel grid GPU payloads, and external volume
 channel GPU payloads are borrowed.
-Camera visual and control preview RGBA8 pointers must stay valid for the plugin instance lifetime, and `revision` must
-increase when the pixel contents change. Viewport voxel grid data is borrowed GPU data: the plugin requests a
+Camera visual RGBA8 pointers must stay valid for the plugin instance lifetime, and `revision` must increase when the
+pixel contents change. Viewport voxel grid data is borrowed GPU data: the plugin requests a
 Spectra-owned external Vulkan storage buffer through host services, imports it into its own GPU runtime, writes the
 declared source payload, and publishes
 `resource_id + source_kind + index_encoding + external_device_pointer + source_byte_size + revision`.
 
 ### Binary Contract
 
-- ABI version: `3`.
-- Exported symbol: `spectra_scene_plugin_v3`.
+- ABI version: `4`.
+- Exported symbol: `spectra_scene_plugin_v4`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -103,10 +103,10 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v3(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v4(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `3` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `4` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are required; missing callbacks are errors.
 
@@ -120,7 +120,7 @@ Controls callbacks are required; missing callbacks are errors.
   Document views may publish every named span. Frame views may publish cameras, renderable entities, and viewport
   attachments; materials and lights are document-only.
 - A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or
-  `VolumeGrid`. Cameras, lights, control status, and debug attachments do not count as renderable scene entities.
+  `VolumeGrid`. Cameras, lights, control state, and debug attachments do not count as renderable scene entities.
 - `default_coordinate_system` may be empty or one of `SpectraSceneYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
   Unknown names are errors.
 - Material `model` values: `lit_surface`, `unlit_surface`, `emissive_surface`, `volume`, `point_sprite`.
@@ -165,33 +165,27 @@ Controls callbacks are required; missing callbacks are errors.
 - `base_pbrt_path` may be empty. If non-empty, it must be relative to the plugin library directory.
 - `open_action_label` must be non-empty. `open_action_description` may be empty.
 - `sections` declares generic control panel sections. Each section id and label must be non-empty and unique. Section
-  declaration order is the display order. Open options, control settings, control actions, status metrics, and control
-  images must each reference a declared `section_id`. Within a section, item order is the order of
-  the corresponding descriptor or snapshot span.
+  declaration order is the display order. Open options, control settings, control actions, and state metrics must each
+  reference a declared `section_id`. Within a section, item order is the order of the corresponding descriptor or state span.
 - `control_actions` may be empty, but every declared action id and label must be non-empty and unique. Action option
   schemas use the same option kind and validation rules as open options.
 - Control action `style` values are `0` Secondary, `1` Primary, and `2` Danger. Unknown values are errors.
-- `control_snapshot` and `control_setting_update` are required. Settings are live editable
+- `control_state` and `control_setting_update` are required. Settings are live editable
   controls for active plugin-driven scenes; Spectra submits a changed setting immediately and then checks `scene_revision` to
   refresh changed scene/debug data. Setting schemas are declared once in the plugin descriptor through normal option
   schemas. Setting kinds are restricted to `3` choice, `4` bool, `5` float, and `6` unsigned integer. Text and path
   kinds are only valid for open options or explicit action options. Setting keys and labels must be non-empty and unique
-  in the descriptor. A snapshot setting item returns only `{ key, value }`; each key must match a declared setting and
-  the value must parse according to that setting schema.
-- `control_snapshot` returns named fields directly: `settings`, `status`, and `images`.
-  `status.struct_size` must match `SpectraSceneControlStatusView`. Empty optional arrays use
-  `{ nullptr, 0 }`. When the descriptor declares control settings, `settings` must provide one value for each schema.
-- Status phase, headline, metric keys/labels/values, and action state ids must be non-empty.
+  in the descriptor and must provide non-empty defaults. Setting values are host-owned UI state initialized from those
+  descriptor defaults; plugins accept or reject changes through `control_setting_update`.
+- `control_state` returns `phase`, `headline`, `detail`, metrics, and action states directly.
+  `struct_size` must match `SpectraSceneControlStateView`. Empty optional arrays use `{ nullptr, 0 }`.
+- State phase, headline, metric keys/labels/values, and action state ids must be non-empty.
   Each action state id must refer to a declared control action. Every declared control action must have exactly one
   action state. Disabled actions must set `enabled = 0` and provide a non-empty `disabled_reason`; enabled actions must
   set `enabled = 1` and provide an empty `disabled_reason`.
 - Control metric presentation flags are bit flags: `1` ViewportOverlay, `2` PanelSummary, and `4` PanelDetail. Unknown
-  bits are errors. Metric order is the snapshot metric span order. `has_color` must be `0` or `1`; if set, `color` must
+  bits are errors. Metric order is the control-state metric span order. `has_color` must be `0` or `1`; if set, `color` must
   contain finite RGBA values. Spectra uses these hints only for generic dashboard and viewport overlay layout.
-- The snapshot image span may be empty. Non-empty control image
-  outputs must have unique non-empty `id`, non-empty `label`, positive `width` and `height`, non-null tightly packed
-  RGBA8 pixels with byte count `width * height * 4`, and non-zero `revision`. Spectra uploads these images to the
-  Scene popover texture cache and reuses the texture while pointer, byte size, dimensions, and revision are unchanged.
 - Option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
   `6` unsigned integer.
 - Option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
@@ -236,17 +230,15 @@ Controls callbacks are required; missing callbacks are errors.
   transform animation without a separate transform callback ABI.
 - Descriptor `last_error` returns the most recent instance-local error string; it may be empty. Controls callbacks use
   the same instance error channel.
-- All descriptor function pointers listed in this section are mandatory for ABI v3. Missing callbacks are rejected
+- All descriptor function pointers listed in this section are mandatory for ABI v4. Missing callbacks are rejected
   during plugin inspection/loading.
 - Descriptor `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
   `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as
-  status metrics and preview images must not increment it.
+  state metrics must not increment it.
 - Descriptor `control_action` executes one plugin-declared action with strict key/value options.
 - Descriptor `control_setting_update` applies one changed setting key/value pair; it must validate the value strictly and increase
   `scene_revision` if the change modifies scene entities or debug attachments.
-- Descriptor `control_snapshot` returns the current plugin-owned live setting values, phase/headline/detail, metrics,
-  action states, and borrowed CPU RGBA8 preview images as named spans. Preview images are uploaded to UI textures but are not copied into `scene::Scene`,
-  exported to PBRT, or exposed to the pathtracer scene.
+- Descriptor `control_state` returns phase/headline/detail, metrics, and action states as named spans.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_SCENE_RESULT_ERROR` and expose a message through
 `last_error`.

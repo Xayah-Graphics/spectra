@@ -230,9 +230,9 @@ namespace spectra::scene {
             return (metric.placement_flags & placement) != 0u;
         }
 
-        [[nodiscard]] std::vector<const ControlMetric*> control_metrics_with_placement(const ControlStatus& status, const std::uint32_t placement) {
+        [[nodiscard]] std::vector<const ControlMetric*> control_metrics_with_placement(const ControlState& state, const std::uint32_t placement) {
             std::vector<const ControlMetric*> metrics{};
-            for (const ControlMetric& metric : status.metrics)
+            for (const ControlMetric& metric : state.metrics)
                 if (metric_has_placement(metric, placement)) metrics.push_back(&metric);
             return metrics;
         }
@@ -385,16 +385,16 @@ namespace spectra::scene {
             return true;
         }
 
-        [[nodiscard]] bool action_enabled(const ControlStatus& status, const std::string& action_id) {
-            const auto state = std::ranges::find_if(status.action_states, [&action_id](const ControlActionState& action_state) { return action_state.action_id == action_id; });
-            return state != status.action_states.end() && state->enabled;
+        [[nodiscard]] bool action_enabled(const ControlState& state, const std::string& action_id) {
+            const auto action_state = std::ranges::find_if(state.action_states, [&action_id](const ControlActionState& candidate) { return candidate.action_id == action_id; });
+            return action_state != state.action_states.end() && action_state->enabled;
         }
 
-        [[nodiscard]] std::string_view action_disabled_reason(const ControlStatus& status, const std::string& action_id) {
-            const auto state = std::ranges::find_if(status.action_states, [&action_id](const ControlActionState& action_state) { return action_state.action_id == action_id; });
-            if (state == status.action_states.end()) return "Action disabled by control status";
-            if (state->disabled_reason.empty()) return "Action disabled by control status";
-            return state->disabled_reason;
+        [[nodiscard]] std::string_view action_disabled_reason(const ControlState& state, const std::string& action_id) {
+            const auto action_state = std::ranges::find_if(state.action_states, [&action_id](const ControlActionState& candidate) { return candidate.action_id == action_id; });
+            if (action_state == state.action_states.end()) return "Action disabled by control state";
+            if (action_state->disabled_reason.empty()) return "Action disabled by control state";
+            return action_state->disabled_reason;
         }
 
         [[nodiscard]] int push_action_button_style(const std::uint32_t style) {
@@ -415,10 +415,10 @@ namespace spectra::scene {
 
         bool execute_action(Scene& scene_instance, StatusState& status, ControlsState& controls, ActionEditor& editor);
 
-        bool draw_action_button(Scene& scene_instance, StatusState& status, ControlsState& controls, ActionEditor& editor, const ControlStatus& control_status, const ImVec2 size) {
+        bool draw_action_button(Scene& scene_instance, StatusState& status, ControlsState& controls, ActionEditor& editor, const ControlState& control_state, const ImVec2 size) {
             ImGui::PushID(editor.action.id.c_str());
-            const bool enabled = action_enabled(control_status, editor.action.id);
-            const std::string_view disabled_reason = action_disabled_reason(control_status, editor.action.id);
+            const bool enabled = action_enabled(control_state, editor.action.id);
+            const std::string_view disabled_reason = action_disabled_reason(control_state, editor.action.id);
             const int style_count = push_action_button_style(editor.action.style);
             ImGui::BeginDisabled(!enabled);
             const bool clicked = ImGui::Button(editor.action.label.c_str(), size);
@@ -431,7 +431,7 @@ namespace spectra::scene {
             return clicked;
         }
 
-        void draw_action_section(Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlStatus& control_status, const std::string_view section_id) {
+        void draw_action_section(Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlState& control_state, const std::string_view section_id) {
             const std::vector<ActionEditor*> editors = action_editors_for_section(controls.actions, section_id);
             if (editors.empty()) return;
             std::vector<ActionEditor*> immediate{};
@@ -448,7 +448,7 @@ namespace spectra::scene {
                 const float button_width = std::max(74.0f, (available_width - spacing * static_cast<float>(columns - 1u)) / static_cast<float>(columns));
                 for (std::size_t index = 0u; index < immediate.size(); ++index) {
                     if (index % columns != 0u) ImGui::SameLine(0.0f, spacing);
-                    static_cast<void>(draw_action_button(scene_instance, status, controls, *immediate[index], control_status, ImVec2{button_width, 0.0f}));
+                    static_cast<void>(draw_action_button(scene_instance, status, controls, *immediate[index], control_state, ImVec2{button_width, 0.0f}));
                 }
                 if (!forms.empty()) ImGui::Spacing();
             }
@@ -457,7 +457,7 @@ namespace spectra::scene {
                 ImGui::TextUnformatted(editor->action.label.c_str());
                 if (!editor->action.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", editor->action.description.c_str());
                 draw_option_sections(controls.plugin, editor->options, true);
-                static_cast<void>(draw_action_button(scene_instance, status, controls, *editor, control_status, ImVec2{-1.0f, 0.0f}));
+                static_cast<void>(draw_action_button(scene_instance, status, controls, *editor, control_state, ImVec2{-1.0f, 0.0f}));
                 ImGui::PopID();
                 ImGui::Spacing();
             }
@@ -467,9 +467,7 @@ namespace spectra::scene {
             return std::ranges::any_of(editors, [section_id](const SettingEditor& editor) { return editor.schema.section_id == section_id; });
         }
 
-        void sync_setting_editors(ControlsState& controls, const std::span<const ControlSettingValue> settings);
         void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, std::string_view section_id);
-        void draw_control_images(Spectra& application, const ControlsState& controls, std::span<const ControlImage> images, std::string_view section_id);
         bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_panel(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, ImVec2 viewport_position, ImVec2 viewport_size);
@@ -513,17 +511,6 @@ namespace spectra::scene {
             }
         }
 
-        void sync_setting_editors(ControlsState& controls, const std::span<const ControlSettingValue> settings) {
-            for (const ControlSettingValue& setting : settings) {
-                const auto editor = std::ranges::find_if(controls.settings, [&setting](const SettingEditor& candidate) { return candidate.schema.key == setting.key; });
-                if (editor == controls.settings.end()) continue;
-                if (editor->committed_value != setting.value || option_editor_value(editor->option) != setting.value) {
-                    set_option_editor_value(editor->option, setting.value);
-                    editor->committed_value = setting.value;
-                }
-            }
-        }
-
         void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, const std::string_view section_id) {
             for (SettingEditor& editor : controls.settings) {
                 if (editor.schema.section_id != section_id) continue;
@@ -545,45 +532,8 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] std::string image_cache_key(const ControlsState& controls, const ControlImage& image) {
-            const std::string& controls_id = controls.active_id.empty() ? controls.plugin.id : controls.active_id;
-            return std::format("scene-control-image://{}/{}", controls_id, image.id);
-        }
-
-        [[nodiscard]] bool control_images_section_has_images(const std::span<const ControlImage> images, const std::string_view section_id) {
-            return std::ranges::any_of(images, [section_id](const ControlImage& image) { return image.section_id == section_id; });
-        }
-
-        void draw_control_images(Spectra& application, const ControlsState& controls, const std::span<const ControlImage> images, const std::string_view section_id) {
-            for (const ControlImage& image : images) {
-                if (image.section_id != section_id) continue;
-                ImGui::PushID(image.id.c_str());
-                ImGui::TextUnformatted(image.label.c_str());
-                if (!image.description.empty()) ImGui::TextWrapped("%s", image.description.c_str());
-                ImGui::TextDisabled("%u x %u | rev %llu", image.width, image.height, static_cast<unsigned long long>(image.revision));
-                const float available_width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-                const float display_height = available_width * static_cast<float>(image.height) / static_cast<float>(image.width);
-                try {
-                    application.draw_imgui_rgba8_image(
-                        image_cache_key(controls, image),
-                        Rgba8ImageSource{
-                            .data = image.rgba8,
-                            .byte_size = image.rgba8_size,
-                            .width = image.width,
-                            .height = image.height,
-                            .revision = image.revision,
-                        },
-                        ImVec2{available_width, display_height});
-                } catch (const std::exception& error) {
-                    ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", error.what());
-                }
-                ImGui::Spacing();
-                ImGui::PopID();
-            }
-        }
-
-        [[nodiscard]] bool draw_summary(const ControlStatus& status) {
-            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(status, ControlPlacementPanelSummary);
+        [[nodiscard]] bool draw_summary(const ControlState& state) {
+            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(state, ControlPlacementPanelSummary);
             if (metrics.empty()) return false;
             if (!ImGui::BeginTable("SceneControlSummary", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) return false;
             std::size_t index{};
@@ -598,8 +548,8 @@ namespace spectra::scene {
             return true;
         }
 
-        void draw_detail_metrics(const ControlStatus& status, const std::string_view section_id) {
-            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(status, ControlPlacementPanelDetail);
+        void draw_detail_metrics(const ControlState& state, const std::string_view section_id) {
+            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(state, ControlPlacementPanelDetail);
             for (const ControlMetric* metric : metrics) {
                 if (metric->section_id != section_id) continue;
                 if (metric_has_placement(*metric, ControlPlacementPanelSummary)) continue;
@@ -609,8 +559,8 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] bool section_has_detail_metrics(const ControlStatus& status, const std::string_view section_id) {
-            return std::ranges::any_of(status.metrics, [section_id](const ControlMetric& metric) {
+        [[nodiscard]] bool section_has_detail_metrics(const ControlState& state, const std::string_view section_id) {
+            return std::ranges::any_of(state.metrics, [section_id](const ControlMetric& metric) {
                 return metric.section_id == section_id && metric_has_placement(metric, ControlPlacementPanelDetail) && !metric_has_placement(metric, ControlPlacementPanelSummary);
             });
         }
@@ -644,7 +594,7 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] bool draw_header(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlStatus* control_status) {
+        [[nodiscard]] bool draw_header(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls, const ControlState* control_state) {
             const float button_size = ImGui::GetFrameHeight();
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(controls.plugin.title.c_str());
@@ -660,14 +610,14 @@ namespace spectra::scene {
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Close Scene");
 
-            const std::string phase = control_status != nullptr ? control_status->phase : phase_text(controls.phase);
-            const std::string headline = control_status != nullptr ? control_status->headline : controls.plugin.title;
+            const std::string phase = control_state != nullptr ? control_state->phase : phase_text(controls.phase);
+            const std::string headline = control_state != nullptr ? control_state->headline : controls.plugin.title;
             draw_status_pill(phase);
             if (!headline.empty()) {
                 ImGui::SameLine(0.0f, 8.0f);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextWrapped("%s", headline.c_str());
-                if (control_status != nullptr && !control_status->detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", control_status->detail.c_str());
+                if (control_state != nullptr && !control_state->detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", control_state->detail.c_str());
             }
             if (!controls.active_title.empty() && controls.active_title != controls.plugin.title) ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", controls.active_title.c_str());
             return false;
@@ -679,21 +629,18 @@ namespace spectra::scene {
                 return;
             }
 
-            std::optional<ControlSnapshot> snapshot{};
+            std::optional<ControlState> control_state{};
             if (controls.phase == SceneControlsPhase::Active || controls.phase == SceneControlsPhase::Error) {
                 try {
-                    if (scene_instance.has_controls()) {
-                        snapshot = scene_instance.control_snapshot();
-                        sync_setting_editors(controls, snapshot->settings);
-                    }
+                    if (scene_instance.has_controls()) control_state = scene_instance.control_state();
                 } catch (const std::exception& error) {
                     controls.phase = SceneControlsPhase::Error;
                     controls.error = error.what();
                 }
             }
 
-            const ControlStatus* control_status = snapshot.has_value() ? &snapshot->status : nullptr;
-            if (draw_header(application, scene_instance, status, controls, control_status)) return;
+            const ControlState* state = control_state.has_value() ? &*control_state : nullptr;
+            if (draw_header(application, scene_instance, status, controls, state)) return;
             if (!controls.error.empty()) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
@@ -702,12 +649,12 @@ namespace spectra::scene {
             ImGui::Separator();
             ImGui::Spacing();
 
-            if (!snapshot.has_value()) {
+            if (!control_state.has_value()) {
                 static_cast<void>(draw_open_controls(application, scene_instance, status, controls));
                 return;
             }
 
-            if (draw_summary(snapshot->status)) {
+            if (draw_summary(*control_state)) {
                 ImGui::Spacing();
                 ImGui::Separator();
             }
@@ -715,22 +662,20 @@ namespace spectra::scene {
             for (const ControlSection& section : controls.plugin.sections) {
                 const bool has_actions = action_section_has_editors(controls.actions, section.id);
                 const bool has_settings = setting_section_has_editors(controls.settings, section.id);
-                const bool has_images = control_images_section_has_images(snapshot->images, section.id);
-                const bool has_metrics = section_has_detail_metrics(snapshot->status, section.id);
-                if (!has_actions && !has_settings && !has_images && !has_metrics) continue;
+                const bool has_metrics = section_has_detail_metrics(*control_state, section.id);
+                if (!has_actions && !has_settings && !has_metrics) continue;
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", section.label.c_str());
-                if (has_actions) draw_action_section(scene_instance, status, controls, snapshot->status, section.id);
+                if (has_actions) draw_action_section(scene_instance, status, controls, *control_state, section.id);
                 if (has_settings) draw_settings(scene_instance, status, controls, section.id);
-                if (has_images) draw_control_images(application, controls, snapshot->images, section.id);
-                if (has_metrics) draw_detail_metrics(snapshot->status, section.id);
+                if (has_metrics) draw_detail_metrics(*control_state, section.id);
             }
         }
 
-        [[nodiscard]] std::string overlay_text(const ControlStatus& status) {
-            std::string text = status.phase;
-            if (!status.headline.empty()) text += std::format(" | {}", status.headline);
-            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(status, ControlPlacementViewportOverlay);
+        [[nodiscard]] std::string overlay_text(const ControlState& state) {
+            std::string text = state.phase;
+            if (!state.headline.empty()) text += std::format(" | {}", state.headline);
+            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(state, ControlPlacementViewportOverlay);
             std::size_t shown{};
             for (const ControlMetric* metric : metrics) {
                 if (shown >= 5u) break;
@@ -744,15 +689,15 @@ namespace spectra::scene {
 
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, const ImVec2 viewport_position, const ImVec2 viewport_size) {
             if (controls.phase == SceneControlsPhase::None || !scene_instance.has_controls()) return;
-            ControlSnapshot snapshot{};
+            ControlState state{};
             try {
-                snapshot = scene_instance.control_snapshot();
+                state = scene_instance.control_state();
             } catch (const std::exception& error) {
                 controls.phase = SceneControlsPhase::Error;
                 controls.error = error.what();
                 return;
             }
-            const std::string text = overlay_text(snapshot.status);
+            const std::string text = overlay_text(state);
             if (text.empty() || viewport_size.x < 180.0f || viewport_size.y < 120.0f) return;
             const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
             const ImVec2 padding{9.0f, 5.0f};
