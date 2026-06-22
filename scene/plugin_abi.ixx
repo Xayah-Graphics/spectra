@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 2u;
+    constexpr std::uint32_t plugin_abi_version = 3u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -125,17 +125,6 @@ export namespace spectra::scene {
         SpectraSceneControlActionStateSpan action_states{};
     };
 
-    struct SpectraSceneControlLogEntry {
-        std::uint64_t sequence{};
-        const char* level{};
-        const char* message{};
-    };
-
-    struct SpectraSceneControlLogEntrySpan {
-        const SpectraSceneControlLogEntry* data{};
-        std::uint64_t count{};
-    };
-
     struct SpectraSceneControlImage {
         const char* id{};
         const char* label{};
@@ -153,40 +142,11 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
-    struct SpectraSceneControlScalarSample {
-        std::uint64_t step{};
-        double time_seconds{};
-        double value{};
-    };
-
-    struct SpectraSceneControlScalarSampleSpan {
-        const SpectraSceneControlScalarSample* data{};
-        std::uint64_t count{};
-    };
-
-    struct SpectraSceneControlScalarSeries {
-        const char* id{};
-        const char* label{};
-        const char* description{};
-        const char* unit{};
-        float color[4]{};
-        const char* section_id{};
-        std::uint64_t revision{};
-        SpectraSceneControlScalarSampleSpan samples{};
-    };
-
-    struct SpectraSceneControlScalarSeriesSpan {
-        const SpectraSceneControlScalarSeries* data{};
-        std::uint64_t count{};
-    };
-
     struct SpectraSceneControlSnapshotView {
         std::uint64_t struct_size{};
         SpectraSceneControlSettingValueSpan settings{};
         SpectraSceneControlStatusView status{};
-        SpectraSceneControlLogEntrySpan logs{};
         SpectraSceneControlImageSpan images{};
-        SpectraSceneControlScalarSeriesSpan scalar_series{};
     };
 
     struct SpectraSceneUpdateInfo {

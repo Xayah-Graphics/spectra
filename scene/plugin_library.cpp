@@ -236,7 +236,7 @@ namespace spectra::scene {
 
     struct PluginLibrary::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v2");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v3");
             const SpectraScenePluginEntryFn entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));

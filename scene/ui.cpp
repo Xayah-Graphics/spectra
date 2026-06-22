@@ -248,23 +248,6 @@ namespace spectra::scene {
             return std::ranges::any_of(editors, [section_id](const ActionEditor& editor) { return editor.action.section_id == section_id; });
         }
 
-        [[nodiscard]] std::vector<const ControlScalarSeries*> scalar_series_for_section(const std::span<const ControlScalarSeries> series, const std::string_view section_id) {
-            std::vector<const ControlScalarSeries*> selected{};
-            for (const ControlScalarSeries& chart : series)
-                if (chart.section_id == section_id && !chart.samples.empty()) selected.push_back(&chart);
-            return selected;
-        }
-
-        [[nodiscard]] bool scalar_series_section_has_samples(const std::span<const ControlScalarSeries> series, const std::string_view section_id) {
-            return std::ranges::any_of(series, [section_id](const ControlScalarSeries& chart) { return chart.section_id == section_id && !chart.samples.empty(); });
-        }
-
-        [[nodiscard]] ImVec4 control_log_level_color(const std::string& level) {
-            if (level == "ERROR") return ImVec4{1.0f, 0.42f, 0.36f, 1.0f};
-            if (level == "WARN") return ImVec4{1.0f, 0.78f, 0.32f, 1.0f};
-            return ImVec4{0.68f, 0.73f, 0.80f, 1.0f};
-        }
-
         [[nodiscard]] ImVec4 control_metric_color(const ControlMetric& metric) {
             if (!metric.has_color) return ImVec4{0.72f, 0.79f, 0.86f, 1.0f};
             return ImVec4{metric.color[0], metric.color[1], metric.color[2], metric.color[3]};
@@ -487,7 +470,6 @@ namespace spectra::scene {
         void sync_setting_editors(ControlsState& controls, const std::span<const ControlSettingValue> settings);
         void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, std::string_view section_id);
         void draw_control_images(Spectra& application, const ControlsState& controls, std::span<const ControlImage> images, std::string_view section_id);
-        void draw_scalar_series(std::span<const ControlScalarSeries> series, std::string_view section_id);
         bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_panel(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, ImVec2 viewport_position, ImVec2 viewport_size);
@@ -600,42 +582,6 @@ namespace spectra::scene {
             }
         }
 
-        void draw_scalar_series(const std::span<const ControlScalarSeries> series, const std::string_view section_id) {
-            const std::vector<const ControlScalarSeries*> selected = scalar_series_for_section(series, section_id);
-            for (const ControlScalarSeries* chart : selected) {
-                ImGui::PushID(chart->id.c_str());
-                ImGui::TextUnformatted(chart->label.c_str());
-                if (!chart->description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", chart->description.c_str());
-                const ControlScalarSample& latest = chart->samples.back();
-                const std::string latest_text = chart->unit.empty()
-                    ? std::format("step {} | {:.6g}", latest.step, latest.value)
-                    : std::format("step {} | {:.6g} {}", latest.step, latest.value, chart->unit);
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s | %zu samples | rev %llu", latest_text.c_str(), chart->samples.size(), static_cast<unsigned long long>(chart->revision));
-                std::vector<float> values{};
-                values.reserve(chart->samples.size());
-                bool finite = true;
-                for (const ControlScalarSample& sample : chart->samples) {
-                    const float value = static_cast<float>(sample.value);
-                    if (!std::isfinite(value)) {
-                        finite = false;
-                        break;
-                    }
-                    values.push_back(value);
-                }
-                if (!finite || values.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-                    ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", "Chart values cannot be plotted");
-                    ImGui::PopID();
-                    continue;
-                }
-                ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4{chart->color[0], chart->color[1], chart->color[2], chart->color[3]});
-                ImGui::PlotLines("##plot", values.data(), static_cast<int>(values.size()), 0, nullptr, std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), ImVec2{std::max(1.0f, ImGui::GetContentRegionAvail().x), 54.0f});
-                ImGui::PopStyleColor();
-                ImGui::Spacing();
-                ImGui::PopID();
-            }
-        }
-
         [[nodiscard]] bool draw_summary(const ControlStatus& status) {
             const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(status, ControlPlacementPanelSummary);
             if (metrics.empty()) return false;
@@ -667,18 +613,6 @@ namespace spectra::scene {
             return std::ranges::any_of(status.metrics, [section_id](const ControlMetric& metric) {
                 return metric.section_id == section_id && metric_has_placement(metric, ControlPlacementPanelDetail) && !metric_has_placement(metric, ControlPlacementPanelSummary);
             });
-        }
-
-        void draw_logs(const std::span<const ControlLogEntry> logs) {
-            if (logs.empty()) return;
-            ImGui::TextDisabled("%s", "Log");
-            ImGui::BeginChild("SceneControlLog", ImVec2{-1.0f, 160.0f}, true);
-            for (const ControlLogEntry& entry : logs) {
-                const std::string line = std::format("{:>5} {:<9} {}", entry.sequence, entry.level, entry.message);
-                ImGui::TextColored(control_log_level_color(entry.level), "%s", line.c_str());
-            }
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
-            ImGui::EndChild();
         }
 
         bool draw_open_controls(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls) {
@@ -782,21 +716,14 @@ namespace spectra::scene {
                 const bool has_actions = action_section_has_editors(controls.actions, section.id);
                 const bool has_settings = setting_section_has_editors(controls.settings, section.id);
                 const bool has_images = control_images_section_has_images(snapshot->images, section.id);
-                const bool has_charts = scalar_series_section_has_samples(snapshot->scalar_series, section.id);
                 const bool has_metrics = section_has_detail_metrics(snapshot->status, section.id);
-                if (!has_actions && !has_settings && !has_images && !has_charts && !has_metrics) continue;
+                if (!has_actions && !has_settings && !has_images && !has_metrics) continue;
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", section.label.c_str());
                 if (has_actions) draw_action_section(scene_instance, status, controls, snapshot->status, section.id);
                 if (has_settings) draw_settings(scene_instance, status, controls, section.id);
                 if (has_images) draw_control_images(application, controls, snapshot->images, section.id);
-                if (has_charts) draw_scalar_series(snapshot->scalar_series, section.id);
                 if (has_metrics) draw_detail_metrics(snapshot->status, section.id);
-            }
-
-            if (!snapshot->logs.empty()) {
-                ImGui::Spacing();
-                draw_logs(snapshot->logs);
             }
         }
 

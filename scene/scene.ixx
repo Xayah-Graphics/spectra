@@ -158,12 +158,6 @@ namespace spectra::scene {
         std::vector<ControlActionState> action_states{};
     };
 
-    export struct ControlLogEntry {
-        std::uint64_t sequence{};
-        std::string level{};
-        std::string message{};
-    };
-
     export struct ControlImage {
         std::string id{};
         std::string label{};
@@ -174,23 +168,6 @@ namespace spectra::scene {
         std::uint64_t revision{};
         std::uint32_t width{};
         std::uint32_t height{};
-    };
-
-    export struct ControlScalarSample {
-        std::uint64_t step{};
-        double time_seconds{};
-        double value{};
-    };
-
-    export struct ControlScalarSeries {
-        std::string id{};
-        std::string label{};
-        std::string description{};
-        std::string unit{};
-        std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
-        std::string section_id{};
-        std::uint64_t revision{};
-        std::vector<ControlScalarSample> samples{};
     };
 
     export enum class ControlTimelineMode : std::uint32_t {
@@ -211,9 +188,7 @@ namespace spectra::scene {
     export struct ControlSnapshot {
         ControlStatus status{};
         std::vector<ControlSettingValue> settings{};
-        std::vector<ControlLogEntry> logs{};
         std::vector<ControlImage> images{};
-        std::vector<ControlScalarSeries> scalar_series{};
     };
 
     export enum class SceneKind {

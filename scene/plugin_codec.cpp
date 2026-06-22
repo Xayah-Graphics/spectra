@@ -842,20 +842,6 @@ namespace spectra::scene {
             return status;
         }
 
-        [[nodiscard]] std::vector<ControlLogEntry> make_control_logs(const std::span<const SpectraSceneControlLogEntry> entries, const std::string_view context) {
-            std::vector<ControlLogEntry> converted{};
-            converted.reserve(entries.size());
-            for (std::size_t entry_index = 0u; entry_index < entries.size(); ++entry_index) {
-                const SpectraSceneControlLogEntry& entry = entries[entry_index];
-                converted.push_back(ControlLogEntry{
-                    .sequence = entry.sequence,
-                    .level = abi_string(entry.level, std::format("{} entry {} level", context, entry_index), false),
-                    .message = abi_string(entry.message, std::format("{} entry {} message", context, entry_index), false),
-                });
-            }
-            return converted;
-        }
-
         [[nodiscard]] std::uint64_t checked_control_image_rgba8_byte_count(const ControlImage& image, const std::string_view context) {
             if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} image '{}' dimensions must be non-zero", context, image.id));
             const std::uint64_t width = image.width;
@@ -892,50 +878,6 @@ namespace spectra::scene {
             return converted;
         }
 
-        [[nodiscard]] ControlScalarSample make_control_scalar_sample(const SpectraSceneControlScalarSample& sample, const std::string_view context) {
-            return ControlScalarSample{
-                .step = sample.step,
-                .time_seconds = finite_double(sample.time_seconds, std::format("{} time", context)),
-                .value = finite_double(sample.value, std::format("{} value", context)),
-            };
-        }
-
-        [[nodiscard]] std::vector<ControlScalarSeries> make_control_scalar_series(const std::span<const SpectraSceneControlScalarSeries> series_span, const std::string_view context) {
-            std::set<std::string> series_ids{};
-            std::vector<ControlScalarSeries> converted{};
-            converted.reserve(series_span.size());
-            for (std::size_t series_index = 0u; series_index < series_span.size(); ++series_index) {
-                const SpectraSceneControlScalarSeries& series = series_span[series_index];
-                ControlScalarSeries converted_series{
-                    .id = abi_string(series.id, std::format("{} series {} id", context, series_index), false),
-                    .label = abi_string(series.label, std::format("{} series {} label", context, series_index), false),
-                    .description = abi_string(series.description, std::format("{} series {} description", context, series_index), true),
-                    .unit = abi_string(series.unit, std::format("{} series {} unit", context, series_index), true),
-                    .color = {
-                        finite_float(series.color[0], std::format("{} series {} color r", context, series_index)),
-                        finite_float(series.color[1], std::format("{} series {} color g", context, series_index)),
-                        finite_float(series.color[2], std::format("{} series {} color b", context, series_index)),
-                        finite_float(series.color[3], std::format("{} series {} color a", context, series_index)),
-                    },
-                    .section_id = abi_string(series.section_id, std::format("{} series {} section_id", context, series_index), false),
-                    .revision = series.revision,
-                };
-                if (!series_ids.insert(converted_series.id).second) throw std::runtime_error(std::format("{} series '{}' is duplicated", context, converted_series.id));
-                if (converted_series.revision == 0u) throw std::runtime_error(std::format("{} series '{}' revision must not be zero", context, converted_series.id));
-                const std::span<const SpectraSceneControlScalarSample> samples = abi_span(series.samples, std::format("{} series '{}' samples", context, converted_series.id));
-                converted_series.samples.reserve(samples.size());
-                std::uint64_t previous_step{};
-                for (std::size_t sample_index = 0u; sample_index < samples.size(); ++sample_index) {
-                    ControlScalarSample sample = make_control_scalar_sample(samples[sample_index], std::format("{} series '{}' sample {}", context, converted_series.id, sample_index));
-                    if (sample_index != 0u && sample.step < previous_step) throw std::runtime_error(std::format("{} series '{}' samples must be ordered by nondecreasing step", context, converted_series.id));
-                    previous_step = sample.step;
-                    converted_series.samples.push_back(sample);
-                }
-                converted.push_back(std::move(converted_series));
-            }
-            return converted;
-        }
-
         void validate_descriptor_section_references(const PluginAbiCodec::Descriptor& descriptor, const std::string_view context) {
             const std::set<std::string> section_ids = make_section_id_set(descriptor.sections);
             for (const ControlOptionSchema& option : descriptor.open_options) require_known_section_id(section_ids, option.section_id, std::format("{} open option '{}'", context, option.key));
@@ -950,7 +892,6 @@ namespace spectra::scene {
             const std::set<std::string> section_ids = make_section_id_set(sections);
             for (const ControlMetric& metric : snapshot.status.metrics) require_known_section_id(section_ids, metric.section_id, std::format("{} metric '{}'", context, metric.key));
             for (const ControlImage& image : snapshot.images) require_known_section_id(section_ids, image.section_id, std::format("{} image '{}'", context, image.id));
-            for (const ControlScalarSeries& series : snapshot.scalar_series) require_known_section_id(section_ids, series.section_id, std::format("{} scalar series '{}'", context, series.id));
         }
 
         [[nodiscard]] ControlSnapshot make_control_snapshot(const SpectraSceneControlSnapshotView& view, const std::span<const ControlSection> sections, const std::span<const ControlAction> actions, const std::span<const ControlOptionSchema> setting_schemas, const std::string_view context) {
@@ -958,9 +899,7 @@ namespace spectra::scene {
             ControlSnapshot snapshot{
                 .status = make_control_status(view.status, std::format("{} status", context)),
                 .settings = make_control_setting_values(abi_span(view.settings, std::format("{} settings", context)), setting_schemas, std::format("{} settings", context)),
-                .logs = make_control_logs(abi_span(view.logs, std::format("{} logs", context)), std::format("{} logs", context)),
                 .images = make_control_images(abi_span(view.images, std::format("{} images", context)), std::format("{} images", context)),
-                .scalar_series = make_control_scalar_series(abi_span(view.scalar_series, std::format("{} scalar series", context)), std::format("{} scalar series", context)),
             };
             if (snapshot.settings.size() != setting_schemas.size()) throw std::runtime_error(std::format("{} settings must provide one value for each declared control setting", context));
 

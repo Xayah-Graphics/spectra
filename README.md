@@ -46,7 +46,7 @@ You may also load PBRT scene files and scene plugins through the GUI.
 then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
 empty scene plugin controls workspace first; the Scene popover renders the generic form declared by the plugin
 descriptor and creates the dynamic scene only when the plugin-declared open action is pressed. After creation, the same
-popover displays plugin-declared control actions, status metrics, logs, charts, and preview images, while selected
+popover displays plugin-declared control actions, status metrics, and preview images, while selected
 metrics may also appear as compact viewport overlay chips.
 
 
@@ -59,7 +59,7 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v2()`.
+2. Export `spectra_scene_plugin_v3()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -75,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `2`.
-- Exported symbol: `spectra_scene_plugin_v2`.
+- ABI version: `3`.
+- Exported symbol: `spectra_scene_plugin_v3`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -90,9 +90,8 @@ declared source payload, and publishes
 
 scene plugins must declare the documented C ABI in the producer. Do not include Spectra headers, link
 Spectra libraries, import Spectra modules, or depend on Spectra CMake targets. A producer only needs to declare payload
-structs for the scene item kinds and control item kinds it actually emits; Spectra's host implementation still supports
-the full item kind tables. The plugin descriptor directly exposes generic controls/open metadata, scene callbacks,
-optional controls callbacks, open option schemas, control action schemas, and live setting schemas. Spectra renders the
+structs for the scene item kinds and control fields it actually emits. The plugin descriptor directly exposes generic
+controls/open metadata, scene callbacks, controls callbacks, open option schemas, control action schemas, and live setting schemas. Spectra renders the
 schemas in the Scene popover and calls the descriptor callbacks directly.
 
 ### Required Export
@@ -104,10 +103,10 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v2(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v3(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `2` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `3` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are required; missing callbacks are errors.
 
@@ -121,7 +120,7 @@ Controls callbacks are required; missing callbacks are errors.
   Document views may publish every named span. Frame views may publish cameras, renderable entities, and viewport
   attachments; materials and lights are document-only.
 - A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or
-  `VolumeGrid`. Cameras, lights, controls telemetry, and debug attachments do not count as renderable scene entities.
+  `VolumeGrid`. Cameras, lights, control status, and debug attachments do not count as renderable scene entities.
 - `default_coordinate_system` may be empty or one of `SpectraSceneYUp`, `PBRT`, `BlenderZUp`, `OpenGL`, `OpenCV`.
   Unknown names are errors.
 - Material `model` values: `lit_surface`, `unlit_surface`, `emissive_surface`, `volume`, `point_sprite`.
@@ -166,8 +165,8 @@ Controls callbacks are required; missing callbacks are errors.
 - `base_pbrt_path` may be empty. If non-empty, it must be relative to the plugin library directory.
 - `open_action_label` must be non-empty. `open_action_description` may be empty.
 - `sections` declares generic control panel sections. Each section id and label must be non-empty and unique. Section
-  declaration order is the display order. Open options, control settings, control actions, status metrics, control
-  images, and scalar series must each reference a declared `section_id`. Within a section, item order is the order of
+  declaration order is the display order. Open options, control settings, control actions, status metrics, and control
+  images must each reference a declared `section_id`. Within a section, item order is the order of
   the corresponding descriptor or snapshot span.
 - `control_actions` may be empty, but every declared action id and label must be non-empty and unique. Action option
   schemas use the same option kind and validation rules as open options.
@@ -179,11 +178,10 @@ Controls callbacks are required; missing callbacks are errors.
   kinds are only valid for open options or explicit action options. Setting keys and labels must be non-empty and unique
   in the descriptor. A snapshot setting item returns only `{ key, value }`; each key must match a declared setting and
   the value must parse according to that setting schema.
-- If controls are present, `control_snapshot` returns named fields directly: `settings`, `status`, `logs`, `images`,
-  and `scalar_series`. `status.struct_size` must match `SpectraSceneControlStatusView`. Empty optional arrays use
+- `control_snapshot` returns named fields directly: `settings`, `status`, and `images`.
+  `status.struct_size` must match `SpectraSceneControlStatusView`. Empty optional arrays use
   `{ nullptr, 0 }`. When the descriptor declares control settings, `settings` must provide one value for each schema.
-  Log, image, and scalar-series spans may be empty.
-- Status phase, headline, metric keys/labels/values, action state ids, log levels, and log messages must be non-empty.
+- Status phase, headline, metric keys/labels/values, and action state ids must be non-empty.
   Each action state id must refer to a declared control action. Every declared control action must have exactly one
   action state. Disabled actions must set `enabled = 0` and provide a non-empty `disabled_reason`; enabled actions must
   set `enabled = 1` and provide an empty `disabled_reason`.
@@ -194,11 +192,6 @@ Controls callbacks are required; missing callbacks are errors.
   outputs must have unique non-empty `id`, non-empty `label`, positive `width` and `height`, non-null tightly packed
   RGBA8 pixels with byte count `width * height * 4`, and non-zero `revision`. Spectra uploads these images to the
   Scene popover texture cache and reuses the texture while pointer, byte size, dimensions, and revision are unchanged.
-- The snapshot scalar-series span may be empty. Non-empty scalar
-  series outputs must have unique non-empty `id`, non-empty `label`, finite `color`, and non-zero `revision`. Samples
-  must have finite `time_seconds` and `value`, and must be ordered by nondecreasing `step`. Spectra copies scalar
-  samples for Scene popover charts only; scalar series do not enter `scene::Scene`, PBRT export, rasterizer scene
-  passes, or the pathtracer scene. Scalar-series display order is the snapshot scalar-series span order.
 - Option kinds: `0` text, `1` directory path, `2` file path, `3` choice, `4` bool, `5` float,
   `6` unsigned integer.
 - Option keys must be unique and non-empty. Choice options must declare non-empty unique choices; non-choice
@@ -230,7 +223,7 @@ Controls callbacks are required; missing callbacks are errors.
   is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
   when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
   `frame_index` describe the host timeline state. Long-running source updates must honor `scene_delta_seconds` so
-  Space/record/playback controls stay synchronized with source actions, telemetry, and preview availability.
+  Space/record/playback controls stay synchronized with source actions and preview availability.
 - Descriptor `document` returns static scene data as named spans: materials, lights, cameras, static renderable
   entities, and static debug attachments.
 - Cameras are optional scene items. If a plugin provides no cameras and no base PBRT camera, Spectra injects a
@@ -243,17 +236,16 @@ Controls callbacks are required; missing callbacks are errors.
   transform animation without a separate transform callback ABI.
 - Descriptor `last_error` returns the most recent instance-local error string; it may be empty. Controls callbacks use
   the same instance error channel.
-- All descriptor function pointers listed in this section are mandatory for ABI v29. Missing callbacks are rejected
+- All descriptor function pointers listed in this section are mandatory for ABI v3. Missing callbacks are rejected
   during plugin inspection/loading.
 - Descriptor `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
   `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as
-  logs, scalar charts, and preview images must not increment it.
+  status metrics and preview images must not increment it.
 - Descriptor `control_action` executes one plugin-declared action with strict key/value options.
 - Descriptor `control_setting_update` applies one changed setting key/value pair; it must validate the value strictly and increase
   `scene_revision` if the change modifies scene entities or debug attachments.
 - Descriptor `control_snapshot` returns the current plugin-owned live setting values, phase/headline/detail, metrics,
-  action states, log snapshot, borrowed CPU RGBA8 preview images, and scalar charts as named spans. Spectra copies logs
-  and scalar samples for display. Preview images are uploaded to UI textures but are not copied into `scene::Scene`,
+  action states, and borrowed CPU RGBA8 preview images as named spans. Preview images are uploaded to UI textures but are not copied into `scene::Scene`,
   exported to PBRT, or exposed to the pathtracer scene.
 
 Callbacks must not throw across the ABI. Return `SPECTRA_SCENE_RESULT_ERROR` and expose a message through
