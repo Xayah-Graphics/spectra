@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 8u;
+    constexpr std::uint32_t plugin_abi_version = 9u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -128,7 +128,6 @@ export namespace spectra::scene {
         double scene_delta_seconds{};
         double time_seconds{};
         std::uint64_t frame_index{};
-        std::uint32_t timeline_mode{};
         std::uint32_t timeline_playing{};
     };
 

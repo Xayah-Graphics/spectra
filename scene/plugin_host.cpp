@@ -733,7 +733,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] ControlAction make_control_action(const SpectraSceneControlAction& action, const std::string_view context) {
-            if (action.style > ControlActionStyleDanger) throw std::runtime_error(std::format("{} has unknown action style {}", context, action.style));
+            if (action.style > ControlActionStylePrimary) throw std::runtime_error(std::format("{} has unknown action style {}", context, action.style));
             return ControlAction{
                 .id = abi_string(action.id, std::format("{} id", context), false),
                 .label = abi_string(action.label, std::format("{} label", context), false),
@@ -1133,7 +1133,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v8");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v9");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1215,7 +1215,6 @@ namespace spectra::scene {
                 .scene_delta_seconds = update.scene_delta_seconds,
                 .time_seconds = update.time_seconds,
                 .frame_index = update.frame_index,
-                .timeline_mode = static_cast<std::uint32_t>(update.timeline_mode),
                 .timeline_playing = update.timeline_playing ? 1u : 0u,
             };
             this->check_result(this->plugin->update(instance, &update_info), instance, "Scene plugin update");

@@ -124,7 +124,6 @@ namespace spectra::scene {
     export inline constexpr std::uint32_t ControlMetricDisplayPrimary = 1u << 0u;
     export inline constexpr std::uint32_t ControlActionStyleSecondary = 0u;
     export inline constexpr std::uint32_t ControlActionStylePrimary = 1u;
-    export inline constexpr std::uint32_t ControlActionStyleDanger = 2u;
 
     export struct ControlAction {
         std::string id{};
@@ -159,18 +158,11 @@ namespace spectra::scene {
         std::vector<ControlActionState> action_states{};
     };
 
-    export enum class ControlTimelineMode : std::uint32_t {
-        Live = 0u,
-        Record = 1u,
-        Playback = 2u,
-    };
-
     export struct UpdateInfo {
         double wall_delta_seconds{};
         double scene_delta_seconds{};
         double time_seconds{};
         std::uint64_t frame_index{};
-        ControlTimelineMode timeline_mode{ControlTimelineMode::Live};
         bool timeline_playing{};
     };
 
@@ -594,12 +586,6 @@ namespace spectra::scene {
             DebugAttachmentSet debug_attachments{};
         };
 
-        enum class TimelineMode {
-            Live,
-            Record,
-            Playback,
-        };
-
         struct FrameCursor {
             std::uint64_t frame_index{};
             double time_seconds{};
@@ -616,14 +602,10 @@ namespace spectra::scene {
         };
 
         struct Timeline {
-            TimelineMode mode{TimelineMode::Playback};
             double frames_per_second{24.0};
             bool playing{true};
             FrameCursor cursor{};
-            std::uint64_t selected_frame_index{};
-            std::uint64_t clear_recording_request_serial{};
             std::optional<FrameSnapshot> current_frame{};
-            std::vector<FrameSnapshot> recorded_frames{};
         };
 
         struct ResolvedFrame {
@@ -715,7 +697,7 @@ namespace spectra::scene {
         void attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver);
         void open_plugin(PluginOpenRequest request);
         void advance(std::uint64_t frame_number, double delta_seconds);
-        void toggle_timeline_playback();
+        void toggle_timeline_playing();
         void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);
         void update_control_setting(std::string_view key, std::string_view value);
 
@@ -738,9 +720,7 @@ namespace spectra::scene {
             double frame_accumulator_seconds{};
             double stream_time_seconds{};
             std::uint64_t stream_frame_index{};
-            std::uint64_t observed_clear_recording_request_serial{};
             std::uint64_t observed_scene_revision{};
-            std::optional<std::uint64_t> committed_playback_frame_index{};
             std::optional<std::uint64_t> updated_frame_number{};
         };
 

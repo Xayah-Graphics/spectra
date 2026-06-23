@@ -1510,15 +1510,6 @@ namespace spectra::scene {
             if (!resolved_frame_has_renderable_entity(frame)) throw std::runtime_error(std::format("{} must contain at least one renderable Mesh, Sphere, PointCloud, or VolumeGrid entity", context));
         }
 
-        [[nodiscard]] ControlTimelineMode control_timeline_mode(const Scene::TimelineMode mode) {
-            switch (mode) {
-            case Scene::TimelineMode::Live: return ControlTimelineMode::Live;
-            case Scene::TimelineMode::Record: return ControlTimelineMode::Record;
-            case Scene::TimelineMode::Playback: return ControlTimelineMode::Playback;
-            }
-            throw std::runtime_error("Unknown scene timeline mode");
-        }
-
         [[nodiscard]] std::string lowercase_ascii(std::string value) {
             for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
             return value;
@@ -1810,9 +1801,7 @@ namespace spectra::scene {
         this->driver_runtime.frame_accumulator_seconds = 0.0;
         this->driver_runtime.stream_time_seconds = 0.0;
         this->driver_runtime.stream_frame_index = 0u;
-        this->driver_runtime.observed_clear_recording_request_serial = 0u;
         this->driver_runtime.observed_scene_revision = 0u;
-        this->driver_runtime.committed_playback_frame_index.reset();
         this->driver_runtime.updated_frame_number.reset();
     }
 
@@ -1872,10 +1861,8 @@ namespace spectra::scene {
         const std::uint64_t scene_revision = driver->scene_revision();
         const std::shared_ptr<const Document> scene_document = scene_instance.document();
         Timeline timeline{
-            .mode = TimelineMode::Live,
             .frames_per_second = scene_document->frames_per_second,
             .playing = true,
-            .selected_frame_index = 0u,
         };
         commit_scene_timeline_and_frame(scene_instance, std::move(timeline), std::move(snapshot));
         validate_scene_renderable_entities(scene_instance, "Plugin-driven scene initial frame");
@@ -1915,40 +1902,12 @@ namespace spectra::scene {
         const auto mark_updated = [this, frame_number] {
             this->driver_runtime.updated_frame_number = frame_number;
         };
-        if (timeline.clear_recording_request_serial != this->driver_runtime.observed_clear_recording_request_serial) {
-            timeline.recorded_frames.clear();
-            timeline.selected_frame_index = 0u;
-            commit_scene_timeline(*this, std::move(timeline));
-            this->driver_runtime.observed_clear_recording_request_serial = this->timeline().clear_recording_request_serial;
-            this->driver_runtime.committed_playback_frame_index.reset();
-            mark_updated();
-            return;
-        }
-        if (timeline.mode == TimelineMode::Playback) {
-            if (timeline.recorded_frames.empty()) {
-                mark_updated();
-                return;
-            }
-            if (timeline.selected_frame_index >= timeline.recorded_frames.size()) throw std::runtime_error("Scene playback selected frame is out of range");
-            if (this->driver_runtime.committed_playback_frame_index.has_value() && *this->driver_runtime.committed_playback_frame_index == timeline.selected_frame_index) {
-                mark_updated();
-                return;
-            }
-            FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
-            commit_scene_frame(*this, std::move(selected_frame));
-            validate_scene_renderable_entities(*this, "Scene playback frame");
-            this->driver_runtime.committed_playback_frame_index = timeline.selected_frame_index;
-            mark_updated();
-            return;
-        }
-        this->driver_runtime.committed_playback_frame_index.reset();
-        const bool scene_advancing = timeline.playing && timeline.mode != TimelineMode::Playback;
+        const bool scene_advancing = timeline.playing;
         driver.update(UpdateInfo{
             .wall_delta_seconds = delta_seconds,
             .scene_delta_seconds = scene_advancing ? delta_seconds : 0.0,
             .time_seconds = this->driver_runtime.stream_time_seconds,
             .frame_index = this->driver_runtime.stream_frame_index,
-            .timeline_mode = control_timeline_mode(timeline.mode),
             .timeline_playing = timeline.playing,
         });
         this->commit_driver_revision("Scene update");
@@ -1974,27 +1933,18 @@ namespace spectra::scene {
             mark_updated();
             return;
         }
-        if (timeline.mode == TimelineMode::Record) {
-            timeline.recorded_frames.push_back(snapshot);
-            timeline.selected_frame_index = timeline.recorded_frames.size() - 1u;
-            commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
-            validate_scene_renderable_entities(*this, "Scene recorded frame");
-            mark_updated();
-            return;
-        }
         commit_scene_frame(*this, std::move(snapshot));
         validate_scene_renderable_entities(*this, "Scene live frame");
         mark_updated();
     }
 
-    void Scene::toggle_timeline_playback() {
-        if (!this->document()->timeline_enabled) throw std::runtime_error("Scene does not support timeline playback");
+    void Scene::toggle_timeline_playing() {
+        if (!this->document()->timeline_enabled) throw std::runtime_error("Scene does not support timeline control");
         Timeline timeline = this->timeline();
-        if (timeline.mode == TimelineMode::Playback) throw std::runtime_error("Scene playback can only be toggled in Live or Record mode");
         timeline.playing = !timeline.playing;
         commit_scene_timeline(*this, std::move(timeline));
         this->driver_runtime.updated_frame_number.reset();
-        this->sync_driver_timeline_state("Scene timeline playback");
+        this->sync_driver_timeline_state("Scene timeline");
     }
 
     void Scene::execute_control_action(const std::string_view action_id, const std::span<const ControlOption> options) {
@@ -2037,7 +1987,6 @@ namespace spectra::scene {
             .scene_delta_seconds = 0.0,
             .time_seconds = this->driver_runtime.stream_time_seconds,
             .frame_index = this->driver_runtime.stream_frame_index,
-            .timeline_mode = control_timeline_mode(timeline.mode),
             .timeline_playing = timeline.playing,
         });
         this->commit_driver_revision(context);

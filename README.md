@@ -59,7 +59,7 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v8()`.
+2. Export `spectra_scene_plugin_v9()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -75,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `8`.
-- Exported symbol: `spectra_scene_plugin_v8`.
+- ABI version: `9`.
+- Exported symbol: `spectra_scene_plugin_v9`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -103,10 +103,10 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v8(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v9(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `8` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `9` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are required; missing callbacks are errors.
 
@@ -213,8 +213,8 @@ Controls callbacks are required; missing callbacks are errors.
 - Descriptor `destroy` releases that instance.
 - Descriptor `update` receives a `SpectraSceneUpdateInfo` once per GUI frame. `wall_delta_seconds`
   is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
-  when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
-  `frame_index` describe the host timeline state. Long-running source updates must honor `scene_delta_seconds` so
+  when the host timeline is paused. `timeline_playing`, `time_seconds`, and `frame_index` describe the host timeline
+  state. Long-running source updates must honor `scene_delta_seconds` so
   Space/record/playback controls stay synchronized with source actions and preview availability.
 - Descriptor `document` returns static scene data as named spans: materials, lights, cameras, static renderable
   entities, and static debug attachments.
@@ -228,7 +228,7 @@ Controls callbacks are required; missing callbacks are errors.
   transform animation without a separate transform callback ABI.
 - Descriptor `last_error` returns the most recent instance-local error string; it may be empty. Controls callbacks use
   the same instance error channel.
-- All descriptor function pointers listed in this section are mandatory for ABI v8. Missing callbacks are rejected
+- All descriptor function pointers listed in this section are mandatory for ABI v9. Missing callbacks are rejected
   during plugin inspection/loading.
 - Descriptor `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
   `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as

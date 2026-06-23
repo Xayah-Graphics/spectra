@@ -416,12 +416,6 @@ namespace spectra::scene {
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.10f, 0.56f, 0.60f, 1.0f});
                 return 3;
             }
-            if (style == ControlActionStyleDanger) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.32f, 0.12f, 0.12f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.46f, 0.16f, 0.15f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.60f, 0.18f, 0.16f, 1.0f});
-                return 3;
-            }
             return 0;
         }
 
@@ -574,13 +568,12 @@ namespace spectra::scene {
             const std::shared_ptr<const Scene::Document> document = scene_instance.document();
             if (!document->timeline_enabled) return false;
             const Scene::Timeline timeline = scene_instance.timeline();
-            if (timeline.mode == Scene::TimelineMode::Playback) return false;
             ImGui::Spacing();
             ImGui::TextDisabled("%s", "Timeline");
             const char* const label = timeline.playing ? "Pause" : "Resume";
             if (!ImGui::Button(label, ImVec2{-1.0f, 0.0f})) return false;
             try {
-                scene_instance.toggle_timeline_playback();
+                scene_instance.toggle_timeline_playing();
                 controls.phase = SceneControlsPhase::Active;
                 controls.error.clear();
                 set_scene_status(status, timeline.playing ? "Paused timeline" : "Resumed timeline", false);
@@ -840,7 +833,7 @@ namespace spectra::scene {
         const std::shared_ptr<const Scene::Document> document = scene_instance.document();
         if (!document->timeline_enabled) return;
         const Scene::Timeline timeline = scene_instance.timeline();
-        if (timeline.mode != Scene::TimelineMode::Playback && ImGui::IsKeyPressed(ImGuiKey_Space, false)) scene_instance.toggle_timeline_playback();
+        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) scene_instance.toggle_timeline_playing();
     }
 
     void SceneUi::register_to(Spectra& application) {

@@ -671,15 +671,6 @@ namespace {
         ImGui::TextUnformatted(value.c_str());
     }
 
-    [[nodiscard]] const char* timeline_mode_text(const spectra::scene::Scene::TimelineMode mode) {
-        switch (mode) {
-        case spectra::scene::Scene::TimelineMode::Live: return "Live";
-        case spectra::scene::Scene::TimelineMode::Record: return "Record";
-        case spectra::scene::Scene::TimelineMode::Playback: return "Playback";
-        }
-        throw std::runtime_error("Unknown Spectra rasterizer timeline mode");
-    }
-
     [[nodiscard]] float half_to_float(const std::uint16_t value) {
         const std::uint32_t sign     = (value >> 15u) & 0x1u;
         const std::uint32_t exponent = (value >> 10u) & 0x1fu;
@@ -972,8 +963,7 @@ namespace spectra::rasterizer {
         const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->host.swapchain_extent.width;
         const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
         const std::shared_ptr<const scene::Scene::Document> scene = this->scene.instance->document();
-        const scene::Scene::Timeline timeline = this->scene.instance->timeline();
-        const char* scene_mode = scene->timeline_enabled ? timeline_mode_text(timeline.mode) : "Static";
+        const char* scene_mode = scene->timeline_enabled ? "Live" : "Static";
         return std::format("{} | {} | {}x{}", scene->title.empty() ? scene->name : scene->title, scene_mode, width, height);
     }
 
@@ -4742,13 +4732,13 @@ namespace spectra::rasterizer {
         const std::shared_ptr<const scene::Scene::Document> scene = this->scene.instance->document();
         this->rebuild_scene_ui_cache_if_needed();
         constexpr const char* projection_text = "Perspective";
-        const char* scene_mode = scene->timeline_enabled ? timeline_mode_text(timeline.mode) : "Static";
+        const char* scene_mode = scene->timeline_enabled ? "Live" : "Static";
         const std::string scene_title = scene->title.empty() ? scene->name : scene->title;
-        std::string hud = scene->timeline_enabled ? std::format("{} | {} | frame {} | {:.2f}s | recorded {} | {}x{} | {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, timeline.recorded_frames.size(), this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {} | {}x{} | {}", scene_title, scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
+        std::string hud = scene->timeline_enabled ? std::format("{} | {} | frame {} | {:.2f}s | {}x{} | {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {} | {}x{} | {}", scene_title, scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
         const ImVec2 hud_padding{10.0f, 7.0f};
         ImVec2 hud_text = ImGui::CalcTextSize(hud.c_str());
         if (hud_text.x + hud_padding.x * 2.0f > image_size.x - 24.0f) {
-            hud = scene->timeline_enabled ? std::format("{} | {} | f{} | rec {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.recorded_frames.size()) : std::format("{} | {}", scene_title, scene_mode);
+            hud = scene->timeline_enabled ? std::format("{} | {} | f{}", scene_title, scene_mode, timeline.cursor.frame_index) : std::format("{} | {}", scene_title, scene_mode);
             hud_text = ImGui::CalcTextSize(hud.c_str());
         }
         const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
@@ -4759,17 +4749,10 @@ namespace spectra::rasterizer {
         float next_left_overlay_y = hud_max.y + 8.0f;
         if (scene->timeline_enabled) {
             constexpr const char* timeline_separator = "\xC2\xB7";
-            std::string timeline_hint{};
-            std::string compact_timeline_hint{};
-            if (timeline.mode == scene::Scene::TimelineMode::Playback) {
-                timeline_hint         = std::format("Playback {} R Reset", timeline_separator);
-                compact_timeline_hint = std::format("Playback {} R", timeline_separator);
-            } else {
-                const char* playback_state = timeline.playing ? "Playing" : "Paused";
-                const char* space_action = timeline.playing ? "Space Pause" : "Space Play";
-                timeline_hint         = std::format("{} {} {} {} R Reset", playback_state, timeline_separator, space_action, timeline_separator);
-                compact_timeline_hint = std::format("{} {} Space {} R", playback_state, timeline_separator, timeline_separator);
-            }
+            const char* playback_state = timeline.playing ? "Playing" : "Paused";
+            const char* space_action = timeline.playing ? "Space Pause" : "Space Resume";
+            std::string timeline_hint = std::format("{} {} {}", playback_state, timeline_separator, space_action);
+            std::string compact_timeline_hint = std::format("{} {} Space", playback_state, timeline_separator);
 
             const ImVec2 timeline_padding{10.0f, 7.0f};
             ImVec2 timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
@@ -4778,13 +4761,13 @@ namespace spectra::rasterizer {
                 timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
             }
             if (timeline_text.x + timeline_padding.x * 2.0f > image_size.x - 24.0f) {
-                timeline_hint = timeline.mode == scene::Scene::TimelineMode::Playback ? "R Reset" : "Space / R";
+                timeline_hint = "Space";
                 timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
             }
 
             const ImVec2 timeline_min{image_min.x + 12.0f, next_left_overlay_y};
             const ImVec2 timeline_max{timeline_min.x + timeline_text.x + timeline_padding.x * 2.0f, timeline_min.y + timeline_text.y + timeline_padding.y * 2.0f};
-            const bool timeline_active = timeline.mode != scene::Scene::TimelineMode::Playback && timeline.playing;
+            const bool timeline_active = timeline.playing;
             draw_list->AddRectFilled(timeline_min, timeline_max, timeline_active ? IM_COL32(12, 42, 38, 184) : IM_COL32(15, 18, 22, 164), 7.0f);
             draw_list->AddRect(timeline_min, timeline_max, timeline_active ? IM_COL32(72, 202, 154, 96) : IM_COL32(92, 102, 112, 72), 7.0f);
             draw_list->AddText(ImVec2{timeline_min.x + timeline_padding.x, timeline_min.y + timeline_padding.y}, IM_COL32(218, 236, 232, 255), timeline_hint.c_str());
