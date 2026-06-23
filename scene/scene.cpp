@@ -282,12 +282,6 @@ namespace spectra::scene {
             if (!scene_entity_exists(entity, frame, document)) throw std::runtime_error(std::format("{} references missing {} owner \"{}\"", context, scene_entity_kind_name(entity.kind), entity.name));
         }
 
-        [[nodiscard]] const Scene::Camera& require_camera_entity(const Scene::ResolvedFrame& frame, const std::string& name, const std::string_view context) {
-            for (const Scene::Camera& camera : frame.cameras)
-                if (camera.name == name) return camera;
-            throw std::runtime_error(std::format("{} references missing camera owner \"{}\"", context, name));
-        }
-
         void validate_viewport_segment_set(const Scene::ViewportSegmentSet& segment_set) {
             if (segment_set.name.empty()) throw std::runtime_error("Viewport segment set name must not be empty");
             if (!std::isfinite(segment_set.width) || segment_set.width <= 0.0f) throw std::runtime_error(std::format("Viewport segment set \"{}\" has an invalid default width", segment_set.name));
@@ -347,33 +341,9 @@ namespace spectra::scene {
             }
         }
 
-        void validate_viewport_camera_visual_image(const Scene::ViewportCameraVisualImage& image, const std::string_view context) {
-            validate_viewport_annotation_color(image.tint, std::format("{} image tint", context));
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} RGBA8 image dimensions must be non-zero", context));
-            const std::uint64_t byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
-            if (image.rgba8_size != byte_count) throw std::runtime_error(std::format("{} RGBA8 image byte count must be width * height * 4", context));
-            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("{} RGBA8 image pointer must not be null", context));
-        }
-
-        void validate_viewport_camera_visual(const Scene::ViewportCameraVisual& visual, const Scene::ResolvedFrame& frame, const Scene::Document& document) {
-            if (visual.name.empty()) throw std::runtime_error("Viewport camera visual name must not be empty");
-            if (visual.owner.kind != Scene::SceneEntityKind::Camera) throw std::runtime_error(std::format("Viewport camera visual \"{}\" owner must be a camera", visual.name));
-            validate_scene_entity_ref(visual.owner, frame, document, std::format("Viewport camera visual \"{}\"", visual.name));
-            const Scene::Camera& camera = require_camera_entity(frame, visual.owner.name, std::format("Viewport camera visual \"{}\"", visual.name));
-            if (camera.view.projection.kind == CameraProjectionKind::Orthographic) throw std::runtime_error(std::format("Viewport camera visual \"{}\" requires perspective or pinhole projection", visual.name));
-            validate_viewport_annotation_color(visual.color, std::format("Viewport camera visual \"{}\" color", visual.name));
-            if (!std::isfinite(visual.width) || !(visual.width > 0.0f)) throw std::runtime_error(std::format("Viewport camera visual \"{}\" width must be positive", visual.name));
-            validate_viewport_segment_width_mode(visual.width_mode, std::format("Viewport camera visual \"{}\"", visual.name));
-            validate_viewport_segment_depth_mode(visual.depth_mode, std::format("Viewport camera visual \"{}\"", visual.name));
-            if (!std::isfinite(visual.visual_near) || !std::isfinite(visual.visual_far) || !(visual.visual_near > 0.0f) || !(visual.visual_far > visual.visual_near)) throw std::runtime_error(std::format("Viewport camera visual \"{}\" range must satisfy visual_far > visual_near > 0", visual.name));
-            if (visual.image.has_value()) validate_viewport_camera_visual_image(*visual.image, std::format("Viewport camera visual \"{}\"", visual.name));
-        }
-
         void validate_debug_attachment_set(const Scene::DebugAttachmentSet& attachments, const Scene::ResolvedFrame& frame, const Scene::Document& document) {
             validate_viewport_segment_sets(attachments.viewport_segment_sets, frame, document);
             validate_viewport_voxel_grids(attachments.viewport_voxel_grids, frame, document);
-            validate_unique_scene_item_names(attachments.viewport_camera_visuals, "Scene resolved frame", "viewport camera visual");
-            for (const Scene::ViewportCameraVisual& visual : attachments.viewport_camera_visuals) validate_viewport_camera_visual(visual, frame, document);
         }
 
         void validate_volume_channel(const Scene::VolumeChannel& channel, const Scene::VolumeGrid& volume) {
@@ -421,9 +391,17 @@ namespace spectra::scene {
             for (const Scene::VolumeGrid& volume : volumes) validate_volume_grid(volume, document);
         }
 
+        void validate_camera_image(const Scene::CameraImage& image, const std::string_view context) {
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} RGBA8 image dimensions must be non-zero", context));
+            const std::uint64_t byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+            if (image.rgba8_size != byte_count) throw std::runtime_error(std::format("{} RGBA8 image byte count must be width * height * 4", context));
+            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("{} RGBA8 image pointer must not be null", context));
+        }
+
         void validate_camera(const Scene::Camera& camera, const std::string_view context) {
             if (camera.name.empty()) throw std::runtime_error(std::format("{} camera name must not be empty", context));
             static_cast<void>(make_vulkan_camera_matrices(camera.view, 1.0f, camera.view.projection.far_plane));
+            if (camera.image.has_value()) validate_camera_image(*camera.image, std::format("{} camera \"{}\"", context, camera.name));
         }
 
         void validate_cameras(const std::vector<Scene::Camera>& cameras, const std::string& active_camera_name, const std::string_view context) {
@@ -1152,7 +1130,6 @@ namespace spectra::scene {
             return Scene::DebugAttachmentSet{
                 .viewport_segment_sets = resolve_scene_items(document_attachments.viewport_segment_sets, frame_attachments.viewport_segment_sets, "viewport segment set"),
                 .viewport_voxel_grids = resolve_scene_items(document_attachments.viewport_voxel_grids, frame_attachments.viewport_voxel_grids, "viewport voxel grid"),
-                .viewport_camera_visuals = resolve_scene_items(document_attachments.viewport_camera_visuals, frame_attachments.viewport_camera_visuals, "viewport camera visual"),
             };
         }
 
@@ -1449,19 +1426,19 @@ namespace spectra::scene {
         }
     } // namespace
 
-    void Scene::Edit::replace_timeline(Scene::Timeline timeline) {
+    void Scene::Edit::replace_timeline(Timeline timeline) {
         this->timeline_replacement = std::move(timeline);
-        this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Timeline);
+        this->dirty = combine_dirty_flags(this->dirty, DirtyFlags::Timeline);
     }
 
-    void Scene::Edit::replace_document(Scene::Document document) {
+    void Scene::Edit::replace_document(Document document) {
         this->document_replacement = std::move(document);
-        this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Document);
+        this->dirty = combine_dirty_flags(this->dirty, DirtyFlags::Document);
     }
 
-    void Scene::Edit::replace_frame(Scene::FrameSnapshot frame) {
+    void Scene::Edit::replace_frame(FrameSnapshot frame) {
         this->frame_replacement = std::move(frame);
-        this->dirty = Scene::combine_dirty_flags(this->dirty, Scene::DirtyFlags::Frame);
+        this->dirty = combine_dirty_flags(this->dirty, DirtyFlags::Frame);
     }
 
     namespace {
@@ -1622,58 +1599,58 @@ namespace spectra::scene {
         this->scene.name = std::move(name);
         this->scene.title = std::move(title);
         this->scene.source = std::move(source);
-        this->scene.revision = Scene::Revision{1};
+        this->scene.revision = Revision{1};
     }
 
-    void Scene::Builder::set_revision(const Scene::Revision revision) {
+    void Scene::Builder::set_revision(const Revision revision) {
         if (revision.value == 0u) throw std::runtime_error("Scene builder revision must not be zero");
         this->scene.revision = revision;
     }
 
-    void Scene::Builder::set_render_settings(Scene::RenderSettings render_settings) {
+    void Scene::Builder::set_render_settings(RenderSettings render_settings) {
         this->scene.render_settings = std::move(render_settings);
     }
 
-    void Scene::Builder::add_material(Scene::Material material) {
+    void Scene::Builder::add_material(Material material) {
         if (material.name.empty()) throw std::runtime_error("Scene builder material name must not be empty");
-        for (const Scene::Material& existing : this->scene.materials) if (existing.name == material.name) throw std::runtime_error(std::format("Scene builder material \"{}\" is duplicated", material.name));
+        for (const Material& existing : this->scene.materials) if (existing.name == material.name) throw std::runtime_error(std::format("Scene builder material \"{}\" is duplicated", material.name));
         this->scene.materials.push_back(std::move(material));
     }
 
-    void Scene::Builder::add_texture(Scene::Texture texture) {
+    void Scene::Builder::add_texture(Texture texture) {
         if (texture.name.empty()) throw std::runtime_error("Scene builder texture name must not be empty");
-        for (const Scene::Texture& existing : this->scene.textures) if (existing.name == texture.name) throw std::runtime_error(std::format("Scene builder texture \"{}\" is duplicated", texture.name));
+        for (const Texture& existing : this->scene.textures) if (existing.name == texture.name) throw std::runtime_error(std::format("Scene builder texture \"{}\" is duplicated", texture.name));
         this->scene.textures.push_back(std::move(texture));
     }
 
-    void Scene::Builder::add_medium(Scene::Medium medium) {
+    void Scene::Builder::add_medium(Medium medium) {
         if (medium.name.empty()) throw std::runtime_error("Scene builder medium name must not be empty");
-        for (const Scene::Medium& existing : this->scene.media) if (existing.name == medium.name) throw std::runtime_error(std::format("Scene builder medium \"{}\" is duplicated", medium.name));
+        for (const Medium& existing : this->scene.media) if (existing.name == medium.name) throw std::runtime_error(std::format("Scene builder medium \"{}\" is duplicated", medium.name));
         this->scene.media.push_back(std::move(medium));
     }
 
-    void Scene::Builder::add_light(Scene::Light light) {
+    void Scene::Builder::add_light(Light light) {
         if (light.name.empty()) throw std::runtime_error("Scene builder light name must not be empty");
-        for (const Scene::Light& existing : this->scene.lights) if (existing.name == light.name) throw std::runtime_error(std::format("Scene builder light \"{}\" is duplicated", light.name));
+        for (const Light& existing : this->scene.lights) if (existing.name == light.name) throw std::runtime_error(std::format("Scene builder light \"{}\" is duplicated", light.name));
         this->scene.lights.push_back(std::move(light));
     }
 
-    void Scene::Builder::add_shape(Scene::Shape shape) {
+    void Scene::Builder::add_shape(Shape shape) {
         if (shape.name.empty()) throw std::runtime_error("Scene builder shape name must not be empty");
-        for (const Scene::Shape& existing : this->scene.shapes) if (existing.name == shape.name) throw std::runtime_error(std::format("Scene builder shape \"{}\" is duplicated", shape.name));
+        for (const Shape& existing : this->scene.shapes) if (existing.name == shape.name) throw std::runtime_error(std::format("Scene builder shape \"{}\" is duplicated", shape.name));
         this->scene.shapes.push_back(std::move(shape));
     }
 
-    void Scene::Builder::add_object_definition(Scene::ObjectDefinition definition) {
+    void Scene::Builder::add_object_definition(ObjectDefinition definition) {
         if (definition.name.empty()) throw std::runtime_error("Scene builder object definition name must not be empty");
-        for (const Scene::ObjectDefinition& existing : this->scene.object_definitions) if (existing.name == definition.name) throw std::runtime_error(std::format("Scene builder object definition \"{}\" is duplicated", definition.name));
+        for (const ObjectDefinition& existing : this->scene.object_definitions) if (existing.name == definition.name) throw std::runtime_error(std::format("Scene builder object definition \"{}\" is duplicated", definition.name));
         this->scene.object_definitions.push_back(std::move(definition));
     }
 
-    void Scene::Builder::add_object_instance(Scene::ObjectInstance instance) {
+    void Scene::Builder::add_object_instance(ObjectInstance instance) {
         if (instance.name.empty()) throw std::runtime_error("Scene builder object instance name must not be empty");
         if (instance.definition_name.empty()) throw std::runtime_error(std::format("Scene builder object instance \"{}\" definition name must not be empty", instance.name));
-        for (const Scene::ObjectInstance& existing : this->scene.object_instances) if (existing.name == instance.name) throw std::runtime_error(std::format("Scene builder object instance \"{}\" is duplicated", instance.name));
+        for (const ObjectInstance& existing : this->scene.object_instances) if (existing.name == instance.name) throw std::runtime_error(std::format("Scene builder object instance \"{}\" is duplicated", instance.name));
         this->scene.object_instances.push_back(std::move(instance));
     }
 
@@ -1684,34 +1661,34 @@ namespace spectra::scene {
     }
 
     Scene Scene::Builder::build() && {
-        Scene::ResolvedScene scene = std::move(*this).resolved_scene();
+        ResolvedScene scene = std::move(*this).resolved_scene();
         return Scene{std::move(scene)};
     }
 
     Scene::Scene() : Scene(make_empty_document()) {}
 
-    Scene::Scene(Scene::Document document) {
-        if (document.revision.value == 0) document.revision = Scene::Revision{1};
+    Scene::Scene(Document document) {
+        if (document.revision.value == 0) document.revision = Revision{1};
         document.default_coordinate_system = coordinate_system(document.default_coordinate_system.name);
         this->current_revision = document.revision;
-        this->current_document = std::make_shared<Scene::Document>(std::move(document));
+        this->current_document = std::make_shared<Document>(std::move(document));
         this->current_timeline.frames_per_second = this->current_document->frames_per_second;
     }
 
-    Scene::Scene(Scene::ResolvedScene scene) {
-        if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
+    Scene::Scene(ResolvedScene scene) {
+        if (scene.revision.value == 0) scene.revision = Revision{1};
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
         this->canonical_scene = std::move(scene);
     }
 
-    Scene::Scene(Scene::ResolvedScene scene, Scene::Document preview_document) {
-        if (scene.revision.value == 0) scene.revision = Scene::Revision{1};
+    Scene::Scene(ResolvedScene scene, Document preview_document) {
+        if (scene.revision.value == 0) scene.revision = Revision{1};
         if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
         preview_document.default_coordinate_system = coordinate_system(preview_document.default_coordinate_system.name);
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
-        this->current_document = std::make_shared<Scene::Document>(std::move(preview_document));
+        this->current_document = std::make_shared<Document>(std::move(preview_document));
         this->current_timeline.frames_per_second = this->current_document->frames_per_second;
         this->canonical_scene = std::move(scene);
     }
@@ -1736,28 +1713,28 @@ namespace spectra::scene {
     }
 
     Scene::ResolvedFrame Scene::resolved_frame() const {
-        const Scene::Document& document = this->preview_document();
-        const Scene::FrameSnapshot empty_frame{};
-        const Scene::FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
+        const Document& document = this->preview_document();
+        const FrameSnapshot empty_frame{};
+        const FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
         return make_rasterizer_preview_frame(resolve_document_frame(document, frame_value));
     }
 
     Scene::ResolvedScene Scene::resolved_scene() const {
-        return this->resolved_scene(std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>{});
+        return this->resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)>{});
     }
 
-    Scene::ResolvedScene Scene::resolved_scene(std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)> external_volume_materializer) const {
+    Scene::ResolvedScene Scene::resolved_scene(std::move_only_function<std::vector<float>(const VolumeGrid&, const VolumeChannel&)> external_volume_materializer) const {
         if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
         if (this->canonical_scene.has_value() && !this->current_timeline.current_frame.has_value()) {
-            Scene::ResolvedScene scene = *this->canonical_scene;
+            ResolvedScene scene = *this->canonical_scene;
             scene.revision = this->current_revision;
             validate_canonical_scene(scene);
             return scene;
         }
-        const Scene::Document& document = this->preview_document();
-        const Scene::FrameSnapshot empty_frame{};
-        const Scene::FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
-        Scene::ResolvedScene scene = make_resolved_scene_from_preview(document, resolve_document_frame(document, frame_value), this->current_revision, &external_volume_materializer);
+        const Document& document = this->preview_document();
+        const FrameSnapshot empty_frame{};
+        const FrameSnapshot& frame_value = this->current_timeline.current_frame.has_value() ? *this->current_timeline.current_frame : empty_frame;
+        ResolvedScene scene = make_resolved_scene_from_preview(document, resolve_document_frame(document, frame_value), this->current_revision, &external_volume_materializer);
         validate_canonical_scene(scene);
         return scene;
     }
@@ -1803,18 +1780,18 @@ namespace spectra::scene {
 
     void Scene::replace_with_scene(Scene scene) {
         const std::shared_ptr<HostServiceRouter> preserved_host = std::move(this->host);
-        const Scene::Revision replacement_revision{std::max(scene.current_revision.value, this->current_revision.value + 1u)};
+        const Revision replacement_revision{std::max(scene.current_revision.value, this->current_revision.value + 1u)};
         this->current_revision = replacement_revision;
         if (scene.current_document != nullptr) {
-            Scene::Document document = *scene.current_document;
+            Document document = *scene.current_document;
             document.revision = replacement_revision;
-            this->current_document = std::make_shared<Scene::Document>(std::move(document));
+            this->current_document = std::make_shared<Document>(std::move(document));
         } else {
             this->current_document.reset();
         }
         this->current_timeline = std::move(scene.current_timeline);
         if (scene.canonical_scene.has_value()) {
-            Scene::ResolvedScene resolved = std::move(*scene.canonical_scene);
+            ResolvedScene resolved = std::move(*scene.canonical_scene);
             resolved.revision = replacement_revision;
             this->canonical_scene = std::move(resolved);
         } else {
@@ -1876,28 +1853,28 @@ namespace spectra::scene {
         if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Scene path must be a PBRT file, not a directory");
         if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
         if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
-        this->open_static_scene(absolute_path.string(), scene_file_title(absolute_path), Scene::parse_pbrt_file(absolute_path));
+        this->open_static_scene(absolute_path.string(), scene_file_title(absolute_path), parse_pbrt_file(absolute_path));
     }
 
     void Scene::attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver) {
         if (id.empty()) throw std::runtime_error("Plugin-driven scene id must not be empty");
         if (driver == nullptr) throw std::runtime_error("Plugin-driven scene requires a driver");
         driver->reset();
-        Scene::Document document = driver->create_scene_document();
+        Document document = driver->create_scene_document();
         if (!document.timeline_enabled) throw std::runtime_error("Plugin-driven scene document must enable timeline");
         if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Plugin-driven scene document frame rate must be finite and positive");
         if (title.empty()) title = document.title;
         if (title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
         Scene scene_instance{std::move(document)};
-        Scene::FrameSnapshot snapshot = driver->create_scene_frame(Scene::FrameInfo{
+        FrameSnapshot snapshot = driver->create_scene_frame(FrameInfo{
             .delta_seconds = 0.0,
             .time_seconds = 0.0,
             .frame_index = 0u,
         });
         const std::uint64_t scene_revision = driver->scene_revision();
-        const std::shared_ptr<const Scene::Document> scene_document = scene_instance.document();
-        Scene::Timeline timeline{
-            .mode = Scene::TimelineMode::Live,
+        const std::shared_ptr<const Document> scene_document = scene_instance.document();
+        Timeline timeline{
+            .mode = TimelineMode::Live,
             .frames_per_second = scene_document->frames_per_second,
             .playing = true,
             .selected_frame_index = 0u,
@@ -1931,10 +1908,10 @@ namespace spectra::scene {
         if (this->kind() == Kind::Static) return;
         if (this->driver_runtime.updated_frame_number.has_value() && *this->driver_runtime.updated_frame_number == frame_number) return;
         SceneDriver& driver = this->active_driver();
-        const std::shared_ptr<const Scene::Document> document = this->document();
+        const std::shared_ptr<const Document> document = this->document();
         if (!document->timeline_enabled) throw std::runtime_error("Plugin-driven scene must enable timeline");
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene delta time is invalid");
-        Scene::Timeline timeline = this->timeline();
+        Timeline timeline = this->timeline();
         if (timeline.frames_per_second <= 0.0) throw std::runtime_error("Scene timeline frame rate must be positive");
         const double fixed_delta_seconds = 1.0 / timeline.frames_per_second;
         const auto mark_updated = [this, frame_number] {
@@ -1956,7 +1933,7 @@ namespace spectra::scene {
             mark_updated();
             return;
         }
-        if (timeline.mode == Scene::TimelineMode::Playback) {
+        if (timeline.mode == TimelineMode::Playback) {
             if (timeline.recorded_frames.empty()) {
                 mark_updated();
                 return;
@@ -1966,7 +1943,7 @@ namespace spectra::scene {
                 mark_updated();
                 return;
             }
-            Scene::FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
+            FrameSnapshot selected_frame = timeline.recorded_frames.at(timeline.selected_frame_index);
             commit_scene_frame(*this, std::move(selected_frame));
             validate_scene_renderable_entities(*this, "Scene playback frame");
             this->driver_runtime.committed_playback_frame_index = timeline.selected_frame_index;
@@ -1974,7 +1951,7 @@ namespace spectra::scene {
             return;
         }
         this->driver_runtime.committed_playback_frame_index.reset();
-        const bool scene_advancing = timeline.playing && timeline.mode != Scene::TimelineMode::Playback;
+        const bool scene_advancing = timeline.playing && timeline.mode != TimelineMode::Playback;
         driver.update(UpdateInfo{
             .wall_delta_seconds = delta_seconds,
             .scene_delta_seconds = scene_advancing ? delta_seconds : 0.0,
@@ -1990,12 +1967,12 @@ namespace spectra::scene {
         }
         this->driver_runtime.frame_accumulator_seconds += delta_seconds;
         bool updated = false;
-        Scene::FrameSnapshot snapshot{};
+        FrameSnapshot snapshot{};
         while (this->driver_runtime.frame_accumulator_seconds >= fixed_delta_seconds) {
             this->driver_runtime.frame_accumulator_seconds -= fixed_delta_seconds;
             ++this->driver_runtime.stream_frame_index;
             this->driver_runtime.stream_time_seconds += fixed_delta_seconds;
-            snapshot = driver.create_scene_frame(Scene::FrameInfo{
+            snapshot = driver.create_scene_frame(FrameInfo{
                 .delta_seconds = fixed_delta_seconds,
                 .time_seconds = this->driver_runtime.stream_time_seconds,
                 .frame_index = this->driver_runtime.stream_frame_index,
@@ -2006,7 +1983,7 @@ namespace spectra::scene {
             mark_updated();
             return;
         }
-        if (timeline.mode == Scene::TimelineMode::Record) {
+        if (timeline.mode == TimelineMode::Record) {
             timeline.recorded_frames.push_back(snapshot);
             timeline.selected_frame_index = timeline.recorded_frames.size() - 1u;
             commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
@@ -2021,8 +1998,8 @@ namespace spectra::scene {
 
     void Scene::toggle_timeline_playback() {
         if (!this->document()->timeline_enabled) throw std::runtime_error("Scene does not support timeline playback");
-        Scene::Timeline timeline = this->timeline();
-        if (timeline.mode == Scene::TimelineMode::Playback) throw std::runtime_error("Scene playback can only be toggled in Live or Record mode");
+        Timeline timeline = this->timeline();
+        if (timeline.mode == TimelineMode::Playback) throw std::runtime_error("Scene playback can only be toggled in Live or Record mode");
         timeline.playing = !timeline.playing;
         commit_scene_timeline(*this, std::move(timeline));
         this->driver_runtime.updated_frame_number.reset();
@@ -2030,7 +2007,7 @@ namespace spectra::scene {
 
     void Scene::request_timeline_reset() {
         if (!this->document()->timeline_enabled) throw std::runtime_error("Scene does not support timeline reset");
-        Scene::Timeline timeline = this->timeline();
+        Timeline timeline = this->timeline();
         ++timeline.reset_request_serial;
         commit_scene_timeline(*this, std::move(timeline));
         this->driver_runtime.updated_frame_number.reset();
@@ -2054,10 +2031,10 @@ namespace spectra::scene {
         SceneDriver& driver = this->active_driver();
         const std::uint64_t scene_revision = driver.scene_revision();
         if (scene_revision == this->driver_runtime.observed_scene_revision) return;
-        Scene::Document document = driver.create_scene_document();
+        Document document = driver.create_scene_document();
         if (!document.timeline_enabled) throw std::runtime_error("Plugin-driven scene document must enable timeline");
         if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Plugin-driven scene document frame rate must be finite and positive");
-        Scene::FrameSnapshot snapshot = driver.create_scene_frame(Scene::FrameInfo{
+        FrameSnapshot snapshot = driver.create_scene_frame(FrameInfo{
             .delta_seconds = 0.0,
             .time_seconds = this->driver_runtime.stream_time_seconds,
             .frame_index = this->driver_runtime.stream_frame_index,
@@ -2067,14 +2044,14 @@ namespace spectra::scene {
         this->driver_runtime.observed_scene_revision = scene_revision;
     }
 
-    void Scene::reset_driver_scene(Scene::Timeline timeline) {
+    void Scene::reset_driver_scene(Timeline timeline) {
         SceneDriver& driver = this->active_driver();
         this->driver_runtime.frame_accumulator_seconds = 0.0;
         this->driver_runtime.stream_time_seconds = 0.0;
         this->driver_runtime.stream_frame_index = 0u;
         driver.reset();
         this->driver_runtime.observed_scene_revision = driver.scene_revision();
-        Scene::FrameSnapshot snapshot = driver.create_scene_frame(Scene::FrameInfo{
+        FrameSnapshot snapshot = driver.create_scene_frame(FrameInfo{
             .delta_seconds = 0.0,
             .time_seconds = 0.0,
             .frame_index = 0u,
@@ -2087,22 +2064,22 @@ namespace spectra::scene {
     const Scene::Document& Scene::preview_document() const {
         if (this->current_document != nullptr) return *this->current_document;
         if (!this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
-        Scene::Document preview_document = make_preview_document_from_pbrt(*this->canonical_scene);
+        Document preview_document = make_preview_document_from_pbrt(*this->canonical_scene);
         if (preview_document.revision.value == 0) preview_document.revision = this->current_revision;
-        this->current_document = std::make_shared<Scene::Document>(std::move(preview_document));
+        this->current_document = std::make_shared<Document>(std::move(preview_document));
         return *this->current_document;
     }
 
-    Scene::DirtyFlags Scene::commit(Scene::Edit edit) {
+    Scene::DirtyFlags Scene::commit(Edit edit) {
         if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Cannot edit an unloaded scene workspace");
-        if (edit.dirty == Scene::DirtyFlags::None) throw std::runtime_error("Cannot commit an empty scene edit");
+        if (edit.dirty == DirtyFlags::None) throw std::runtime_error("Cannot commit an empty scene edit");
 
-        this->current_revision = Scene::Revision{this->current_revision.value + 1};
+        this->current_revision = Revision{this->current_revision.value + 1};
         if (edit.document_replacement.has_value()) {
-            Scene::Document document = std::move(*edit.document_replacement);
+            Document document = std::move(*edit.document_replacement);
             document.revision = this->current_revision;
             document.default_coordinate_system = coordinate_system(document.default_coordinate_system.name);
-            this->current_document = std::make_shared<Scene::Document>(std::move(document));
+            this->current_document = std::make_shared<Document>(std::move(document));
             this->current_timeline.frames_per_second = this->current_document->frames_per_second;
             this->canonical_scene.reset();
         }
@@ -2115,8 +2092,8 @@ namespace spectra::scene {
         return edit.dirty;
     }
 
-    Scene::FrameCursor Scene::make_frame_cursor(const Scene::FrameInfo& info) {
-        return Scene::FrameCursor{
+    Scene::FrameCursor Scene::make_frame_cursor(const FrameInfo& info) {
+        return FrameCursor{
             .frame_index  = info.frame_index,
             .time_seconds = info.time_seconds,
         };

@@ -111,16 +111,16 @@ namespace spectra::scene {
             return value;
         }
 
-        [[nodiscard]] scene::Vector3 make_vector3(const float (&value)[3], const std::string_view context) {
-            return scene::Vector3{
+        [[nodiscard]] Vector3 make_vector3(const float (&value)[3], const std::string_view context) {
+            return Vector3{
                 finite_float(value[0], std::format("{} x", context)),
                 finite_float(value[1], std::format("{} y", context)),
                 finite_float(value[2], std::format("{} z", context)),
             };
         }
 
-        [[nodiscard]] scene::Vector4 make_vector4(const float (&value)[4], const std::string_view context) {
-            return scene::Vector4{
+        [[nodiscard]] Vector4 make_vector4(const float (&value)[4], const std::string_view context) {
+            return Vector4{
                 finite_float(value[0], std::format("{} x", context)),
                 finite_float(value[1], std::format("{} y", context)),
                 finite_float(value[2], std::format("{} z", context)),
@@ -128,10 +128,10 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] scene::Transform make_transform(const SpectraSceneTransform& transform, const std::string_view context) {
-            return scene::Transform{
+        [[nodiscard]] Transform make_transform(const SpectraSceneTransform& transform, const std::string_view context) {
+            return Transform{
                 .position = make_vector3(transform.position, std::format("{} position", context)),
-                .rotation = scene::Quaternion{
+                .rotation = Quaternion{
                     finite_float(transform.rotation[0], std::format("{} rotation x", context)),
                     finite_float(transform.rotation[1], std::format("{} rotation y", context)),
                     finite_float(transform.rotation[2], std::format("{} rotation z", context)),
@@ -141,117 +141,117 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] scene::Scene::ViewportSegmentWidthMode viewport_segment_width_mode_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::ViewportSegmentWidthMode viewport_segment_width_mode_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::ViewportSegmentWidthMode::Screen;
-            case 1u: return scene::Scene::ViewportSegmentWidthMode::World;
+            case 0u: return Scene::ViewportSegmentWidthMode::Screen;
+            case 1u: return Scene::ViewportSegmentWidthMode::World;
             }
             throw std::runtime_error(std::format("{} has invalid viewport segment width mode {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::ViewportSegmentDepthMode viewport_segment_depth_mode_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::ViewportSegmentDepthMode viewport_segment_depth_mode_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::ViewportSegmentDepthMode::DepthTested;
-            case 1u: return scene::Scene::ViewportSegmentDepthMode::AlwaysVisible;
+            case 0u: return Scene::ViewportSegmentDepthMode::DepthTested;
+            case 1u: return Scene::ViewportSegmentDepthMode::AlwaysVisible;
             }
             throw std::runtime_error(std::format("{} has invalid viewport segment depth mode {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::ViewportVoxelGridSourceKind viewport_voxel_grid_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::ViewportVoxelGridSourceKind viewport_voxel_grid_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::ViewportVoxelGridSourceKind::IndexList;
-            case 1u: return scene::Scene::ViewportVoxelGridSourceKind::Bitfield;
+            case 0u: return Scene::ViewportVoxelGridSourceKind::IndexList;
+            case 1u: return Scene::ViewportVoxelGridSourceKind::Bitfield;
             }
             throw std::runtime_error(std::format("{} has invalid viewport voxel grid source kind {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::ViewportVoxelGridIndexEncoding viewport_voxel_grid_index_encoding_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::ViewportVoxelGridIndexEncoding viewport_voxel_grid_index_encoding_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::ViewportVoxelGridIndexEncoding::Linear;
-            case 1u: return scene::Scene::ViewportVoxelGridIndexEncoding::Morton3D;
+            case 0u: return Scene::ViewportVoxelGridIndexEncoding::Linear;
+            case 1u: return Scene::ViewportVoxelGridIndexEncoding::Morton3D;
             }
             throw std::runtime_error(std::format("{} has invalid viewport voxel grid index encoding {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::VolumeChannelSourceKind volume_channel_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::VolumeChannelSourceKind volume_channel_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::VolumeChannelSourceKind::Values;
-            case 1u: return scene::Scene::VolumeChannelSourceKind::ExternalGpuBuffer;
+            case 0u: return Scene::VolumeChannelSourceKind::Values;
+            case 1u: return Scene::VolumeChannelSourceKind::ExternalGpuBuffer;
             }
             throw std::runtime_error(std::format("{} has invalid volume channel source kind {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::VolumeChannelIndexEncoding volume_channel_index_encoding_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::VolumeChannelIndexEncoding volume_channel_index_encoding_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::VolumeChannelIndexEncoding::Linear;
-            case 1u: return scene::Scene::VolumeChannelIndexEncoding::Morton3D;
+            case 0u: return Scene::VolumeChannelIndexEncoding::Linear;
+            case 1u: return Scene::VolumeChannelIndexEncoding::Morton3D;
             }
             throw std::runtime_error(std::format("{} has invalid volume channel index encoding {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::VolumeChannelFormat volume_channel_format_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::VolumeChannelFormat volume_channel_format_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::VolumeChannelFormat::Float32;
-            case 1u: return scene::Scene::VolumeChannelFormat::Float32x3;
+            case 0u: return Scene::VolumeChannelFormat::Float32;
+            case 1u: return Scene::VolumeChannelFormat::Float32x3;
             }
             throw std::runtime_error(std::format("{} has invalid volume channel format {}", context, value));
         }
 
-        [[nodiscard]] std::uint32_t volume_channel_component_count(const scene::Scene::VolumeChannelFormat format) {
+        [[nodiscard]] std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
             switch (format) {
-            case scene::Scene::VolumeChannelFormat::Float32: return 1u;
-            case scene::Scene::VolumeChannelFormat::Float32x3: return 3u;
+            case Scene::VolumeChannelFormat::Float32: return 1u;
+            case Scene::VolumeChannelFormat::Float32x3: return 3u;
             }
             throw std::runtime_error("Unknown Scene volume channel format");
         }
 
-        [[nodiscard]] scene::Scene::SceneEntityKind scene_entity_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+        [[nodiscard]] Scene::SceneEntityKind scene_entity_kind_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
-            case 0u: return scene::Scene::SceneEntityKind::Mesh;
-            case 1u: return scene::Scene::SceneEntityKind::Sphere;
-            case 2u: return scene::Scene::SceneEntityKind::PointCloud;
-            case 3u: return scene::Scene::SceneEntityKind::VolumeGrid;
-            case 4u: return scene::Scene::SceneEntityKind::Camera;
-            case 5u: return scene::Scene::SceneEntityKind::Light;
+            case 0u: return Scene::SceneEntityKind::Mesh;
+            case 1u: return Scene::SceneEntityKind::Sphere;
+            case 2u: return Scene::SceneEntityKind::PointCloud;
+            case 3u: return Scene::SceneEntityKind::VolumeGrid;
+            case 4u: return Scene::SceneEntityKind::Camera;
+            case 5u: return Scene::SceneEntityKind::Light;
             }
             throw std::runtime_error(std::format("{} has invalid scene entity kind {}", context, value));
         }
 
-        [[nodiscard]] scene::Scene::SceneEntityRef make_entity_ref(const SpectraSceneEntityRef& entity, const std::string_view context) {
-            return scene::Scene::SceneEntityRef{
+        [[nodiscard]] Scene::SceneEntityRef make_entity_ref(const SpectraSceneEntityRef& entity, const std::string_view context) {
+            return Scene::SceneEntityRef{
                 .kind = scene_entity_kind_from_u32(entity.kind, context),
                 .name = abi_string(entity.name, std::format("{} name", context), false),
             };
         }
 
-        [[nodiscard]] scene::Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
-            if (value == "lit_surface") return scene::Scene::PreviewSurfaceKind::LitSurface;
-            if (value == "unlit_surface") return scene::Scene::PreviewSurfaceKind::UnlitSurface;
-            if (value == "emissive_surface") return scene::Scene::PreviewSurfaceKind::EmissiveSurface;
-            if (value == "volume") return scene::Scene::PreviewSurfaceKind::Volume;
-            if (value == "point_sprite") return scene::Scene::PreviewSurfaceKind::PointGlyph;
+        [[nodiscard]] Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
+            if (value == "lit_surface") return Scene::PreviewSurfaceKind::LitSurface;
+            if (value == "unlit_surface") return Scene::PreviewSurfaceKind::UnlitSurface;
+            if (value == "emissive_surface") return Scene::PreviewSurfaceKind::EmissiveSurface;
+            if (value == "volume") return Scene::PreviewSurfaceKind::Volume;
+            if (value == "point_sprite") return Scene::PreviewSurfaceKind::PointGlyph;
             throw std::runtime_error(std::format("Scene material \"{}\" has invalid preview surface kind \"{}\"", material_name, value));
         }
 
-        [[nodiscard]] scene::Scene::PreviewAlphaMode preview_alpha_mode_from_string(const std::string_view value, const std::string_view material_name) {
-            if (value == "opaque") return scene::Scene::PreviewAlphaMode::Opaque;
-            if (value == "masked") return scene::Scene::PreviewAlphaMode::Masked;
-            if (value == "blend") return scene::Scene::PreviewAlphaMode::Blend;
+        [[nodiscard]] Scene::PreviewAlphaMode preview_alpha_mode_from_string(const std::string_view value, const std::string_view material_name) {
+            if (value == "opaque") return Scene::PreviewAlphaMode::Opaque;
+            if (value == "masked") return Scene::PreviewAlphaMode::Masked;
+            if (value == "blend") return Scene::PreviewAlphaMode::Blend;
             throw std::runtime_error(std::format("Scene material \"{}\" has invalid alpha mode \"{}\"", material_name, value));
         }
 
-        [[nodiscard]] scene::Scene::PreviewLightKind light_kind_from_string(const std::string_view value, const std::string_view light_name) {
-            if (value == "directional") return scene::Scene::PreviewLightKind::Directional;
-            if (value == "point") return scene::Scene::PreviewLightKind::Point;
-            if (value == "spot") return scene::Scene::PreviewLightKind::Spot;
-            if (value == "area") return scene::Scene::PreviewLightKind::Area;
-            if (value == "environment") return scene::Scene::PreviewLightKind::Environment;
+        [[nodiscard]] Scene::PreviewLightKind light_kind_from_string(const std::string_view value, const std::string_view light_name) {
+            if (value == "directional") return Scene::PreviewLightKind::Directional;
+            if (value == "point") return Scene::PreviewLightKind::Point;
+            if (value == "spot") return Scene::PreviewLightKind::Spot;
+            if (value == "area") return Scene::PreviewLightKind::Area;
+            if (value == "environment") return Scene::PreviewLightKind::Environment;
             throw std::runtime_error(std::format("Scene light \"{}\" has invalid kind \"{}\"", light_name, value));
         }
 
-        [[nodiscard]] scene::Scene::PreviewMaterial make_material(const SpectraSceneMaterial& material) {
+        [[nodiscard]] Scene::PreviewMaterial make_material(const SpectraSceneMaterial& material) {
             const std::string name = abi_string(material.name, "Scene material name", false);
-            return scene::Scene::PreviewMaterial{
+            return Scene::PreviewMaterial{
                 .name = name,
                 .surface_kind = preview_surface_kind_from_string(abi_string(material.model, std::format("Scene material \"{}\" model", name), true), name),
                 .alpha_mode = preview_alpha_mode_from_string(abi_string(material.alpha_mode, std::format("Scene material \"{}\" alpha mode", name), true), name),
@@ -266,9 +266,9 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] scene::Scene::PreviewLight make_light(const SpectraSceneLight& light) {
+        [[nodiscard]] Scene::PreviewLight make_light(const SpectraSceneLight& light) {
             const std::string name = abi_string(light.name, "Scene light name", false);
-            return scene::Scene::PreviewLight{
+            return Scene::PreviewLight{
                 .name = name,
                 .kind = light_kind_from_string(abi_string(light.kind, std::format("Scene light \"{}\" kind", name), true), name),
                 .transform = make_transform(light.transform, std::format("Scene light \"{}\"", name)),
@@ -278,18 +278,18 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] scene::CameraProjection camera_projection(const SpectraSceneCamera& camera, const std::string& name) {
-            scene::CameraProjection projection{
+        [[nodiscard]] CameraProjection camera_projection(const SpectraSceneCamera& camera, const std::string& name) {
+            CameraProjection projection{
                 .near_plane = finite_float(camera.near_plane, std::format("Scene camera \"{}\" near plane", name)),
                 .far_plane = finite_float(camera.far_plane, std::format("Scene camera \"{}\" far plane", name)),
             };
             switch (camera.projection) {
             case 0u:
-                projection.kind = scene::CameraProjectionKind::Perspective;
+                projection.kind = CameraProjectionKind::Perspective;
                 projection.vertical_fov_degrees = finite_float(camera.vertical_fov_degrees, std::format("Scene camera \"{}\" vertical fov", name));
                 return projection;
             case 1u:
-                projection.kind = scene::CameraProjectionKind::Pinhole;
+                projection.kind = CameraProjectionKind::Pinhole;
                 projection.image_width = camera.image_width;
                 projection.image_height = camera.image_height;
                 projection.fx = finite_float(camera.fx, std::format("Scene camera \"{}\" fx", name));
@@ -301,30 +301,47 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("Scene camera \"{}\" has invalid projection {}", name, camera.projection));
         }
 
-        [[nodiscard]] scene::Scene::Camera make_camera(const SpectraSceneCamera& camera) {
+        [[nodiscard]] Scene::CameraImage make_camera_image(const SpectraSceneCameraImage& image, const std::string& name) {
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Scene camera \"{}\" RGBA8 image dimensions must be non-zero", name));
+            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Scene camera \"{}\" RGBA8 image byte count must be width * height * 4", name));
+            const Scene::CameraImage result{
+                .width = image.width,
+                .height = image.height,
+                .rgba8 = image.rgba8,
+                .rgba8_size = image.rgba8_size,
+                .revision = image.revision,
+            };
+            static_cast<void>(abi_span(image.rgba8, image.rgba8_size, std::format("Scene camera \"{}\" RGBA8 image", name)));
+            return result;
+        }
+
+        [[nodiscard]] Scene::Camera make_camera(const SpectraSceneCamera& camera) {
             const std::string name = abi_string(camera.name, "Scene camera name", false);
             const std::string local_coordinate_system_name = abi_string(camera.local_coordinate_system, std::format("Scene camera \"{}\" local coordinate system", name), false);
-            const scene::Transform transform = make_transform(camera.transform, std::format("Scene camera \"{}\"", name));
-            const scene::Vector3 target = make_vector3(camera.target, std::format("Scene camera \"{}\" target", name));
-            const scene::Vector3 up = make_vector3(camera.up, std::format("Scene camera \"{}\" up", name));
-            return scene::Scene::Camera{
+            const Transform transform = make_transform(camera.transform, std::format("Scene camera \"{}\"", name));
+            const Vector3 target = make_vector3(camera.target, std::format("Scene camera \"{}\" target", name));
+            const Vector3 up = make_vector3(camera.up, std::format("Scene camera \"{}\" up", name));
+            Scene::Camera result{
                 .name = name,
-                .view = scene::CameraViewState{
-                    .pose = scene::CameraPose{
+                .view = CameraViewState{
+                    .pose = CameraPose{
                         .position = transform.position,
-                        .orientation = scene::normalized_quaternion(transform.rotation, std::format("Scene camera \"{}\" orientation", name)),
-                        .local_convention = scene::coordinate_system(local_coordinate_system_name).convention,
+                        .orientation = normalized_quaternion(transform.rotation, std::format("Scene camera \"{}\" orientation", name)),
+                        .local_convention = coordinate_system(local_coordinate_system_name).convention,
                     },
                     .focus = target,
-                    .navigation_up = scene::normalize(up, std::format("Scene camera \"{}\" up", name)),
+                    .navigation_up = normalize(up, std::format("Scene camera \"{}\" up", name)),
                     .projection = camera_projection(camera, name),
                 },
             };
+            if (camera.has_image != 0u) result.image = make_camera_image(camera.image, name);
+            return result;
         }
 
-        [[nodiscard]] scene::Scene::Mesh make_mesh(const SpectraSceneMesh& mesh, const bool dynamic) {
+        [[nodiscard]] Scene::Mesh make_mesh(const SpectraSceneMesh& mesh, const bool dynamic) {
             const std::string name = abi_string(mesh.name, "Scene mesh name", false);
-            scene::Scene::Mesh result{
+            Scene::Mesh result{
                 .name = name,
                 .material_name = abi_string(mesh.material_name, std::format("Scene mesh \"{}\" material name", name), false),
                 .transform = make_transform(mesh.transform, std::format("Scene mesh \"{}\"", name)),
@@ -346,11 +363,11 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] scene::Scene::Sphere make_sphere(const SpectraSceneSphere& sphere, const bool dynamic) {
+        [[nodiscard]] Scene::Sphere make_sphere(const SpectraSceneSphere& sphere, const bool dynamic) {
             const std::string name = abi_string(sphere.name, "Scene sphere name", false);
             const float radius = finite_float(sphere.radius, std::format("Scene sphere \"{}\" radius", name));
             if (radius <= 0.0f) throw std::runtime_error(std::format("Scene sphere \"{}\" radius must be positive", name));
-            return scene::Scene::Sphere{
+            return Scene::Sphere{
                 .name = name,
                 .radius = radius,
                 .material_name = abi_string(sphere.material_name, std::format("Scene sphere \"{}\" material name", name), false),
@@ -359,9 +376,9 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] scene::Scene::PointCloud make_point_cloud(const SpectraScenePointCloud& point_cloud, const bool dynamic) {
+        [[nodiscard]] Scene::PointCloud make_point_cloud(const SpectraScenePointCloud& point_cloud, const bool dynamic) {
             const std::string name = abi_string(point_cloud.name, "Scene point cloud name", false);
-            scene::Scene::PointCloud result{
+            Scene::PointCloud result{
                 .name = name,
                 .material_name = abi_string(point_cloud.material_name, std::format("Scene point cloud \"{}\" material name", name), false),
                 .transform = make_transform(point_cloud.transform, std::format("Scene point cloud \"{}\"", name)),
@@ -383,9 +400,9 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] scene::Scene::VolumeGrid make_volume(const SpectraSceneVolume& volume, const bool dynamic) {
+        [[nodiscard]] Scene::VolumeGrid make_volume(const SpectraSceneVolume& volume, const bool dynamic) {
             const std::string name = abi_string(volume.name, "Scene volume name", false);
-            scene::Scene::VolumeGrid result{
+            Scene::VolumeGrid result{
                 .name = name,
                 .dimensions = {volume.dimensions[0], volume.dimensions[1], volume.dimensions[2]},
                 .origin = make_vector3(volume.origin, std::format("Scene volume \"{}\" origin", name)),
@@ -397,7 +414,7 @@ namespace spectra::scene {
             const std::span<const SpectraSceneVolumeChannel> channels = abi_span(volume.channels.data, volume.channels.count, std::format("Scene volume \"{}\" channels", name));
             for (const SpectraSceneVolumeChannel& channel : channels) {
                 const std::string channel_name = abi_string(channel.name, std::format("Scene volume \"{}\" channel name", name), false);
-                scene::Scene::VolumeChannel converted{
+                Scene::VolumeChannel converted{
                     .name = channel_name,
                     .dimensions = {channel.dimensions[0], channel.dimensions[1], channel.dimensions[2]},
                     .format = volume_channel_format_from_u32(channel.format, std::format("Scene volume \"{}\" channel \"{}\"", name, channel_name)),
@@ -414,7 +431,7 @@ namespace spectra::scene {
                 if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" value count exceeds uint64 range", name, converted.name));
                 const std::uint64_t expected_count = cell_count * component_count;
                 const std::span<const float> values = abi_span(channel.values.data, channel.values.count, std::format("Scene volume \"{}\" channel \"{}\" values", name, converted.name));
-                if (converted.source_kind == scene::Scene::VolumeChannelSourceKind::Values) {
+                if (converted.source_kind == Scene::VolumeChannelSourceKind::Values) {
                     if (expected_count != values.size()) throw std::runtime_error(std::format("Scene volume \"{}\" channel \"{}\" value count does not match dimensions", name, converted.name));
                     converted.values.assign(values.begin(), values.end());
                     for (std::size_t index = 0u; index < converted.values.size(); ++index)
@@ -435,42 +452,9 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] scene::Scene::ViewportCameraVisualImage make_viewport_camera_visual_image(const SpectraSceneViewportCameraVisualImage& image, const std::string& name) {
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Scene viewport camera visual \"{}\" RGBA8 image dimensions must be non-zero", name));
-            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
-            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Scene viewport camera visual \"{}\" RGBA8 image byte count must be width * height * 4", name));
-            scene::Scene::ViewportCameraVisualImage result{
-                .width = image.width,
-                .height = image.height,
-                .rgba8 = image.rgba8,
-                .rgba8_size = image.rgba8_size,
-                .revision = image.revision,
-                .tint = make_vector4(image.tint, std::format("Scene viewport camera visual \"{}\" image tint", name)),
-            };
-            static_cast<void>(abi_span(image.rgba8, image.rgba8_size, std::format("Scene viewport camera visual \"{}\" RGBA8 image", name)));
-            return result;
-        }
-
-        [[nodiscard]] scene::Scene::ViewportCameraVisual make_viewport_camera_visual(const SpectraSceneViewportCameraVisual& visual, const bool dynamic) {
-            const std::string name = abi_string(visual.name, "Scene viewport camera visual name", false);
-            scene::Scene::ViewportCameraVisual result{
-                .name = name,
-                .owner = make_entity_ref(visual.owner, std::format("Scene viewport camera visual \"{}\" owner", name)),
-                .color = make_vector4(visual.color, std::format("Scene viewport camera visual \"{}\" color", name)),
-                .width = finite_float(visual.width, std::format("Scene viewport camera visual \"{}\" width", name)),
-                .width_mode = viewport_segment_width_mode_from_u32(visual.width_mode, std::format("Scene viewport camera visual \"{}\"", name)),
-                .depth_mode = viewport_segment_depth_mode_from_u32(visual.depth_mode, std::format("Scene viewport camera visual \"{}\"", name)),
-                .visual_near = finite_float(visual.visual_near, std::format("Scene viewport camera visual \"{}\" near", name)),
-                .visual_far = finite_float(visual.visual_far, std::format("Scene viewport camera visual \"{}\" far", name)),
-                .dynamic = dynamic,
-            };
-            if (visual.has_image != 0u) result.image = make_viewport_camera_visual_image(visual.image, name);
-            return result;
-        }
-
-        [[nodiscard]] scene::Scene::ViewportSegmentSet make_viewport_segment_set(const SpectraSceneViewportSegmentSet& segment_set, const bool dynamic) {
+        [[nodiscard]] Scene::ViewportSegmentSet make_viewport_segment_set(const SpectraSceneViewportSegmentSet& segment_set, const bool dynamic) {
             const std::string name = abi_string(segment_set.name, "Scene viewport segment set name", false);
-            scene::Scene::ViewportSegmentSet result{
+            Scene::ViewportSegmentSet result{
                 .name = name,
                 .owner = make_entity_ref(segment_set.owner, std::format("Scene viewport segment set \"{}\" owner", name)),
                 .width = finite_float(segment_set.width, std::format("Scene viewport segment set \"{}\" width", name)),
@@ -483,7 +467,7 @@ namespace spectra::scene {
             const std::span<const SpectraSceneViewportSegment> segments = abi_span(segment_set.segments, std::format("Scene viewport segment set \"{}\" segments", name));
             result.segments.reserve(segments.size());
             for (std::size_t index = 0u; index < segments.size(); ++index) {
-                result.segments.push_back(scene::Scene::ViewportSegment{
+                result.segments.push_back(Scene::ViewportSegment{
                     .start = make_vector3(segments[index].start, std::format("Scene viewport segment set \"{}\" segment #{} start", name, index)),
                     .end = make_vector3(segments[index].end, std::format("Scene viewport segment set \"{}\" segment #{} end", name, index)),
                 });
@@ -501,9 +485,9 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] scene::Scene::ViewportVoxelGrid make_viewport_voxel_grid(const SpectraSceneViewportVoxelGrid& voxel_grid, const bool dynamic) {
+        [[nodiscard]] Scene::ViewportVoxelGrid make_viewport_voxel_grid(const SpectraSceneViewportVoxelGrid& voxel_grid, const bool dynamic) {
             const std::string name = abi_string(voxel_grid.name, "Scene viewport voxel grid name", false);
-            return scene::Scene::ViewportVoxelGrid{
+            return Scene::ViewportVoxelGrid{
                 .name = name,
                 .owner = make_entity_ref(voxel_grid.owner, std::format("Scene viewport voxel grid \"{}\" owner", name)),
                 .dimensions = {voxel_grid.dimensions[0], voxel_grid.dimensions[1], voxel_grid.dimensions[2]},
@@ -529,15 +513,15 @@ namespace spectra::scene {
             if (!names.insert(item.name).second) throw std::runtime_error(std::format("Scene {} \"{}\" is duplicated", kind, item.name));
         }
 
-        [[nodiscard]] std::set<std::string> collect_material_names(const scene::Scene::Document& document) {
+        [[nodiscard]] std::set<std::string> collect_material_names(const Scene::Document& document) {
             std::set<std::string> names{};
-            for (const scene::Scene::PreviewMaterial& material : document.materials) require_unique_name(names, material, "material");
+            for (const Scene::PreviewMaterial& material : document.materials) require_unique_name(names, material, "material");
             return names;
         }
 
-        [[nodiscard]] std::set<std::string> collect_light_names(const scene::Scene::Document& document) {
+        [[nodiscard]] std::set<std::string> collect_light_names(const Scene::Document& document) {
             std::set<std::string> names{};
-            for (const scene::Scene::PreviewLight& light : document.lights) require_unique_name(names, light, "light");
+            for (const Scene::PreviewLight& light : document.lights) require_unique_name(names, light, "light");
             return names;
         }
 
@@ -547,19 +531,17 @@ namespace spectra::scene {
             if (!material_names.contains(primitive.material_name)) throw std::runtime_error(std::format("Scene {} \"{}\" references unknown material \"{}\"", kind, primitive.name, primitive.material_name));
         }
 
-        void append_debug_attachments(scene::Scene::DebugAttachmentSet& attachments, const SpectraSceneItems& items, const bool dynamic, const std::string_view context) {
+        void append_debug_attachments(Scene::DebugAttachmentSet& attachments, const SpectraSceneItems& items, const bool dynamic, const std::string_view context) {
             for (const SpectraSceneViewportSegmentSet& segment_set_view : abi_span(items.viewport_segment_sets, std::format("{} viewport segment sets", context)))
                 attachments.viewport_segment_sets.push_back(make_viewport_segment_set(segment_set_view, dynamic));
             for (const SpectraSceneViewportVoxelGrid& voxel_grid_view : abi_span(items.viewport_voxel_grids, std::format("{} viewport voxel grids", context)))
                 attachments.viewport_voxel_grids.push_back(make_viewport_voxel_grid(voxel_grid_view, dynamic));
-            for (const SpectraSceneViewportCameraVisual& visual_view : abi_span(items.viewport_camera_visuals, std::format("{} viewport camera visuals", context)))
-                attachments.viewport_camera_visuals.push_back(make_viewport_camera_visual(visual_view, dynamic));
         }
 
-        void append_document_view(scene::Scene::Document& document, const SpectraSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
+        void append_document_view(Scene::Document& document, const SpectraSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
             if (view.struct_size != sizeof(SpectraSceneDocumentView)) throw std::runtime_error("Scene document view ABI size mismatch");
             const std::string coordinate_system_name = abi_string(view.default_coordinate_system, "Scene document default coordinate system", true);
-            if (!coordinate_system_name.empty()) document.default_coordinate_system = scene::coordinate_system(coordinate_system_name);
+            if (!coordinate_system_name.empty()) document.default_coordinate_system = coordinate_system(coordinate_system_name);
             const std::string active_camera_name = abi_string(view.active_camera_name, "Scene document active camera name", true);
             if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
 
@@ -569,12 +551,12 @@ namespace spectra::scene {
             const std::size_t volume_begin = document.volumes.size();
 
             for (const SpectraSceneMaterial& material_view : abi_span(view.items.materials, "Scene document materials")) {
-                scene::Scene::PreviewMaterial material = make_material(material_view);
+                Scene::PreviewMaterial material = make_material(material_view);
                 require_unique_name(material_names, material, "material");
                 document.materials.push_back(std::move(material));
             }
             for (const SpectraSceneLight& light_view : abi_span(view.items.lights, "Scene document lights")) {
-                scene::Scene::PreviewLight light = make_light(light_view);
+                Scene::PreviewLight light = make_light(light_view);
                 require_unique_name(light_names, light, "light");
                 document.lights.push_back(std::move(light));
             }
@@ -591,27 +573,27 @@ namespace spectra::scene {
             for (std::size_t index = volume_begin; index < document.volumes.size(); ++index) require_material_reference(document.volumes[index], material_names, "volume");
         }
 
-        [[nodiscard]] scene::Scene::FrameSnapshot make_frame_snapshot(const SpectraSceneFrameView& view, const scene::Scene::FrameInfo& frame, const std::set<std::string>& material_names) {
+        [[nodiscard]] Scene::FrameSnapshot make_frame_snapshot(const SpectraSceneFrameView& view, const Scene::FrameInfo& frame, const std::set<std::string>& material_names) {
             if (view.struct_size != sizeof(SpectraSceneFrameView)) throw std::runtime_error("Scene frame view ABI size mismatch");
-            scene::Scene::FrameSnapshot snapshot{.cursor = scene::Scene::make_frame_cursor(frame)};
+            Scene::FrameSnapshot snapshot{.cursor = Scene::make_frame_cursor(frame)};
             for (const SpectraSceneCamera& camera_view : abi_span(view.items.cameras, "Scene frame cameras")) snapshot.cameras.push_back(make_camera(camera_view));
             for (const SpectraSceneMesh& mesh_view : abi_span(view.items.meshes, "Scene frame meshes")) {
-                scene::Scene::Mesh mesh = make_mesh(mesh_view, true);
+                Scene::Mesh mesh = make_mesh(mesh_view, true);
                 require_material_reference(mesh, material_names, "mesh");
                 snapshot.meshes.push_back(std::move(mesh));
             }
             for (const SpectraSceneSphere& sphere_view : abi_span(view.items.spheres, "Scene frame spheres")) {
-                scene::Scene::Sphere sphere = make_sphere(sphere_view, true);
+                Scene::Sphere sphere = make_sphere(sphere_view, true);
                 require_material_reference(sphere, material_names, "sphere");
                 snapshot.spheres.push_back(std::move(sphere));
             }
             for (const SpectraScenePointCloud& point_cloud_view : abi_span(view.items.point_clouds, "Scene frame point clouds")) {
-                scene::Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view, true);
+                Scene::PointCloud point_cloud = make_point_cloud(point_cloud_view, true);
                 require_material_reference(point_cloud, material_names, "point cloud");
                 snapshot.point_clouds.push_back(std::move(point_cloud));
             }
             for (const SpectraSceneVolume& volume_view : abi_span(view.items.volumes, "Scene frame volumes")) {
-                scene::Scene::VolumeGrid volume = make_volume(volume_view, true);
+                Scene::VolumeGrid volume = make_volume(volume_view, true);
                 require_material_reference(volume, material_names, "volume");
                 snapshot.volumes.push_back(std::move(volume));
             }
@@ -917,8 +899,8 @@ namespace spectra::scene {
         public:
             explicit NativeLibrary(std::filesystem::path path) : path(std::move(path)) {
 #if defined(_WIN32)
-                this->handle = static_cast<void*>(::LoadLibraryW(this->path.wstring().c_str()));
-                if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load Scene plugin, Win32 error {}", this->path.string(), ::GetLastError()));
+                this->handle = static_cast<void*>(LoadLibraryW(this->path.wstring().c_str()));
+                if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load Scene plugin, Win32 error {}", this->path.string(), GetLastError()));
 #else
                 this->handle = ::dlopen(this->path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
                 if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load Scene plugin: {}", this->path.string(), ::dlerror()));
@@ -932,7 +914,7 @@ namespace spectra::scene {
 
             ~NativeLibrary() noexcept {
 #if defined(_WIN32)
-                if (this->handle != nullptr) static_cast<void>(::FreeLibrary(static_cast<HMODULE>(this->handle)));
+                if (this->handle != nullptr) static_cast<void>(FreeLibrary(static_cast<HMODULE>(this->handle)));
 #else
                 if (this->handle != nullptr) static_cast<void>(::dlclose(this->handle));
 #endif
@@ -940,8 +922,8 @@ namespace spectra::scene {
 
             [[nodiscard]] void* symbol(const char* name) const {
 #if defined(_WIN32)
-                void* symbol_address = reinterpret_cast<void*>(::GetProcAddress(static_cast<HMODULE>(this->handle), name));
-                if (symbol_address == nullptr) throw std::runtime_error(std::format("{}: Scene plugin is missing export \"{}\", Win32 error {}", this->path.string(), name, ::GetLastError()));
+                auto symbol_address = reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(this->handle), name));
+                if (symbol_address == nullptr) throw std::runtime_error(std::format("{}: Scene plugin is missing export \"{}\", Win32 error {}", this->path.string(), name, GetLastError()));
                 return symbol_address;
 #else
                 ::dlerror();
@@ -1011,7 +993,7 @@ namespace spectra::scene {
 
         [[nodiscard]] const char* scene_host_last_error(void* user_data) noexcept {
             if (user_data == nullptr) return scene_host_service_callback_error.c_str();
-            HostServices& host = *static_cast<HostServices*>(user_data);
+            const HostServices& host = *static_cast<HostServices*>(user_data);
             const std::string_view service_error = host.last_error();
             thread_local std::string host_service_error_text{};
             if (!service_error.empty()) {
@@ -1031,15 +1013,15 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] scene::Scene::Camera make_host_inspection_camera() {
-            return scene::Scene::Camera{
+        [[nodiscard]] Scene::Camera make_host_inspection_camera() {
+            return Scene::Camera{
                 .name = "Spectra Inspector Camera",
-                .view = scene::camera_view_from_look_at(
-                    scene::Vector3{0.0f, 1.0f, 5.0f},
-                    scene::Vector3{0.0f, 0.0f, 0.0f},
-                    scene::Vector3{0.0f, 1.0f, 0.0f},
-                    scene::CameraProjection{
-                        .kind = scene::CameraProjectionKind::Perspective,
+                .view = camera_view_from_look_at(
+                    Vector3{0.0f, 1.0f, 5.0f},
+                    Vector3{0.0f, 0.0f, 0.0f},
+                    Vector3{0.0f, 1.0f, 0.0f},
+                    CameraProjection{
+                        .kind = CameraProjectionKind::Perspective,
                         .vertical_fov_degrees = 45.0f,
                         .near_plane = 0.01f,
                         .far_plane = 200.0f,
@@ -1048,7 +1030,7 @@ namespace spectra::scene {
             };
         }
 
-        void ensure_scene_camera(scene::Scene::Document& document, const std::string_view plugin_id) {
+        void ensure_scene_camera(Scene::Document& document, const std::string_view plugin_id) {
             if (document.cameras.empty()) {
                 document.cameras.push_back(make_host_inspection_camera());
                 document.active_camera_name = document.cameras.back().name;
@@ -1090,7 +1072,7 @@ namespace spectra::scene {
             return std::format("{}#plugin-open-{:016x}", plugin_path.string(), hash);
         }
 
-        [[nodiscard]] PluginOpenRequestStorage make_plugin_open_request_storage(std::filesystem::path plugin_path, std::vector<ControlOption> options, std::shared_ptr<HostServices> host) {
+        [[nodiscard]] PluginOpenRequestStorage make_plugin_open_request_storage(const std::filesystem::path& plugin_path, std::vector<ControlOption> options, std::shared_ptr<HostServices> host) {
             PluginOpenRequestStorage storage{
                 .plugin_path = normalized_scene_plugin_path(plugin_path),
             };
@@ -1119,7 +1101,7 @@ namespace spectra::scene {
         }
 
 
-        [[nodiscard]] PluginOpenRequestStorage make_plugin_inspect_request_storage(std::filesystem::path plugin_path) {
+        [[nodiscard]] PluginOpenRequestStorage make_plugin_inspect_request_storage(const std::filesystem::path& plugin_path) {
             PluginOpenRequestStorage storage{
                 .plugin_path = normalized_scene_plugin_path(plugin_path),
             };
@@ -1130,8 +1112,8 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v4");
-            const SpectraScenePluginEntryFn entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v5");
+            const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
             this->validate_plugin_descriptor();
@@ -1164,11 +1146,11 @@ namespace spectra::scene {
             return this->open_request.scene_id;
         }
 
-        [[nodiscard]] scene::Scene::Document make_base_document() const {
+        [[nodiscard]] Scene::Document make_base_document() const {
             const std::string& base_path_text = this->descriptor.base_pbrt_path;
             if (base_path_text.empty()) {
-                return scene::Scene::Document{
-                    .revision = scene::Scene::Revision{1},
+                return Scene::Document{
+                    .revision = Scene::Revision{1},
                     .name = this->descriptor.id,
                     .title = this->descriptor.title,
                     .source = this->open_request.scene_id,
@@ -1180,9 +1162,9 @@ namespace spectra::scene {
             if (base_relative_path.is_absolute()) throw std::runtime_error(std::format("{}: Scene base PBRT path must be relative to the plugin directory", base_path_text));
             const std::filesystem::path base_path = (this->plugin_directory / base_relative_path).lexically_normal();
             if (!std::filesystem::is_regular_file(base_path)) throw std::runtime_error(std::format("{}: Scene base PBRT file does not exist", base_path.string()));
-            scene::Scene base_scene = scene::Scene::parse_pbrt_file(base_path);
-            scene::Scene::Document document = *base_scene.document();
-            document.revision = scene::Scene::Revision{1};
+            const Scene base_scene = Scene::parse_pbrt_file(base_path);
+            Scene::Document document = *base_scene.document();
+            document.revision = Scene::Revision{1};
             document.name = this->descriptor.id;
             document.title = this->descriptor.title;
             document.source = this->open_request.scene_id;
@@ -1298,7 +1280,7 @@ namespace spectra::scene {
             return view;
         }
 
-        [[nodiscard]] SpectraSceneFrameView frame(SpectraSceneInstance* instance, const scene::Scene::FrameInfo& frame_info) const {
+        [[nodiscard]] SpectraSceneFrameView frame(SpectraSceneInstance* instance, const Scene::FrameInfo& frame_info) const {
             SpectraSceneFrameView view{};
             this->check_result(this->plugin->frame(instance, SpectraSceneFrameInfo{.delta_seconds = frame_info.delta_seconds, .time_seconds = frame_info.time_seconds, .frame_index = frame_info.frame_index}, &view), instance, "Scene plugin frame");
             return view;
@@ -1378,8 +1360,8 @@ namespace spectra::scene {
             return this->plugin->state->control_state(this->instance);
         }
 
-        [[nodiscard]] scene::Scene::Document create_scene_document() const override {
-            scene::Scene::Document document = this->plugin->state->make_base_document();
+        [[nodiscard]] Scene::Document create_scene_document() const override {
+            Scene::Document document = this->plugin->state->make_base_document();
             SceneSymbols symbols{
                 .material_names = collect_material_names(document),
                 .light_names = collect_light_names(document),
@@ -1392,7 +1374,7 @@ namespace spectra::scene {
             return document;
         }
 
-        [[nodiscard]] scene::Scene::FrameSnapshot create_scene_frame(const scene::Scene::FrameInfo& frame) const override {
+        [[nodiscard]] Scene::FrameSnapshot create_scene_frame(const Scene::FrameInfo& frame) const override {
             if (!this->document_validated) throw std::runtime_error("Scene plugin frame was requested before document material validation");
             return make_frame_snapshot(this->plugin->state->frame(this->instance, frame), frame, this->scene_symbols.material_names);
         }

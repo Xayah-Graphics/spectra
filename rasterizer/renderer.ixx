@@ -167,9 +167,6 @@ namespace spectra::rasterizer {
             float camera_cy{};
             float camera_near_plane{};
             float camera_far_plane{};
-            bool camera_visual_enabled{};
-            float camera_visual_near{};
-            float camera_visual_far{};
             std::string camera_image_source{};
             scene::Scene::PreviewLightKind light_kind{scene::Scene::PreviewLightKind::Directional};
             scene::Vector3 light_color{};
@@ -235,6 +232,12 @@ namespace spectra::rasterizer {
             float height{};
         };
 
+        struct ViewportDebugUploadKey {
+            scene::Scene::Revision scene_revision{};
+            std::uint64_t settings_revision{};
+            friend auto operator<=>(const ViewportDebugUploadKey&, const ViewportDebugUploadKey&) = default;
+        };
+
         struct FrameSceneResources {
             GpuBuffer vertexBuffer{};
             GpuBuffer indexBuffer{};
@@ -256,7 +259,7 @@ namespace spectra::rasterizer {
 
         struct FrameViewportSegmentResources {
             GpuBuffer instanceBuffer{};
-            scene::Scene::Revision uploadedRevision{};
+            ViewportDebugUploadKey uploadedKey{};
             std::vector<ViewportSegmentDrawCommand> drawCommands{};
         };
 
@@ -269,7 +272,7 @@ namespace spectra::rasterizer {
 
         struct FrameViewportImagePlaneResources {
             GpuBuffer instanceBuffer{};
-            scene::Scene::Revision uploadedRevision{};
+            ViewportDebugUploadKey uploadedKey{};
             std::vector<ViewportImagePlaneDrawCommand> drawCommands{};
         };
 
@@ -561,6 +564,13 @@ namespace spectra::rasterizer {
             bool camera_initialized{false};
             bool overlays_visible{true};
             bool grid_visible{false};
+            bool camera_visual_frustums_visible{true};
+            bool camera_visual_images_visible{true};
+            float camera_visual_near{0.02f};
+            float camera_visual_far{0.25f};
+            float camera_visual_width{1.5f};
+            float camera_visual_image_alpha{0.35f};
+            std::uint64_t camera_visual_revision{1u};
             bool hovered{false};
             bool screenshot_requested{false};
             bool screenshot_pending{false};

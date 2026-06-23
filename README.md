@@ -59,15 +59,15 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v4()`.
+2. Export `spectra_scene_plugin_v5()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
 optional; required strings must be non-empty. Numeric categories are `uint32_t` values constrained by the tables below,
 not ABI enum types. The plugin owns all returned string and array views. Scene metadata is copied into Spectra scene storage during
-conversion, but camera visual pixels, viewport voxel grid GPU payloads, and external volume
+conversion, but camera image pixels, viewport voxel grid GPU payloads, and external volume
 channel GPU payloads are borrowed.
-Camera visual RGBA8 pointers must stay valid for the plugin instance lifetime, and `revision` must increase when the
+Camera image RGBA8 pointers must stay valid for the plugin instance lifetime, and `revision` must increase when the
 pixel contents change. Viewport voxel grid data is borrowed GPU data: the plugin requests a
 Spectra-owned external Vulkan storage buffer through host services, imports it into its own GPU runtime, writes the
 declared source payload, and publishes
@@ -75,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `4`.
-- Exported symbol: `spectra_scene_plugin_v4`.
+- ABI version: `5`.
+- Exported symbol: `spectra_scene_plugin_v5`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -103,10 +103,10 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v4(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v5(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `4` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `5` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are required; missing callbacks are errors.
 
@@ -115,8 +115,8 @@ Controls callbacks are required; missing callbacks are errors.
 - `id`, `title`, material names, light names, camera name, primitive names, and material references must be non-empty.
 - `frames_per_second` must be finite and positive.
 - Scene document and frame payloads are published through named `SpectraSceneItems` spans: `materials`, `lights`,
-  `cameras`, `meshes`, `spheres`, `point_clouds`, `volumes`, `viewport_segment_sets`, `viewport_voxel_grids`, and
-  `viewport_camera_visuals`. Empty spans use `{ nullptr, 0 }`. Non-empty spans must provide non-null `data`.
+  `cameras`, `meshes`, `spheres`, `point_clouds`, `volumes`, `viewport_segment_sets`, and
+  `viewport_voxel_grids`. Empty spans use `{ nullptr, 0 }`. Non-empty spans must provide non-null `data`.
   Document views may publish every named span. Frame views may publish cameras, renderable entities, and viewport
   attachments; materials and lights are document-only.
 - A successfully created dynamic scene must resolve to at least one renderable `Mesh`, `Sphere`, `PointCloud`, or

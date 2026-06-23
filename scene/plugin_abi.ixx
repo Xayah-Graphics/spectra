@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 4u;
+    constexpr std::uint32_t plugin_abi_version = 5u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -208,6 +208,14 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
+    struct SpectraSceneCameraImage {
+        const std::uint8_t* rgba8{};
+        std::uint64_t rgba8_size{};
+        std::uint64_t revision{};
+        std::uint32_t width{};
+        std::uint32_t height{};
+    };
+
     struct SpectraSceneCamera {
         const char* name{};
         const char* local_coordinate_system{};
@@ -224,6 +232,8 @@ export namespace spectra::scene {
         float cy{};
         float near_plane{};
         float far_plane{};
+        std::uint32_t has_image{};
+        SpectraSceneCameraImage image{};
     };
 
     struct SpectraSceneCameraSpan {
@@ -396,33 +406,6 @@ export namespace spectra::scene {
         std::uint64_t count{};
     };
 
-    struct SpectraSceneViewportCameraVisualImage {
-        const std::uint8_t* rgba8{};
-        std::uint64_t rgba8_size{};
-        std::uint64_t revision{};
-        std::uint32_t width{};
-        std::uint32_t height{};
-        float tint[4]{};
-    };
-
-    struct SpectraSceneViewportCameraVisual {
-        const char* name{};
-        SpectraSceneEntityRef owner{};
-        float color[4]{};
-        float width{};
-        std::uint32_t width_mode{};
-        std::uint32_t depth_mode{};
-        float visual_near{};
-        float visual_far{};
-        std::uint32_t has_image{};
-        SpectraSceneViewportCameraVisualImage image{};
-    };
-
-    struct SpectraSceneViewportCameraVisualSpan {
-        const SpectraSceneViewportCameraVisual* data{};
-        std::uint64_t count{};
-    };
-
     struct SpectraSceneItems {
         SpectraSceneMaterialSpan materials{};
         SpectraSceneLightSpan lights{};
@@ -433,7 +416,6 @@ export namespace spectra::scene {
         SpectraSceneVolumeSpan volumes{};
         SpectraSceneViewportSegmentSetSpan viewport_segment_sets{};
         SpectraSceneViewportVoxelGridSpan viewport_voxel_grids{};
-        SpectraSceneViewportCameraVisualSpan viewport_camera_visuals{};
     };
 
     struct SpectraSceneDocumentView {

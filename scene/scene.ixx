@@ -514,32 +514,18 @@ namespace spectra::scene {
             Morton3D = 1u,
         };
 
-        struct ViewportCameraVisualImage {
+        struct CameraImage {
             std::uint32_t width{};
             std::uint32_t height{};
             const std::uint8_t* rgba8{};
             std::uint64_t rgba8_size{};
             std::uint64_t revision{};
-            Vector4 tint{1.0f, 1.0f, 1.0f, 1.0f};
-        };
-
-        struct ViewportCameraVisual {
-            std::string name{};
-            SceneEntityRef owner{.kind = SceneEntityKind::Camera};
-            Vector4 color{0.0f, 0.75f, 1.0f, 0.85f};
-            float width{2.0f};
-            ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
-            ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
-            float visual_near{0.05f};
-            float visual_far{1.0f};
-            std::optional<ViewportCameraVisualImage> image{};
-            bool dynamic{true};
-            SourceLocation source{};
         };
 
         struct Camera {
             std::string name{};
             CameraViewState view{};
+            std::optional<CameraImage> image{};
             SourceLocation source{};
         };
 
@@ -580,7 +566,6 @@ namespace spectra::scene {
         struct DebugAttachmentSet {
             std::vector<ViewportSegmentSet> viewport_segment_sets{};
             std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
-            std::vector<ViewportCameraVisual> viewport_camera_visuals{};
         };
 
         struct Document {

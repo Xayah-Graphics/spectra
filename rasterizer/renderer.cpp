@@ -174,8 +174,12 @@ namespace {
                 (projection.cy - v) / projection.fy * distance,
                 distance,
             };
-        case spectra::scene::CameraProjectionKind::Orthographic:
-            throw std::runtime_error("Rasterizer camera visual frustum requires perspective or pinhole projection");
+        case spectra::scene::CameraProjectionKind::Orthographic: {
+            const float aspect = projection.image_width != 0u && projection.image_height != 0u ? static_cast<float>(projection.image_width) / static_cast<float>(projection.image_height) : 1.0f;
+            const float half_height = projection.orthographic_height * 0.5f;
+            const float half_width = half_height * aspect;
+            return spectra::scene::Vector3{u * half_width, v * half_height, distance};
+        }
         }
         throw std::runtime_error("Unknown Spectra camera projection kind");
     }
@@ -203,31 +207,16 @@ namespace {
         return frame.position + frame.right * local.x + frame.up * local.y + frame.forward * local.z;
     }
 
-    [[nodiscard]] CameraVisualPlanes camera_visual_planes(const spectra::scene::Scene::Camera& camera, const spectra::scene::Scene::ViewportCameraVisual& visual) {
+    [[nodiscard]] CameraVisualPlanes camera_visual_planes(const spectra::scene::Scene::Camera& camera, const float visual_near, const float visual_far) {
         const spectra::scene::CameraFrame frame = spectra::scene::camera_frame(camera.view.pose);
-        const std::array<spectra::scene::Vector3, 4> near_local = camera_visual_local_corners(camera.view.projection, visual.visual_near);
-        const std::array<spectra::scene::Vector3, 4> far_local = camera_visual_local_corners(camera.view.projection, visual.visual_far);
+        const std::array<spectra::scene::Vector3, 4> near_local = camera_visual_local_corners(camera.view.projection, visual_near);
+        const std::array<spectra::scene::Vector3, 4> far_local = camera_visual_local_corners(camera.view.projection, visual_far);
         CameraVisualPlanes planes{};
         for (std::size_t index = 0u; index < 4u; ++index) {
             planes.near_corners.at(index) = camera_visual_world_point(frame, near_local.at(index));
             planes.far_corners.at(index) = camera_visual_world_point(frame, far_local.at(index));
         }
         return planes;
-    }
-
-    [[nodiscard]] const spectra::scene::Scene::Camera& require_camera_visual_owner(const std::span<const spectra::scene::Scene::Camera> cameras, const spectra::scene::Scene::ViewportCameraVisual& visual) {
-        if (visual.owner.kind != spectra::scene::Scene::SceneEntityKind::Camera) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" owner must be a camera", visual.name));
-        for (const spectra::scene::Scene::Camera& camera : cameras) {
-            if (camera.name == visual.owner.name) return camera;
-        }
-        throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" references missing camera \"{}\"", visual.name, visual.owner.name));
-    }
-
-    [[nodiscard]] const spectra::scene::Scene::ViewportCameraVisual* find_camera_visual_for_owner(const std::span<const spectra::scene::Scene::ViewportCameraVisual> visuals, const std::string_view camera_name) {
-        for (const spectra::scene::Scene::ViewportCameraVisual& visual : visuals) {
-            if (visual.owner.kind == spectra::scene::Scene::SceneEntityKind::Camera && visual.owner.name == camera_name) return &visual;
-        }
-        return nullptr;
     }
 
     [[nodiscard]] std::array<float, 16> camera_visual_image_model(const CameraVisualPlanes& planes) {
@@ -2560,13 +2549,11 @@ namespace spectra::rasterizer {
         }
 
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
-        const std::span<const scene::Scene::ViewportCameraVisual> resolved_camera_visuals{resolved_frame.debug_attachments.viewport_camera_visuals};
-        const auto make_camera_record = [&active_camera_name = document->active_camera_name, resolved_camera_visuals](const scene::Scene::Camera& camera) {
+        const auto make_camera_record = [&active_camera_name = document->active_camera_name](const scene::Scene::Camera& camera) {
             if (camera.name.empty()) throw std::runtime_error("Rasterizer scene collection camera name must not be empty");
             const scene::CameraFrame camera_frame = scene::camera_frame(camera.view.pose);
-            const scene::Scene::ViewportCameraVisual* visual = find_camera_visual_for_owner(resolved_camera_visuals, camera.name);
             std::string image_source{};
-            if (visual != nullptr && visual->image.has_value()) image_source = std::format("RGBA8 {}x{}", visual->image->width, visual->image->height);
+            if (camera.image.has_value()) image_source = std::format("RGBA8 {}x{}", camera.image->width, camera.image->height);
             float vertical_fov{};
             if (camera.view.projection.kind != scene::CameraProjectionKind::Orthographic) vertical_fov = scene::camera_projection_vertical_fov_degrees(camera.view.projection);
             return SceneObjectRecord{
@@ -2587,9 +2574,6 @@ namespace spectra::rasterizer {
                 .camera_cy                   = camera.view.projection.cy,
                 .camera_near_plane           = camera.view.projection.near_plane,
                 .camera_far_plane            = camera.view.projection.far_plane,
-                .camera_visual_enabled       = visual != nullptr,
-                .camera_visual_near          = visual != nullptr ? visual->visual_near : 0.0f,
-                .camera_visual_far           = visual != nullptr ? visual->visual_far : 0.0f,
                 .camera_image_source         = std::move(image_source),
             };
         };
@@ -3081,7 +3065,8 @@ namespace spectra::rasterizer {
         if (frame_index >= this->viewport_segment_pass.frame_segments.size()) throw std::runtime_error("Spectra rasterizer viewport segment frame index is out of range");
         FrameViewportSegmentResources& frame_segments = this->viewport_segment_pass.frame_segments.at(frame_index);
         const scene::Scene::Revision scene_revision = this->scene.instance->revision();
-        if (frame_segments.uploadedRevision == scene_revision) return;
+        const ViewportDebugUploadKey upload_key{.scene_revision = scene_revision, .settings_revision = this->viewport.camera_visual_revision};
+        if (frame_segments.uploadedKey == upload_key) return;
 
         std::vector<ViewportSegmentInstance> instances{};
         std::vector<ViewportSegmentDrawCommand> draw_commands{};
@@ -3127,42 +3112,48 @@ namespace spectra::rasterizer {
                 .depthMode     = segment_set.depth_mode,
             });
         }
-        for (const scene::Scene::ViewportCameraVisual& visual : resolved_frame.debug_attachments.viewport_camera_visuals) {
-            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
-            if (instances.size() + 12u > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer camera frustum edge count exceeds uint32 range");
-            const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
-            const scene::Scene::Camera& camera = require_camera_visual_owner(std::span<const scene::Scene::Camera>{resolved_frame.cameras}, visual);
-            const CameraVisualPlanes planes = camera_visual_planes(camera, visual);
-            const std::array<std::array<const scene::Vector3*, 2>, 12> edges{{
-                {&planes.near_corners.at(0u), &planes.near_corners.at(1u)},
-                {&planes.near_corners.at(1u), &planes.near_corners.at(2u)},
-                {&planes.near_corners.at(2u), &planes.near_corners.at(3u)},
-                {&planes.near_corners.at(3u), &planes.near_corners.at(0u)},
-                {&planes.far_corners.at(0u), &planes.far_corners.at(1u)},
-                {&planes.far_corners.at(1u), &planes.far_corners.at(2u)},
-                {&planes.far_corners.at(2u), &planes.far_corners.at(3u)},
-                {&planes.far_corners.at(3u), &planes.far_corners.at(0u)},
-                {&planes.near_corners.at(0u), &planes.far_corners.at(0u)},
-                {&planes.near_corners.at(1u), &planes.far_corners.at(1u)},
-                {&planes.near_corners.at(2u), &planes.far_corners.at(2u)},
-                {&planes.near_corners.at(3u), &planes.far_corners.at(3u)},
-            }};
-            instances.reserve(instances.size() + edges.size());
-            for (const std::array<const scene::Vector3*, 2>& edge : edges) {
-                append_segment_instance(
-                    to_render_vector(*edge.at(0u)),
-                    to_render_vector(*edge.at(1u)),
-                    visual.color,
-                    visual.width,
-                    visual.width_mode,
-                    std::format("Rasterizer viewport camera visual \"{}\"", visual.name)
-                );
+        if (this->viewport.camera_visual_frustums_visible) {
+            if (!std::isfinite(this->viewport.camera_visual_width) || this->viewport.camera_visual_width <= 0.0f) throw std::runtime_error("Rasterizer camera visual width must be finite and positive");
+            if (!std::isfinite(this->viewport.camera_visual_near) || !std::isfinite(this->viewport.camera_visual_far) || this->viewport.camera_visual_near <= 0.0f || this->viewport.camera_visual_far <= this->viewport.camera_visual_near) throw std::runtime_error("Rasterizer camera visual range must satisfy far > near > 0");
+            for (std::size_t camera_index = 0u; camera_index < resolved_frame.cameras.size(); ++camera_index) {
+                if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
+                if (instances.size() + 12u > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer camera frustum edge count exceeds uint32 range");
+                const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
+                const scene::Scene::Camera& camera = resolved_frame.cameras.at(camera_index);
+                const float t = resolved_frame.cameras.size() > 1u ? static_cast<float>(camera_index) / static_cast<float>(resolved_frame.cameras.size() - 1u) : 0.0f;
+                const scene::Vector4 color{0.12f + 0.72f * t, 0.82f, 1.0f - 0.55f * t, 0.52f};
+                const CameraVisualPlanes planes = camera_visual_planes(camera, this->viewport.camera_visual_near, this->viewport.camera_visual_far);
+                const std::array<std::array<const scene::Vector3*, 2>, 12> edges{{
+                    {&planes.near_corners.at(0u), &planes.near_corners.at(1u)},
+                    {&planes.near_corners.at(1u), &planes.near_corners.at(2u)},
+                    {&planes.near_corners.at(2u), &planes.near_corners.at(3u)},
+                    {&planes.near_corners.at(3u), &planes.near_corners.at(0u)},
+                    {&planes.far_corners.at(0u), &planes.far_corners.at(1u)},
+                    {&planes.far_corners.at(1u), &planes.far_corners.at(2u)},
+                    {&planes.far_corners.at(2u), &planes.far_corners.at(3u)},
+                    {&planes.far_corners.at(3u), &planes.far_corners.at(0u)},
+                    {&planes.near_corners.at(0u), &planes.far_corners.at(0u)},
+                    {&planes.near_corners.at(1u), &planes.far_corners.at(1u)},
+                    {&planes.near_corners.at(2u), &planes.far_corners.at(2u)},
+                    {&planes.near_corners.at(3u), &planes.far_corners.at(3u)},
+                }};
+                instances.reserve(instances.size() + edges.size());
+                for (const std::array<const scene::Vector3*, 2>& edge : edges) {
+                    append_segment_instance(
+                        to_render_vector(*edge.at(0u)),
+                        to_render_vector(*edge.at(1u)),
+                        color,
+                        this->viewport.camera_visual_width,
+                        scene::Scene::ViewportSegmentWidthMode::Screen,
+                        std::format("Rasterizer camera visual \"{}\"", camera.name)
+                    );
+                }
+                draw_commands.push_back(ViewportSegmentDrawCommand{
+                    .firstInstance = first_instance,
+                    .instanceCount = static_cast<std::uint32_t>(edges.size()),
+                    .depthMode     = scene::Scene::ViewportSegmentDepthMode::AlwaysVisible,
+                });
             }
-            draw_commands.push_back(ViewportSegmentDrawCommand{
-                .firstInstance = first_instance,
-                .instanceCount = static_cast<std::uint32_t>(edges.size()),
-                .depthMode     = visual.depth_mode,
-            });
         }
 
         frame_segments.drawCommands = std::move(draw_commands);
@@ -3171,7 +3162,7 @@ namespace spectra::rasterizer {
             this->ensure_host_buffer(frame_segments.instanceBuffer, instance_bytes, vk::BufferUsageFlagBits::eVertexBuffer);
             std::memcpy(frame_segments.instanceBuffer.mapped, instances.data(), static_cast<std::size_t>(instance_bytes));
         }
-        frame_segments.uploadedRevision = scene_revision;
+        frame_segments.uploadedKey = upload_key;
     }
 
     void Renderer::upload_viewport_voxel_grid_resources(const std::uint32_t frame_index) {
@@ -3223,79 +3214,81 @@ namespace spectra::rasterizer {
         if (!*this->viewport_image_plane_pass.descriptor_set_layout || !*this->viewport_image_plane_pass.sampler) throw std::runtime_error("Spectra rasterizer viewport image plane resources are not initialized");
         FrameViewportImagePlaneResources& frame_planes = this->viewport_image_plane_pass.frame_planes.at(frame_index);
         const scene::Scene::Revision scene_revision = this->scene.instance->revision();
-        if (frame_planes.uploadedRevision == scene_revision) return;
+        const ViewportDebugUploadKey upload_key{.scene_revision = scene_revision, .settings_revision = this->viewport.camera_visual_revision};
+        if (frame_planes.uploadedKey == upload_key) return;
 
         std::vector<ViewportImagePlaneInstance> instances{};
         std::vector<ViewportImagePlaneDrawCommand> draw_commands{};
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
-        for (const scene::Scene::ViewportCameraVisual& visual : resolved_frame.debug_attachments.viewport_camera_visuals) {
-            if (!visual.image.has_value()) continue;
-            if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport image plane instance count exceeds uint32 range");
-            const scene::Scene::Camera& camera = require_camera_visual_owner(std::span<const scene::Scene::Camera>{resolved_frame.cameras}, visual);
-            const scene::Scene::ViewportCameraVisualImage& image = *visual.image;
-            if (!finite_scene_vector(image.tint)) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" image tint must be finite", visual.name));
-            if (image.tint.x < 0.0f || image.tint.y < 0.0f || image.tint.z < 0.0f || image.tint.w < 0.0f || image.tint.w > 1.0f) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" image tint is invalid", visual.name));
+        if (this->viewport.camera_visual_images_visible) {
+            if (!std::isfinite(this->viewport.camera_visual_image_alpha) || this->viewport.camera_visual_image_alpha < 0.0f || this->viewport.camera_visual_image_alpha > 1.0f) throw std::runtime_error("Rasterizer camera visual image alpha must be in [0, 1]");
+            if (!std::isfinite(this->viewport.camera_visual_near) || !std::isfinite(this->viewport.camera_visual_far) || this->viewport.camera_visual_near <= 0.0f || this->viewport.camera_visual_far <= this->viewport.camera_visual_near) throw std::runtime_error("Rasterizer camera visual image range must satisfy far > near > 0");
+            for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
+                if (!camera.image.has_value()) continue;
+                if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport image plane instance count exceeds uint32 range");
+                const scene::Scene::CameraImage& image = *camera.image;
 
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" image dimensions must be non-zero", visual.name));
-            const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
-            if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" RGBA8 byte count must be width * height * 4", visual.name));
-            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("Rasterizer viewport camera visual \"{}\" RGBA8 pointer must not be null", visual.name));
+                if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("Rasterizer camera \"{}\" image dimensions must be non-zero", camera.name));
+                const std::uint64_t expected_byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
+                if (image.rgba8_size != expected_byte_count) throw std::runtime_error(std::format("Rasterizer camera \"{}\" RGBA8 byte count must be width * height * 4", camera.name));
+                if (image.rgba8 == nullptr) throw std::runtime_error(std::format("Rasterizer camera \"{}\" RGBA8 pointer must not be null", camera.name));
 
-            const std::string image_key = std::format("camera-visual-rgba8://{}", visual.name);
-            const ViewportImagePlaneTexture::Source source{
-                .data = reinterpret_cast<std::uintptr_t>(image.rgba8),
-                .byteSize = image.rgba8_size,
-                .width = image.width,
-                .height = image.height,
-                .revision = image.revision,
-            };
-            const std::map<std::string, ViewportImagePlaneTexture>::const_iterator cached_texture = this->viewport_image_plane_pass.texture_cache.find(image_key);
-            if (cached_texture == this->viewport_image_plane_pass.texture_cache.end() || cached_texture->second.source != source) {
-                const std::map<std::string, ViewportImagePlaneTexture>::iterator existing = this->viewport_image_plane_pass.texture_cache.find(image_key);
-                if (existing != this->viewport_image_plane_pass.texture_cache.end()) {
-                    this->destroy_viewport_image_plane_texture(existing->second);
-                    this->viewport_image_plane_pass.texture_cache.erase(existing);
+                const std::string image_key = std::format("camera-rgba8://{}", camera.name);
+                const ViewportImagePlaneTexture::Source source{
+                    .data = reinterpret_cast<std::uintptr_t>(image.rgba8),
+                    .byteSize = image.rgba8_size,
+                    .width = image.width,
+                    .height = image.height,
+                    .revision = image.revision,
+                };
+                const std::map<std::string, ViewportImagePlaneTexture>::const_iterator cached_texture = this->viewport_image_plane_pass.texture_cache.find(image_key);
+                if (cached_texture == this->viewport_image_plane_pass.texture_cache.end() || cached_texture->second.source != source) {
+                    const std::map<std::string, ViewportImagePlaneTexture>::iterator existing = this->viewport_image_plane_pass.texture_cache.find(image_key);
+                    if (existing != this->viewport_image_plane_pass.texture_cache.end()) {
+                        this->destroy_viewport_image_plane_texture(existing->second);
+                        this->viewport_image_plane_pass.texture_cache.erase(existing);
+                    }
+
+                    ViewportImagePlaneTexture texture{};
+                    this->create_image_2d(texture.image, vk::Extent2D{image.width, image.height}, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor);
+                    const vk::DeviceSize texture_bytes = static_cast<vk::DeviceSize>(image.rgba8_size);
+                    this->ensure_host_buffer(texture.stagingBuffer, texture_bytes, vk::BufferUsageFlagBits::eTransferSrc);
+                    std::memcpy(texture.stagingBuffer.mapped, image.rgba8, static_cast<std::size_t>(texture_bytes));
+
+                    const std::array descriptor_pool_sizes{
+                        vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1u},
+                        vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1u},
+                    };
+                    const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1u, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
+                    texture.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
+                    const vk::DescriptorSetLayout image_descriptor_set_layout = *this->viewport_image_plane_pass.descriptor_set_layout;
+                    const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*texture.descriptor_pool, 1u, &image_descriptor_set_layout};
+                    texture.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
+                    if (texture.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("{}: failed to allocate viewport image plane texture descriptor set", image_key));
+                    const vk::DescriptorImageInfo image_info{{}, *texture.image.view, vk::ImageLayout::eShaderReadOnlyOptimal};
+                    const vk::DescriptorImageInfo sampler_info{*this->viewport_image_plane_pass.sampler, {}, vk::ImageLayout::eUndefined};
+                    const std::array descriptor_writes{
+                        vk::WriteDescriptorSet{*texture.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eSampledImage, &image_info, nullptr, nullptr},
+                        vk::WriteDescriptorSet{*texture.descriptor_sets.at(0), 1u, 0u, 1u, vk::DescriptorType::eSampler, &sampler_info, nullptr, nullptr},
+                    };
+                    this->host.device->updateDescriptorSets(descriptor_writes, {});
+                    texture.source = source;
+                    texture.uploadPending = true;
+                    this->viewport_image_plane_pass.texture_cache.emplace(image_key, std::move(texture));
                 }
 
-                ViewportImagePlaneTexture texture{};
-                this->create_image_2d(texture.image, vk::Extent2D{image.width, image.height}, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageAspectFlagBits::eColor);
-                const vk::DeviceSize texture_bytes = static_cast<vk::DeviceSize>(image.rgba8_size);
-                this->ensure_host_buffer(texture.stagingBuffer, texture_bytes, vk::BufferUsageFlagBits::eTransferSrc);
-                std::memcpy(texture.stagingBuffer.mapped, image.rgba8, static_cast<std::size_t>(texture_bytes));
-
-                const std::array descriptor_pool_sizes{
-                    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1u},
-                    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1u},
-                };
-                const vk::DescriptorPoolCreateInfo descriptor_pool_create_info{vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1u, static_cast<std::uint32_t>(descriptor_pool_sizes.size()), descriptor_pool_sizes.data()};
-                texture.descriptor_pool = vk::raii::DescriptorPool{*this->host.device, descriptor_pool_create_info};
-                const vk::DescriptorSetLayout image_descriptor_set_layout = *this->viewport_image_plane_pass.descriptor_set_layout;
-                const vk::DescriptorSetAllocateInfo descriptor_set_allocate_info{*texture.descriptor_pool, 1u, &image_descriptor_set_layout};
-                texture.descriptor_sets = vk::raii::DescriptorSets{*this->host.device, descriptor_set_allocate_info};
-                if (texture.descriptor_sets.size() != 1u) throw std::runtime_error(std::format("{}: failed to allocate viewport image plane texture descriptor set", image_key));
-                const vk::DescriptorImageInfo image_info{{}, *texture.image.view, vk::ImageLayout::eShaderReadOnlyOptimal};
-                const vk::DescriptorImageInfo sampler_info{*this->viewport_image_plane_pass.sampler, {}, vk::ImageLayout::eUndefined};
-                const std::array descriptor_writes{
-                    vk::WriteDescriptorSet{*texture.descriptor_sets.at(0), 0u, 0u, 1u, vk::DescriptorType::eSampledImage, &image_info, nullptr, nullptr},
-                    vk::WriteDescriptorSet{*texture.descriptor_sets.at(0), 1u, 0u, 1u, vk::DescriptorType::eSampler, &sampler_info, nullptr, nullptr},
-                };
-                this->host.device->updateDescriptorSets(descriptor_writes, {});
-                texture.source = source;
-                texture.uploadPending = true;
-                this->viewport_image_plane_pass.texture_cache.emplace(image_key, std::move(texture));
+                const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
+                instances.push_back(ViewportImagePlaneInstance{
+                    .model = camera_visual_image_model(camera_visual_planes(camera, this->viewport.camera_visual_near, this->viewport.camera_visual_far)),
+                    .tint = {1.0f, 1.0f, 1.0f, this->viewport.camera_visual_image_alpha},
+                });
+                draw_commands.push_back(ViewportImagePlaneDrawCommand{
+                    .firstInstance = first_instance,
+                    .instanceCount = 1u,
+                    .depthMode = scene::Scene::ViewportSegmentDepthMode::AlwaysVisible,
+                    .imageKey = image_key,
+                });
             }
-
-            const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
-            instances.push_back(ViewportImagePlaneInstance{
-                .model = camera_visual_image_model(camera_visual_planes(camera, visual)),
-                .tint = {image.tint.x, image.tint.y, image.tint.z, image.tint.w},
-            });
-            draw_commands.push_back(ViewportImagePlaneDrawCommand{
-                .firstInstance = first_instance,
-                .instanceCount = 1u,
-                .depthMode = visual.depth_mode,
-                .imageKey = image_key,
-            });
         }
 
         frame_planes.drawCommands = std::move(draw_commands);
@@ -3304,7 +3297,7 @@ namespace spectra::rasterizer {
             this->ensure_host_buffer(frame_planes.instanceBuffer, instance_bytes, vk::BufferUsageFlagBits::eVertexBuffer);
             std::memcpy(frame_planes.instanceBuffer.mapped, instances.data(), static_cast<std::size_t>(instance_bytes));
         }
-        frame_planes.uploadedRevision = scene_revision;
+        frame_planes.uploadedKey = upload_key;
     }
 
     void Renderer::upload_volume_resources(const std::uint32_t frame_index) {
@@ -4568,7 +4561,7 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::draw_viewport_toolbar(const ViewportImageRect image_rect) {
-        if (image_rect.width < 230.0f || image_rect.height < 54.0f) return;
+        if (image_rect.width < 268.0f || image_rect.height < 54.0f) return;
         const ImVec2 image_min{image_rect.x, image_rect.y};
         const ImVec2 image_max{image_rect.x + image_rect.width, image_rect.y + image_rect.height};
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -4576,7 +4569,7 @@ namespace spectra::rasterizer {
         constexpr float gap = 4.0f;
         const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
         const ImVec2 padding{6.0f, 5.0f};
-        const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 5.0f + gap * 4.0f, origin.y + padding.y * 2.0f + button_size};
+        const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 6.0f + gap * 5.0f, origin.y + padding.y * 2.0f + button_size};
         draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 198), 7.0f);
         draw_list->AddRect(origin, background_max, IM_COL32(86, 98, 108, 72), 7.0f);
 
@@ -4596,6 +4589,26 @@ namespace spectra::rasterizer {
         if (draw_button(ICON_MS_CENTER_FOCUS_STRONG "##frame_all", "Frame All", false)) this->frame_viewport_scene();
         ImGui::SameLine(0.0f, gap);
         if (draw_button(this->viewport.grid_visible ? ICON_MS_GRID_ON "##grid" : ICON_MS_GRID_OFF "##grid", "Grid", this->viewport.grid_visible)) this->viewport.grid_visible = !this->viewport.grid_visible;
+        ImGui::SameLine(0.0f, gap);
+        const bool camera_visual_active = this->viewport.camera_visual_frustums_visible || this->viewport.camera_visual_images_visible;
+        if (draw_button(camera_visual_active ? ICON_MS_PHOTO_CAMERA "##camera_visuals" : ICON_MS_VIDEOCAM_OFF "##camera_visuals", "Camera Visuals", camera_visual_active)) ImGui::OpenPopup("camera_visuals_popup");
+        if (ImGui::BeginPopup("camera_visuals_popup")) {
+            bool changed = false;
+            changed = ImGui::Checkbox("Frustums", &this->viewport.camera_visual_frustums_visible) || changed;
+            changed = ImGui::Checkbox("Images", &this->viewport.camera_visual_images_visible) || changed;
+            ImGui::SetNextItemWidth(150.0f);
+            changed = ImGui::SliderFloat("Far", &this->viewport.camera_visual_far, this->viewport.camera_visual_near + 0.001f, 5.0f, "%.3f") || changed;
+            if (!this->viewport.camera_visual_frustums_visible) ImGui::BeginDisabled();
+            ImGui::SetNextItemWidth(150.0f);
+            changed = ImGui::SliderFloat("Width", &this->viewport.camera_visual_width, 0.25f, 8.0f, "%.2f") || changed;
+            if (!this->viewport.camera_visual_frustums_visible) ImGui::EndDisabled();
+            if (!this->viewport.camera_visual_images_visible) ImGui::BeginDisabled();
+            ImGui::SetNextItemWidth(150.0f);
+            changed = ImGui::SliderFloat("Alpha", &this->viewport.camera_visual_image_alpha, 0.0f, 1.0f, "%.2f") || changed;
+            if (!this->viewport.camera_visual_images_visible) ImGui::EndDisabled();
+            if (changed) ++this->viewport.camera_visual_revision;
+            ImGui::EndPopup();
+        }
         ImGui::SameLine(0.0f, gap);
         if (draw_button(this->viewport.overlays_visible ? ICON_MS_VISIBILITY "##overlays" : ICON_MS_VISIBILITY_OFF "##overlays", "Overlays", this->viewport.overlays_visible)) this->viewport.overlays_visible = !this->viewport.overlays_visible;
         ImGui::SameLine(0.0f, gap);
@@ -4998,11 +5011,7 @@ namespace spectra::rasterizer {
             }
             draw_property_row("Near", format_float(object->camera_near_plane));
             draw_property_row("Far", format_float(object->camera_far_plane));
-            draw_property_row("Visual", object->camera_visual_enabled ? "true" : "false");
-            if (object->camera_visual_enabled) {
-                draw_property_row("Visual Range", std::format("{} - {}", format_float(object->camera_visual_near), format_float(object->camera_visual_far)));
-                if (!object->camera_image_source.empty()) draw_property_row("Image", object->camera_image_source);
-            }
+            if (!object->camera_image_source.empty()) draw_property_row("Image", object->camera_image_source);
             break;
         case SceneObjectKind::Light:
             this->draw_inspector_transform(object->transform);
