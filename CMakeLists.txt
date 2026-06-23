@@ -24,13 +24,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
-# ============================================================================
-# Build Configuration
-# ============================================================================
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type" FORCE)
-endif ()
-
 set(SPECTRA_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(SPECTRA_BINARY_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
@@ -609,13 +602,13 @@ set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 # ============================================================================
 # GUI
 # ============================================================================
-add_executable(spectra_gui main.cpp)
-add_executable(spectra::gui ALIAS spectra_gui)
+add_executable(spectra main.cpp)
+add_executable(spectra::gui ALIAS spectra)
 if (WIN32)
-    target_sources(spectra_gui PRIVATE spectra.rc)
+    target_sources(spectra PRIVATE spectra.rc)
 endif ()
 target_sources(
-        spectra_gui
+        spectra
         PRIVATE
         FILE_SET private_cxx_modules TYPE CXX_MODULES FILES
         scene/ui.ixx
@@ -623,7 +616,7 @@ target_sources(
         scene/ui.cpp
 )
 target_link_libraries(
-        spectra_gui
+        spectra
         PRIVATE
         spectra::core
         spectra::scene
@@ -631,4 +624,4 @@ target_link_libraries(
         spectra::rasterizer
         xayah-util-xcli
 )
-set_property(TARGET spectra_gui PROPERTY CXX_MODULE_STD ON)
+set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
