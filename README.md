@@ -1,6 +1,6 @@
 ![Spectra](https://github.com/Xayah-Graphics/imagebed/blob/14c6599b610e65a7ef42174e6910dac53004cec9/spectra-banner2.png)
 
-# Spectra
+# Spectra v1.1.0
 
 [![Windows](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/windows.yml)
 [![Arch Linux](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml/badge.svg)](https://github.com/Xayah-Graphics/spectra/actions/workflows/archlinux.yml)
@@ -9,9 +9,9 @@
 Spectra is a C++23 graphics research workspace for inspecting static PBRT scenes and live plugin-driven scenes.
 It owns one shared `spectra.scene` workspace and lets multiple renderer backends consume the same active scene.
 
-| Pathtracing Rendering                                                                                                                       | Physical Simulation                                                                                                                                   |
-|---------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/883141b90fd655fa7e4b227d8a54842ee137392c/spectra-pathtracer-cornell-box.png) | ![Cloth Simulation](https://github.com/Xayah-Graphics/imagebed/blob/0b600f42860a713b7bad36e350fbb55f29a4d97c/spectra-pathtracer-cloth-simulation.png) |
+| Pathtracing Rendering                                                                                                                       | Physical Simulation                                                                                                                                   | Instant NGP                                                                                                                                 |
+|---------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| ![Cornell Box](https://github.com/Xayah-Graphics/imagebed/blob/883141b90fd655fa7e4b227d8a54842ee137392c/spectra-pathtracer-cornell-box.png) | ![Cloth Simulation](https://github.com/Xayah-Graphics/imagebed/blob/0b600f42860a713b7bad36e350fbb55f29a4d97c/spectra-pathtracer-cloth-simulation.png) | ![Instant NGP](https://github.com/Xayah-Graphics/imagebed/blob/eae3d3fd1d4073f8876f69cc38927ee88448df21/spectra-rasterizer-instant-ngp.png) |
 
 ## Highlights
 
