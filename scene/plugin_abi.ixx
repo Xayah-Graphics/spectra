@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 9u;
+    constexpr std::uint32_t plugin_abi_version = 10u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -78,7 +78,6 @@ export namespace spectra::scene {
         const char* label{};
         const char* description{};
         const char* section_id{};
-        std::uint32_t style{};
         SpectraSceneControlOptionSchemaSpan options{};
     };
 
@@ -459,7 +458,6 @@ export namespace spectra::scene {
         const char* id{};
         const char* title{};
         const char* open_action_label{};
-        const char* open_action_description{};
         double frames_per_second{};
         SpectraSceneControlSectionSpan sections{};
         SpectraSceneControlOptionSchemaSpan open_options{};

@@ -1656,6 +1656,16 @@ namespace spectra::scene {
         return Scene{std::move(scene)};
     }
 
+    struct Scene::PluginRuntime {
+        std::shared_ptr<PluginHost> host{};
+        std::shared_ptr<PluginHost::Instance> instance{};
+    };
+
+    Scene::DriverRuntime::DriverRuntime() = default;
+    Scene::DriverRuntime::DriverRuntime(DriverRuntime&& other) noexcept = default;
+    Scene::DriverRuntime& Scene::DriverRuntime::operator=(DriverRuntime&& other) noexcept = default;
+    Scene::DriverRuntime::~DriverRuntime() noexcept = default;
+
     Scene::Scene() : Scene(make_empty_document()) {}
 
     Scene::Scene(Document document) {
@@ -1749,7 +1759,7 @@ namespace spectra::scene {
     }
 
     bool Scene::has_controls() const {
-        return this->descriptor_valid && this->current_descriptor.kind == Kind::Dynamic && this->driver_runtime.driver != nullptr;
+        return this->descriptor_valid && this->current_descriptor.kind == Kind::Dynamic && this->driver_runtime.plugin != nullptr;
     }
 
     bool Scene::has_plugin_info() const {
@@ -1766,7 +1776,8 @@ namespace spectra::scene {
     }
 
     ControlState Scene::control_state() const {
-        return this->active_driver().control_state();
+        PluginRuntime& runtime = this->active_plugin_runtime();
+        return runtime.host->control_state(*runtime.instance);
     }
 
     void Scene::replace_with_scene(Scene scene) {
@@ -1797,7 +1808,7 @@ namespace spectra::scene {
     }
 
     void Scene::reset_driver_runtime() {
-        this->driver_runtime.driver.reset();
+        this->driver_runtime.plugin.reset();
         this->driver_runtime.frame_accumulator_seconds = 0.0;
         this->driver_runtime.stream_time_seconds = 0.0;
         this->driver_runtime.stream_frame_index = 0u;
@@ -1805,10 +1816,10 @@ namespace spectra::scene {
         this->driver_runtime.updated_frame_number.reset();
     }
 
-    SceneDriver& Scene::active_driver() const {
+    Scene::PluginRuntime& Scene::active_plugin_runtime() const {
         if (!this->descriptor_valid || this->current_descriptor.kind != Kind::Dynamic) throw std::runtime_error("Active scene is not plugin-driven");
-        if (this->driver_runtime.driver == nullptr) throw std::runtime_error("Active scene has no driver");
-        return *this->driver_runtime.driver;
+        if (this->driver_runtime.plugin == nullptr) throw std::runtime_error("Active scene has no plugin runtime");
+        return *this->driver_runtime.plugin;
     }
 
     void Scene::close() {
@@ -1844,21 +1855,23 @@ namespace spectra::scene {
         this->open_static_scene(absolute_path.string(), scene_file_title(absolute_path), parse_pbrt_file(absolute_path));
     }
 
-    void Scene::attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver) {
-        if (id.empty()) throw std::runtime_error("Plugin-driven scene id must not be empty");
-        if (driver == nullptr) throw std::runtime_error("Plugin-driven scene requires a driver");
-        Document document = driver->create_scene_document();
+    void Scene::open_plugin(PluginOpenRequest request) {
+        std::shared_ptr<PluginHost> plugin = std::make_shared<PluginHost>(std::move(request.plugin_path), std::move(request.options), this->host);
+        PluginInfo plugin_info = plugin->info();
+        std::string scene_id = plugin->scene_id();
+        if (scene_id.empty()) throw std::runtime_error("Plugin-driven scene id must not be empty");
+        std::shared_ptr<PluginHost::Instance> instance = plugin->create_instance();
+        Document document = plugin->create_scene_document(*instance);
         if (!document.timeline_enabled) throw std::runtime_error("Plugin-driven scene document must enable timeline");
         if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Plugin-driven scene document frame rate must be finite and positive");
-        if (title.empty()) title = document.title;
-        if (title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
+        if (document.title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
         Scene scene_instance{std::move(document)};
-        FrameSnapshot snapshot = driver->create_scene_frame(FrameInfo{
+        FrameSnapshot snapshot = plugin->create_scene_frame(*instance, FrameInfo{
             .delta_seconds = 0.0,
             .time_seconds = 0.0,
             .frame_index = 0u,
         });
-        const std::uint64_t scene_revision = driver->scene_revision();
+        const std::uint64_t scene_revision = plugin->scene_revision(*instance);
         const std::shared_ptr<const Document> scene_document = scene_instance.document();
         Timeline timeline{
             .frames_per_second = scene_document->frames_per_second,
@@ -1868,23 +1881,17 @@ namespace spectra::scene {
         validate_scene_renderable_entities(scene_instance, "Plugin-driven scene initial frame");
         this->reset_driver_runtime();
         this->replace_with_scene(std::move(scene_instance));
-        this->driver_runtime.driver = std::move(driver);
+        this->driver_runtime.plugin = std::make_unique<PluginRuntime>(PluginRuntime{
+            .host = std::move(plugin),
+            .instance = std::move(instance),
+        });
         this->driver_runtime.observed_scene_revision = scene_revision;
         this->current_descriptor = Descriptor{
-            .id = std::move(id),
-            .title = std::move(title),
+            .id = std::move(scene_id),
+            .title = scene_document->title,
             .kind = Kind::Dynamic,
         };
         this->descriptor_valid = true;
-        this->plugin_info_valid = false;
-        this->current_plugin_info = {};
-    }
-
-    void Scene::open_plugin(PluginOpenRequest request) {
-        std::shared_ptr<PluginHost> plugin = std::make_shared<PluginHost>(std::move(request.plugin_path), std::move(request.options), this->host);
-        PluginInfo plugin_info = plugin->info();
-        std::string scene_id = plugin->scene_id();
-        this->attach_driver(std::move(scene_id), {}, plugin->create_driver());
         this->current_plugin_info = std::move(plugin_info);
         this->plugin_info_valid = true;
     }
@@ -1892,7 +1899,7 @@ namespace spectra::scene {
     void Scene::advance(const std::uint64_t frame_number, const double delta_seconds) {
         if (this->kind() == Kind::Static) return;
         if (this->driver_runtime.updated_frame_number.has_value() && *this->driver_runtime.updated_frame_number == frame_number) return;
-        SceneDriver& driver = this->active_driver();
+        PluginRuntime& runtime = this->active_plugin_runtime();
         const std::shared_ptr<const Document> document = this->document();
         if (!document->timeline_enabled) throw std::runtime_error("Plugin-driven scene must enable timeline");
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene delta time is invalid");
@@ -1903,7 +1910,7 @@ namespace spectra::scene {
             this->driver_runtime.updated_frame_number = frame_number;
         };
         const bool scene_advancing = timeline.playing;
-        driver.update(UpdateInfo{
+        runtime.host->update(*runtime.instance, UpdateInfo{
             .wall_delta_seconds = delta_seconds,
             .scene_delta_seconds = scene_advancing ? delta_seconds : 0.0,
             .time_seconds = this->driver_runtime.stream_time_seconds,
@@ -1922,7 +1929,7 @@ namespace spectra::scene {
             this->driver_runtime.frame_accumulator_seconds -= fixed_delta_seconds;
             ++this->driver_runtime.stream_frame_index;
             this->driver_runtime.stream_time_seconds += fixed_delta_seconds;
-            snapshot = driver.create_scene_frame(FrameInfo{
+            snapshot = runtime.host->create_scene_frame(*runtime.instance, FrameInfo{
                 .delta_seconds = fixed_delta_seconds,
                 .time_seconds = this->driver_runtime.stream_time_seconds,
                 .frame_index = this->driver_runtime.stream_frame_index,
@@ -1949,26 +1956,28 @@ namespace spectra::scene {
 
     void Scene::execute_control_action(const std::string_view action_id, const std::span<const ControlOption> options) {
         if (action_id.empty()) throw std::runtime_error("Scene control action id must not be empty");
-        this->active_driver().execute_control_action(action_id, options);
+        PluginRuntime& runtime = this->active_plugin_runtime();
+        runtime.host->execute_control_action(*runtime.instance, action_id, options);
         this->commit_driver_revision("Scene control action");
         this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::update_control_setting(const std::string_view key, const std::string_view value) {
         if (key.empty()) throw std::runtime_error("Scene control setting key must not be empty");
-        this->active_driver().update_control_setting(key, value);
+        PluginRuntime& runtime = this->active_plugin_runtime();
+        runtime.host->update_control_setting(*runtime.instance, key, value);
         this->commit_driver_revision("Scene control setting");
         this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::commit_driver_revision(const std::string_view context) {
-        SceneDriver& driver = this->active_driver();
-        const std::uint64_t scene_revision = driver.scene_revision();
+        PluginRuntime& runtime = this->active_plugin_runtime();
+        const std::uint64_t scene_revision = runtime.host->scene_revision(*runtime.instance);
         if (scene_revision == this->driver_runtime.observed_scene_revision) return;
-        Document document = driver.create_scene_document();
+        Document document = runtime.host->create_scene_document(*runtime.instance);
         if (!document.timeline_enabled) throw std::runtime_error("Plugin-driven scene document must enable timeline");
         if (!std::isfinite(document.frames_per_second) || document.frames_per_second <= 0.0) throw std::runtime_error("Plugin-driven scene document frame rate must be finite and positive");
-        FrameSnapshot snapshot = driver.create_scene_frame(FrameInfo{
+        FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, FrameInfo{
             .delta_seconds = 0.0,
             .time_seconds = this->driver_runtime.stream_time_seconds,
             .frame_index = this->driver_runtime.stream_frame_index,
@@ -1980,9 +1989,9 @@ namespace spectra::scene {
 
     void Scene::sync_driver_timeline_state(const std::string_view context) {
         if (this->kind() == Kind::Static) return;
-        SceneDriver& driver = this->active_driver();
+        PluginRuntime& runtime = this->active_plugin_runtime();
         const Timeline timeline = this->timeline();
-        driver.update(UpdateInfo{
+        runtime.host->update(*runtime.instance, UpdateInfo{
             .wall_delta_seconds = 0.0,
             .scene_delta_seconds = 0.0,
             .time_seconds = this->driver_runtime.stream_time_seconds,

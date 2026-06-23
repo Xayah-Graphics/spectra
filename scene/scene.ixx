@@ -122,15 +122,12 @@ namespace spectra::scene {
     };
 
     export inline constexpr std::uint32_t ControlMetricDisplayPrimary = 1u << 0u;
-    export inline constexpr std::uint32_t ControlActionStyleSecondary = 0u;
-    export inline constexpr std::uint32_t ControlActionStylePrimary = 1u;
 
     export struct ControlAction {
         std::string id{};
         std::string label{};
         std::string description{};
         std::string section_id{};
-        std::uint32_t style{};
         std::vector<ControlOptionSchema> options{};
     };
 
@@ -177,8 +174,6 @@ namespace spectra::scene {
         Kind kind{Kind::Static};
     };
 
-    export class SceneDriver;
-
     export struct PluginOpenRequest {
         std::filesystem::path plugin_path{};
         std::vector<ControlOption> options{};
@@ -188,7 +183,6 @@ namespace spectra::scene {
         std::string id{};
         std::string title{};
         std::string open_action_label{};
-        std::string open_action_description{};
         std::filesystem::path path{};
         std::vector<ControlSection> sections{};
         std::vector<ControlOptionSchema> open_options{};
@@ -694,7 +688,6 @@ namespace spectra::scene {
         void close();
         void open_static_scene(std::string id, std::string title, Scene scene);
         void open_pbrt_file(const std::filesystem::path& scene_path);
-        void attach_driver(std::string id, std::string title, std::unique_ptr<SceneDriver> driver);
         void open_plugin(PluginOpenRequest request);
         void advance(std::uint64_t frame_number, double delta_seconds);
         void toggle_timeline_playing();
@@ -715,8 +708,17 @@ namespace spectra::scene {
         [[nodiscard]] static FrameCursor make_frame_cursor(const FrameInfo& info);
 
     private:
+        struct PluginRuntime;
+
         struct DriverRuntime {
-            std::unique_ptr<SceneDriver> driver{};
+            DriverRuntime();
+            DriverRuntime(const DriverRuntime& other) = delete;
+            DriverRuntime(DriverRuntime&& other) noexcept;
+            DriverRuntime& operator=(const DriverRuntime& other) = delete;
+            DriverRuntime& operator=(DriverRuntime&& other) noexcept;
+            ~DriverRuntime() noexcept;
+
+            std::unique_ptr<PluginRuntime> plugin{};
             double frame_accumulator_seconds{};
             double stream_time_seconds{};
             std::uint64_t stream_frame_index{};
@@ -727,7 +729,7 @@ namespace spectra::scene {
         [[nodiscard]] const Document& preview_document() const;
         void replace_with_scene(Scene scene);
         void reset_driver_runtime();
-        [[nodiscard]] SceneDriver& active_driver() const;
+        [[nodiscard]] PluginRuntime& active_plugin_runtime() const;
         void commit_driver_revision(std::string_view context);
         void sync_driver_timeline_state(std::string_view context);
 
@@ -741,25 +743,6 @@ namespace spectra::scene {
         bool plugin_info_valid{};
         std::shared_ptr<HostServiceRouter> host{std::make_shared<HostServiceRouter>()};
         DriverRuntime driver_runtime{};
-    };
-
-    export class SceneDriver {
-    public:
-        SceneDriver() = default;
-
-        SceneDriver(const SceneDriver& other) = delete;
-        SceneDriver(SceneDriver&& other) = delete;
-        SceneDriver& operator=(const SceneDriver& other) = delete;
-        SceneDriver& operator=(SceneDriver&& other) = delete;
-        virtual ~SceneDriver() noexcept = default;
-
-        virtual void update(const UpdateInfo& update) = 0;
-        [[nodiscard]] virtual std::uint64_t scene_revision() const = 0;
-        virtual void execute_control_action(std::string_view action_id, std::span<const ControlOption> options) = 0;
-        virtual void update_control_setting(std::string_view key, std::string_view value) = 0;
-        [[nodiscard]] virtual ControlState control_state() const = 0;
-        [[nodiscard]] virtual Scene::Document create_scene_document() const = 0;
-        [[nodiscard]] virtual Scene::FrameSnapshot create_scene_frame(const Scene::FrameInfo& frame) const = 0;
     };
 
     export [[nodiscard]] bool is_plugin_file(const std::filesystem::path& path);

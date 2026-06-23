@@ -23,7 +23,6 @@ namespace spectra::scene {
             std::string id{};
             std::string title{};
             std::string open_action_label{};
-            std::string open_action_description{};
             double frames_per_second{};
             std::vector<ControlSection> sections{};
             std::vector<ControlOptionSchema> open_options{};
@@ -733,13 +732,11 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] ControlAction make_control_action(const SpectraSceneControlAction& action, const std::string_view context) {
-            if (action.style > ControlActionStylePrimary) throw std::runtime_error(std::format("{} has unknown action style {}", context, action.style));
             return ControlAction{
                 .id = abi_string(action.id, std::format("{} id", context), false),
                 .label = abi_string(action.label, std::format("{} label", context), false),
                 .description = abi_string(action.description, std::format("{} description", context), true),
                 .section_id = abi_string(action.section_id, std::format("{} section_id", context), false),
-                .style = action.style,
                 .options = make_open_option_schemas(action.options, std::format("{} option schema", context)),
             };
         }
@@ -880,7 +877,6 @@ namespace spectra::scene {
             .id = abi_string(plugin.id, "Scene plugin id", false),
             .title = abi_string(plugin.title, "Scene plugin title", false),
             .open_action_label = abi_string(plugin.open_action_label, "Scene plugin open action label", false),
-            .open_action_description = abi_string(plugin.open_action_description, "Scene plugin open action description", true),
             .frames_per_second = finite_double(plugin.frames_per_second, "Scene plugin frame rate"),
             .sections = make_control_sections(plugin.sections, "Scene plugin control sections"),
             .open_options = make_open_option_schemas(plugin.open_options, "Scene plugin open option schema"),
@@ -1133,7 +1129,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v9");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v10");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1154,7 +1150,6 @@ namespace spectra::scene {
                 .id = this->descriptor.id,
                 .title = this->descriptor.title,
                 .open_action_label = this->descriptor.open_action_label,
-                .open_action_description = this->descriptor.open_action_description,
                 .path = this->open_request.plugin_path,
                 .sections = this->descriptor.sections,
                 .open_options = this->descriptor.open_options,
@@ -1317,67 +1312,30 @@ namespace spectra::scene {
         const SpectraScenePlugin* plugin{};
     };
 
-    class PluginSceneDriver final : public SceneDriver {
+    class PluginHost::Instance final {
     public:
-        explicit PluginSceneDriver(std::shared_ptr<PluginHost> plugin) : plugin(std::move(plugin)) {
+        explicit Instance(std::shared_ptr<PluginHost> plugin) : plugin(std::move(plugin)) {
             if (this->plugin == nullptr) throw std::runtime_error("Scene plugin driver requires a plugin host");
             this->instance = this->plugin->state->create_instance();
         }
 
-        PluginSceneDriver(const PluginSceneDriver& other) = delete;
-        PluginSceneDriver(PluginSceneDriver&& other) = delete;
-        PluginSceneDriver& operator=(const PluginSceneDriver& other) = delete;
-        PluginSceneDriver& operator=(PluginSceneDriver&& other) = delete;
+        Instance(const Instance& other) = delete;
+        Instance(Instance&& other) = delete;
+        Instance& operator=(const Instance& other) = delete;
+        Instance& operator=(Instance&& other) = delete;
 
-        ~PluginSceneDriver() noexcept override {
+        ~Instance() noexcept {
             this->plugin->state->destroy_instance(this->instance);
             this->instance = nullptr;
-        }
-
-        void update(const UpdateInfo& update) override {
-            this->plugin->state->update(this->instance, update);
-        }
-
-        [[nodiscard]] std::uint64_t scene_revision() const override {
-            return this->plugin->state->scene_revision(this->instance);
-        }
-
-        void execute_control_action(const std::string_view action_id, const std::span<const ControlOption> options) override {
-            this->plugin->state->control_action(this->instance, action_id, options);
-        }
-
-        void update_control_setting(const std::string_view key, const std::string_view value) override {
-            this->plugin->state->control_setting_update(this->instance, key, value);
-        }
-
-        [[nodiscard]] ControlState control_state() const override {
-            return this->plugin->state->control_state(this->instance);
-        }
-
-        [[nodiscard]] Scene::Document create_scene_document() const override {
-            Scene::Document document = this->plugin->state->make_base_document();
-            SceneSymbols symbols{
-                .material_names = collect_material_names(document),
-                .light_names = collect_light_names(document),
-            };
-            append_document_view(document, this->plugin->state->document(this->instance), symbols.material_names, symbols.light_names);
-            ensure_scene_camera(document, document.name);
-            document.timeline_enabled = true;
-            this->scene_symbols = std::move(symbols);
-            this->document_validated = true;
-            return document;
-        }
-
-        [[nodiscard]] Scene::FrameSnapshot create_scene_frame(const Scene::FrameInfo& frame) const override {
-            if (!this->document_validated) throw std::runtime_error("Scene plugin frame was requested before document material validation");
-            return make_frame_snapshot(this->plugin->state->frame(this->instance, frame), frame, this->scene_symbols.material_names);
         }
 
     private:
         std::shared_ptr<PluginHost> plugin{};
         SpectraSceneInstance* instance{};
-        mutable SceneSymbols scene_symbols{};
-        mutable bool document_validated{};
+        SceneSymbols scene_symbols{};
+        bool document_validated{};
+
+        friend class PluginHost;
     };
 
     PluginHost::PluginHost(std::filesystem::path plugin_path) : state(std::make_unique<State>(make_plugin_inspect_request_storage(std::move(plugin_path)))) {}
@@ -1394,8 +1352,47 @@ namespace spectra::scene {
         return this->state->scene_id();
     }
 
-    std::unique_ptr<SceneDriver> PluginHost::create_driver() {
-        return std::make_unique<PluginSceneDriver>(this->shared_from_this());
+    std::shared_ptr<PluginHost::Instance> PluginHost::create_instance() {
+        return std::make_shared<Instance>(this->shared_from_this());
+    }
+
+    void PluginHost::update(Instance& instance, const UpdateInfo& update) const {
+        this->state->update(instance.instance, update);
+    }
+
+    std::uint64_t PluginHost::scene_revision(Instance& instance) const {
+        return this->state->scene_revision(instance.instance);
+    }
+
+    void PluginHost::execute_control_action(Instance& instance, const std::string_view action_id, const std::span<const ControlOption> options) const {
+        this->state->control_action(instance.instance, action_id, options);
+    }
+
+    void PluginHost::update_control_setting(Instance& instance, const std::string_view key, const std::string_view value) const {
+        this->state->control_setting_update(instance.instance, key, value);
+    }
+
+    ControlState PluginHost::control_state(Instance& instance) const {
+        return this->state->control_state(instance.instance);
+    }
+
+    Scene::Document PluginHost::create_scene_document(Instance& instance) const {
+        Scene::Document document = this->state->make_base_document();
+        SceneSymbols symbols{
+            .material_names = collect_material_names(document),
+            .light_names = collect_light_names(document),
+        };
+        append_document_view(document, this->state->document(instance.instance), symbols.material_names, symbols.light_names);
+        ensure_scene_camera(document, document.name);
+        document.timeline_enabled = true;
+        instance.scene_symbols = std::move(symbols);
+        instance.document_validated = true;
+        return document;
+    }
+
+    Scene::FrameSnapshot PluginHost::create_scene_frame(Instance& instance, const Scene::FrameInfo& frame) const {
+        if (!instance.document_validated) throw std::runtime_error("Scene plugin frame was requested before document material validation");
+        return make_frame_snapshot(this->state->frame(instance.instance, frame), frame, instance.scene_symbols.material_names);
     }
 
 } // namespace spectra::scene

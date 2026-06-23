@@ -59,7 +59,7 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v9()`.
+2. Export `spectra_scene_plugin_v10()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -75,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `9`.
-- Exported symbol: `spectra_scene_plugin_v9`.
+- ABI version: `10`.
+- Exported symbol: `spectra_scene_plugin_v10`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -103,7 +103,7 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v9(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v10(void);
 ```
 
 The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `9` and set each
@@ -162,13 +162,12 @@ Controls callbacks are required; missing callbacks are errors.
 - Viewport depth modes: `0` depth tested, `1` always visible.
 - Camera projection values: `0` perspective, `1` pinhole intrinsics.
 - Camera RGBA8 images are optional borrowed pointers with tightly packed `width * height * 4` bytes.
-- `open_action_label` must be non-empty. `open_action_description` may be empty.
+- `open_action_label` must be non-empty.
 - `sections` declares generic control panel sections. Each section id and label must be non-empty and unique. Section
   declaration order is the display order. Open options, control settings, control actions, and state metrics must each
   reference a declared `section_id`. Within a section, item order is the order of the corresponding descriptor or state span.
 - `control_actions` may be empty, but every declared action id and label must be non-empty and unique. Action option
   schemas use the same option kind and validation rules as open options.
-- Control action `style` values are `0` Secondary, `1` Primary, and `2` Danger. Unknown values are errors.
 - `control_state` and `control_setting_update` are required. Settings are live editable
   controls for active plugin-driven scenes; Spectra submits a changed setting immediately and then checks `scene_revision` to
   refresh changed scene/debug data. Setting schemas are declared once in the plugin descriptor through normal option
@@ -202,20 +201,19 @@ Controls callbacks are required; missing callbacks are errors.
   true volume channel storage, the producer may publish a `VolumeChannel` that references the returned `resource_id`
   with `source_kind = 1` and also exposes the producer-owned borrowed device pointer for static pathtracer snapshot
   materialization. The producer owns synchronization: GPU writes must be complete before the callback returning the
-  corresponding scene document/frame or debug attachment returns. There is no CPU voxel copy path and no semaphore
-  fallback.
+  corresponding scene document/frame or debug attachment returns. CPU voxel copies and semaphore synchronization are
+  unsupported.
 - Host services `release_gpu_buffer` releases a previously requested Spectra GPU resource. Producers must release
   imported GPU mappings and then release every requested resource before instance destruction.
 - `SPECTRA_VOLUME_DEBUG=1` enables generic pathtracer volume diagnostics, including density range and approximate
-  majorant statistics. This is for validating renderable volume data, not for accepting acceleration/debug data as a
-  fallback.
+  majorant statistics. This validates renderable volume data only; acceleration/debug data is not accepted there.
 - Descriptor `create` returns a plugin-owned instance pointer.
 - Descriptor `destroy` releases that instance.
 - Descriptor `update` receives a `SpectraSceneUpdateInfo` once per GUI frame. `wall_delta_seconds`
   is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
   when the host timeline is paused. `timeline_playing`, `time_seconds`, and `frame_index` describe the host timeline
-  state. Long-running source updates must honor `scene_delta_seconds` so
-  Space/record/playback controls stay synchronized with source actions and preview availability.
+  state. Long-running source updates must honor `scene_delta_seconds` so Space pause/resume controls stay synchronized
+  with source actions and preview availability.
 - Descriptor `document` returns static scene data as named spans: materials, lights, cameras, static renderable
   entities, and static debug attachments.
 - Cameras are optional scene items. If a plugin provides no cameras, Spectra injects a

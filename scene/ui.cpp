@@ -409,27 +409,15 @@ namespace spectra::scene {
             return action_state->disabled_reason;
         }
 
-        [[nodiscard]] int push_action_button_style(const std::uint32_t style) {
-            if (style == ControlActionStylePrimary) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.10f, 0.34f, 0.38f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.13f, 0.45f, 0.50f, 1.0f});
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.10f, 0.56f, 0.60f, 1.0f});
-                return 3;
-            }
-            return 0;
-        }
-
         bool execute_action(Scene& scene_instance, StatusState& status, ControlsState& controls, ActionEditor& editor);
 
         bool draw_action_button(Scene& scene_instance, StatusState& status, ControlsState& controls, ActionEditor& editor, const ControlState& control_state, const ImVec2 size) {
             ImGui::PushID(editor.action.id.c_str());
             const bool enabled = action_enabled(control_state, editor.action.id);
             const std::string_view disabled_reason = action_disabled_reason(control_state, editor.action.id);
-            const int style_count = push_action_button_style(editor.action.style);
             ImGui::BeginDisabled(!enabled);
             const bool clicked = ImGui::Button(editor.action.label.c_str(), size);
             ImGui::EndDisabled();
-            if (style_count != 0) ImGui::PopStyleColor(style_count);
             if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%.*s", static_cast<int>(disabled_reason.size()), disabled_reason.data());
             if (enabled && !editor.action.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", editor.action.description.c_str());
             if (clicked) static_cast<void>(execute_action(scene_instance, status, controls, editor));
@@ -587,7 +575,6 @@ namespace spectra::scene {
         }
 
         bool draw_open_controls(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin) {
-            if (!plugin.open_action_description.empty()) ImGui::TextWrapped("%s", plugin.open_action_description.c_str());
             if (!controls.open_options.empty()) draw_option_sections(plugin, controls.open_options, false);
             if (!ImGui::Button(plugin.open_action_label.c_str(), ImVec2{-1.0f, 0.0f})) return false;
             try {
