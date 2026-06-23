@@ -841,7 +841,6 @@ namespace spectra::scene {
         if (!document->timeline_enabled) return;
         const Scene::Timeline timeline = scene_instance.timeline();
         if (timeline.mode != Scene::TimelineMode::Playback && ImGui::IsKeyPressed(ImGuiKey_Space, false)) scene_instance.toggle_timeline_playback();
-        if (ImGui::IsKeyPressed(ImGuiKey_R, false)) scene_instance.request_timeline_reset();
     }
 
     void SceneUi::register_to(Spectra& application) {

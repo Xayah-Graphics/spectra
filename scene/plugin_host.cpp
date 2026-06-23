@@ -24,7 +24,6 @@ namespace spectra::scene {
             std::string title{};
             std::string open_action_label{};
             std::string open_action_description{};
-            std::string base_pbrt_path{};
             double frames_per_second{};
             std::vector<ControlSection> sections{};
             std::vector<ControlOptionSchema> open_options{};
@@ -882,7 +881,6 @@ namespace spectra::scene {
             .title = abi_string(plugin.title, "Scene plugin title", false),
             .open_action_label = abi_string(plugin.open_action_label, "Scene plugin open action label", false),
             .open_action_description = abi_string(plugin.open_action_description, "Scene plugin open action description", true),
-            .base_pbrt_path = abi_string(plugin.base_pbrt_path, "Scene plugin base PBRT path", true),
             .frames_per_second = finite_double(plugin.frames_per_second, "Scene plugin frame rate"),
             .sections = make_control_sections(plugin.sections, "Scene plugin control sections"),
             .open_options = make_open_option_schemas(plugin.open_options, "Scene plugin open option schema"),
@@ -1134,8 +1132,8 @@ namespace spectra::scene {
     } // namespace
 
     struct PluginHost::State final {
-        explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v7");
+        explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v8");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1170,30 +1168,14 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] Scene::Document make_base_document() const {
-            const std::string& base_path_text = this->descriptor.base_pbrt_path;
-            if (base_path_text.empty()) {
-                return Scene::Document{
-                    .revision = Scene::Revision{1},
-                    .name = this->descriptor.id,
-                    .title = this->descriptor.title,
-                    .source = this->open_request.scene_id,
-                    .frames_per_second = this->descriptor.frames_per_second,
-                    .timeline_enabled = true,
-                };
-            }
-            const std::filesystem::path base_relative_path{base_path_text};
-            if (base_relative_path.is_absolute()) throw std::runtime_error(std::format("{}: Scene base PBRT path must be relative to the plugin directory", base_path_text));
-            const std::filesystem::path base_path = (this->plugin_directory / base_relative_path).lexically_normal();
-            if (!std::filesystem::is_regular_file(base_path)) throw std::runtime_error(std::format("{}: Scene base PBRT file does not exist", base_path.string()));
-            const Scene base_scene = Scene::parse_pbrt_file(base_path);
-            Scene::Document document = *base_scene.document();
-            document.revision = Scene::Revision{1};
-            document.name = this->descriptor.id;
-            document.title = this->descriptor.title;
-            document.source = this->open_request.scene_id;
-            document.frames_per_second = this->descriptor.frames_per_second;
-            document.timeline_enabled = true;
-            return document;
+            return Scene::Document{
+                .revision = Scene::Revision{1},
+                .name = this->descriptor.id,
+                .title = this->descriptor.title,
+                .source = this->open_request.scene_id,
+                .frames_per_second = this->descriptor.frames_per_second,
+                .timeline_enabled = true,
+            };
         }
 
         void check_result(const SpectraSceneResult result, SpectraSceneInstance* instance, const std::string_view action) const {
@@ -1224,10 +1206,6 @@ namespace spectra::scene {
 
         void destroy_instance(SpectraSceneInstance* instance) const noexcept {
             if (instance != nullptr) this->plugin->destroy(instance);
-        }
-
-        void reset(SpectraSceneInstance* instance) const {
-            this->check_result(this->plugin->reset(instance), instance, "Scene plugin reset");
         }
 
         void update(SpectraSceneInstance* instance, const UpdateInfo& update) const {
@@ -1320,7 +1298,6 @@ namespace spectra::scene {
             if (fps <= 0.0) throw std::runtime_error(std::format("{}: Scene plugin frame rate must be positive", this->open_request.plugin_path.string()));
             if (this->plugin->create == nullptr) throw std::runtime_error(std::format("{}: Scene plugin create function is null", this->open_request.plugin_path.string()));
             if (this->plugin->destroy == nullptr) throw std::runtime_error(std::format("{}: Scene plugin destroy function is null", this->open_request.plugin_path.string()));
-            if (this->plugin->reset == nullptr) throw std::runtime_error(std::format("{}: Scene plugin reset function is null", this->open_request.plugin_path.string()));
             if (this->plugin->update == nullptr) throw std::runtime_error(std::format("{}: Scene plugin update function is null", this->open_request.plugin_path.string()));
             if (this->plugin->document == nullptr) throw std::runtime_error(std::format("{}: Scene plugin document function is null", this->open_request.plugin_path.string()));
             if (this->plugin->frame == nullptr) throw std::runtime_error(std::format("{}: Scene plugin frame function is null", this->open_request.plugin_path.string()));
@@ -1335,7 +1312,6 @@ namespace spectra::scene {
         }
 
         PluginOpenRequestStorage open_request{};
-        std::filesystem::path plugin_directory{};
         AbiCodec codec{};
         AbiCodec::Descriptor descriptor{};
         NativeLibrary native;
@@ -1357,10 +1333,6 @@ namespace spectra::scene {
         ~PluginSceneDriver() noexcept override {
             this->plugin->state->destroy_instance(this->instance);
             this->instance = nullptr;
-        }
-
-        void reset() override {
-            this->plugin->state->reset(this->instance);
         }
 
         void update(const UpdateInfo& update) override {

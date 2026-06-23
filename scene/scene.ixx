@@ -621,7 +621,6 @@ namespace spectra::scene {
             bool playing{true};
             FrameCursor cursor{};
             std::uint64_t selected_frame_index{};
-            std::uint64_t reset_request_serial{};
             std::uint64_t clear_recording_request_serial{};
             std::optional<FrameSnapshot> current_frame{};
             std::vector<FrameSnapshot> recorded_frames{};
@@ -717,7 +716,6 @@ namespace spectra::scene {
         void open_plugin(PluginOpenRequest request);
         void advance(std::uint64_t frame_number, double delta_seconds);
         void toggle_timeline_playback();
-        void request_timeline_reset();
         void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);
         void update_control_setting(std::string_view key, std::string_view value);
 
@@ -740,7 +738,6 @@ namespace spectra::scene {
             double frame_accumulator_seconds{};
             double stream_time_seconds{};
             std::uint64_t stream_frame_index{};
-            std::uint64_t observed_reset_request_serial{};
             std::uint64_t observed_clear_recording_request_serial{};
             std::uint64_t observed_scene_revision{};
             std::optional<std::uint64_t> committed_playback_frame_index{};
@@ -751,7 +748,6 @@ namespace spectra::scene {
         void replace_with_scene(Scene scene);
         void reset_driver_runtime();
         [[nodiscard]] SceneDriver& active_driver() const;
-        void reset_driver_scene(Timeline timeline);
         void commit_driver_revision(std::string_view context);
         void sync_driver_timeline_state(std::string_view context);
 
@@ -777,7 +773,6 @@ namespace spectra::scene {
         SceneDriver& operator=(SceneDriver&& other) = delete;
         virtual ~SceneDriver() noexcept = default;
 
-        virtual void reset() = 0;
         virtual void update(const UpdateInfo& update) = 0;
         [[nodiscard]] virtual std::uint64_t scene_revision() const = 0;
         virtual void execute_control_action(std::string_view action_id, std::span<const ControlOption> options) = 0;

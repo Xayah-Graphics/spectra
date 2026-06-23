@@ -46,8 +46,8 @@ You may also load PBRT scene files and scene plugins through the GUI.
 then drag and drop a `.pbrt` file or plugin `.dll`/`.so` file onto the application window. Plugin libraries open an
 empty scene plugin controls workspace first; the Scene popover renders the generic form declared by the plugin
 descriptor and creates the dynamic scene only when the plugin-declared open action is pressed. After creation, the same
-popover displays plugin-declared control actions and control-state metrics, while selected
-metrics may also appear as compact viewport overlay chips.
+popover displays plugin-declared control actions and live settings, while runtime phase and metrics appear in the
+viewport HUD.
 
 
 ## scene plugins Developer Guide
@@ -59,7 +59,7 @@ Inside Spectra, `spectra.scene` owns the scene model, plugin protocol, host serv
 A scene plugin only needs to:
 
 1. Build a dynamic library.
-2. Export `spectra_scene_plugin_v7()`.
+2. Export `spectra_scene_plugin_v8()`.
 3. Declare the ABI structs exactly as documented below.
 
 ABI strings are UTF-8, NUL-terminated `const char*` values. `nullptr` is treated as empty only for fields documented as
@@ -75,8 +75,8 @@ declared source payload, and publishes
 
 ### Binary Contract
 
-- ABI version: `7`.
-- Exported symbol: `spectra_scene_plugin_v7`.
+- ABI version: `8`.
+- Exported symbol: `spectra_scene_plugin_v8`.
 - Windows export: `extern "C" __declspec(dllexport)`.
 - Result codes are `uint32_t`: `0` OK and `1` error. Option kinds, handle kinds, scene item kinds, entity kinds,
   projection kinds, channel kinds, and presentation hints are also `uint32_t` table values rather than ABI enum
@@ -103,10 +103,10 @@ schemas in the Scene popover and calls the descriptor callbacks directly.
 #define SPECTRA_SCENE_EXPORT __attribute__((visibility("default")))
 #endif
 
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v7(void);
+extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v8(void);
 ```
 
-The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `7` and set each
+The returned descriptor must stay valid while the library is loaded. Set `abi_version` to `8` and set each
 `struct_size` to the exact matching ABI struct size. The scene callbacks are required; missing callbacks are errors.
 Controls callbacks are required; missing callbacks are errors.
 
@@ -145,14 +145,12 @@ Controls callbacks are required; missing callbacks are errors.
   values must be non-negative. External GPU channels must provide no CPU values, a non-zero rasterizer `buffer_id`, a
   non-zero borrowed `external_device_pointer` for pathtracer static snapshot materialization,
   `source_byte_size >= x * y * z * component_count * sizeof(float)`, and non-zero `revision`.
-- Debug attachments are preview-only data attached to real scene entities. Each viewport segment set, viewport voxel
-  grid, and viewport camera visual must name an existing owner entity through `{ kind, name }`. Supported owner kinds are
-  `0` mesh, `1` sphere, `2` point cloud, `3` volume grid, `4` camera, and `5` light. Viewport voxel grids must be owned
-  by a volume grid; viewport camera visuals must be owned by a camera. Missing, empty, or type-mismatched owners are
-  errors.
-- Viewport segment annotations and viewport camera visuals are preview-only. They are consumed by the rasterizer and
-  ignored by the pathtracer/PBRT scene. Camera visuals are attachments owned by camera entities; camera structs
-  themselves do not contain visualization fields.
+- Debug attachments are preview-only data attached to real scene entities. Each viewport segment set and viewport voxel
+  grid must name an existing owner entity through `{ kind, name }`. Supported owner kinds are `0` mesh, `1` sphere,
+  `2` point cloud, `3` volume grid, `4` camera, and `5` light. Viewport voxel grids must be owned by a volume grid.
+  Missing, empty, or type-mismatched owners are errors.
+- Viewport segment annotations are preview-only. They are consumed by the rasterizer and ignored by the
+  pathtracer/PBRT scene.
 - Viewport voxel grids are preview-only sparse voxel annotations. They are consumed by the rasterizer and ignored by the
   pathtracer/PBRT scene. `dimensions` and positive `voxel_size` describe the logical grid; `buffer_id` names a
   host-service GPU buffer. `source_kind` values are `0` compacted `uint32_t` index list and `1` dense occupancy
@@ -163,8 +161,7 @@ Controls callbacks are required; missing callbacks are errors.
 - Viewport width modes: `0` screen-space pixels, `1` world-space units.
 - Viewport depth modes: `0` depth tested, `1` always visible.
 - Camera projection values: `0` perspective, `1` pinhole intrinsics.
-- Viewport camera visual RGBA8 images are borrowed pointers with tightly packed `width * height * 4` bytes.
-- `base_pbrt_path` may be empty. If non-empty, it must be relative to the plugin library directory.
+- Camera RGBA8 images are optional borrowed pointers with tightly packed `width * height * 4` bytes.
 - `open_action_label` must be non-empty. `open_action_description` may be empty.
 - `sections` declares generic control panel sections. Each section id and label must be non-empty and unique. Section
   declaration order is the display order. Open options, control settings, control actions, and state metrics must each
@@ -208,13 +205,12 @@ Controls callbacks are required; missing callbacks are errors.
   corresponding scene document/frame or debug attachment returns. There is no CPU voxel copy path and no semaphore
   fallback.
 - Host services `release_gpu_buffer` releases a previously requested Spectra GPU resource. Producers must release
-  imported GPU mappings and then release every requested resource before instance destruction or reset.
+  imported GPU mappings and then release every requested resource before instance destruction.
 - `SPECTRA_VOLUME_DEBUG=1` enables generic pathtracer volume diagnostics, including density range and approximate
   majorant statistics. This is for validating renderable volume data, not for accepting acceleration/debug data as a
   fallback.
 - Descriptor `create` returns a plugin-owned instance pointer.
 - Descriptor `destroy` releases that instance.
-- Descriptor `reset` resets dynamic scene state and rebuilds internal visualization buffers.
 - Descriptor `update` receives a `SpectraSceneUpdateInfo` once per GUI frame. `wall_delta_seconds`
   is the elapsed host UI time. `scene_delta_seconds` is the delta that source-owned scene work may consume; it is `0`
   when the host timeline is paused or in playback mode. `timeline_playing`, `timeline_mode`, `time_seconds`, and
@@ -222,7 +218,7 @@ Controls callbacks are required; missing callbacks are errors.
   Space/record/playback controls stay synchronized with source actions and preview availability.
 - Descriptor `document` returns static scene data as named spans: materials, lights, cameras, static renderable
   entities, and static debug attachments.
-- Cameras are optional scene items. If a plugin provides no cameras and no base PBRT camera, Spectra injects a
+- Cameras are optional scene items. If a plugin provides no cameras, Spectra injects a
   host-owned `Spectra Inspector Camera`. If a plugin provides exactly one camera, `active_camera_name` may be empty and
   that camera becomes active. Plugins that provide multiple cameras must declare `active_camera_name`.
 - Descriptor `frame` returns dynamic named spans for the requested frame cursor: dynamic cameras, renderable entities,
@@ -232,7 +228,7 @@ Controls callbacks are required; missing callbacks are errors.
   transform animation without a separate transform callback ABI.
 - Descriptor `last_error` returns the most recent instance-local error string; it may be empty. Controls callbacks use
   the same instance error channel.
-- All descriptor function pointers listed in this section are mandatory for ABI v4. Missing callbacks are rejected
+- All descriptor function pointers listed in this section are mandatory for ABI v8. Missing callbacks are rejected
   during plugin inspection/loading.
 - Descriptor `scene_revision` returns a non-zero plugin-owned scene data revision. It must increase whenever
   `document` or `frame` would publish changed scene entities or debug attachments. Controls-only UI changes such as

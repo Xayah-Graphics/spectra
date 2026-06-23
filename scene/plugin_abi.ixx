@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 7u;
+    constexpr std::uint32_t plugin_abi_version = 8u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -445,7 +445,6 @@ export namespace spectra::scene {
 
     typedef SpectraSceneResult (*SpectraSceneCreateFn)(const SpectraSceneOpenInfo* open_info, SpectraSceneInstance** instance);
     typedef void (*SpectraSceneDestroyFn)(SpectraSceneInstance* instance);
-    typedef SpectraSceneResult (*SpectraSceneResetFn)(SpectraSceneInstance* instance);
     typedef SpectraSceneResult (*SpectraSceneUpdateFn)(SpectraSceneInstance* instance, const SpectraSceneUpdateInfo* update_info);
     typedef SpectraSceneResult (*SpectraSceneDocumentFn)(SpectraSceneInstance* instance, SpectraSceneDocumentView* document);
     typedef SpectraSceneResult (*SpectraSceneFrameFn)(SpectraSceneInstance* instance, SpectraSceneFrameInfo frame, SpectraSceneFrameView* snapshot);
@@ -462,7 +461,6 @@ export namespace spectra::scene {
         const char* title{};
         const char* open_action_label{};
         const char* open_action_description{};
-        const char* base_pbrt_path{};
         double frames_per_second{};
         SpectraSceneControlSectionSpan sections{};
         SpectraSceneControlOptionSchemaSpan open_options{};
@@ -470,7 +468,6 @@ export namespace spectra::scene {
         SpectraSceneControlOptionSchemaSpan control_settings{};
         SpectraSceneCreateFn create{};
         SpectraSceneDestroyFn destroy{};
-        SpectraSceneResetFn reset{};
         SpectraSceneUpdateFn update{};
         SpectraSceneDocumentFn document{};
         SpectraSceneFrameFn frame{};
