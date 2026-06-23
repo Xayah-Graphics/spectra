@@ -25,6 +25,9 @@ namespace spectra::scene {
         std::string label{};
     };
 
+    export inline constexpr std::uint32_t ControlOptionPresentationDefault = 0u;
+    export inline constexpr std::uint32_t ControlOptionPresentationSlider = 1u;
+
     export struct ControlSection {
         std::string id{};
         std::string label{};
@@ -39,6 +42,11 @@ namespace spectra::scene {
         std::string default_value{};
         std::string section_id{};
         std::vector<ControlOptionChoice> choices{};
+        std::uint32_t presentation{ControlOptionPresentationDefault};
+        bool has_numeric_range{};
+        float numeric_min{};
+        float numeric_max{};
+        float numeric_step{};
     };
 
     export struct ControlOption {
@@ -113,9 +121,7 @@ namespace spectra::scene {
         std::string last_error_message{};
     };
 
-    export inline constexpr std::uint32_t ControlPlacementViewportOverlay = 1u << 0u;
-    export inline constexpr std::uint32_t ControlPlacementPanelSummary = 1u << 1u;
-    export inline constexpr std::uint32_t ControlPlacementPanelDetail = 1u << 2u;
+    export inline constexpr std::uint32_t ControlMetricDisplayPrimary = 1u << 0u;
     export inline constexpr std::uint32_t ControlActionStyleSecondary = 0u;
     export inline constexpr std::uint32_t ControlActionStylePrimary = 1u;
     export inline constexpr std::uint32_t ControlActionStyleDanger = 2u;
@@ -134,7 +140,7 @@ namespace spectra::scene {
         std::string label{};
         std::string value{};
         std::string section_id{};
-        std::uint32_t placement_flags{};
+        std::uint32_t display_flags{};
         bool has_color{};
         std::array<float, 4u> color{1.0f, 1.0f, 1.0f, 1.0f};
     };
@@ -747,6 +753,7 @@ namespace spectra::scene {
         [[nodiscard]] SceneDriver& active_driver() const;
         void reset_driver_scene(Timeline timeline);
         void commit_driver_revision(std::string_view context);
+        void sync_driver_timeline_state(std::string_view context);
 
         Revision current_revision{};
         mutable std::shared_ptr<const Document> current_document{};

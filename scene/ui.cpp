@@ -129,6 +129,15 @@ namespace spectra::scene {
             return std::ranges::any_of(schema.choices, [&value](const ControlOptionChoice& choice) { return choice.value == value; });
         }
 
+        [[nodiscard]] bool option_uses_slider(const ControlOptionSchema& schema) {
+            return schema.kind == ControlOptionKind::Float && schema.presentation == ControlOptionPresentationSlider && schema.has_numeric_range;
+        }
+
+        void snap_slider_value(OptionEditor& editor) {
+            const float offset = std::round((editor.float_value - editor.schema.numeric_min) / editor.schema.numeric_step) * editor.schema.numeric_step;
+            editor.float_value = std::clamp(editor.schema.numeric_min + offset, editor.schema.numeric_min, editor.schema.numeric_max);
+        }
+
         [[nodiscard]] OptionEditor make_option_editor(ControlOptionSchema schema) {
             OptionEditor editor{.schema = std::move(schema)};
             editor.enabled = editor.schema.required || !editor.schema.default_value.empty();
@@ -137,7 +146,8 @@ namespace spectra::scene {
                 editor.bool_value = editor.schema.default_value.empty() ? false : parse_bool_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
                 break;
             case ControlOptionKind::Float:
-                editor.float_value = editor.schema.default_value.empty() ? 0.0f : parse_float_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
+                if (editor.schema.default_value.empty()) editor.float_value = option_uses_slider(editor.schema) ? editor.schema.numeric_min : 0.0f;
+                else editor.float_value = parse_float_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
                 break;
             case ControlOptionKind::UnsignedInteger:
                 editor.unsigned_value = editor.schema.default_value.empty() ? 0u : parse_unsigned_integer_text(editor.schema.default_value, std::format("Scene option '{}'", editor.schema.key));
@@ -215,24 +225,21 @@ namespace spectra::scene {
 
         void begin_pending_plugin_controls(ControlsState& controls, PluginInfo plugin);
 
-        [[nodiscard]] const char* phase_text(const SceneControlsPhase phase) {
-            switch (phase) {
-            case SceneControlsPhase::None: return "No Scene Plugin";
-            case SceneControlsPhase::PluginLoaded: return "Plugin Loaded";
-            case SceneControlsPhase::Active: return "Active";
-            case SceneControlsPhase::Error: return "Error";
-            }
-            throw std::runtime_error("Unknown scene controls phase");
+        [[nodiscard]] bool metric_is_primary(const ControlMetric& metric) {
+            return (metric.display_flags & ControlMetricDisplayPrimary) != 0u;
         }
 
-        [[nodiscard]] bool metric_has_placement(const ControlMetric& metric, const std::uint32_t placement) {
-            return (metric.placement_flags & placement) != 0u;
-        }
-
-        [[nodiscard]] std::vector<const ControlMetric*> control_metrics_with_placement(const ControlState& state, const std::uint32_t placement) {
+        [[nodiscard]] std::vector<const ControlMetric*> primary_metrics(const ControlState& state) {
             std::vector<const ControlMetric*> metrics{};
             for (const ControlMetric& metric : state.metrics)
-                if (metric_has_placement(metric, placement)) metrics.push_back(&metric);
+                if (metric_is_primary(metric)) metrics.push_back(&metric);
+            return metrics;
+        }
+
+        [[nodiscard]] std::vector<const ControlMetric*> detail_metrics_for_section(const ControlState& state, const std::string_view section_id) {
+            std::vector<const ControlMetric*> metrics{};
+            for (const ControlMetric& metric : state.metrics)
+                if (!metric_is_primary(metric) && metric.section_id == section_id) metrics.push_back(&metric);
             return metrics;
         }
 
@@ -298,7 +305,12 @@ namespace spectra::scene {
                 changed = ImGui::Checkbox("##value", &editor.bool_value) || changed;
                 break;
             case ControlOptionKind::Float:
-                changed = ImGui::InputFloat("##value", &editor.float_value, 0.0f, 0.0f, "%.6g", ImGuiInputTextFlags_EnterReturnsTrue) || changed;
+                if (option_uses_slider(editor.schema)) {
+                    changed = ImGui::SliderFloat("##value", &editor.float_value, editor.schema.numeric_min, editor.schema.numeric_max, "%.2f") || changed;
+                    if (changed) snap_slider_value(editor);
+                } else {
+                    changed = ImGui::InputFloat("##value", &editor.float_value, 0.0f, 0.0f, "%.6g", ImGuiInputTextFlags_EnterReturnsTrue) || changed;
+                }
                 break;
             case ControlOptionKind::UnsignedInteger:
                 changed = ImGui::InputScalar("##value", ImGuiDataType_U64, &editor.unsigned_value, nullptr, nullptr, nullptr, ImGuiInputTextFlags_EnterReturnsTrue) || changed;
@@ -377,6 +389,7 @@ namespace spectra::scene {
             if (!changed) return false;
             if (editor.schema.kind == ControlOptionKind::Bool) return true;
             if (editor.schema.kind == ControlOptionKind::Choice) return true;
+            if (option_uses_slider(editor.schema)) return true;
             if (editor.schema.kind == ControlOptionKind::Float || editor.schema.kind == ControlOptionKind::UnsignedInteger) {
                 if (ImGui::IsItemDeactivatedAfterEdit()) return true;
                 return ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
@@ -467,6 +480,7 @@ namespace spectra::scene {
         }
 
         void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, std::string_view section_id);
+        [[nodiscard]] bool draw_timeline_controls(Scene& scene_instance, StatusState& status, ControlsState& controls);
         bool draw_open_controls(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin);
         void draw_controls_panel(Scene& scene_instance, StatusState& status, ControlsState& controls);
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, ImVec2 viewport_position, ImVec2 viewport_size);
@@ -536,14 +550,16 @@ namespace spectra::scene {
         void draw_settings(Scene& scene_instance, StatusState& status, ControlsState& controls, const std::string_view section_id) {
             for (SettingEditor& editor : controls.settings) {
                 if (editor.schema.section_id != section_id) continue;
-                if (!option_editor_should_commit(editor.option, draw_option_editor(editor.option, false))) continue;
+                const bool changed = draw_option_editor(editor.option, false);
+                const bool finished_edit = ImGui::IsItemDeactivatedAfterEdit();
+                if (!option_editor_should_commit(editor.option, changed)) continue;
                 const std::string value = option_editor_value(editor.option);
                 try {
                     scene_instance.update_control_setting(editor.schema.key, value);
                     editor.committed_value = value;
                     controls.phase = SceneControlsPhase::Active;
                     controls.error.clear();
-                    set_scene_status(status, std::format("Updated {}", editor.schema.label), false);
+                    if (!option_uses_slider(editor.option.schema) || finished_edit) set_scene_status(status, std::format("Updated {}", editor.schema.label), false);
                 } catch (const std::exception& error) {
                     set_option_editor_value(editor.option, editor.committed_value);
                     controls.phase = SceneControlsPhase::Error;
@@ -554,37 +570,27 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] bool draw_summary(const ControlState& state) {
-            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(state, ControlPlacementPanelSummary);
-            if (metrics.empty()) return false;
-            if (!ImGui::BeginTable("SceneControlSummary", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) return false;
-            std::size_t index{};
-            for (const ControlMetric* metric : metrics) {
-                if (index % 2u == 0u) ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(static_cast<int>(index % 2u));
-                ImGui::TextDisabled("%s", metric->label.c_str());
-                ImGui::TextColored(control_metric_color(*metric), "%s", metric->value.c_str());
-                ++index;
+        bool draw_timeline_controls(Scene& scene_instance, StatusState& status, ControlsState& controls) {
+            const std::shared_ptr<const Scene::Document> document = scene_instance.document();
+            if (!document->timeline_enabled) return false;
+            const Scene::Timeline timeline = scene_instance.timeline();
+            if (timeline.mode == Scene::TimelineMode::Playback) return false;
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", "Timeline");
+            const char* const label = timeline.playing ? "Pause" : "Resume";
+            if (!ImGui::Button(label, ImVec2{-1.0f, 0.0f})) return false;
+            try {
+                scene_instance.toggle_timeline_playback();
+                controls.phase = SceneControlsPhase::Active;
+                controls.error.clear();
+                set_scene_status(status, timeline.playing ? "Paused timeline" : "Resumed timeline", false);
+                return true;
+            } catch (const std::exception& error) {
+                controls.phase = SceneControlsPhase::Error;
+                controls.error = error.what();
+                set_scene_status(status, controls.error, true);
+                return false;
             }
-            ImGui::EndTable();
-            return true;
-        }
-
-        void draw_detail_metrics(const ControlState& state, const std::string_view section_id) {
-            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(state, ControlPlacementPanelDetail);
-            for (const ControlMetric* metric : metrics) {
-                if (metric->section_id != section_id) continue;
-                if (metric_has_placement(*metric, ControlPlacementPanelSummary)) continue;
-                ImGui::TextDisabled("%s", metric->label.c_str());
-                ImGui::SameLine();
-                ImGui::TextColored(control_metric_color(*metric), "%s", metric->value.c_str());
-            }
-        }
-
-        [[nodiscard]] bool section_has_detail_metrics(const ControlState& state, const std::string_view section_id) {
-            return std::ranges::any_of(state.metrics, [section_id](const ControlMetric& metric) {
-                return metric.section_id == section_id && metric_has_placement(metric, ControlPlacementPanelDetail) && !metric_has_placement(metric, ControlPlacementPanelSummary);
-            });
         }
 
         bool draw_open_controls(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin) {
@@ -609,35 +615,14 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] bool draw_header(Scene& scene_instance, StatusState& status, ControlsState& controls, const PluginInfo& plugin, const ControlState* control_state) {
-            const float button_size = ImGui::GetFrameHeight();
+        void draw_header(Scene& scene_instance, const PluginInfo& plugin) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(plugin.title.c_str());
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", plugin.path.string().c_str());
-            const float close_x = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - button_size;
-            if (ImGui::GetCursorPosX() < close_x) ImGui::SameLine(close_x);
-            if (ImGui::Button(ICON_MS_CLOSE "##close_scene_plugin", ImVec2{button_size, button_size})) {
-                controls = ControlsState{};
-                scene_instance.close();
-                set_scene_status(status, "Closed scene plugin controls", false);
-                return true;
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("Close Scene");
-
-            const std::string phase = control_state != nullptr ? control_state->phase : phase_text(controls.phase);
-            const std::string headline = control_state != nullptr ? control_state->headline : plugin.title;
-            draw_status_pill(phase);
-            if (!headline.empty()) {
-                ImGui::SameLine(0.0f, 8.0f);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextWrapped("%s", headline.c_str());
-                if (control_state != nullptr && !control_state->detail.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", control_state->detail.c_str());
-            }
             if (scene_instance.has_descriptor()) {
                 const Descriptor& descriptor = scene_instance.descriptor();
                 if (descriptor.title != plugin.title) ImGui::TextColored(ImVec4{0.55f, 0.62f, 0.70f, 1.0f}, "%s", descriptor.title.c_str());
             }
-            return false;
         }
 
         void draw_controls_panel(Scene& scene_instance, StatusState& status, ControlsState& controls) {
@@ -669,8 +654,7 @@ namespace spectra::scene {
                 }
             }
 
-            const ControlState* state = control_state.has_value() ? &*control_state : nullptr;
-            if (draw_header(scene_instance, status, controls, *plugin, state)) return;
+            draw_header(scene_instance, *plugin);
             if (!controls.error.empty()) {
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4{1.0f, 0.42f, 0.36f, 1.0f}, "%s", controls.error.c_str());
@@ -685,61 +669,121 @@ namespace spectra::scene {
                 return;
             }
 
-            if (draw_summary(*control_state)) {
-                ImGui::Spacing();
-                ImGui::Separator();
-            }
+            if (draw_timeline_controls(scene_instance, status, controls)) control_state = scene_instance.control_state();
 
             for (const ControlSection& section : plugin->sections) {
                 const bool has_actions = action_section_has_editors(controls.actions, section.id);
                 const bool has_settings = setting_section_has_editors(controls.settings, section.id);
-                const bool has_metrics = section_has_detail_metrics(*control_state, section.id);
-                if (!has_actions && !has_settings && !has_metrics) continue;
+                if (!has_actions && !has_settings) continue;
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", section.label.c_str());
                 if (has_actions) draw_action_section(scene_instance, status, controls, *plugin, *control_state, section.id);
                 if (has_settings) draw_settings(scene_instance, status, controls, section.id);
-                if (has_metrics) draw_detail_metrics(*control_state, section.id);
             }
         }
 
-        [[nodiscard]] std::string overlay_text(const ControlState& state) {
-            std::string text = state.phase;
-            if (!state.headline.empty()) text += std::format(" | {}", state.headline);
-            const std::vector<const ControlMetric*> metrics = control_metrics_with_placement(state, ControlPlacementViewportOverlay);
-            std::size_t shown{};
-            for (const ControlMetric* metric : metrics) {
-                if (shown >= 5u) break;
-                text += std::format(" | {} {}", metric->label, metric->value);
-                ++shown;
+        void draw_hud_metric_row(const ControlMetric& metric) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%s", metric.label.c_str());
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(control_metric_color(metric), "%s", metric.value.c_str());
+        }
+
+        void draw_hud_primary_metrics(const ControlState& state, const bool compact) {
+            const std::vector<const ControlMetric*> metrics = primary_metrics(state);
+            if (metrics.empty()) return;
+            if (compact) {
+                for (std::size_t index = 0u; index < std::min<std::size_t>(metrics.size(), 3u); ++index) {
+                    if (index != 0u) ImGui::SameLine(0.0f, 10.0f);
+                    ImGui::TextColored(control_metric_color(*metrics[index]), "%s %s", metrics[index]->label.c_str(), metrics[index]->value.c_str());
+                }
+                return;
             }
-            constexpr std::size_t max_text_size = 220u;
-            if (text.size() > max_text_size) text = text.substr(0u, max_text_size - 3u) + "...";
-            return text;
+            constexpr int columns = 2;
+            if (!ImGui::BeginTable("SceneStatusHudPrimary", columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) return;
+            for (std::size_t index = 0u; index < metrics.size(); ++index) {
+                if (index % static_cast<std::size_t>(columns) == 0u) ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(static_cast<int>(index % static_cast<std::size_t>(columns)));
+                ImGui::TextDisabled("%s", metrics[index]->label.c_str());
+                ImGui::TextColored(control_metric_color(*metrics[index]), "%s", metrics[index]->value.c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        void draw_hud_detail_metrics(const PluginInfo& plugin, const ControlState& state) {
+            for (const ControlSection& section : plugin.sections) {
+                const std::vector<const ControlMetric*> metrics = detail_metrics_for_section(state, section.id);
+                if (metrics.empty()) continue;
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", section.label.c_str());
+                if (!ImGui::BeginTable(section.id.c_str(), 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) continue;
+                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.48f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.52f);
+                for (const ControlMetric* metric : metrics) draw_hud_metric_row(*metric);
+                ImGui::EndTable();
+            }
+        }
+
+        void draw_status_hud(const PluginInfo& plugin, const ControlState& state, const ImVec2 viewport_position, const ImVec2 viewport_size) {
+            if (viewport_size.x < 180.0f || viewport_size.y < 120.0f) return;
+            const bool compact = viewport_size.x < 380.0f || viewport_size.y < 220.0f;
+            const float hud_width = std::min(420.0f, std::max(220.0f, viewport_size.x - 24.0f));
+            const float hud_max_height = std::max(86.0f, viewport_size.y * 0.45f);
+            ImGui::SetNextWindowPos(ImVec2{viewport_position.x + 12.0f, viewport_position.y + viewport_size.y - 12.0f}, ImGuiCond_Always, ImVec2{0.0f, 1.0f});
+            ImGui::SetNextWindowSizeConstraints(ImVec2{std::min(hud_width, viewport_size.x - 24.0f), 0.0f}, ImVec2{hud_width, hud_max_height});
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 10.0f});
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.035f, 0.047f, 0.060f, 0.88f});
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.24f, 0.50f, 0.54f, 0.36f});
+            constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
+            if (ImGui::Begin("##SceneStatusHud", nullptr, flags)) {
+                draw_status_pill(state.phase);
+                if (!state.headline.empty()) {
+                    ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::TextWrapped("%s", state.headline.c_str());
+                }
+                if (!compact && !state.detail.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4{0.62f, 0.69f, 0.76f, 1.0f}, "%s", state.detail.c_str());
+                }
+                draw_hud_primary_metrics(state, compact);
+                if (!compact) draw_hud_detail_metrics(plugin, state);
+            }
+            ImGui::End();
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(3);
+        }
+
+        void draw_status_hud_error(const std::string_view message, const ImVec2 viewport_position, const ImVec2 viewport_size) {
+            ControlState state{
+                .phase = "Error",
+                .headline = "Scene controls unavailable",
+                .detail = std::string{message},
+            };
+            PluginInfo plugin{
+                .sections = {ControlSection{.id = "error", .label = "Error"}},
+            };
+            draw_status_hud(plugin, state, viewport_position, viewport_size);
         }
 
         void draw_controls_overlay(Scene& scene_instance, ControlsState& controls, const ImVec2 viewport_position, const ImVec2 viewport_size) {
-            if (controls.phase == SceneControlsPhase::None || !scene_instance.has_controls()) return;
+            if (controls.phase == SceneControlsPhase::None || !scene_instance.has_controls() || !scene_instance.has_plugin_info()) return;
+            if (controls.phase == SceneControlsPhase::Error && !controls.error.empty()) {
+                draw_status_hud_error(controls.error, viewport_position, viewport_size);
+                return;
+            }
             ControlState state{};
             try {
                 state = scene_instance.control_state();
             } catch (const std::exception& error) {
                 controls.phase = SceneControlsPhase::Error;
                 controls.error = error.what();
+                draw_status_hud_error(controls.error, viewport_position, viewport_size);
                 return;
             }
-            const std::string text = overlay_text(state);
-            if (text.empty() || viewport_size.x < 180.0f || viewport_size.y < 120.0f) return;
-            const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
-            const ImVec2 padding{9.0f, 5.0f};
-            const float max_width = std::max(120.0f, viewport_size.x - 24.0f);
-            const ImVec2 chip_size{std::min(max_width, text_size.x + padding.x * 2.0f), text_size.y + padding.y * 2.0f};
-            const ImVec2 chip_min{viewport_position.x + 12.0f, viewport_position.y + viewport_size.y - chip_size.y - 12.0f};
-            const ImVec2 chip_max{chip_min.x + chip_size.x, chip_min.y + chip_size.y};
-            ImDrawList* draw_list = ImGui::GetForegroundDrawList();
-            draw_list->AddRectFilled(chip_min, chip_max, ImGui::GetColorU32(ImVec4{0.03f, 0.05f, 0.07f, 0.78f}), 6.0f);
-            draw_list->AddRect(chip_min, chip_max, ImGui::GetColorU32(ImVec4{0.34f, 0.68f, 0.72f, 0.45f}), 6.0f);
-            draw_list->AddText(ImVec2{chip_min.x + padding.x, chip_min.y + padding.y}, ImGui::GetColorU32(ImVec4{0.82f, 0.92f, 0.94f, 1.0f}), text.c_str());
+            draw_status_hud(scene_instance.plugin_info(), state, viewport_position, viewport_size);
         }
 
         void open_scene_files(Spectra& application, Scene& scene_instance, StatusState& status, ControlsState& controls, const std::span<const std::filesystem::path> paths) {

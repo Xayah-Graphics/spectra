@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 5u;
+    constexpr std::uint32_t plugin_abi_version = 7u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -29,6 +29,8 @@ export namespace spectra::scene {
     constexpr std::uint32_t SPECTRA_SCENE_OPTION_BOOL = 4u;
     constexpr std::uint32_t SPECTRA_SCENE_OPTION_FLOAT = 5u;
     constexpr std::uint32_t SPECTRA_SCENE_OPTION_UNSIGNED_INTEGER = 6u;
+    constexpr std::uint32_t SPECTRA_SCENE_OPTION_PRESENTATION_DEFAULT = 0u;
+    constexpr std::uint32_t SPECTRA_SCENE_OPTION_PRESENTATION_SLIDER = 1u;
 
     struct SpectraSceneControlOptionChoice {
         const char* value{};
@@ -59,6 +61,11 @@ export namespace spectra::scene {
         const char* default_value{};
         const char* section_id{};
         SpectraSceneControlOptionChoiceSpan choices{};
+        std::uint32_t presentation{};
+        std::uint32_t has_numeric_range{};
+        float numeric_min{};
+        float numeric_max{};
+        float numeric_step{};
     };
 
     struct SpectraSceneControlOptionSchemaSpan {
@@ -85,7 +92,7 @@ export namespace spectra::scene {
         const char* label{};
         const char* value{};
         const char* section_id{};
-        std::uint32_t placement_flags{};
+        std::uint32_t display_flags{};
         std::uint32_t has_color{};
         float color[4]{};
     };

@@ -564,8 +564,8 @@ namespace spectra::rasterizer {
             bool camera_initialized{false};
             bool overlays_visible{true};
             bool grid_visible{false};
-            bool camera_visual_frustums_visible{true};
-            bool camera_visual_images_visible{true};
+            bool camera_visual_frustums_visible{false};
+            bool camera_visual_images_visible{false};
             float camera_visual_near{0.02f};
             float camera_visual_far{0.25f};
             float camera_visual_width{1.5f};

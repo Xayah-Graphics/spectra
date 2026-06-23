@@ -2003,6 +2003,7 @@ namespace spectra::scene {
         timeline.playing = !timeline.playing;
         commit_scene_timeline(*this, std::move(timeline));
         this->driver_runtime.updated_frame_number.reset();
+        this->sync_driver_timeline_state("Scene timeline playback");
     }
 
     void Scene::request_timeline_reset() {
@@ -2042,6 +2043,21 @@ namespace spectra::scene {
         commit_scene_document_and_frame(*this, std::move(document), std::move(snapshot));
         validate_scene_renderable_entities(*this, context);
         this->driver_runtime.observed_scene_revision = scene_revision;
+    }
+
+    void Scene::sync_driver_timeline_state(const std::string_view context) {
+        if (this->kind() == Kind::Static) return;
+        SceneDriver& driver = this->active_driver();
+        const Timeline timeline = this->timeline();
+        driver.update(UpdateInfo{
+            .wall_delta_seconds = 0.0,
+            .scene_delta_seconds = 0.0,
+            .time_seconds = this->driver_runtime.stream_time_seconds,
+            .frame_index = this->driver_runtime.stream_frame_index,
+            .timeline_mode = control_timeline_mode(timeline.mode),
+            .timeline_playing = timeline.playing,
+        });
+        this->commit_driver_revision(context);
     }
 
     void Scene::reset_driver_scene(Timeline timeline) {

@@ -665,7 +665,24 @@ namespace spectra::scene {
             if (!section_ids.contains(section_id)) throw std::runtime_error(std::format("{} references unknown section '{}'", context, section_id));
         }
 
+        void validate_option_presentation(const ControlOptionSchema& schema, const std::string_view context) {
+            if (schema.presentation != ControlOptionPresentationDefault && schema.presentation != ControlOptionPresentationSlider) throw std::runtime_error(std::format("{} has unknown presentation {}", context, schema.presentation));
+            if (!schema.has_numeric_range) {
+                if (schema.presentation == ControlOptionPresentationSlider) throw std::runtime_error(std::format("{} slider presentation requires a numeric range", context));
+                return;
+            }
+            if (schema.kind != ControlOptionKind::Float) throw std::runtime_error(std::format("{} numeric range is only supported for float options", context));
+            if (schema.presentation != ControlOptionPresentationSlider) throw std::runtime_error(std::format("{} numeric range requires slider presentation", context));
+            if (!std::isfinite(schema.numeric_min) || !std::isfinite(schema.numeric_max) || !std::isfinite(schema.numeric_step)) throw std::runtime_error(std::format("{} numeric range must be finite", context));
+            if (!(schema.numeric_min < schema.numeric_max)) throw std::runtime_error(std::format("{} numeric range min must be less than max", context));
+            if (!(schema.numeric_step > 0.0f)) throw std::runtime_error(std::format("{} numeric range step must be positive", context));
+            if (schema.default_value.empty()) return;
+            const float default_value = parse_float_default(schema.default_value, std::format("{} default value", context));
+            if (default_value < schema.numeric_min || default_value > schema.numeric_max) throw std::runtime_error(std::format("{} default value is outside its numeric range", context));
+        }
+
         [[nodiscard]] ControlOptionSchema make_open_option_schema(const SpectraSceneControlOptionSchema& schema, const std::string_view context) {
+            if (schema.has_numeric_range != 0u && schema.has_numeric_range != 1u) throw std::runtime_error(std::format("{} has_numeric_range flag must be 0 or 1", context));
             ControlOptionSchema converted{
                 .key = abi_string(schema.key, std::format("{} key", context), false),
                 .label = abi_string(schema.label, std::format("{} label", context), false),
@@ -674,6 +691,11 @@ namespace spectra::scene {
                 .required = schema.required != 0u,
                 .default_value = abi_string(schema.default_value, std::format("{} default value", context), true),
                 .section_id = abi_string(schema.section_id, std::format("{} section_id", context), false),
+                .presentation = schema.presentation,
+                .has_numeric_range = schema.has_numeric_range != 0u,
+                .numeric_min = schema.numeric_min,
+                .numeric_max = schema.numeric_max,
+                .numeric_step = schema.numeric_step,
             };
             if (schema.required != 0u && schema.required != 1u) throw std::runtime_error(std::format("{} required flag must be 0 or 1", context));
             const std::span<const SpectraSceneControlOptionChoice> choices = abi_span(schema.choices.data, schema.choices.count, std::format("{} choices", context));
@@ -694,6 +716,7 @@ namespace spectra::scene {
             if (converted.kind == ControlOptionKind::Bool && !converted.default_value.empty()) static_cast<void>(parse_bool_default(converted.default_value));
             if (converted.kind == ControlOptionKind::Float && !converted.default_value.empty()) static_cast<void>(parse_float_default(converted.default_value, std::format("{} default value", context)));
             if (converted.kind == ControlOptionKind::UnsignedInteger && !converted.default_value.empty()) static_cast<void>(parse_unsigned_integer_default(converted.default_value, std::format("{} default value", context)));
+            validate_option_presentation(converted, context);
             return converted;
         }
 
@@ -790,7 +813,7 @@ namespace spectra::scene {
                     .label = abi_string(metric.label, std::format("{} metric {} label", context, metric_index), false),
                     .value = abi_string(metric.value, std::format("{} metric {} value", context, metric_index), false),
                     .section_id = abi_string(metric.section_id, std::format("{} metric {} section_id", context, metric_index), false),
-                    .placement_flags = metric.placement_flags,
+                    .display_flags = metric.display_flags,
                     .has_color = metric.has_color != 0u,
                     .color = {
                         finite_float(metric.color[0], std::format("{} metric {} color r", context, metric_index)),
@@ -799,7 +822,7 @@ namespace spectra::scene {
                         finite_float(metric.color[3], std::format("{} metric {} color a", context, metric_index)),
                     },
                 };
-                if ((converted.placement_flags & ~(ControlPlacementViewportOverlay | ControlPlacementPanelSummary | ControlPlacementPanelDetail)) != 0u) throw std::runtime_error(std::format("{} metric '{}' has unknown placement flags {}", context, converted.key, converted.placement_flags));
+                if ((converted.display_flags & ~ControlMetricDisplayPrimary) != 0u) throw std::runtime_error(std::format("{} metric '{}' has unknown display flags {}", context, converted.key, converted.display_flags));
                 if (metric.has_color != 0u && metric.has_color != 1u) throw std::runtime_error(std::format("{} metric '{}' has_color flag must be 0 or 1", context, converted.key));
                 if (!metric_keys.insert(converted.key).second) throw std::runtime_error(std::format("{} metric '{}' is duplicated", context, converted.key));
                 state.metrics.push_back(std::move(converted));
@@ -1112,7 +1135,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), plugin_directory(this->open_request.plugin_path.parent_path()), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v5");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v7");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
