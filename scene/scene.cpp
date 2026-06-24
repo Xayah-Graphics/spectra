@@ -308,7 +308,6 @@ namespace spectra::scene {
 
         void validate_viewport_voxel_grid(const Scene::ViewportVoxelGrid& voxel_grid) {
             if (voxel_grid.name.empty()) throw std::runtime_error("Viewport voxel grid name must not be empty");
-            validate_viewport_annotation_transform(voxel_grid.transform, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
             validate_viewport_annotation_color(voxel_grid.color, std::format("Viewport voxel grid \"{}\" color", voxel_grid.name));
             validate_viewport_segment_depth_mode(voxel_grid.depth_mode, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
             validate_viewport_voxel_grid_source_kind(voxel_grid.source_kind, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
@@ -400,7 +399,7 @@ namespace spectra::scene {
 
         void validate_camera(const Scene::Camera& camera, const std::string_view context) {
             if (camera.name.empty()) throw std::runtime_error(std::format("{} camera name must not be empty", context));
-            static_cast<void>(make_vulkan_camera_matrices(camera.view, 1.0f, camera.view.projection.far_plane));
+            static_cast<void>(make_vulkan_camera_matrices(camera.pose, camera.projection, 1.0f, camera.projection.far_plane));
             if (camera.image.has_value()) validate_camera_image(*camera.image, std::format("{} camera \"{}\"", context, camera.name));
         }
 
@@ -422,16 +421,16 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] float pathtracer_camera_fov_degrees(const Scene::Camera& camera) {
-            switch (camera.view.projection.kind) {
+            switch (camera.projection.kind) {
             case CameraProjectionKind::Perspective:
-                return camera.view.projection.vertical_fov_degrees;
+                return camera.projection.vertical_fov_degrees;
             case CameraProjectionKind::Pinhole: {
                 constexpr float principal_point_tolerance = 1.0e-3f;
-                const float centered_x = static_cast<float>(camera.view.projection.image_width) * 0.5f;
-                const float centered_y = static_cast<float>(camera.view.projection.image_height) * 0.5f;
-                if (std::abs(camera.view.projection.cx - centered_x) > principal_point_tolerance || std::abs(camera.view.projection.cy - centered_y) > principal_point_tolerance)
+                const float centered_x = static_cast<float>(camera.projection.image_width) * 0.5f;
+                const float centered_y = static_cast<float>(camera.projection.image_height) * 0.5f;
+                if (std::abs(camera.projection.cx - centered_x) > principal_point_tolerance || std::abs(camera.projection.cy - centered_y) > principal_point_tolerance)
                     throw std::runtime_error(std::format("Active camera \"{}\" uses off-center pinhole intrinsics; current pathtracer camera adapter requires a centered principal point", camera.name));
-                return camera_projection_vertical_fov_degrees(camera.view.projection);
+                return camera_projection_vertical_fov_degrees(camera.projection);
             }
             case CameraProjectionKind::Orthographic:
                 throw std::runtime_error(std::format("Active camera \"{}\" uses orthographic projection; preview pathtracer conversion currently requires a perspective camera", camera.name));
@@ -1113,7 +1112,7 @@ namespace spectra::scene {
                 .parameters = {float_parameter("fov", {pathtracer_camera_fov_degrees(active_camera)}, active_camera.source)},
                 .source = active_camera.source,
             };
-            const SceneTransform world_from_camera = camera_world_from_camera(active_camera.view.pose);
+            const SceneTransform world_from_camera = camera_world_from_camera(active_camera.pose);
             scene.render_settings.camera_transform = SceneTransformSet{.start = world_from_camera, .end = world_from_camera};
             const std::set<std::string> texture_names = append_canonical_textures(scene, document);
             append_canonical_materials(scene, document, texture_names, !frame.volumes.empty());
@@ -1452,17 +1451,13 @@ namespace spectra::scene {
                 .cameras = {
                     Scene::Camera{
                         .name = "Camera",
-                        .view = camera_view_from_look_at(
-                            Vector3{0.0f, 1.0f, 5.0f},
-                            Vector3{0.0f, 0.0f, 0.0f},
-                            Vector3{0.0f, 1.0f, 0.0f},
-                            CameraProjection{
-                                .kind = CameraProjectionKind::Perspective,
-                                .vertical_fov_degrees = 45.0f,
-                                .near_plane = 0.01f,
-                                .far_plane = 200.0f,
-                            }
-                        ),
+                        .pose = camera_pose_from_look_at(Vector3{0.0f, 1.0f, 5.0f}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{0.0f, 1.0f, 0.0f}),
+                        .projection = CameraProjection{
+                            .kind = CameraProjectionKind::Perspective,
+                            .vertical_fov_degrees = 45.0f,
+                            .near_plane = 0.01f,
+                            .far_plane = 200.0f,
+                        },
                     },
                 },
                 .active_camera_name = "Camera",
@@ -1670,7 +1665,6 @@ namespace spectra::scene {
 
     Scene::Scene(Document document) {
         if (document.revision.value == 0) document.revision = Revision{1};
-        document.default_coordinate_system = coordinate_system(document.default_coordinate_system.name);
         this->current_revision = document.revision;
         this->current_document = std::make_shared<Document>(std::move(document));
         this->current_timeline.frames_per_second = this->current_document->frames_per_second;
@@ -1686,7 +1680,6 @@ namespace spectra::scene {
     Scene::Scene(ResolvedScene scene, Document preview_document) {
         if (scene.revision.value == 0) scene.revision = Revision{1};
         if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
-        preview_document.default_coordinate_system = coordinate_system(preview_document.default_coordinate_system.name);
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
         this->current_document = std::make_shared<Document>(std::move(preview_document));
@@ -2018,7 +2011,6 @@ namespace spectra::scene {
         if (edit.document_replacement.has_value()) {
             Document document = std::move(*edit.document_replacement);
             document.revision = this->current_revision;
-            document.default_coordinate_system = coordinate_system(document.default_coordinate_system.name);
             this->current_document = std::make_shared<Document>(std::move(document));
             this->current_timeline.frames_per_second = this->current_document->frames_per_second;
             this->canonical_scene.reset();
@@ -3378,23 +3370,18 @@ namespace spectra::scene {
             if (scene.render_settings.camera.type != "perspective") throw std::runtime_error(std::format("PBRT preview scene loader only supports perspective cameras, got \"{}\"", scene.render_settings.camera.type));
             require_static_transform(scene.render_settings.camera_transform, "PBRT preview camera");
             const CameraPose pose = camera_pose_from_world_from_camera(scene.render_settings.camera_transform.start);
-            const CameraFrame frame = camera_frame(pose);
             const Vector3 target = center(bounds);
             const float scene_radius = radius(bounds);
             const float camera_distance = length(pose.position - target);
             const float far_plane = std::max(20.0f, camera_distance + scene_radius * 4.0f);
             return Scene::Camera{
                 .name               = "camera.main",
-                .view               = CameraViewState{
-                    .pose = pose,
-                    .focus = target,
-                    .navigation_up = frame.up,
-                    .projection = CameraProjection{
-                        .kind = CameraProjectionKind::Perspective,
-                        .vertical_fov_degrees = required_one_float_value(scene.render_settings.camera, "fov", "PBRT preview camera"),
-                        .near_plane = 0.01f,
-                        .far_plane = far_plane,
-                    },
+                .pose               = pose,
+                .projection         = CameraProjection{
+                    .kind = CameraProjectionKind::Perspective,
+                    .vertical_fov_degrees = required_one_float_value(scene.render_settings.camera, "fov", "PBRT preview camera"),
+                    .near_plane = 0.01f,
+                    .far_plane = far_plane,
                 },
                 .source             = scene.render_settings.camera.source,
             };
@@ -4102,7 +4089,7 @@ namespace spectra::scene {
                     .entity = Scene::Entity{.type = "diffuse", .color_space = Scene::ColorSpace::sRGB, .source = source},
                 });
                 this->material_names.insert(DefaultMaterialName);
-                this->namedCoordinateSystems["world"] = this->graphicsState.transform;
+                this->namedTransformStates["world"] = this->graphicsState.transform;
             }
 
             [[nodiscard]] Scene::ResolvedScene Parse() {
@@ -4308,7 +4295,7 @@ namespace spectra::scene {
                     this->scene.render_settings.camera          = this->Entity(type, this->ParseParameters(stream), EntityUse::Camera, directive.source, this->graphicsState.color_space);
                     this->scene.render_settings.camera_transform = this->WorldFromCameraTransform();
                     this->scene.render_settings.camera_medium    = this->graphicsState.medium_interface.outside;
-                    this->namedCoordinateSystems["camera"]     = this->scene.render_settings.camera_transform;
+                    this->namedTransformStates["camera"]     = this->scene.render_settings.camera_transform;
                     return;
                 }
                 if (directive.text == "ColorSpace") {
@@ -4320,13 +4307,13 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "CoordinateSystem") {
-                    this->namedCoordinateSystems[RequireStringToken(stream, "CoordinateSystem")] = this->graphicsState.transform;
+                    this->namedTransformStates[RequireStringToken(stream, "CoordinateSystem")] = this->graphicsState.transform;
                     return;
                 }
                 if (directive.text == "CoordSysTransform") {
                     const std::string name = RequireStringToken(stream, "CoordSysTransform");
-                    const std::map<std::string, SceneTransformSet>::const_iterator iter = this->namedCoordinateSystems.find(name);
-                    if (iter == this->namedCoordinateSystems.end()) throw ParseError(directive.source, std::format("Unknown coordinate system \"{}\"", name));
+                    const std::map<std::string, SceneTransformSet>::const_iterator iter = this->namedTransformStates.find(name);
+                    if (iter == this->namedTransformStates.end()) throw ParseError(directive.source, std::format("Unknown PBRT transform state \"{}\"", name));
                     this->graphicsState.transform = iter->second;
                     return;
                 }
@@ -4482,7 +4469,7 @@ namespace spectra::scene {
                     this->graphicsState.transform   = SceneTransformSet{.start_time = start_time, .end_time = end_time};
                     this->graphicsState.activeStart = true;
                     this->graphicsState.activeEnd   = true;
-                    this->namedCoordinateSystems["world"] = this->graphicsState.transform;
+                    this->namedTransformStates["world"] = this->graphicsState.transform;
                     return;
                 }
                 if (directive.text == "WorldEnd") throw ParseError(directive.source, "WorldEnd is not used by PBRT v4 scene files");
@@ -4754,7 +4741,7 @@ namespace spectra::scene {
             BlockState currentBlock{BlockState::Options};
             std::vector<GraphicsState> stateStack{};
             std::vector<char> stackKinds{};
-            std::map<std::string, SceneTransformSet> namedCoordinateSystems{};
+            std::map<std::string, SceneTransformSet> namedTransformStates{};
             std::optional<Scene::ObjectDefinition> activeObjectDefinition{};
             std::set<std::string> material_names{};
             std::set<std::string> mediumNames{};
@@ -4855,7 +4842,6 @@ namespace spectra::scene {
         return Scene::Info{
             .name                    = scene.name,
             .title                   = scene.title,
-            .coordinate_system       = coordinate_system_label(coordinate_system("PBRT")),
             .camera                  = scene.render_settings.camera.type,
             .sampler                 = scene.render_settings.sampler.type,
             .integrator              = scene.render_settings.integrator.type,

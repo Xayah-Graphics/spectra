@@ -21,7 +21,6 @@ struct CameraUniform {
 };
 
 struct VoxelGridPushConstants {
-    row_major float4x4 model;
     float4 originCellScale;
     float4 voxelSize;
     float4 color;
@@ -125,7 +124,7 @@ VertexOutput vertex_main(uint vertexIndex : SV_VertexID, uint instanceIndex : SV
     float cellScale = saturate(voxelGrid.originCellScale.w);
     float3 inset = (float3(1.0, 1.0, 1.0) - float3(cellScale, cellScale, cellScale)) * 0.5;
     float3 local = voxelGrid.originCellScale.xyz + (cell + inset + corner * cellScale) * voxelGrid.voxelSize.xyz;
-    float4 world = mul(float4(local, 1.0), voxelGrid.model);
+    float4 world = float4(local, 1.0);
 
     VertexOutput output;
     output.position = mul(world, camera.worldToClip);

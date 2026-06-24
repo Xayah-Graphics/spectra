@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 10u;
+    constexpr std::uint32_t plugin_abi_version = 11u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -223,10 +223,10 @@ export namespace spectra::scene {
 
     struct SpectraSceneCamera {
         const char* name{};
-        const char* local_coordinate_system{};
-        SpectraSceneTransform transform{};
-        float target[3]{};
+        float position[3]{};
+        float right[3]{};
         float up[3]{};
+        float forward[3]{};
         std::uint32_t projection{};
         float vertical_fov_degrees{};
         std::uint32_t image_width{};
@@ -394,7 +394,6 @@ export namespace spectra::scene {
         std::uint32_t dimensions[3]{};
         float origin[3]{};
         float voxel_size[3]{};
-        SpectraSceneTransform transform{};
         float color[4]{};
         float cell_scale{};
         std::uint32_t depth_mode{};
@@ -425,7 +424,6 @@ export namespace spectra::scene {
 
     struct SpectraSceneDocumentView {
         std::uint64_t struct_size{};
-        const char* default_coordinate_system{};
         const char* active_camera_name{};
         SpectraSceneItems items{};
     };

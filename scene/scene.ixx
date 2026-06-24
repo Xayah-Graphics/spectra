@@ -322,7 +322,6 @@ namespace spectra::scene {
         struct Info {
             std::string name{};
             std::string title{};
-            std::string coordinate_system{};
             std::string camera{};
             std::string sampler{};
             std::string integrator{};
@@ -516,7 +515,8 @@ namespace spectra::scene {
 
         struct Camera {
             std::string name{};
-            CameraViewState view{};
+            CameraPose pose{};
+            CameraProjection projection{};
             std::optional<CameraImage> image{};
             SourceLocation source{};
         };
@@ -541,7 +541,6 @@ namespace spectra::scene {
             std::array<std::uint32_t, 3> dimensions{};
             Vector3 origin{};
             Vector3 voxel_size{1.0f, 1.0f, 1.0f};
-            Transform transform{};
             Vector4 color{0.15f, 0.85f, 1.0f, 0.28f};
             float cell_scale{1.0f};
             ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};
@@ -565,7 +564,6 @@ namespace spectra::scene {
             std::string name{};
             std::string title{};
             std::string source{};
-            CoordinateSystem default_coordinate_system{};
             double frames_per_second{24.0};
             bool timeline_enabled{true};
             std::vector<Camera> cameras{};

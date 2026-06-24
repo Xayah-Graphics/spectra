@@ -943,30 +943,28 @@ namespace spectra::pathtracer {
         return info.camera_fov_degrees;
     }
 
-    [[nodiscard]] scene::CameraState scene_camera_state_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds, const float fov_degrees) {
+    [[nodiscard]] scene::ViewportCamera viewport_camera_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds, const float fov_degrees) {
         const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
         const spectra::Point3f eye      = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
         const spectra::Vector3f forward = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
         const scene::SceneTransform scene_world_from_camera = scene_transform_from_pathtracer_transform(world_from_camera);
         const scene::CameraPose pose = scene::camera_pose_from_world_from_camera(scene_world_from_camera);
         const scene::CameraFrame frame = scene::camera_frame(pose);
-        return scene::CameraState{
-            .view = scene::CameraViewState{
-                .pose = pose,
-                .focus = to_scene_vector(camera_focus_center_from_bounds(eye, forward, focus_bounds)),
-                .navigation_up = frame.up,
-                .projection = scene::CameraProjection{
-                    .kind = scene::CameraProjectionKind::Perspective,
-                    .vertical_fov_degrees = fov_degrees,
-                    .near_plane = 0.01f,
-                    .far_plane = 200.0f,
-                },
+        return scene::ViewportCamera{
+            .pose = pose,
+            .focus = to_scene_vector(camera_focus_center_from_bounds(eye, forward, focus_bounds)),
+            .navigation_up = frame.up,
+            .projection = scene::CameraProjection{
+                .kind = scene::CameraProjectionKind::Perspective,
+                .vertical_fov_degrees = fov_degrees,
+                .near_plane = 0.01f,
+                .far_plane = 200.0f,
             },
         };
     }
 
-    [[nodiscard]] spectra::Transform moving_from_camera_from_scene_camera_state(const spectra::Transform& base_camera_from_world, const scene::CameraState& state) {
-        const scene::SceneTransform world_from_current_camera = scene::camera_world_from_camera(state.view.pose);
+    [[nodiscard]] spectra::Transform moving_from_camera_from_viewport_camera(const spectra::Transform& base_camera_from_world, const scene::ViewportCamera& state) {
+        const scene::SceneTransform world_from_current_camera = scene::camera_world_from_camera(state.pose);
         const spectra::Transform current_camera_from_world = spectra::Inverse(pathtracer_transform_from_scene_transform(world_from_current_camera));
         return base_camera_from_world * spectra::Inverse(current_camera_from_world);
     }
@@ -1081,7 +1079,6 @@ namespace spectra::pathtracer {
         return scene::Scene::Info{
             .name = scene_snapshot.name,
             .title = scene_snapshot.title,
-            .coordinate_system = scene::coordinate_system_label(scene::coordinate_system("PBRT")),
             .camera = scene_snapshot.render_settings.camera.type,
             .sampler = scene_snapshot.render_settings.sampler.type,
             .integrator = scene_snapshot.render_settings.integrator.type,
@@ -1188,7 +1185,7 @@ namespace spectra::pathtracer {
         void initialize_camera_state();
         void synchronize_camera_workspace();
         void apply_camera_snapshot(const scene::CameraSnapshot& snapshot);
-        void commit_camera_state(scene::CameraState state);
+        void commit_camera_state(scene::ViewportCamera state);
         void reset_camera();
         void clear_throughput_statistics();
         void update_frame_statistics(std::uint32_t frame_index, std::uint32_t image_index, bool rendered_sample, bool reset_accumulation, std::uint64_t sample_pixels);
@@ -1250,19 +1247,17 @@ namespace spectra::pathtracer {
         struct {
             bool initialized{false};
             bool input_enabled{false};
-            scene::CameraState state{
-                .view = scene::camera_view_from_look_at(
-                    scene::Vector3{0.0f, 0.0f, 0.0f},
-                    scene::Vector3{0.0f, 0.0f, 1.0f},
-                    scene::Vector3{0.0f, 1.0f, 0.0f},
-                    scene::CameraProjection{
-                        .kind = scene::CameraProjectionKind::Perspective,
-                        .vertical_fov_degrees = 60.0f,
-                        .near_plane = 0.01f,
-                        .far_plane = 200.0f,
-                    }
-                ),
-            };
+            scene::ViewportCamera state = scene::viewport_camera_from_look_at(
+                scene::Vector3{0.0f, 0.0f, 0.0f},
+                scene::Vector3{0.0f, 0.0f, 1.0f},
+                scene::Vector3{0.0f, 1.0f, 0.0f},
+                scene::CameraProjection{
+                    .kind = scene::CameraProjectionKind::Perspective,
+                    .vertical_fov_degrees = 60.0f,
+                    .near_plane = 0.01f,
+                    .far_plane = 200.0f,
+                }
+            );
             spectra::Transform moving_from_camera{};
             spectra::Transform camera_from_world{};
             scene::CameraRevision observed_revision{};
@@ -1754,7 +1749,7 @@ namespace spectra::pathtracer {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
         this->camera.camera_from_world = this->scene_camera_from_world;
         this->camera.input_enabled    = false;
-        const scene::CameraState state = scene_camera_state_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
+        const scene::ViewportCamera state = viewport_camera_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
         this->camera_workspace->ensure_camera(this->active_scene_id(), state);
         this->apply_camera_snapshot(this->camera_workspace->snapshot(this->active_scene_id()));
     }
@@ -1773,12 +1768,12 @@ namespace spectra::pathtracer {
         if (this->render_pipeline == nullptr) throw std::runtime_error("Cannot apply camera state without an active Spectra pathtracer");
         this->camera.state              = snapshot.state;
         this->camera.input_enabled      = false;
-        this->camera.moving_from_camera = moving_from_camera_from_scene_camera_state(this->camera.camera_from_world, this->camera.state);
+        this->camera.moving_from_camera = moving_from_camera_from_viewport_camera(this->camera.camera_from_world, this->camera.state);
         this->camera.initialized = true;
         this->camera.observed_revision = snapshot.revision;
     }
 
-    void Renderer::Impl::commit_camera_state(scene::CameraState state) {
+    void Renderer::Impl::commit_camera_state(scene::ViewportCamera state) {
         const scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), std::move(state));
         this->camera.observed_revision = snapshot.revision;
     }
@@ -1786,7 +1781,7 @@ namespace spectra::pathtracer {
     void Renderer::Impl::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pipeline_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
-        const scene::CameraState state = scene_camera_state_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
+        const scene::ViewportCamera state = viewport_camera_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
         const scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), state);
         this->apply_camera_snapshot(snapshot);
         this->request_accumulation_reset();
@@ -1866,7 +1861,7 @@ namespace spectra::pathtracer {
         const bool shift = io.KeyShift;
         const bool ctrl  = io.KeyCtrl;
         const bool alt   = io.KeyAlt;
-        scene::CameraState state = this->camera.state;
+        scene::ViewportCamera state = this->camera.state;
         bool camera_changed = false;
 
         const std::array<float, 2> viewport_size = this->ui.viewport_size;
@@ -1917,7 +1912,7 @@ namespace spectra::pathtracer {
 
         if (camera_changed) {
             this->camera.state              = state;
-            this->camera.moving_from_camera = moving_from_camera_from_scene_camera_state(this->camera.camera_from_world, this->camera.state);
+            this->camera.moving_from_camera = moving_from_camera_from_viewport_camera(this->camera.camera_from_world, this->camera.state);
             this->commit_camera_state(this->camera.state);
             this->request_accumulation_reset();
         }
@@ -2180,7 +2175,6 @@ namespace spectra::pathtracer {
         draw_inspector_section("Scene");
         draw_statistics_row("Name", std::string(scene.name));
         draw_statistics_row("Title", std::string(scene.title));
-        draw_statistics_row("Coordinate", std::string(scene.coordinate_system));
         draw_statistics_row("Film", resolution_text(this->scene_film_resolution));
         draw_statistics_row("Sampler SPP", positive_int_text(this->scene_sampler_sample_count));
 
@@ -2203,10 +2197,10 @@ namespace spectra::pathtracer {
 
         draw_inspector_section("Camera");
         if (this->camera.initialized) {
-            draw_statistics_row("Eye", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.view.pose.position.x, this->camera.state.view.pose.position.y, this->camera.state.view.pose.position.z));
-            draw_statistics_row("Focus", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.view.focus.x, this->camera.state.view.focus.y, this->camera.state.view.focus.z));
-            draw_statistics_row("Navigation Up", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.view.navigation_up.x, this->camera.state.view.navigation_up.y, this->camera.state.view.navigation_up.z));
-            draw_statistics_row("FOV", std::format("{:.3f}", this->camera.state.view.projection.vertical_fov_degrees));
+            draw_statistics_row("Eye", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.pose.position.x, this->camera.state.pose.position.y, this->camera.state.pose.position.z));
+            draw_statistics_row("Focus", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.focus.x, this->camera.state.focus.y, this->camera.state.focus.z));
+            draw_statistics_row("Navigation Up", std::format("{:.3f}, {:.3f}, {:.3f}", this->camera.state.navigation_up.x, this->camera.state.navigation_up.y, this->camera.state.navigation_up.z));
+            draw_statistics_row("FOV", std::format("{:.3f}", this->camera.state.projection.vertical_fov_degrees));
         } else {
             draw_statistics_row("State", "Pending");
         }

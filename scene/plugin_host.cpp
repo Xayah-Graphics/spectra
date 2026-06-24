@@ -17,9 +17,7 @@ import spectra.scene.plugin_abi;
 
 namespace spectra::scene {
     namespace {
-        class AbiCodec final {
-        public:
-        struct Descriptor {
+        struct PluginDescriptor {
             std::string id{};
             std::string title{};
             std::string open_action_label{};
@@ -28,12 +26,6 @@ namespace spectra::scene {
             std::vector<ControlOptionSchema> open_options{};
             std::vector<ControlAction> control_actions{};
             std::vector<ControlOptionSchema> control_settings{};
-        };
-
-        [[nodiscard]] Descriptor decode_descriptor(const SpectraScenePlugin& plugin) const;
-        [[nodiscard]] std::string decode_last_error(const SpectraScenePlugin& plugin, SpectraSceneInstance* instance, std::string_view action) const;
-        [[nodiscard]] GpuBufferRequest decode_gpu_buffer_request(const SpectraSceneGpuBufferRequest& request, std::string_view context) const;
-        [[nodiscard]] SpectraSceneGpuBufferAllocation encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation) const;
         };
 
         struct SceneSymbols {
@@ -127,7 +119,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] Transform make_transform(const SpectraSceneTransform& transform, const std::string_view context) {
-            return Transform{
+            const Transform result{
                 .position = make_vector3(transform.position, std::format("{} position", context)),
                 .rotation = Quaternion{
                     finite_float(transform.rotation[0], std::format("{} rotation x", context)),
@@ -137,6 +129,10 @@ namespace spectra::scene {
                 },
                 .scale = make_vector3(transform.scale, std::format("{} scale", context)),
             };
+            const float rotation_length_squared = result.rotation.x * result.rotation.x + result.rotation.y * result.rotation.y + result.rotation.z * result.rotation.z + result.rotation.w * result.rotation.w;
+            if (std::abs(rotation_length_squared - 1.0f) > 1.0e-3f) throw std::runtime_error(std::format("{} rotation quaternion must be unit length", context));
+            if (result.scale.x <= 0.0f || result.scale.y <= 0.0f || result.scale.z <= 0.0f) throw std::runtime_error(std::format("{} scale must be positive", context));
+            return result;
         }
 
         [[nodiscard]] Scene::ViewportSegmentWidthMode viewport_segment_width_mode_from_u32(const std::uint32_t value, const std::string_view context) {
@@ -316,22 +312,14 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::Camera make_camera(const SpectraSceneCamera& camera) {
             const std::string name = abi_string(camera.name, "Scene camera name", false);
-            const std::string local_coordinate_system_name = abi_string(camera.local_coordinate_system, std::format("Scene camera \"{}\" local coordinate system", name), false);
-            const Transform transform = make_transform(camera.transform, std::format("Scene camera \"{}\"", name));
-            const Vector3 target = make_vector3(camera.target, std::format("Scene camera \"{}\" target", name));
+            const Vector3 position = make_vector3(camera.position, std::format("Scene camera \"{}\" position", name));
+            const Vector3 right = make_vector3(camera.right, std::format("Scene camera \"{}\" right", name));
             const Vector3 up = make_vector3(camera.up, std::format("Scene camera \"{}\" up", name));
+            const Vector3 forward = make_vector3(camera.forward, std::format("Scene camera \"{}\" forward", name));
             Scene::Camera result{
                 .name = name,
-                .view = CameraViewState{
-                    .pose = CameraPose{
-                        .position = transform.position,
-                        .orientation = normalized_quaternion(transform.rotation, std::format("Scene camera \"{}\" orientation", name)),
-                        .local_convention = coordinate_system(local_coordinate_system_name).convention,
-                    },
-                    .focus = target,
-                    .navigation_up = normalize(up, std::format("Scene camera \"{}\" up", name)),
-                    .projection = camera_projection(camera, name),
-                },
+                .pose = camera_pose_from_frame(position, right, up, forward),
+                .projection = camera_projection(camera, name),
             };
             if (camera.has_image != 0u) result.image = make_camera_image(camera.image, name);
             return result;
@@ -491,7 +479,6 @@ namespace spectra::scene {
                 .dimensions = {voxel_grid.dimensions[0], voxel_grid.dimensions[1], voxel_grid.dimensions[2]},
                 .origin = make_vector3(voxel_grid.origin, std::format("Scene viewport voxel grid \"{}\" origin", name)),
                 .voxel_size = make_vector3(voxel_grid.voxel_size, std::format("Scene viewport voxel grid \"{}\" voxel size", name)),
-                .transform = make_transform(voxel_grid.transform, std::format("Scene viewport voxel grid \"{}\"", name)),
                 .color = make_vector4(voxel_grid.color, std::format("Scene viewport voxel grid \"{}\" color", name)),
                 .cell_scale = finite_float(voxel_grid.cell_scale, std::format("Scene viewport voxel grid \"{}\" cell scale", name)),
                 .depth_mode = viewport_segment_depth_mode_from_u32(voxel_grid.depth_mode, std::format("Scene viewport voxel grid \"{}\"", name)),
@@ -538,8 +525,6 @@ namespace spectra::scene {
 
         void append_document_view(Scene::Document& document, const SpectraSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
             if (view.struct_size != sizeof(SpectraSceneDocumentView)) throw std::runtime_error("Scene document view ABI size mismatch");
-            const std::string coordinate_system_name = abi_string(view.default_coordinate_system, "Scene document default coordinate system", true);
-            if (!coordinate_system_name.empty()) document.default_coordinate_system = coordinate_system(coordinate_system_name);
             const std::string active_camera_name = abi_string(view.active_camera_name, "Scene document active camera name", true);
             if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
 
@@ -842,7 +827,7 @@ namespace spectra::scene {
             return state;
         }
 
-        void validate_descriptor_section_references(const AbiCodec::Descriptor& descriptor, const std::string_view context) {
+        void validate_descriptor_section_references(const PluginDescriptor& descriptor, const std::string_view context) {
             const std::set<std::string> section_ids = make_section_id_set(descriptor.sections);
             for (const ControlOptionSchema& option : descriptor.open_options) require_known_section_id(section_ids, option.section_id, std::format("{} open option '{}'", context, option.key));
             for (const ControlAction& action : descriptor.control_actions) {
@@ -872,45 +857,45 @@ namespace spectra::scene {
             return state;
         }
 
-    AbiCodec::Descriptor AbiCodec::decode_descriptor(const SpectraScenePlugin& plugin) const {
-        Descriptor descriptor{
-            .id = abi_string(plugin.id, "Scene plugin id", false),
-            .title = abi_string(plugin.title, "Scene plugin title", false),
-            .open_action_label = abi_string(plugin.open_action_label, "Scene plugin open action label", false),
-            .frames_per_second = finite_double(plugin.frames_per_second, "Scene plugin frame rate"),
-            .sections = make_control_sections(plugin.sections, "Scene plugin control sections"),
-            .open_options = make_open_option_schemas(plugin.open_options, "Scene plugin open option schema"),
-            .control_actions = make_control_actions(plugin.control_actions, "Scene plugin controls action"),
-            .control_settings = make_control_setting_schemas(plugin.control_settings, "Scene plugin controls setting schema"),
-        };
-        validate_descriptor_section_references(descriptor, "Scene plugin descriptor");
-        return descriptor;
-    }
+        [[nodiscard]] PluginDescriptor decode_plugin_descriptor(const SpectraScenePlugin& plugin) {
+            PluginDescriptor descriptor{
+                .id = abi_string(plugin.id, "Scene plugin id", false),
+                .title = abi_string(plugin.title, "Scene plugin title", false),
+                .open_action_label = abi_string(plugin.open_action_label, "Scene plugin open action label", false),
+                .frames_per_second = finite_double(plugin.frames_per_second, "Scene plugin frame rate"),
+                .sections = make_control_sections(plugin.sections, "Scene plugin control sections"),
+                .open_options = make_open_option_schemas(plugin.open_options, "Scene plugin open option schema"),
+                .control_actions = make_control_actions(plugin.control_actions, "Scene plugin controls action"),
+                .control_settings = make_control_setting_schemas(plugin.control_settings, "Scene plugin controls setting schema"),
+            };
+            validate_descriptor_section_references(descriptor, "Scene plugin descriptor");
+            return descriptor;
+        }
 
-    std::string AbiCodec::decode_last_error(const SpectraScenePlugin& plugin, SpectraSceneInstance* instance, const std::string_view action) const {
-        return abi_string(plugin.last_error(instance), std::format("{} error message", action), true);
-    }
+        [[nodiscard]] std::string decode_plugin_last_error(const SpectraScenePlugin& plugin, SpectraSceneInstance* instance, const std::string_view action) {
+            return abi_string(plugin.last_error(instance), std::format("{} error message", action), true);
+        }
 
-    GpuBufferRequest AbiCodec::decode_gpu_buffer_request(const SpectraSceneGpuBufferRequest& request, const std::string_view context) const {
-        if (request.struct_size != sizeof(SpectraSceneGpuBufferRequest)) throw std::runtime_error(std::format("{} GPU buffer request ABI size mismatch", context));
-        return GpuBufferRequest{
-            .kind = scene_gpu_buffer_kind_from_abi(request.kind, context),
-            .byte_size = request.byte_size,
-            .debug_name = abi_string(request.debug_name, std::format("{} GPU buffer debug name", context), true),
-        };
-    }
+        [[nodiscard]] GpuBufferRequest decode_gpu_buffer_request(const SpectraSceneGpuBufferRequest& request, const std::string_view context) {
+            if (request.struct_size != sizeof(SpectraSceneGpuBufferRequest)) throw std::runtime_error(std::format("{} GPU buffer request ABI size mismatch", context));
+            return GpuBufferRequest{
+                .kind = scene_gpu_buffer_kind_from_abi(request.kind, context),
+                .byte_size = request.byte_size,
+                .debug_name = abi_string(request.debug_name, std::format("{} GPU buffer debug name", context), true),
+            };
+        }
 
-    SpectraSceneGpuBufferAllocation AbiCodec::encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation) const {
-        return SpectraSceneGpuBufferAllocation{
-            .struct_size = sizeof(SpectraSceneGpuBufferAllocation),
-            .resource_id = allocation.resource_id,
-            .byte_size = allocation.byte_size,
-            .kind = abi_gpu_buffer_kind(allocation.kind),
-            .handle_kind = abi_gpu_resource_handle_kind(allocation.handle_kind),
-            .handle = allocation.handle,
-            .device_identity = abi_gpu_device_identity(allocation.device_identity),
-        };
-    }
+        [[nodiscard]] SpectraSceneGpuBufferAllocation encode_gpu_buffer_allocation(const GpuBufferAllocation& allocation) {
+            return SpectraSceneGpuBufferAllocation{
+                .struct_size = sizeof(SpectraSceneGpuBufferAllocation),
+                .resource_id = allocation.resource_id,
+                .byte_size = allocation.byte_size,
+                .kind = abi_gpu_buffer_kind(allocation.kind),
+                .handle_kind = abi_gpu_resource_handle_kind(allocation.handle_kind),
+                .handle = allocation.handle,
+                .device_identity = abi_gpu_device_identity(allocation.device_identity),
+            };
+        }
 
         class NativeLibrary final {
         public:
@@ -978,10 +963,9 @@ namespace spectra::scene {
                 if (user_data == nullptr) throw std::runtime_error("Scene host services user data pointer is null");
                 if (request == nullptr) throw std::runtime_error("Scene GPU buffer request pointer is null");
                 if (allocation == nullptr) throw std::runtime_error("Scene GPU buffer allocation pointer is null");
-                const AbiCodec codec{};
                 HostServices& host = *static_cast<HostServices*>(user_data);
-                const GpuBufferAllocation allocated = host.request_gpu_buffer(codec.decode_gpu_buffer_request(*request, "Scene host services"));
-                *allocation = codec.encode_gpu_buffer_allocation(allocated);
+                const GpuBufferAllocation allocated = host.request_gpu_buffer(decode_gpu_buffer_request(*request, "Scene host services"));
+                *allocation = encode_gpu_buffer_allocation(allocated);
                 return SPECTRA_SCENE_RESULT_OK;
             } catch (const std::exception& error) {
                 scene_host_service_callback_error = error.what();
@@ -1033,17 +1017,13 @@ namespace spectra::scene {
         [[nodiscard]] Scene::Camera make_host_inspection_camera() {
             return Scene::Camera{
                 .name = "Spectra Inspector Camera",
-                .view = camera_view_from_look_at(
-                    Vector3{0.0f, 1.0f, 5.0f},
-                    Vector3{0.0f, 0.0f, 0.0f},
-                    Vector3{0.0f, 1.0f, 0.0f},
-                    CameraProjection{
-                        .kind = CameraProjectionKind::Perspective,
-                        .vertical_fov_degrees = 45.0f,
-                        .near_plane = 0.01f,
-                        .far_plane = 200.0f,
-                    }
-                ),
+                .pose = camera_pose_from_look_at(Vector3{0.0f, 1.0f, 5.0f}, Vector3{0.0f, 0.0f, 0.0f}, Vector3{0.0f, 1.0f, 0.0f}),
+                .projection = CameraProjection{
+                    .kind = CameraProjectionKind::Perspective,
+                    .vertical_fov_degrees = 45.0f,
+                    .near_plane = 0.01f,
+                    .far_plane = 200.0f,
+                },
             };
         }
 
@@ -1129,12 +1109,12 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v10");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v11");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
             this->validate_plugin_descriptor();
-            this->descriptor = this->codec.decode_descriptor(*this->plugin);
+            this->descriptor = decode_plugin_descriptor(*this->plugin);
             this->validate_scene_api();
             this->validate_controls_api();
         }
@@ -1176,7 +1156,7 @@ namespace spectra::scene {
         void check_result(const SpectraSceneResult result, SpectraSceneInstance* instance, const std::string_view action) const {
             if (result == SPECTRA_SCENE_RESULT_OK) return;
             if (result != SPECTRA_SCENE_RESULT_ERROR) throw std::runtime_error(std::format("{} returned an unknown result code {}", action, static_cast<int>(result)));
-            std::string error = this->codec.decode_last_error(*this->plugin, instance, action);
+            std::string error = decode_plugin_last_error(*this->plugin, instance, action);
             if (error.empty()) error = "unknown plugin error";
             throw std::runtime_error(std::format("{} failed: {}", action, error));
         }
@@ -1306,8 +1286,7 @@ namespace spectra::scene {
         }
 
         PluginOpenRequestStorage open_request{};
-        AbiCodec codec{};
-        AbiCodec::Descriptor descriptor{};
+        PluginDescriptor descriptor{};
         NativeLibrary native;
         const SpectraScenePlugin* plugin{};
     };
