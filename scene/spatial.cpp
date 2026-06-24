@@ -133,40 +133,41 @@ namespace spectra::scene {
             return result;
         }
 
-        [[nodiscard]] std::array<Vector3, 3> validated_camera_basis(Vector3 right, Vector3 up, Vector3 forward, const std::string_view context) {
+        [[nodiscard]] std::array<Vector3, 3> validated_camera_basis(Vector3 right, Vector3 down, Vector3 forward, const std::string_view context) {
             right = normalize(right, std::format("{} right", context));
-            up = normalize(up, std::format("{} up", context));
+            down = normalize(down, std::format("{} down", context));
             forward = normalize(forward, std::format("{} forward", context));
-            if (std::abs(dot(right, up)) > 1.0e-4f || std::abs(dot(right, forward)) > 1.0e-4f || std::abs(dot(up, forward)) > 1.0e-4f) throw std::runtime_error(std::format("{} basis must be orthogonal", context));
-            if (dot(cross(right, up), forward) <= 0.0f) throw std::runtime_error(std::format("{} basis must be right-handed in SpectraYUp", context));
-            return {right, up, forward};
+            if (std::abs(dot(right, down)) > 1.0e-4f || std::abs(dot(right, forward)) > 1.0e-4f || std::abs(dot(down, forward)) > 1.0e-4f) throw std::runtime_error(std::format("{} basis must be orthogonal", context));
+            if (dot(cross(right, down), forward) <= 0.0f) throw std::runtime_error(std::format("{} basis must satisfy cross(right, down) == forward in Spectra image-down camera space", context));
+            return {right, down, forward};
         }
     } // namespace
 
-    CameraPose camera_pose_from_look_at(const Vector3 eye, const Vector3 target, const Vector3 up) {
+    CameraPose camera_pose_from_look_at(const Vector3 eye, const Vector3 target, const Vector3 navigation_up) {
         const Vector3 forward = normalize(target - eye, "Scene camera look-at forward");
-        const Vector3 right = normalize(cross(normalize(up, "Scene camera look-at up"), forward), "Scene camera look-at right");
-        const Vector3 camera_up = cross(forward, right);
+        const Vector3 down = -normalize(navigation_up, "Scene camera look-at navigation up");
+        const Vector3 right = normalize(cross(down, forward), "Scene camera look-at right");
+        const Vector3 camera_down = cross(forward, right);
         return CameraPose{
             .position = eye,
-            .orientation = quaternion_from_frame(right, camera_up, forward, "Scene camera look-at orientation"),
+            .orientation = quaternion_from_frame(right, camera_down, forward, "Scene camera look-at orientation"),
         };
     }
 
-    CameraPose camera_pose_from_frame(const Vector3 position, const Vector3 right, const Vector3 up, const Vector3 forward) {
+    CameraPose camera_pose_from_frame(const Vector3 position, const Vector3 right, const Vector3 down, const Vector3 forward) {
         if (!is_finite(position)) throw std::runtime_error("Scene camera frame position must be finite");
-        const std::array<Vector3, 3> basis = validated_camera_basis(right, up, forward, "Scene camera frame");
+        const std::array<Vector3, 3> basis = validated_camera_basis(right, down, forward, "Scene camera frame");
         return CameraPose{
             .position = position,
             .orientation = quaternion_from_frame(basis[0], basis[1], basis[2], "Scene camera frame orientation"),
         };
     }
 
-    ViewportCamera viewport_camera_from_look_at(const Vector3 eye, const Vector3 target, const Vector3 up, CameraProjection projection) {
+    ViewportCamera viewport_camera_from_look_at(const Vector3 eye, const Vector3 target, const Vector3 navigation_up, CameraProjection projection) {
         ViewportCamera view{
-            .pose = camera_pose_from_look_at(eye, target, up),
+            .pose = camera_pose_from_look_at(eye, target, navigation_up),
             .focus = target,
-            .navigation_up = normalize(up, "Scene camera navigation up"),
+            .navigation_up = normalize(navigation_up, "Scene camera navigation up"),
             .projection = projection,
         };
         validate_viewport_camera(view);
@@ -179,7 +180,7 @@ namespace spectra::scene {
         return CameraFrame{
             .position = pose.position,
             .right = normalize(rotate_vector(rotation, Vector3{1.0f, 0.0f, 0.0f}), "Scene camera frame right"),
-            .up = normalize(rotate_vector(rotation, Vector3{0.0f, 1.0f, 0.0f}), "Scene camera frame up"),
+            .down = normalize(rotate_vector(rotation, Vector3{0.0f, 1.0f, 0.0f}), "Scene camera frame down"),
             .forward = normalize(rotate_vector(rotation, Vector3{0.0f, 0.0f, 1.0f}), "Scene camera frame forward"),
         };
     }
@@ -188,14 +189,14 @@ namespace spectra::scene {
         const CameraFrame frame = camera_frame(pose);
         SceneTransform transform{};
         transform.matrix = {
-            frame.right.x, frame.up.x, frame.forward.x, frame.position.x,
-            frame.right.y, frame.up.y, frame.forward.y, frame.position.y,
-            frame.right.z, frame.up.z, frame.forward.z, frame.position.z,
+            frame.right.x, frame.down.x, frame.forward.x, frame.position.x,
+            frame.right.y, frame.down.y, frame.forward.y, frame.position.y,
+            frame.right.z, frame.down.z, frame.forward.z, frame.position.z,
             0.0f, 0.0f, 0.0f, 1.0f,
         };
         transform.inverse = {
             frame.right.x, frame.right.y, frame.right.z, -dot(frame.right, frame.position),
-            frame.up.x, frame.up.y, frame.up.z, -dot(frame.up, frame.position),
+            frame.down.x, frame.down.y, frame.down.z, -dot(frame.down, frame.position),
             frame.forward.x, frame.forward.y, frame.forward.z, -dot(frame.forward, frame.position),
             0.0f, 0.0f, 0.0f, 1.0f,
         };
@@ -205,9 +206,9 @@ namespace spectra::scene {
     CameraPose camera_pose_from_world_from_camera(const SceneTransform& world_from_camera) {
         const Vector3 position{world_from_camera.matrix.at(3u), world_from_camera.matrix.at(7u), world_from_camera.matrix.at(11u)};
         const Vector3 right = normalize(Vector3{world_from_camera.matrix.at(0u), world_from_camera.matrix.at(4u), world_from_camera.matrix.at(8u)}, "Scene camera world transform right");
-        const Vector3 up = normalize(Vector3{world_from_camera.matrix.at(1u), world_from_camera.matrix.at(5u), world_from_camera.matrix.at(9u)}, "Scene camera world transform up");
+        const Vector3 down = normalize(Vector3{world_from_camera.matrix.at(1u), world_from_camera.matrix.at(5u), world_from_camera.matrix.at(9u)}, "Scene camera world transform down");
         const Vector3 forward = normalize(Vector3{world_from_camera.matrix.at(2u), world_from_camera.matrix.at(6u), world_from_camera.matrix.at(10u)}, "Scene camera world transform forward");
-        return camera_pose_from_frame(position, right, up, forward);
+        return camera_pose_from_frame(position, right, down, forward);
     }
 
     float camera_projection_vertical_fov_degrees(const CameraProjection& projection) {
@@ -221,14 +222,14 @@ namespace spectra::scene {
         if (!std::isfinite(far_plane) || far_plane <= projection.near_plane) throw std::runtime_error("Scene Vulkan camera far plane is invalid");
         const CameraFrame frame = camera_frame(pose);
         const std::array<float, 16> world_to_view{
-            frame.right.x, frame.up.x, -frame.forward.x, 0.0f,
-            frame.right.y, frame.up.y, -frame.forward.y, 0.0f,
-            frame.right.z, frame.up.z, -frame.forward.z, 0.0f,
-            -dot(frame.right, frame.position), -dot(frame.up, frame.position), dot(frame.forward, frame.position), 1.0f,
+            frame.right.x, frame.down.x, -frame.forward.x, 0.0f,
+            frame.right.y, frame.down.y, -frame.forward.y, 0.0f,
+            frame.right.z, frame.down.z, -frame.forward.z, 0.0f,
+            -dot(frame.right, frame.position), -dot(frame.down, frame.position), dot(frame.forward, frame.position), 1.0f,
         };
         const std::array<float, 16> view_to_world{
             frame.right.x, frame.right.y, frame.right.z, 0.0f,
-            frame.up.x, frame.up.y, frame.up.z, 0.0f,
+            frame.down.x, frame.down.y, frame.down.z, 0.0f,
             -frame.forward.x, -frame.forward.y, -frame.forward.z, 0.0f,
             frame.position.x, frame.position.y, frame.position.z, 1.0f,
         };
@@ -240,13 +241,13 @@ namespace spectra::scene {
             const float depth_scale = -(far_plane * projection.near_plane) / (far_plane - projection.near_plane);
             view_to_clip = {
                 f / aspect, 0.0f, 0.0f, 0.0f,
-                0.0f, -f, 0.0f, 0.0f,
+                0.0f, f, 0.0f, 0.0f,
                 0.0f, 0.0f, far_plane / (projection.near_plane - far_plane), -1.0f,
                 0.0f, 0.0f, depth_scale, 0.0f,
             };
             clip_to_view = {
                 aspect / f, 0.0f, 0.0f, 0.0f,
-                0.0f, -1.0f / f, 0.0f, 0.0f,
+                0.0f, 1.0f / f, 0.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 1.0f / depth_scale,
                 0.0f, 0.0f, -1.0f, far_plane / (projection.near_plane - far_plane) / depth_scale,
             };
@@ -255,13 +256,13 @@ namespace spectra::scene {
             const float width = height * aspect;
             view_to_clip = {
                 2.0f / width, 0.0f, 0.0f, 0.0f,
-                0.0f, -2.0f / height, 0.0f, 0.0f,
+                0.0f, 2.0f / height, 0.0f, 0.0f,
                 0.0f, 0.0f, 1.0f / (projection.near_plane - far_plane), 0.0f,
                 0.0f, 0.0f, projection.near_plane / (projection.near_plane - far_plane), 1.0f,
             };
             clip_to_view = {
                 width * 0.5f, 0.0f, 0.0f, 0.0f,
-                0.0f, height * -0.5f, 0.0f, 0.0f,
+                0.0f, height * 0.5f, 0.0f, 0.0f,
                 0.0f, 0.0f, projection.near_plane - far_plane, 0.0f,
                 0.0f, 0.0f, -projection.near_plane, 1.0f,
             };
@@ -342,7 +343,7 @@ namespace spectra::scene {
         Vector3 horizontal = offset_direction - up_axis * dot(offset_direction, up_axis);
         if (length_squared(horizontal) <= 1.0e-12f) horizontal = -camera_frame(state.pose).forward;
         horizontal = normalize(horizontal, "Scene viewport camera orbit horizontal direction");
-        const Quaternion yaw_rotation = axis_angle_quaternion(up_axis, delta.x_pixels * orbit_radians_per_pixel, "Scene viewport camera yaw axis");
+        const Quaternion yaw_rotation = axis_angle_quaternion(up_axis, -delta.x_pixels * orbit_radians_per_pixel, "Scene viewport camera yaw axis");
         const Vector3 yawed_horizontal = normalize(rotate_vector(yaw_rotation, horizontal), "Scene viewport camera yaw direction");
         const float pitch = clamp_viewport_camera_pitch(current_pitch + delta.y_pixels * orbit_radians_per_pixel);
         const Vector3 direction = yawed_horizontal * std::cos(pitch) + up_axis * std::sin(pitch);
@@ -364,9 +365,9 @@ namespace spectra::scene {
                                     ? 2.0f * distance * std::tan(camera_projection_vertical_fov_radians(state.projection) * 0.5f) / viewport.height
                                     : state.projection.orthographic_height / viewport.height;
         if (!std::isfinite(pan_scale) || !(pan_scale > 0.0f)) throw std::runtime_error("Scene viewport camera pan scale must be positive");
-        const float horizontal_offset = -delta.x_pixels * pan_scale;
+        const float horizontal_offset = delta.x_pixels * pan_scale;
         const float vertical_offset = delta.y_pixels * pan_scale;
-        const Vector3 offset = frame.right * horizontal_offset + frame.up * vertical_offset;
+        const Vector3 offset = frame.right * horizontal_offset - frame.down * vertical_offset;
         state.pose.position += offset;
         state.focus += offset;
         validate_viewport_camera(state);

@@ -3989,12 +3989,12 @@ namespace spectra::scene {
             try {
                 const Vector3 position{worldFromPbrtCamera.matrix.at(3u), worldFromPbrtCamera.matrix.at(7u), worldFromPbrtCamera.matrix.at(11u)};
                 Vector3 right = normalize(Vector3{worldFromPbrtCamera.matrix.at(0u), worldFromPbrtCamera.matrix.at(4u), worldFromPbrtCamera.matrix.at(8u)}, "PBRT camera transform right");
-                const Vector3 up = normalize(Vector3{worldFromPbrtCamera.matrix.at(1u), worldFromPbrtCamera.matrix.at(5u), worldFromPbrtCamera.matrix.at(9u)}, "PBRT camera transform up");
+                const Vector3 down = -normalize(Vector3{worldFromPbrtCamera.matrix.at(1u), worldFromPbrtCamera.matrix.at(5u), worldFromPbrtCamera.matrix.at(9u)}, "PBRT camera transform up");
                 const Vector3 forward = normalize(Vector3{worldFromPbrtCamera.matrix.at(2u), worldFromPbrtCamera.matrix.at(6u), worldFromPbrtCamera.matrix.at(10u)}, "PBRT camera transform forward");
-                if (std::abs(dot(right, up)) > 1.0e-4f || std::abs(dot(right, forward)) > 1.0e-4f || std::abs(dot(up, forward)) > 1.0e-4f) throw std::runtime_error("basis is not orthogonal");
-                if (dot(cross(right, up), forward) <= 0.0f) right = -right;
-                if (dot(cross(right, up), forward) <= 0.0f) throw std::runtime_error("basis is not convertible to right-handed SpectraYUp");
-                return camera_world_from_camera(camera_pose_from_frame(position, right, up, forward));
+                if (std::abs(dot(right, down)) > 1.0e-4f || std::abs(dot(right, forward)) > 1.0e-4f || std::abs(dot(down, forward)) > 1.0e-4f) throw std::runtime_error("basis is not orthogonal");
+                if (dot(cross(right, down), forward) <= 0.0f) right = -right;
+                if (dot(cross(right, down), forward) <= 0.0f) throw std::runtime_error("basis is not convertible to Spectra image-down camera space");
+                return camera_world_from_camera(camera_pose_from_frame(position, right, down, forward));
             } catch (const std::exception& error) {
                 throw ParseError(source, std::format("PBRT camera transform cannot be converted to SpectraYUp: {}", error.what()));
             }

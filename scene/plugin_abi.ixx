@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 11u;
+    constexpr std::uint32_t plugin_abi_version = 12u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -225,7 +225,7 @@ export namespace spectra::scene {
         const char* name{};
         float position[3]{};
         float right[3]{};
-        float up[3]{};
+        float down[3]{};
         float forward[3]{};
         std::uint32_t projection{};
         float vertical_fov_degrees{};

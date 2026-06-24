@@ -49,12 +49,12 @@ float2 quad_corner(uint vertexIndex) {
 
 float2 quad_uv(uint vertexIndex) {
     uint index = vertexIndex % 6;
-    if (index == 0) return float2(0.0, 1.0);
-    if (index == 1) return float2(1.0, 1.0);
-    if (index == 2) return float2(1.0, 0.0);
-    if (index == 3) return float2(0.0, 1.0);
-    if (index == 4) return float2(1.0, 0.0);
-    return float2(0.0, 0.0);
+    if (index == 0) return float2(0.0, 0.0);
+    if (index == 1) return float2(1.0, 0.0);
+    if (index == 2) return float2(1.0, 1.0);
+    if (index == 3) return float2(0.0, 0.0);
+    if (index == 4) return float2(1.0, 1.0);
+    return float2(0.0, 1.0);
 }
 
 [shader("vertex")]

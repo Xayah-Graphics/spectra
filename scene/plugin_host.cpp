@@ -314,11 +314,11 @@ namespace spectra::scene {
             const std::string name = abi_string(camera.name, "Scene camera name", false);
             const Vector3 position = make_vector3(camera.position, std::format("Scene camera \"{}\" position", name));
             const Vector3 right = make_vector3(camera.right, std::format("Scene camera \"{}\" right", name));
-            const Vector3 up = make_vector3(camera.up, std::format("Scene camera \"{}\" up", name));
+            const Vector3 down = make_vector3(camera.down, std::format("Scene camera \"{}\" down", name));
             const Vector3 forward = make_vector3(camera.forward, std::format("Scene camera \"{}\" forward", name));
             Scene::Camera result{
                 .name = name,
-                .pose = camera_pose_from_frame(position, right, up, forward),
+                .pose = camera_pose_from_frame(position, right, down, forward),
                 .projection = camera_projection(camera, name),
             };
             if (camera.has_image != 0u) result.image = make_camera_image(camera.image, name);
@@ -1109,7 +1109,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v11");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v12");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));

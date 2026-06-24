@@ -32,7 +32,7 @@ namespace spectra::scene {
     export struct CameraFrame {
         Vector3 position{};
         Vector3 right{1.0f, 0.0f, 0.0f};
-        Vector3 up{0.0f, 1.0f, 0.0f};
+        Vector3 down{0.0f, 1.0f, 0.0f};
         Vector3 forward{0.0f, 0.0f, 1.0f};
     };
 
@@ -91,9 +91,9 @@ namespace spectra::scene {
         std::map<std::string, CameraSnapshot> cameras{};
     };
 
-    export [[nodiscard]] CameraPose camera_pose_from_look_at(Vector3 eye, Vector3 target, Vector3 up);
-    export [[nodiscard]] CameraPose camera_pose_from_frame(Vector3 position, Vector3 right, Vector3 up, Vector3 forward);
-    export [[nodiscard]] ViewportCamera viewport_camera_from_look_at(Vector3 eye, Vector3 target, Vector3 up, CameraProjection projection);
+    export [[nodiscard]] CameraPose camera_pose_from_look_at(Vector3 eye, Vector3 target, Vector3 navigation_up);
+    export [[nodiscard]] CameraPose camera_pose_from_frame(Vector3 position, Vector3 right, Vector3 down, Vector3 forward);
+    export [[nodiscard]] ViewportCamera viewport_camera_from_look_at(Vector3 eye, Vector3 target, Vector3 navigation_up, CameraProjection projection);
     export [[nodiscard]] CameraFrame camera_frame(const CameraPose& pose);
     export [[nodiscard]] SceneTransform camera_world_from_camera(const CameraPose& pose);
     export [[nodiscard]] CameraPose camera_pose_from_world_from_camera(const SceneTransform& world_from_camera);

@@ -170,7 +170,7 @@ namespace {
         case spectra::scene::CameraProjectionKind::Pinhole:
             return spectra::scene::Vector3{
                 (u - projection.cx) / projection.fx * distance,
-                (projection.cy - v) / projection.fy * distance,
+                (v - projection.cy) / projection.fy * distance,
                 distance,
             };
         case spectra::scene::CameraProjectionKind::Orthographic: {
@@ -195,15 +195,15 @@ namespace {
             };
         }
         return std::array{
-            camera_visual_local_corner(projection, -1.0f, 1.0f, distance),
-            camera_visual_local_corner(projection, 1.0f, 1.0f, distance),
-            camera_visual_local_corner(projection, 1.0f, -1.0f, distance),
             camera_visual_local_corner(projection, -1.0f, -1.0f, distance),
+            camera_visual_local_corner(projection, 1.0f, -1.0f, distance),
+            camera_visual_local_corner(projection, 1.0f, 1.0f, distance),
+            camera_visual_local_corner(projection, -1.0f, 1.0f, distance),
         };
     }
 
     [[nodiscard]] spectra::scene::Vector3 camera_visual_world_point(const spectra::scene::CameraFrame& frame, const spectra::scene::Vector3& local) {
-        return frame.position + frame.right * local.x + frame.up * local.y + frame.forward * local.z;
+        return frame.position + frame.right * local.x + frame.down * local.y + frame.forward * local.z;
     }
 
     [[nodiscard]] CameraVisualPlanes camera_visual_planes(const spectra::scene::Scene::Camera& camera, const float visual_near, const float visual_far) {
@@ -220,11 +220,11 @@ namespace {
 
     [[nodiscard]] std::array<float, 16> camera_visual_image_model(const CameraVisualPlanes& planes) {
         const spectra::scene::Vector3 right = planes.far_corners.at(1u) - planes.far_corners.at(0u);
-        const spectra::scene::Vector3 up = planes.far_corners.at(0u) - planes.far_corners.at(3u);
+        const spectra::scene::Vector3 down = planes.far_corners.at(3u) - planes.far_corners.at(0u);
         const spectra::scene::Vector3 center = (planes.far_corners.at(0u) + planes.far_corners.at(1u) + planes.far_corners.at(2u) + planes.far_corners.at(3u)) * 0.25f;
         return std::array<float, 16>{
             right.x, right.y, right.z, 0.0f,
-            up.x, up.y, up.z, 0.0f,
+            down.x, down.y, down.z, 0.0f,
             0.0f, 0.0f, 0.0f, 0.0f,
             center.x, center.y, center.z, 1.0f,
         };
@@ -3155,7 +3155,7 @@ namespace spectra::rasterizer {
                 if (instances.size() + 3u > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer camera axis segment count exceeds uint32 range");
                 const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
                 const scene::CameraFrame frame = scene::camera_frame(camera.pose);
-                const std::array axes{frame.right, frame.up, frame.forward};
+                const std::array axes{frame.right, frame.down, frame.forward};
                 for (std::size_t axis_index = 0u; axis_index < axes.size(); ++axis_index) {
                     append_segment_instance(
                         to_render_vector(frame.position),
@@ -3616,7 +3616,7 @@ namespace spectra::rasterizer {
         scene::ViewportCamera state{
             .pose = active_camera->pose,
             .focus = active_frame.position + active_frame.forward,
-            .navigation_up = active_frame.up,
+            .navigation_up = -active_frame.down,
             .projection = active_camera->projection,
         };
 
@@ -3881,7 +3881,7 @@ namespace spectra::rasterizer {
             .lightCounts               = lighting.lightCounts,
             .cameraForward             = {camera_matrices.frame.forward.x, camera_matrices.frame.forward.y, camera_matrices.frame.forward.z, 0.0f},
             .cameraRight               = {camera_matrices.frame.right.x, camera_matrices.frame.right.y, camera_matrices.frame.right.z, 0.0f},
-            .cameraUp                  = {camera_matrices.frame.up.x, camera_matrices.frame.up.y, camera_matrices.frame.up.z, 0.0f},
+            .cameraUp                  = {-camera_matrices.frame.down.x, -camera_matrices.frame.down.y, -camera_matrices.frame.down.z, 0.0f},
             .viewport                  = {static_cast<float>(this->viewport.extent.width), static_cast<float>(this->viewport.extent.height), 0.0f, distance},
         };
     }
@@ -4667,7 +4667,7 @@ namespace spectra::rasterizer {
             const scene::Vector3 scene_axis = to_scene_vector(axis);
             return spectra::rasterizer::math::Vector3{
                 scene::dot(scene_axis, frame.right),
-                scene::dot(scene_axis, frame.up),
+                -scene::dot(scene_axis, frame.down),
                 -scene::dot(scene_axis, frame.forward),
             };
         };

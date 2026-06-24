@@ -953,7 +953,7 @@ namespace spectra::pathtracer {
         return scene::ViewportCamera{
             .pose = pose,
             .focus = to_scene_vector(camera_focus_center_from_bounds(eye, forward, focus_bounds)),
-            .navigation_up = frame.up,
+            .navigation_up = -frame.down,
             .projection = scene::CameraProjection{
                 .kind = scene::CameraProjectionKind::Perspective,
                 .vertical_fov_degrees = fov_degrees,
