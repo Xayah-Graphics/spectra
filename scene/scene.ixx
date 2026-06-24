@@ -567,7 +567,7 @@ namespace spectra::scene {
 
         struct TimelineDescriptor {
             TimelineKind kind{TimelineKind::Static};
-            double frame_rate{24.0};
+            double frame_rate{};
             std::uint64_t frame_count{};
         };
 

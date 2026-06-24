@@ -225,6 +225,7 @@ namespace spectra::scene {
             switch (timeline.kind) {
             case SPECTRA_SCENE_TIMELINE_STATIC:
                 descriptor.kind = Scene::TimelineKind::Static;
+                if (descriptor.frame_rate != 0.0) throw std::runtime_error(std::format("{} static timeline frame rate must be zero", context));
                 if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} static timeline frame count must be zero", context));
                 return descriptor;
             case SPECTRA_SCENE_TIMELINE_LIVE:

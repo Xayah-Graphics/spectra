@@ -961,10 +961,7 @@ namespace spectra::rasterizer {
         const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->host.swapchain_extent.width;
         const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
         const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
-        const char* scene_mode = "Static";
-        if (document->timeline.kind == scene::Scene::TimelineKind::Live) scene_mode = "Live";
-        if (document->timeline.kind == scene::Scene::TimelineKind::Indexed) scene_mode = "Indexed";
-        return std::format("{} | {} | {}x{}", document->title.empty() ? document->name : document->title, scene_mode, width, height);
+        return std::format("{} | {}x{}", document->title.empty() ? document->name : document->title, width, height);
     }
 
     void Renderer::create_viewport_resources(const vk::Extent2D extent) {
@@ -4753,19 +4750,15 @@ namespace spectra::rasterizer {
         const ImVec2 image_max{image_min.x + image_size.x, image_min.y + image_size.y};
 
         ImGui::PushClipRect(image_min, image_max, true);
-        const scene::Scene::Timeline timeline = this->scene.instance->timeline();
         const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
         this->rebuild_scene_ui_cache_if_needed();
         constexpr const char* projection_text = "Perspective";
-        const char* scene_mode = "Static";
-        if (document->timeline.kind == scene::Scene::TimelineKind::Live) scene_mode = "Live";
-        if (document->timeline.kind == scene::Scene::TimelineKind::Indexed) scene_mode = "Indexed";
         const std::string scene_title = document->title.empty() ? document->name : document->title;
-        std::string hud = document->timeline.kind != scene::Scene::TimelineKind::Static ? std::format("{} | {} | frame {} | {:.2f}s | {}x{} | {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {} | {}x{} | {}", scene_title, scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
+        std::string hud = std::format("{} | {}x{} | {}", scene_title, this->viewport.extent.width, this->viewport.extent.height, projection_text);
         const ImVec2 hud_padding{10.0f, 7.0f};
         ImVec2 hud_text = ImGui::CalcTextSize(hud.c_str());
         if (hud_text.x + hud_padding.x * 2.0f > image_size.x - 24.0f) {
-            hud = document->timeline.kind != scene::Scene::TimelineKind::Static ? std::format("{} | {} | f{}", scene_title, scene_mode, timeline.cursor.frame_index) : std::format("{} | {}", scene_title, scene_mode);
+            hud = scene_title;
             hud_text = ImGui::CalcTextSize(hud.c_str());
         }
         const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};

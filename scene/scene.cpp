@@ -1471,6 +1471,8 @@ namespace spectra::scene {
         void validate_timeline_descriptor(const Scene::TimelineDescriptor& descriptor, const std::string_view context) {
             switch (descriptor.kind) {
             case Scene::TimelineKind::Static:
+                if (descriptor.frame_rate != 0.0) throw std::runtime_error(std::format("{} static timeline frame rate must be zero", context));
+                if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} static timeline frame count must be zero", context));
                 return;
             case Scene::TimelineKind::Live:
                 if (!std::isfinite(descriptor.frame_rate) || descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} live timeline frame rate must be finite and positive", context));
