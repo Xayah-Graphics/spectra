@@ -365,9 +365,8 @@ namespace spectra::scene {
                                     ? 2.0f * distance * std::tan(camera_projection_vertical_fov_radians(state.projection) * 0.5f) / viewport.height
                                     : state.projection.orthographic_height / viewport.height;
         if (!std::isfinite(pan_scale) || !(pan_scale > 0.0f)) throw std::runtime_error("Scene viewport camera pan scale must be positive");
-        const float horizontal_offset = delta.x_pixels * pan_scale;
-        const float vertical_offset = delta.y_pixels * pan_scale;
-        const Vector3 offset = frame.right * horizontal_offset - frame.down * vertical_offset;
+        const Vector3 screen_offset = (frame.right * delta.x_pixels + frame.down * delta.y_pixels) * pan_scale;
+        const Vector3 offset = -screen_offset;
         state.pose.position += offset;
         state.focus += offset;
         validate_viewport_camera(state);
