@@ -3985,6 +3985,21 @@ namespace spectra::scene {
             };
         }
 
+        [[nodiscard]] SceneTransform CanonicalSpectraWorldFromPbrtCamera(const SceneTransform& worldFromPbrtCamera, const Scene::SourceLocation& source) {
+            try {
+                const Vector3 position{worldFromPbrtCamera.matrix.at(3u), worldFromPbrtCamera.matrix.at(7u), worldFromPbrtCamera.matrix.at(11u)};
+                Vector3 right = normalize(Vector3{worldFromPbrtCamera.matrix.at(0u), worldFromPbrtCamera.matrix.at(4u), worldFromPbrtCamera.matrix.at(8u)}, "PBRT camera transform right");
+                const Vector3 up = normalize(Vector3{worldFromPbrtCamera.matrix.at(1u), worldFromPbrtCamera.matrix.at(5u), worldFromPbrtCamera.matrix.at(9u)}, "PBRT camera transform up");
+                const Vector3 forward = normalize(Vector3{worldFromPbrtCamera.matrix.at(2u), worldFromPbrtCamera.matrix.at(6u), worldFromPbrtCamera.matrix.at(10u)}, "PBRT camera transform forward");
+                if (std::abs(dot(right, up)) > 1.0e-4f || std::abs(dot(right, forward)) > 1.0e-4f || std::abs(dot(up, forward)) > 1.0e-4f) throw std::runtime_error("basis is not orthogonal");
+                if (dot(cross(right, up), forward) <= 0.0f) right = -right;
+                if (dot(cross(right, up), forward) <= 0.0f) throw std::runtime_error("basis is not convertible to right-handed SpectraYUp");
+                return camera_world_from_camera(camera_pose_from_frame(position, right, up, forward));
+            } catch (const std::exception& error) {
+                throw ParseError(source, std::format("PBRT camera transform cannot be converted to SpectraYUp: {}", error.what()));
+            }
+        }
+
         [[nodiscard]] SceneTransform TransformFromPbrtMatrix(const std::array<float, 16>& pbrtMatrix, const Scene::SourceLocation& source) {
             const std::array<float, 16> matrix = TransposeMatrix(pbrtMatrix);
             return SceneTransform{
@@ -4292,10 +4307,11 @@ namespace spectra::scene {
                 if (directive.text == "Camera") {
                     this->RequireOptions(directive, "Camera");
                     const std::string type = RequireStringToken(stream, "Camera");
+                    const SceneTransformSet pbrt_camera_transform = this->PbrtWorldFromCameraTransform();
                     this->scene.render_settings.camera          = this->Entity(type, this->ParseParameters(stream), EntityUse::Camera, directive.source, this->graphicsState.color_space);
-                    this->scene.render_settings.camera_transform = this->WorldFromCameraTransform();
+                    this->scene.render_settings.camera_transform = this->SpectraWorldFromPbrtCameraTransform(pbrt_camera_transform, directive.source);
                     this->scene.render_settings.camera_medium    = this->graphicsState.medium_interface.outside;
-                    this->namedTransformStates["camera"]     = this->scene.render_settings.camera_transform;
+                    this->namedTransformStates["camera"]     = pbrt_camera_transform;
                     return;
                 }
                 if (directive.text == "ColorSpace") {
@@ -4516,12 +4532,23 @@ namespace spectra::scene {
                 throw ParseError(source, std::format("Unknown ActiveTransform target \"{}\"", token.text));
             }
 
-            [[nodiscard]] SceneTransformSet WorldFromCameraTransform() const {
+            [[nodiscard]] SceneTransformSet PbrtWorldFromCameraTransform() const {
                 SceneTransformSet result{
                     .start     = Inverse(this->graphicsState.transform.start),
                     .end       = Inverse(this->graphicsState.transform.end),
                     .start_time = this->graphicsState.transform.start_time,
                     .end_time   = this->graphicsState.transform.end_time,
+                };
+                RefreshAnimatedFlag(&result);
+                return result;
+            }
+
+            [[nodiscard]] SceneTransformSet SpectraWorldFromPbrtCameraTransform(const SceneTransformSet& pbrtCameraTransform, const Scene::SourceLocation& source) const {
+                SceneTransformSet result{
+                    .start      = CanonicalSpectraWorldFromPbrtCamera(pbrtCameraTransform.start, source),
+                    .end        = CanonicalSpectraWorldFromPbrtCamera(pbrtCameraTransform.end, source),
+                    .start_time = pbrtCameraTransform.start_time,
+                    .end_time   = pbrtCameraTransform.end_time,
                 };
                 RefreshAnimatedFlag(&result);
                 return result;
