@@ -66,15 +66,15 @@ namespace spectra::scene {
             return std::clamp(pitch, -limit, limit);
         }
 
-        [[nodiscard]] Quaternion quaternion_from_frame(const Vector3 right, const Vector3 up, const Vector3 forward, const std::string_view context) {
+        [[nodiscard]] Quaternion quaternion_from_frame(const Vector3 right, const Vector3 y_axis, const Vector3 forward, const std::string_view context) {
             const float m00 = right.x;
-            const float m01 = up.x;
+            const float m01 = y_axis.x;
             const float m02 = forward.x;
             const float m10 = right.y;
-            const float m11 = up.y;
+            const float m11 = y_axis.y;
             const float m12 = forward.y;
             const float m20 = right.z;
-            const float m21 = up.z;
+            const float m21 = y_axis.z;
             const float m22 = forward.z;
             Quaternion result{};
             const float trace = m00 + m11 + m22;
