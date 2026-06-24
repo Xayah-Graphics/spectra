@@ -1496,15 +1496,6 @@ namespace spectra::scene {
             if (!Scene::has_dirty_flag(dirty, Scene::DirtyFlags::Frame)) throw std::runtime_error("Scene frame commit did not mark the frame dirty");
         }
 
-        [[nodiscard]] bool resolved_frame_has_renderable_entity(const Scene::ResolvedFrame& frame) {
-            return !frame.meshes.empty() || !frame.spheres.empty() || !frame.point_clouds.empty() || !frame.volumes.empty();
-        }
-
-        void validate_scene_renderable_entities(Scene& scene_instance, const std::string_view context) {
-            const Scene::ResolvedFrame frame = scene_instance.resolved_frame();
-            if (!resolved_frame_has_renderable_entity(frame)) throw std::runtime_error(std::format("{} must contain at least one renderable Mesh, Sphere, PointCloud, or VolumeGrid entity", context));
-        }
-
         [[nodiscard]] std::string lowercase_ascii(std::string value) {
             for (char& character : value) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
             return value;
@@ -1871,7 +1862,6 @@ namespace spectra::scene {
             .playing = true,
         };
         commit_scene_timeline_and_frame(scene_instance, std::move(timeline), std::move(snapshot));
-        validate_scene_renderable_entities(scene_instance, "Plugin-driven scene initial frame");
         this->reset_driver_runtime();
         this->replace_with_scene(std::move(scene_instance));
         this->driver_runtime.plugin = std::make_unique<PluginRuntime>(PluginRuntime{
@@ -1934,7 +1924,6 @@ namespace spectra::scene {
             return;
         }
         commit_scene_frame(*this, std::move(snapshot));
-        validate_scene_renderable_entities(*this, "Scene live frame");
         mark_updated();
     }
 
@@ -1976,7 +1965,6 @@ namespace spectra::scene {
             .frame_index = this->driver_runtime.stream_frame_index,
         });
         commit_scene_document_and_frame(*this, std::move(document), std::move(snapshot));
-        validate_scene_renderable_entities(*this, context);
         this->driver_runtime.observed_scene_revision = scene_revision;
     }
 

@@ -901,7 +901,7 @@ namespace spectra::scene {
         public:
             explicit NativeLibrary(std::filesystem::path path) : path(std::move(path)) {
 #if defined(_WIN32)
-                this->handle = static_cast<void*>(LoadLibraryW(this->path.wstring().c_str()));
+                this->handle = static_cast<void*>(LoadLibraryExW(this->path.wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
                 if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load Scene plugin, Win32 error {}", this->path.string(), GetLastError()));
 #else
                 this->handle = ::dlopen(this->path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
