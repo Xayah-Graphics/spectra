@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 12u;
+    constexpr std::uint32_t plugin_abi_version = 13u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -11,6 +11,9 @@ export namespace spectra::scene {
     constexpr std::uint32_t SPECTRA_SCENE_RESULT_ERROR = 1u;
     constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_VOLUME_CHANNEL = 0u;
     constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID = 1u;
+    constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_STATIC = 0u;
+    constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_LIVE = 1u;
+    constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_INDEXED = 2u;
 
     struct SpectraSceneOption {
         const char* key{};
@@ -422,8 +425,15 @@ export namespace spectra::scene {
         SpectraSceneViewportVoxelGridSpan viewport_voxel_grids{};
     };
 
+    struct SpectraSceneTimeline {
+        std::uint32_t kind{};
+        double frame_rate{};
+        std::uint64_t frame_count{};
+    };
+
     struct SpectraSceneDocumentView {
         std::uint64_t struct_size{};
+        SpectraSceneTimeline timeline{};
         const char* active_camera_name{};
         SpectraSceneItems items{};
     };
@@ -456,7 +466,6 @@ export namespace spectra::scene {
         const char* id{};
         const char* title{};
         const char* open_action_label{};
-        double frames_per_second{};
         SpectraSceneControlSectionSpan sections{};
         SpectraSceneControlOptionSchemaSpan open_options{};
         SpectraSceneControlActionSpan control_actions{};

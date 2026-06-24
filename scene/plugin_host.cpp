@@ -21,7 +21,6 @@ namespace spectra::scene {
             std::string id{};
             std::string title{};
             std::string open_action_label{};
-            double frames_per_second{};
             std::vector<ControlSection> sections{};
             std::vector<ControlOptionSchema> open_options{};
             std::vector<ControlAction> control_actions{};
@@ -216,6 +215,31 @@ namespace spectra::scene {
                 .kind = scene_entity_kind_from_u32(entity.kind, context),
                 .name = abi_string(entity.name, std::format("{} name", context), false),
             };
+        }
+
+        [[nodiscard]] Scene::TimelineDescriptor make_timeline_descriptor(const SpectraSceneTimeline& timeline, const std::string_view context) {
+            Scene::TimelineDescriptor descriptor{
+                .frame_rate = finite_double(timeline.frame_rate, std::format("{} frame rate", context)),
+                .frame_count = timeline.frame_count,
+            };
+            switch (timeline.kind) {
+            case SPECTRA_SCENE_TIMELINE_STATIC:
+                descriptor.kind = Scene::TimelineKind::Static;
+                if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} static timeline frame count must be zero", context));
+                return descriptor;
+            case SPECTRA_SCENE_TIMELINE_LIVE:
+                descriptor.kind = Scene::TimelineKind::Live;
+                if (descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} live timeline frame rate must be positive", context));
+                if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} live timeline frame count must be zero", context));
+                return descriptor;
+            case SPECTRA_SCENE_TIMELINE_INDEXED:
+                descriptor.kind = Scene::TimelineKind::Indexed;
+                if (descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} indexed timeline frame rate must be positive", context));
+                if (descriptor.frame_count == 0u) throw std::runtime_error(std::format("{} indexed timeline frame count must be positive", context));
+                return descriptor;
+            default:
+                throw std::runtime_error(std::format("{} timeline kind {} is invalid", context, timeline.kind));
+            }
         }
 
         [[nodiscard]] Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
@@ -525,6 +549,7 @@ namespace spectra::scene {
 
         void append_document_view(Scene::Document& document, const SpectraSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
             if (view.struct_size != sizeof(SpectraSceneDocumentView)) throw std::runtime_error("Scene document view ABI size mismatch");
+            document.timeline = make_timeline_descriptor(view.timeline, "Scene document");
             const std::string active_camera_name = abi_string(view.active_camera_name, "Scene document active camera name", true);
             if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
 
@@ -862,7 +887,6 @@ namespace spectra::scene {
                 .id = abi_string(plugin.id, "Scene plugin id", false),
                 .title = abi_string(plugin.title, "Scene plugin title", false),
                 .open_action_label = abi_string(plugin.open_action_label, "Scene plugin open action label", false),
-                .frames_per_second = finite_double(plugin.frames_per_second, "Scene plugin frame rate"),
                 .sections = make_control_sections(plugin.sections, "Scene plugin control sections"),
                 .open_options = make_open_option_schemas(plugin.open_options, "Scene plugin open option schema"),
                 .control_actions = make_control_actions(plugin.control_actions, "Scene plugin controls action"),
@@ -1109,7 +1133,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v12");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v13");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1148,8 +1172,6 @@ namespace spectra::scene {
                 .name = this->descriptor.id,
                 .title = this->descriptor.title,
                 .source = this->open_request.scene_id,
-                .frames_per_second = this->descriptor.frames_per_second,
-                .timeline_enabled = true,
             };
         }
 
@@ -1268,8 +1290,6 @@ namespace spectra::scene {
         }
 
         void validate_scene_api() const {
-            const double fps = this->descriptor.frames_per_second;
-            if (fps <= 0.0) throw std::runtime_error(std::format("{}: Scene plugin frame rate must be positive", this->open_request.plugin_path.string()));
             if (this->plugin->create == nullptr) throw std::runtime_error(std::format("{}: Scene plugin create function is null", this->open_request.plugin_path.string()));
             if (this->plugin->destroy == nullptr) throw std::runtime_error(std::format("{}: Scene plugin destroy function is null", this->open_request.plugin_path.string()));
             if (this->plugin->update == nullptr) throw std::runtime_error(std::format("{}: Scene plugin update function is null", this->open_request.plugin_path.string()));
@@ -1363,7 +1383,6 @@ namespace spectra::scene {
         };
         append_document_view(document, this->state->document(instance.instance), symbols.material_names, symbols.light_names);
         ensure_scene_camera(document, document.name);
-        document.timeline_enabled = true;
         instance.scene_symbols = std::move(symbols);
         instance.document_validated = true;
         return document;

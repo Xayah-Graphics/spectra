@@ -559,13 +559,24 @@ namespace spectra::scene {
             std::vector<ViewportVoxelGrid> viewport_voxel_grids{};
         };
 
+        enum class TimelineKind : std::uint32_t {
+            Static  = 0u,
+            Live    = 1u,
+            Indexed = 2u,
+        };
+
+        struct TimelineDescriptor {
+            TimelineKind kind{TimelineKind::Static};
+            double frame_rate{24.0};
+            std::uint64_t frame_count{};
+        };
+
         struct Document {
             Revision revision{};
             std::string name{};
             std::string title{};
             std::string source{};
-            double frames_per_second{24.0};
-            bool timeline_enabled{true};
+            TimelineDescriptor timeline{};
             std::vector<Camera> cameras{};
             std::string active_camera_name{};
             std::vector<PreviewMaterial> materials{};
@@ -594,8 +605,10 @@ namespace spectra::scene {
         };
 
         struct Timeline {
-            double frames_per_second{24.0};
+            TimelineDescriptor descriptor{};
             bool playing{true};
+            bool loop{true};
+            double playback_accumulator_seconds{};
             FrameCursor cursor{};
             std::optional<FrameSnapshot> current_frame{};
         };
@@ -688,7 +701,10 @@ namespace spectra::scene {
         void open_pbrt_file(const std::filesystem::path& scene_path);
         void open_plugin(PluginOpenRequest request);
         void advance(std::uint64_t frame_number, double delta_seconds);
+        void set_timeline_playing(bool playing);
         void toggle_timeline_playing();
+        void set_timeline_loop(bool loop);
+        void seek_timeline_frame(std::uint64_t frame_index);
         void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);
         void update_control_setting(std::string_view key, std::string_view value);
 
@@ -717,9 +733,6 @@ namespace spectra::scene {
             ~DriverRuntime() noexcept;
 
             std::unique_ptr<PluginRuntime> plugin{};
-            double frame_accumulator_seconds{};
-            double stream_time_seconds{};
-            std::uint64_t stream_frame_index{};
             std::uint64_t observed_scene_revision{};
             std::optional<std::uint64_t> updated_frame_number{};
         };

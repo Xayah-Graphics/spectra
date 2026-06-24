@@ -960,9 +960,11 @@ namespace spectra::rasterizer {
     std::string Renderer::window_detail() const {
         const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->host.swapchain_extent.width;
         const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
-        const std::shared_ptr<const scene::Scene::Document> scene = this->scene.instance->document();
-        const char* scene_mode = scene->timeline_enabled ? "Live" : "Static";
-        return std::format("{} | {} | {}x{}", scene->title.empty() ? scene->name : scene->title, scene_mode, width, height);
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
+        const char* scene_mode = "Static";
+        if (document->timeline.kind == scene::Scene::TimelineKind::Live) scene_mode = "Live";
+        if (document->timeline.kind == scene::Scene::TimelineKind::Indexed) scene_mode = "Indexed";
+        return std::format("{} | {} | {}x{}", document->title.empty() ? document->name : document->title, scene_mode, width, height);
     }
 
     void Renderer::create_viewport_resources(const vk::Extent2D extent) {
@@ -4752,16 +4754,18 @@ namespace spectra::rasterizer {
 
         ImGui::PushClipRect(image_min, image_max, true);
         const scene::Scene::Timeline timeline = this->scene.instance->timeline();
-        const std::shared_ptr<const scene::Scene::Document> scene = this->scene.instance->document();
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
         this->rebuild_scene_ui_cache_if_needed();
         constexpr const char* projection_text = "Perspective";
-        const char* scene_mode = scene->timeline_enabled ? "Live" : "Static";
-        const std::string scene_title = scene->title.empty() ? scene->name : scene->title;
-        std::string hud = scene->timeline_enabled ? std::format("{} | {} | frame {} | {:.2f}s | {}x{} | {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {} | {}x{} | {}", scene_title, scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
+        const char* scene_mode = "Static";
+        if (document->timeline.kind == scene::Scene::TimelineKind::Live) scene_mode = "Live";
+        if (document->timeline.kind == scene::Scene::TimelineKind::Indexed) scene_mode = "Indexed";
+        const std::string scene_title = document->title.empty() ? document->name : document->title;
+        std::string hud = document->timeline.kind != scene::Scene::TimelineKind::Static ? std::format("{} | {} | frame {} | {:.2f}s | {}x{} | {}", scene_title, scene_mode, timeline.cursor.frame_index, timeline.cursor.time_seconds, this->viewport.extent.width, this->viewport.extent.height, projection_text) : std::format("{} | {} | {}x{} | {}", scene_title, scene_mode, this->viewport.extent.width, this->viewport.extent.height, projection_text);
         const ImVec2 hud_padding{10.0f, 7.0f};
         ImVec2 hud_text = ImGui::CalcTextSize(hud.c_str());
         if (hud_text.x + hud_padding.x * 2.0f > image_size.x - 24.0f) {
-            hud = scene->timeline_enabled ? std::format("{} | {} | f{}", scene_title, scene_mode, timeline.cursor.frame_index) : std::format("{} | {}", scene_title, scene_mode);
+            hud = document->timeline.kind != scene::Scene::TimelineKind::Static ? std::format("{} | {} | f{}", scene_title, scene_mode, timeline.cursor.frame_index) : std::format("{} | {}", scene_title, scene_mode);
             hud_text = ImGui::CalcTextSize(hud.c_str());
         }
         const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
@@ -4770,33 +4774,6 @@ namespace spectra::rasterizer {
         draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
 
         float next_left_overlay_y = hud_max.y + 8.0f;
-        if (scene->timeline_enabled) {
-            constexpr const char* timeline_separator = "\xC2\xB7";
-            const char* playback_state = timeline.playing ? "Playing" : "Paused";
-            const char* space_action = timeline.playing ? "Space Pause" : "Space Resume";
-            std::string timeline_hint = std::format("{} {} {}", playback_state, timeline_separator, space_action);
-            std::string compact_timeline_hint = std::format("{} {} Space", playback_state, timeline_separator);
-
-            const ImVec2 timeline_padding{10.0f, 7.0f};
-            ImVec2 timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
-            if (timeline_text.x + timeline_padding.x * 2.0f > image_size.x - 24.0f) {
-                timeline_hint = std::move(compact_timeline_hint);
-                timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
-            }
-            if (timeline_text.x + timeline_padding.x * 2.0f > image_size.x - 24.0f) {
-                timeline_hint = "Space";
-                timeline_text = ImGui::CalcTextSize(timeline_hint.c_str());
-            }
-
-            const ImVec2 timeline_min{image_min.x + 12.0f, next_left_overlay_y};
-            const ImVec2 timeline_max{timeline_min.x + timeline_text.x + timeline_padding.x * 2.0f, timeline_min.y + timeline_text.y + timeline_padding.y * 2.0f};
-            const bool timeline_active = timeline.playing;
-            draw_list->AddRectFilled(timeline_min, timeline_max, timeline_active ? IM_COL32(12, 42, 38, 184) : IM_COL32(15, 18, 22, 164), 7.0f);
-            draw_list->AddRect(timeline_min, timeline_max, timeline_active ? IM_COL32(72, 202, 154, 96) : IM_COL32(92, 102, 112, 72), 7.0f);
-            draw_list->AddText(ImVec2{timeline_min.x + timeline_padding.x, timeline_min.y + timeline_padding.y}, IM_COL32(218, 236, 232, 255), timeline_hint.c_str());
-            next_left_overlay_y = timeline_max.y + 8.0f;
-        }
-
         std::string selection_text = this->scene_selection_summary();
         const ImVec2 selection_padding{10.0f, 7.0f};
         ImVec2 selection_size = ImGui::CalcTextSize(selection_text.c_str());
