@@ -61,26 +61,6 @@ You can also drag a `.pbrt`, `.pbrt.gz`, `.dll`, or `.so` into the viewport. Plu
 setup form in the Scene panel; after opening, controls stay in the Scene panel and runtime status appears in the
 viewport HUD.
 
-## Scene Plugins
-
-Spectra scene plugins are platform dynamic libraries. They do not include Spectra headers, link Spectra libraries,
-import Spectra modules, or use Spectra CMake targets.
-
-The current binary entry point is:
-
-```cpp
-extern "C" SPECTRA_SCENE_EXPORT const SpectraScenePlugin* spectra_scene_plugin_v10(void);
-```
-
-Plugin boundaries:
-
-- The plugin owns its descriptor and returned ABI views while the library or instance is alive.
-- Spectra copies scene metadata, but borrows camera image pixels and external GPU buffer payloads.
-- Controls are descriptor-driven: open options, runtime actions, settings, and HUD metrics are declared by the plugin.
-- Runtime is live-only: the host timeline provides play/pause state, time, frame index, and delta time.
-- Invalid ABI versions, missing required callbacks, unknown enum values, duplicate ids, and malformed scene data are
-  hard errors.
-
 ## Project Layout
 
 - `scene/`: scene model, PBRT import, scene plugin host, control/HUD data.
