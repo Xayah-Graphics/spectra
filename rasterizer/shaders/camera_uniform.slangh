@@ -1,0 +1,21 @@
+static const uint MaxViewportDirectLights = 8;
+
+struct CameraUniform {
+    row_major float4x4 worldToClip;
+    row_major float4x4 clipToWorld;
+    float3 cameraPosition;
+    float _pad0;
+    float3 environmentColor;
+    float environmentIntensity;
+    float4 lightDirections[MaxViewportDirectLights];
+    float4 lightPositions[MaxViewportDirectLights];
+    float4 lightColorIntensities[MaxViewportDirectLights];
+    uint4 lightCounts;
+    float3 cameraForward;
+    float _pad1;
+    float3 cameraRight;
+    float _pad2;
+    float3 cameraUp;
+    float _pad3;
+    float4 viewport;
+};

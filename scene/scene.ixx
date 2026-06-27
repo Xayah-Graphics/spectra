@@ -69,6 +69,10 @@ namespace spectra::scene {
 
     export inline constexpr std::uint32_t GpuBufferKindVolumeChannel = 0u;
     export inline constexpr std::uint32_t GpuBufferKindViewportVoxelGrid = 1u;
+    export inline constexpr std::uint32_t GpuBufferKindPointCloud = 2u;
+    export inline constexpr std::uint32_t GpuBufferKindViewportSegmentSet = 3u;
+    export inline constexpr std::uint64_t PointCloudExternalPointBytes = static_cast<std::uint64_t>(8u * sizeof(float));
+    export inline constexpr std::uint64_t ViewportSegmentExternalSegmentBytes = static_cast<std::uint64_t>(12u * sizeof(float));
 
     export struct GpuBufferRequest {
         std::uint32_t kind{};
@@ -415,14 +419,30 @@ namespace spectra::scene {
             SourceLocation source{};
         };
 
+        struct PointCloudBounds {
+            Vector3 minimum{};
+            Vector3 maximum{};
+        };
+
         struct PointCloud {
+            enum class SourceKind : std::uint32_t {
+                Values            = 0u,
+                ExternalGpuBuffer = 1u,
+            };
+
             std::string name{};
             std::vector<Vector3> positions{};
             std::vector<Vector3> normals{};
             std::vector<Vector4> colors{};
             std::vector<float> radii{};
+            SourceKind source_kind{SourceKind::Values};
+            std::uint64_t point_count{};
+            std::uint64_t buffer_id{};
+            std::uint64_t source_byte_size{};
+            std::uint64_t revision{};
             std::string material_name{};
             Transform transform{};
+            std::optional<PointCloudBounds> bounds{};
             bool dynamic{true};
             SourceLocation source{};
         };
@@ -522,11 +542,21 @@ namespace spectra::scene {
         };
 
         struct ViewportSegmentSet {
+            enum class SourceKind : std::uint32_t {
+                Values            = 0u,
+                ExternalGpuBuffer = 1u,
+            };
+
             std::string name{};
             SceneEntityRef owner{};
             std::vector<ViewportSegment> segments{};
             std::vector<Vector4> colors{};
             std::vector<float> widths{};
+            SourceKind source_kind{SourceKind::Values};
+            std::uint64_t segment_count{};
+            std::uint64_t buffer_id{};
+            std::uint64_t source_byte_size{};
+            std::uint64_t revision{};
             float width{2.0f};
             ViewportSegmentWidthMode width_mode{ViewportSegmentWidthMode::Screen};
             ViewportSegmentDepthMode depth_mode{ViewportSegmentDepthMode::DepthTested};

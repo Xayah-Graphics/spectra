@@ -55,6 +55,8 @@ namespace spectra::scene {
             switch (kind) {
             case SPECTRA_SCENE_GPU_BUFFER_VOLUME_CHANNEL: return GpuBufferKindVolumeChannel;
             case SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID: return GpuBufferKindViewportVoxelGrid;
+            case SPECTRA_SCENE_GPU_BUFFER_POINT_CLOUD: return GpuBufferKindPointCloud;
+            case SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_SEGMENT_SET: return GpuBufferKindViewportSegmentSet;
             default: throw std::runtime_error(std::format("{} GPU buffer kind {} is unknown", context, kind));
             }
         }
@@ -63,6 +65,8 @@ namespace spectra::scene {
             switch (kind) {
             case GpuBufferKindVolumeChannel: return SPECTRA_SCENE_GPU_BUFFER_VOLUME_CHANNEL;
             case GpuBufferKindViewportVoxelGrid: return SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID;
+            case GpuBufferKindPointCloud: return SPECTRA_SCENE_GPU_BUFFER_POINT_CLOUD;
+            case GpuBufferKindViewportSegmentSet: return SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_SEGMENT_SET;
             default: throw std::runtime_error(std::format("Scene GPU buffer kind {} is invalid", kind));
             }
         }
@@ -164,6 +168,22 @@ namespace spectra::scene {
             case 1u: return Scene::ViewportVoxelGridIndexEncoding::Morton3D;
             }
             throw std::runtime_error(std::format("{} has invalid viewport voxel grid index encoding {}", context, value));
+        }
+
+        [[nodiscard]] Scene::PointCloud::SourceKind point_cloud_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return Scene::PointCloud::SourceKind::Values;
+            case 1u: return Scene::PointCloud::SourceKind::ExternalGpuBuffer;
+            }
+            throw std::runtime_error(std::format("{} has invalid point cloud source kind {}", context, value));
+        }
+
+        [[nodiscard]] Scene::ViewportSegmentSet::SourceKind viewport_segment_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return Scene::ViewportSegmentSet::SourceKind::Values;
+            case 1u: return Scene::ViewportSegmentSet::SourceKind::ExternalGpuBuffer;
+            }
+            throw std::runtime_error(std::format("{} has invalid viewport segment source kind {}", context, value));
         }
 
         [[nodiscard]] Scene::VolumeChannelSourceKind volume_channel_source_kind_from_u32(const std::uint32_t value, const std::string_view context) {
@@ -389,12 +409,25 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::PointCloud make_point_cloud(const SpectraScenePointCloud& point_cloud, const bool dynamic) {
             const std::string name = abi_string(point_cloud.name, "Scene point cloud name", false);
+            if (point_cloud.bounds_valid > 1u) throw std::runtime_error(std::format("Scene point cloud \"{}\" bounds_valid must be 0 or 1", name));
             Scene::PointCloud result{
                 .name = name,
+                .source_kind = point_cloud_source_kind_from_u32(point_cloud.source_kind, std::format("Scene point cloud \"{}\"", name)),
+                .point_count = point_cloud.point_count,
+                .buffer_id = point_cloud.buffer_id,
+                .source_byte_size = point_cloud.source_byte_size,
+                .revision = point_cloud.revision,
                 .material_name = abi_string(point_cloud.material_name, std::format("Scene point cloud \"{}\" material name", name), false),
                 .transform = make_transform(point_cloud.transform, std::format("Scene point cloud \"{}\"", name)),
+                .bounds = {},
                 .dynamic = dynamic,
             };
+            if (point_cloud.bounds_valid == 1u) {
+                result.bounds = Scene::PointCloudBounds{
+                    .minimum = make_vector3(point_cloud.bounds_min, std::format("Scene point cloud \"{}\" bounds min", name)),
+                    .maximum = make_vector3(point_cloud.bounds_max, std::format("Scene point cloud \"{}\" bounds max", name)),
+                };
+            }
             const std::span<const SpectraScenePoint> points = abi_span(point_cloud.points.data, point_cloud.points.count, std::format("Scene point cloud \"{}\" points", name));
             result.positions.reserve(points.size());
             result.normals.reserve(points.size());
@@ -468,6 +501,11 @@ namespace spectra::scene {
             Scene::ViewportSegmentSet result{
                 .name = name,
                 .owner = make_entity_ref(segment_set.owner, std::format("Scene viewport segment set \"{}\" owner", name)),
+                .source_kind = viewport_segment_source_kind_from_u32(segment_set.source_kind, std::format("Scene viewport segment set \"{}\"", name)),
+                .segment_count = segment_set.segment_count,
+                .buffer_id = segment_set.buffer_id,
+                .source_byte_size = segment_set.source_byte_size,
+                .revision = segment_set.revision,
                 .width = finite_float(segment_set.width, std::format("Scene viewport segment set \"{}\" width", name)),
                 .width_mode = viewport_segment_width_mode_from_u32(segment_set.width_mode, std::format("Scene viewport segment set \"{}\"", name)),
                 .depth_mode = viewport_segment_depth_mode_from_u32(segment_set.depth_mode, std::format("Scene viewport segment set \"{}\"", name)),
@@ -1134,7 +1172,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v13");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v14");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));

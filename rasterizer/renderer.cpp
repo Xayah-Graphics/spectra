@@ -112,9 +112,18 @@ namespace {
         std::array<std::uint32_t, 4> flags{};
     };
 
+    struct PointCloudPushConstantsData {
+        std::array<float, 16> model{};
+    };
+
     struct PointCloudSelectionPushConstantsData {
+        std::array<float, 16> model{};
         std::array<float, 4> color{};
-        std::uint32_t objectId{};
+        std::array<std::uint32_t, 4> flags{};
+    };
+
+    struct ViewportSegmentPushConstantsData {
+        std::array<float, 16> model{};
     };
 
     struct VolumeSelectionPushConstantsData {
@@ -155,6 +164,19 @@ namespace {
 
     [[nodiscard]] bool finite_scene_vector(const spectra::scene::Vector4 value) {
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) && std::isfinite(value.w);
+    }
+
+    [[nodiscard]] std::array<spectra::scene::Vector3, 8> point_cloud_bounds_corners(const spectra::scene::Scene::PointCloudBounds& point_bounds) {
+        return std::array{
+            spectra::scene::Vector3{point_bounds.minimum.x, point_bounds.minimum.y, point_bounds.minimum.z},
+            spectra::scene::Vector3{point_bounds.maximum.x, point_bounds.minimum.y, point_bounds.minimum.z},
+            spectra::scene::Vector3{point_bounds.minimum.x, point_bounds.maximum.y, point_bounds.minimum.z},
+            spectra::scene::Vector3{point_bounds.maximum.x, point_bounds.maximum.y, point_bounds.minimum.z},
+            spectra::scene::Vector3{point_bounds.minimum.x, point_bounds.minimum.y, point_bounds.maximum.z},
+            spectra::scene::Vector3{point_bounds.maximum.x, point_bounds.minimum.y, point_bounds.maximum.z},
+            spectra::scene::Vector3{point_bounds.minimum.x, point_bounds.maximum.y, point_bounds.maximum.z},
+            spectra::scene::Vector3{point_bounds.maximum.x, point_bounds.maximum.y, point_bounds.maximum.z},
+        };
     }
 
     [[nodiscard]] spectra::scene::Vector3 camera_visual_local_corner(const spectra::scene::CameraProjection& projection, const float u, const float v, const float distance) {
@@ -346,6 +368,26 @@ namespace {
             .base_color = {material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w},
             .material   = {material.roughness, material.metallic, material.alpha_cutoff, 0.0f},
             .flags      = {object_id, preview_alpha_mode_code(material.alpha_mode), 0u, 0u},
+        };
+    }
+
+    [[nodiscard]] PointCloudPushConstantsData make_point_cloud_push_constants(const spectra::scene::Transform& transform) {
+        return PointCloudPushConstantsData{
+            .model = spectra::rasterizer::math::transform_matrix(to_render_transform(transform)).values,
+        };
+    }
+
+    [[nodiscard]] PointCloudSelectionPushConstantsData make_point_cloud_selection_push_constants(const spectra::scene::Transform& transform, const std::array<float, 4>& color, const std::uint32_t object_id) {
+        return PointCloudSelectionPushConstantsData{
+            .model = spectra::rasterizer::math::transform_matrix(to_render_transform(transform)).values,
+            .color = color,
+            .flags = {object_id, 0u, 0u, 0u},
+        };
+    }
+
+    [[nodiscard]] ViewportSegmentPushConstantsData make_viewport_segment_push_constants(const spectra::scene::Transform& transform) {
+        return ViewportSegmentPushConstantsData{
+            .model = spectra::rasterizer::math::transform_matrix(to_render_transform(transform)).values,
         };
     }
 
@@ -1145,6 +1187,14 @@ namespace spectra::rasterizer {
 #endif
     }
 
+    vk::BufferUsageFlags external_storage_buffer_usage(const std::uint32_t kind) {
+        if (kind == scene::GpuBufferKindVolumeChannel) return vk::BufferUsageFlagBits::eStorageBuffer;
+        if (kind == scene::GpuBufferKindViewportVoxelGrid) return vk::BufferUsageFlagBits::eStorageBuffer;
+        if (kind == scene::GpuBufferKindPointCloud) return vk::BufferUsageFlagBits::eVertexBuffer;
+        if (kind == scene::GpuBufferKindViewportSegmentSet) return vk::BufferUsageFlagBits::eVertexBuffer;
+        throw std::runtime_error(std::format("Scene GPU buffer kind {} is unsupported by the rasterizer", kind));
+    }
+
     Renderer::ExternalStorageBuffer& Renderer::external_storage_buffer(const std::uint64_t resource_id, const std::string_view context) {
         const std::map<std::uint64_t, ExternalStorageBuffer>::iterator found = this->external_storage.buffers.find(resource_id);
         if (found == this->external_storage.buffers.end()) throw std::runtime_error(std::format("{} external storage buffer {} does not exist", context, resource_id));
@@ -1174,10 +1224,11 @@ namespace spectra::rasterizer {
         ExternalStorageBuffer resource{
             .resource_id = resource_id,
             .byte_size = byte_size,
+            .kind = kind,
         };
 
         const vk::ExternalMemoryBufferCreateInfo external_buffer_create_info{handle_type};
-        vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(byte_size), vk::BufferUsageFlagBits::eStorageBuffer, vk::SharingMode::eExclusive};
+        vk::BufferCreateInfo buffer_create_info{{}, static_cast<vk::DeviceSize>(byte_size), external_storage_buffer_usage(kind), vk::SharingMode::eExclusive};
         buffer_create_info.setPNext(&external_buffer_create_info);
         resource.buffer.buffer = vk::raii::Buffer{*this->host.device, buffer_create_info};
 
@@ -1233,6 +1284,8 @@ namespace spectra::rasterizer {
             return allocation;
         }
         if (request.kind == scene::GpuBufferKindVolumeChannel) return this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Scene volume buffer");
+        if (request.kind == scene::GpuBufferKindPointCloud) return this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Scene point cloud buffer");
+        if (request.kind == scene::GpuBufferKindViewportSegmentSet) return this->request_external_storage_buffer(request.kind, request.byte_size, request.debug_name, "Scene viewport segment buffer");
         throw std::runtime_error(std::format("Scene GPU buffer kind {} is unsupported by the rasterizer", request.kind));
     }
 
@@ -1258,7 +1311,27 @@ namespace spectra::rasterizer {
             this->release_external_storage_buffer(resource_id, "Scene viewport voxel buffer");
             return;
         }
-        this->release_external_storage_buffer(resource_id, "Scene volume buffer");
+        const std::map<std::uint64_t, ExternalStorageBuffer>::const_iterator resource = this->external_storage.buffers.find(resource_id);
+        if (resource == this->external_storage.buffers.end()) throw std::runtime_error(std::format("Scene GPU buffer resource {} does not exist", resource_id));
+        if (resource->second.kind == scene::GpuBufferKindPointCloud) {
+            if (this->host.device != nullptr) this->host.device->waitIdle();
+            for (FramePointCloudResources& frame_point_cloud : this->point_cloud_pass.frame_point_clouds)
+                std::erase_if(frame_point_cloud.drawCommands, [resource_id](const PointCloudDrawCommand& draw_command) { return draw_command.bufferId == resource_id; });
+            this->release_external_storage_buffer(resource_id, "Scene point cloud buffer");
+            return;
+        }
+        if (resource->second.kind == scene::GpuBufferKindViewportSegmentSet) {
+            if (this->host.device != nullptr) this->host.device->waitIdle();
+            for (FrameViewportSegmentResources& frame_segments : this->viewport_segment_pass.frame_segments)
+                std::erase_if(frame_segments.drawCommands, [resource_id](const ViewportSegmentDrawCommand& draw_command) { return draw_command.bufferId == resource_id; });
+            this->release_external_storage_buffer(resource_id, "Scene viewport segment buffer");
+            return;
+        }
+        if (resource->second.kind == scene::GpuBufferKindVolumeChannel) {
+            this->release_external_storage_buffer(resource_id, "Scene volume buffer");
+            return;
+        }
+        throw std::runtime_error(std::format("Scene GPU buffer resource {} has unsupported kind {}", resource_id, resource->second.kind));
     }
 
     void Renderer::ensure_viewport_voxel_buffer_descriptor(const std::uint64_t resource_id, ViewportVoxelBufferDescriptor& descriptor) {
@@ -1815,7 +1888,8 @@ namespace spectra::rasterizer {
         this->destroy_point_cloud_resources();
 
         const vk::DescriptorSetLayout descriptor_set_layout = *this->camera.descriptor_set_layout;
-        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 0u, nullptr};
+        const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(PointCloudPushConstantsData)};
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 1u, &push_constant_range};
         this->point_cloud_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_point_cloud_vertex_spv_sizeInBytes, spectra_rasterizer_point_cloud_vertex_spv};
@@ -1878,7 +1952,8 @@ namespace spectra::rasterizer {
         this->destroy_viewport_segment_resources();
 
         const vk::DescriptorSetLayout descriptor_set_layout = *this->camera.descriptor_set_layout;
-        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 0u, nullptr};
+        const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(ViewportSegmentPushConstantsData)};
+        const vk::PipelineLayoutCreateInfo pipeline_layout_create_info{{}, 1u, &descriptor_set_layout, 1u, &push_constant_range};
         this->viewport_segment_pass.pipeline_layout = vk::raii::PipelineLayout{*this->host.device, pipeline_layout_create_info};
 
         const vk::ShaderModuleCreateInfo vertex_shader_create_info{{}, spectra_rasterizer_viewport_segment_vertex_spv_sizeInBytes, spectra_rasterizer_viewport_segment_vertex_spv};
@@ -2585,7 +2660,7 @@ namespace spectra::rasterizer {
             };
         };
         const auto make_point_cloud_record = [](const scene::Scene::PointCloud& point_cloud) {
-            if (point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer scene collection point cloud \"{}\" radius count does not match point count", point_cloud.name));
+            if (point_cloud.source_kind == scene::Scene::PointCloud::SourceKind::Values && point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer scene collection point cloud \"{}\" radius count does not match point count", point_cloud.name));
             float minimum_radius{};
             float maximum_radius{};
             if (!point_cloud.radii.empty()) {
@@ -2599,7 +2674,7 @@ namespace spectra::rasterizer {
                 .transform      = point_cloud.transform,
                 .source         = point_cloud.source,
                 .dynamic        = point_cloud.dynamic,
-                .point_count    = point_cloud.positions.size(),
+                .point_count    = point_cloud.source_kind == scene::Scene::PointCloud::SourceKind::ExternalGpuBuffer ? point_cloud.point_count : point_cloud.positions.size(),
                 .minimum_radius = minimum_radius,
                 .maximum_radius = maximum_radius,
             };
@@ -2801,7 +2876,7 @@ namespace spectra::rasterizer {
             this->register_selectable_object(SelectableObjectKind::Mesh, mesh.name, unique_keys, next_id);
         }
         for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
-            if (point_cloud.positions.empty()) continue;
+            if (point_cloud.source_kind == scene::Scene::PointCloud::SourceKind::Values && point_cloud.positions.empty()) continue;
             this->register_selectable_object(SelectableObjectKind::PointCloud, point_cloud.name, unique_keys, next_id);
         }
         const scene::Scene::VolumeGrid* volume = this->select_render_volume_grid(resolved_frame.volumes);
@@ -2998,9 +3073,27 @@ namespace spectra::rasterizer {
         std::vector<PointCloudDrawCommand> draw_commands{};
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
         for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
-            if (point_cloud.positions.empty()) continue;
             const scene::Scene::PreviewMaterial material = this->resolve_material(point_cloud.material_name);
             require_point_glyph_material(material, point_cloud.name);
+            const ObjectKey object_key{SelectableObjectKind::PointCloud, point_cloud.name};
+            if (point_cloud.source_kind == scene::Scene::PointCloud::SourceKind::ExternalGpuBuffer) {
+                if (point_cloud.point_count == 0u) continue;
+                if (point_cloud.point_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" point count exceeds uint32 draw range", point_cloud.name));
+                const ExternalStorageBuffer& resource = this->external_storage_buffer(point_cloud.buffer_id, std::format("Rasterizer point cloud \"{}\"", point_cloud.name));
+                if (resource.kind != scene::GpuBufferKindPointCloud) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" source buffer has unexpected kind {}", point_cloud.name, resource.kind));
+                if (resource.byte_size < point_cloud.point_count * scene::PointCloudExternalPointBytes) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" source buffer is too small", point_cloud.name));
+                draw_commands.push_back(PointCloudDrawCommand{
+                    .objectKey     = object_key,
+                    .objectId      = this->object_id_for(object_key),
+                    .sourceKind    = point_cloud.source_kind,
+                    .bufferId      = point_cloud.buffer_id,
+                    .firstInstance = 0u,
+                    .instanceCount = static_cast<std::uint32_t>(point_cloud.point_count),
+                    .transform     = point_cloud.transform,
+                });
+                continue;
+            }
+            if (point_cloud.positions.empty()) continue;
             if (point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one radius per position", point_cloud.name));
             if (point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one color per position", point_cloud.name));
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer point cloud instance count exceeds uint32 range");
@@ -3028,12 +3121,13 @@ namespace spectra::rasterizer {
                     .a = color.w * material.base_color.w,
                 });
             }
-            const ObjectKey object_key{SelectableObjectKind::PointCloud, point_cloud.name};
             draw_commands.push_back(PointCloudDrawCommand{
                 .objectKey     = object_key,
                 .objectId      = this->object_id_for(object_key),
+                .sourceKind    = point_cloud.source_kind,
                 .firstInstance = first_instance,
                 .instanceCount = static_cast<std::uint32_t>(point_cloud.positions.size()),
+                .transform     = {},
             });
         }
 
@@ -3075,6 +3169,22 @@ namespace spectra::rasterizer {
             });
         };
         for (const scene::Scene::ViewportSegmentSet& segment_set : resolved_frame.debug_attachments.viewport_segment_sets) {
+            if (segment_set.source_kind == scene::Scene::ViewportSegmentSet::SourceKind::ExternalGpuBuffer) {
+                if (segment_set.segment_count == 0u) continue;
+                if (segment_set.segment_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" segment count exceeds uint32 draw range", segment_set.name));
+                const ExternalStorageBuffer& resource = this->external_storage_buffer(segment_set.buffer_id, std::format("Rasterizer viewport segment set \"{}\"", segment_set.name));
+                if (resource.kind != scene::GpuBufferKindViewportSegmentSet) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" source buffer has unexpected kind {}", segment_set.name, resource.kind));
+                if (resource.byte_size < segment_set.segment_count * scene::ViewportSegmentExternalSegmentBytes) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" source buffer is too small", segment_set.name));
+                draw_commands.push_back(ViewportSegmentDrawCommand{
+                    .sourceKind    = segment_set.source_kind,
+                    .bufferId      = segment_set.buffer_id,
+                    .firstInstance = 0u,
+                    .instanceCount = static_cast<std::uint32_t>(segment_set.segment_count),
+                    .depthMode     = segment_set.depth_mode,
+                    .transform     = segment_set.transform,
+                });
+                continue;
+            }
             if (segment_set.segments.empty()) continue;
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
@@ -3092,9 +3202,11 @@ namespace spectra::rasterizer {
                 append_segment_instance(start, end, color, width, segment_set.width_mode, std::format("Rasterizer viewport segment set \"{}\"", segment_set.name));
             }
             draw_commands.push_back(ViewportSegmentDrawCommand{
+                .sourceKind    = segment_set.source_kind,
                 .firstInstance = first_instance,
                 .instanceCount = static_cast<std::uint32_t>(segment_set.segments.size()),
                 .depthMode     = segment_set.depth_mode,
+                .transform     = {},
             });
         }
         if (this->viewport.camera_visual_frustums_visible) {
@@ -3134,9 +3246,11 @@ namespace spectra::rasterizer {
                     );
                 }
                 draw_commands.push_back(ViewportSegmentDrawCommand{
+                    .sourceKind    = scene::Scene::ViewportSegmentSet::SourceKind::Values,
                     .firstInstance = first_instance,
                     .instanceCount = static_cast<std::uint32_t>(edges.size()),
                     .depthMode     = scene::Scene::ViewportSegmentDepthMode::AlwaysVisible,
+                    .transform     = {},
                 });
             }
         }
@@ -3166,9 +3280,11 @@ namespace spectra::rasterizer {
                     );
                 }
                 draw_commands.push_back(ViewportSegmentDrawCommand{
+                    .sourceKind    = scene::Scene::ViewportSegmentSet::SourceKind::Values,
                     .firstInstance = first_instance,
                     .instanceCount = 3u,
                     .depthMode     = scene::Scene::ViewportSegmentDepthMode::AlwaysVisible,
+                    .transform     = {},
                 });
             }
         }
@@ -3710,12 +3826,20 @@ namespace spectra::rasterizer {
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
+        const auto include_transformed_bounds = [&include_transformed_point](const scene::Scene::PointCloudBounds& point_bounds, const scene::Transform& transform) {
+            for (const scene::Vector3& corner : point_cloud_bounds_corners(point_bounds)) include_transformed_point(corner, transform);
+        };
 
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
         for (const scene::Scene::Mesh& mesh : resolved_frame.meshes) {
             for (const scene::Vector3& position : mesh.positions) include_transformed_point(position, mesh.transform);
         }
         for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
+            if (point_cloud.source_kind == scene::Scene::PointCloud::SourceKind::ExternalGpuBuffer) {
+                if (!point_cloud.bounds.has_value()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" external source is missing explicit bounds", point_cloud.name));
+                include_transformed_bounds(*point_cloud.bounds, point_cloud.transform);
+                continue;
+            }
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
             for (std::size_t index = 0; index < point_cloud.positions.size(); ++index) {
                 const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point_cloud.positions.at(index))));
@@ -3755,6 +3879,9 @@ namespace spectra::rasterizer {
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
+        const auto include_transformed_bounds = [&include_transformed_point](const scene::Scene::PointCloudBounds& point_bounds, const scene::Transform& transform) {
+            for (const scene::Vector3& corner : point_cloud_bounds_corners(point_bounds)) include_transformed_point(corner, transform);
+        };
 
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
         for (const scene::Scene::Mesh& mesh : resolved_frame.meshes) {
@@ -3763,6 +3890,11 @@ namespace spectra::rasterizer {
         }
         for (const scene::Scene::PointCloud& point_cloud : resolved_frame.point_clouds) {
             if (!this->object_selected(ObjectKey{SelectableObjectKind::PointCloud, point_cloud.name})) continue;
+            if (point_cloud.source_kind == scene::Scene::PointCloud::SourceKind::ExternalGpuBuffer) {
+                if (!point_cloud.bounds.has_value()) throw std::runtime_error(std::format("Rasterizer selected point cloud \"{}\" external source is missing explicit bounds", point_cloud.name));
+                include_transformed_bounds(*point_cloud.bounds, point_cloud.transform);
+                continue;
+            }
             const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
             for (std::size_t index = 0; index < point_cloud.positions.size(); ++index) {
                 const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point_cloud.positions.at(index))));
@@ -4022,6 +4154,28 @@ namespace spectra::rasterizer {
         command_buffer.draw(36u, 1u, 0u, 0u);
     }
 
+    void Renderer::transition_external_debug_vertex_buffers(const vk::raii::CommandBuffer& command_buffer) {
+        if (this->lifecycle.active_frame_index >= this->point_cloud_pass.frame_point_clouds.size()) throw std::runtime_error("Spectra rasterizer active point cloud frame index is out of range");
+        if (this->lifecycle.active_frame_index >= this->viewport_segment_pass.frame_segments.size()) throw std::runtime_error("Spectra rasterizer active viewport segment frame index is out of range");
+        std::set<std::uint64_t> transitioned_buffers{};
+        const auto transition_external_buffer = [this, &command_buffer, &transitioned_buffers](const std::uint64_t buffer_id, const std::string_view context) {
+            if (!transitioned_buffers.insert(buffer_id).second) return;
+            const ExternalStorageBuffer& resource = this->external_storage_buffer(buffer_id, context);
+            if (!*resource.buffer.buffer) throw std::runtime_error(std::format("{} {} is invalid", context, buffer_id));
+            transition_buffer_access(command_buffer, *resource.buffer.buffer, vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eMemoryWrite, vk::PipelineStageFlagBits2::eVertexAttributeInput, vk::AccessFlagBits2::eVertexAttributeRead);
+        };
+        const FramePointCloudResources& frame_point_cloud = this->point_cloud_pass.frame_point_clouds.at(this->lifecycle.active_frame_index);
+        for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) {
+            if (draw_command.sourceKind == scene::Scene::PointCloud::SourceKind::Values) continue;
+            transition_external_buffer(draw_command.bufferId, "Rasterizer point cloud external buffer");
+        }
+        const FrameViewportSegmentResources& frame_segments = this->viewport_segment_pass.frame_segments.at(this->lifecycle.active_frame_index);
+        for (const ViewportSegmentDrawCommand& draw_command : frame_segments.drawCommands) {
+            if (draw_command.sourceKind == scene::Scene::ViewportSegmentSet::SourceKind::Values) continue;
+            transition_external_buffer(draw_command.bufferId, "Rasterizer viewport segment external buffer");
+        }
+    }
+
     void Renderer::record_point_cloud_pass(const vk::raii::CommandBuffer& command_buffer) {
         if (this->lifecycle.active_frame_index >= this->point_cloud_pass.frame_point_clouds.size()) throw std::runtime_error("Spectra rasterizer active point cloud frame index is out of range");
         FramePointCloudResources& frame_point_cloud = this->point_cloud_pass.frame_point_clouds.at(this->lifecycle.active_frame_index);
@@ -4032,10 +4186,22 @@ namespace spectra::rasterizer {
         command_buffer.setScissor(0u, scissor);
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *this->point_cloud_pass.pipeline);
         command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->point_cloud_pass.pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
-        const std::array<vk::Buffer, 1> vertex_buffers{*frame_point_cloud.instanceBuffer.buffer};
         constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
-        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
-        for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
+        for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) {
+            if (draw_command.sourceKind == scene::Scene::PointCloud::SourceKind::Values) {
+                if (!*frame_point_cloud.instanceBuffer.buffer) throw std::runtime_error("Spectra rasterizer point cloud CPU instance buffer is invalid");
+                const std::array<vk::Buffer, 1> vertex_buffers{*frame_point_cloud.instanceBuffer.buffer};
+                command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+            } else {
+                const ExternalStorageBuffer& resource = this->external_storage_buffer(draw_command.bufferId, "Rasterizer point cloud external buffer");
+                if (!*resource.buffer.buffer) throw std::runtime_error(std::format("Rasterizer point cloud external buffer {} is invalid", draw_command.bufferId));
+                const std::array<vk::Buffer, 1> vertex_buffers{*resource.buffer.buffer};
+                command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+            }
+            const PointCloudPushConstantsData push_constants = make_point_cloud_push_constants(draw_command.transform);
+            command_buffer.pushConstants(*this->point_cloud_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
+            command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
+        }
     }
 
     void Renderer::record_viewport_voxel_grid_compactions(const vk::raii::CommandBuffer& command_buffer) {
@@ -4177,16 +4343,26 @@ namespace spectra::rasterizer {
         command_buffer.setViewport(0u, viewport);
         command_buffer.setScissor(0u, scissor);
         command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *this->viewport_segment_pass.pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
-        const std::array<vk::Buffer, 1> vertex_buffers{*frame_segments.instanceBuffer.buffer};
         constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
-        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
         std::optional<scene::Scene::ViewportSegmentDepthMode> bound_depth_mode{};
         for (const ViewportSegmentDrawCommand& draw_command : frame_segments.drawCommands) {
+            if (draw_command.sourceKind == scene::Scene::ViewportSegmentSet::SourceKind::Values) {
+                if (!*frame_segments.instanceBuffer.buffer) throw std::runtime_error("Spectra rasterizer viewport segment CPU instance buffer is invalid");
+                const std::array<vk::Buffer, 1> vertex_buffers{*frame_segments.instanceBuffer.buffer};
+                command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+            } else {
+                const ExternalStorageBuffer& resource = this->external_storage_buffer(draw_command.bufferId, "Rasterizer viewport segment external buffer");
+                if (!*resource.buffer.buffer) throw std::runtime_error(std::format("Rasterizer viewport segment external buffer {} is invalid", draw_command.bufferId));
+                const std::array<vk::Buffer, 1> vertex_buffers{*resource.buffer.buffer};
+                command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+            }
             if (!bound_depth_mode.has_value() || *bound_depth_mode != draw_command.depthMode) {
                 const vk::raii::Pipeline& pipeline = draw_command.depthMode == scene::Scene::ViewportSegmentDepthMode::AlwaysVisible ? this->viewport_segment_pass.always_visible_pipeline : this->viewport_segment_pass.depth_tested_pipeline;
                 command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
                 bound_depth_mode = draw_command.depthMode;
             }
+            const ViewportSegmentPushConstantsData push_constants = make_viewport_segment_push_constants(draw_command.transform);
+            command_buffer.pushConstants(*this->viewport_segment_pass.pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
             command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
         }
     }
@@ -4203,6 +4379,7 @@ namespace spectra::rasterizer {
         this->viewport.layout = vk::ImageLayout::eColorAttachmentOptimal;
         transition_image_layout(command_buffer, *this->viewport.depth_image, vk::ImageAspectFlagBits::eDepth, this->viewport.depth_layout, vk::ImageLayout::eDepthAttachmentOptimal, vk::PipelineStageFlagBits2::eAllCommands, {}, vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::AccessFlagBits2::eDepthStencilAttachmentWrite);
         this->viewport.depth_layout = vk::ImageLayout::eDepthAttachmentOptimal;
+        this->transition_external_debug_vertex_buffers(command_buffer);
 
         constexpr std::array<float, 4> clear_color{0.035f, 0.038f, 0.043f, 1.0f};
         const vk::ClearValue clear_value{vk::ClearColorValue{clear_color}};
@@ -4283,16 +4460,21 @@ namespace spectra::rasterizer {
         if (frame_point_cloud.drawCommands.empty()) return;
         command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, picking ? *this->selection.point_cloud_picking_pipeline : *this->selection.point_cloud_mask_pipeline);
         command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, picking ? *this->selection.point_cloud_picking_pipeline_layout : *this->selection.point_cloud_mask_pipeline_layout, 0u, *this->camera.descriptor_sets.at(this->lifecycle.active_frame_index), {});
-        const std::array<vk::Buffer, 1> vertex_buffers{*frame_point_cloud.instanceBuffer.buffer};
         constexpr std::array<vk::DeviceSize, 1> vertex_offsets{0};
-        command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
         for (const PointCloudDrawCommand& draw_command : frame_point_cloud.drawCommands) {
             const std::array<float, 4> color = picking ? std::array<float, 4>{} : this->selection_mask_color(draw_command.objectKey);
             if (!picking && color[0] == 0.0f && color[1] == 0.0f && color[2] == 0.0f) continue;
-            const PointCloudSelectionPushConstantsData push_constants{
-                .color    = color,
-                .objectId = draw_command.objectId,
-            };
+            if (draw_command.sourceKind == scene::Scene::PointCloud::SourceKind::Values) {
+                if (!*frame_point_cloud.instanceBuffer.buffer) throw std::runtime_error("Spectra rasterizer point cloud CPU selection buffer is invalid");
+                const std::array<vk::Buffer, 1> vertex_buffers{*frame_point_cloud.instanceBuffer.buffer};
+                command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+            } else {
+                const ExternalStorageBuffer& resource = this->external_storage_buffer(draw_command.bufferId, "Rasterizer point cloud external selection buffer");
+                if (!*resource.buffer.buffer) throw std::runtime_error(std::format("Rasterizer point cloud external selection buffer {} is invalid", draw_command.bufferId));
+                const std::array<vk::Buffer, 1> vertex_buffers{*resource.buffer.buffer};
+                command_buffer.bindVertexBuffers(0u, vertex_buffers, vertex_offsets);
+            }
+            const PointCloudSelectionPushConstantsData push_constants = make_point_cloud_selection_push_constants(draw_command.transform, color, draw_command.objectId);
             command_buffer.pushConstants(picking ? *this->selection.point_cloud_picking_pipeline_layout : *this->selection.point_cloud_mask_pipeline_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(push_constants), &push_constants);
             command_buffer.draw(6u, draw_command.instanceCount, 0u, draw_command.firstInstance);
         }

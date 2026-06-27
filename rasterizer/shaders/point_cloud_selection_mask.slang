@@ -1,27 +1,9 @@
-static const uint MaxViewportDirectLights = 8;
-
-struct CameraUniform {
-    row_major float4x4 worldToClip;
-    row_major float4x4 clipToWorld;
-    float3 cameraPosition;
-    float _pad0;
-    float3 environmentColor;
-    float environmentIntensity;
-    float4 lightDirections[MaxViewportDirectLights];
-    float4 lightColorIntensities[MaxViewportDirectLights];
-    uint4 lightCounts;
-    float3 cameraForward;
-    float _pad1;
-    float3 cameraRight;
-    float _pad2;
-    float3 cameraUp;
-    float _pad3;
-    float4 viewport;
-};
+#include "camera_uniform.slangh"
 
 struct PointCloudSelectionPushConstants {
+    row_major float4x4 model;
     float4 color;
-    uint objectId;
+    uint4 flags;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
@@ -50,7 +32,8 @@ float2 quad_corner(uint vertexIndex) {
 VertexOutput vertex_main(PointCloudInput input, uint vertexIndex : SV_VertexID) {
     float2 corner = quad_corner(vertexIndex);
     float radius = input.positionRadius.w;
-    float3 world = input.positionRadius.xyz + camera.cameraRight * corner.x * radius + camera.cameraUp * corner.y * radius;
+    float3 center = mul(float4(input.positionRadius.xyz, 1.0), selection.model).xyz;
+    float3 world = center + camera.cameraRight * corner.x * radius + camera.cameraUp * corner.y * radius;
     VertexOutput output;
     output.position = mul(float4(world, 1.0), camera.worldToClip);
     output.localPosition = corner;

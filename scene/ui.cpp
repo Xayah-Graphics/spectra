@@ -133,7 +133,23 @@ namespace spectra::scene {
             return schema.kind == ControlOptionKind::Float && schema.presentation == ControlOptionPresentationSlider && schema.has_numeric_range;
         }
 
+        [[nodiscard]] int slider_decimal_precision(const ControlOptionSchema& schema) {
+            if (!std::isfinite(schema.numeric_step) || schema.numeric_step <= 0.0f) throw std::runtime_error(std::format("Scene option '{}' slider step must be finite and positive", schema.key));
+            double scaled_step = std::abs(static_cast<double>(schema.numeric_step));
+            for (int precision = 0; precision <= 9; ++precision) {
+                const double rounded_step = std::round(scaled_step);
+                if (std::abs(scaled_step - rounded_step) <= 1.0e-6 * std::max(1.0, std::abs(scaled_step))) return precision;
+                scaled_step *= 10.0;
+            }
+            return 9;
+        }
+
+        [[nodiscard]] std::string slider_float_format(const ControlOptionSchema& schema) {
+            return std::format("%.{}f", slider_decimal_precision(schema));
+        }
+
         void snap_slider_value(OptionEditor& editor) {
+            if (!std::isfinite(editor.schema.numeric_step) || editor.schema.numeric_step <= 0.0f) throw std::runtime_error(std::format("Scene option '{}' slider step must be finite and positive", editor.schema.key));
             const float offset = std::round((editor.float_value - editor.schema.numeric_min) / editor.schema.numeric_step) * editor.schema.numeric_step;
             editor.float_value = std::clamp(editor.schema.numeric_min + offset, editor.schema.numeric_min, editor.schema.numeric_max);
         }
@@ -306,7 +322,8 @@ namespace spectra::scene {
                 break;
             case ControlOptionKind::Float:
                 if (option_uses_slider(editor.schema)) {
-                    changed = ImGui::SliderFloat("##value", &editor.float_value, editor.schema.numeric_min, editor.schema.numeric_max, "%.2f") || changed;
+                    const std::string format = slider_float_format(editor.schema);
+                    changed = ImGui::SliderFloat("##value", &editor.float_value, editor.schema.numeric_min, editor.schema.numeric_max, format.c_str()) || changed;
                     if (changed) snap_slider_value(editor);
                 } else {
                     changed = ImGui::InputFloat("##value", &editor.float_value, 0.0f, 0.0f, "%.6g", ImGuiInputTextFlags_EnterReturnsTrue) || changed;

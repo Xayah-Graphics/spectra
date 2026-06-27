@@ -76,6 +76,7 @@ namespace spectra::rasterizer {
             ExternalGpuBuffer buffer{};
             std::uint64_t resource_id{};
             std::uint64_t byte_size{};
+            std::uint32_t kind{};
         };
 
         struct DeviceGpuBuffer {
@@ -206,8 +207,11 @@ namespace spectra::rasterizer {
         struct PointCloudDrawCommand {
             ObjectKey objectKey{};
             std::uint32_t objectId{};
+            scene::Scene::PointCloud::SourceKind sourceKind{scene::Scene::PointCloud::SourceKind::Values};
+            std::uint64_t bufferId{};
             std::uint32_t firstInstance{};
             std::uint32_t instanceCount{};
+            scene::Transform transform{};
         };
 
         struct VolumeDrawCommand {
@@ -250,9 +254,12 @@ namespace spectra::rasterizer {
         };
 
         struct ViewportSegmentDrawCommand {
+            scene::Scene::ViewportSegmentSet::SourceKind sourceKind{scene::Scene::ViewportSegmentSet::SourceKind::Values};
+            std::uint64_t bufferId{};
             std::uint32_t firstInstance{};
             std::uint32_t instanceCount{};
             scene::Scene::ViewportSegmentDepthMode depthMode{scene::Scene::ViewportSegmentDepthMode::DepthTested};
+            scene::Transform transform{};
         };
 
         struct FrameViewportSegmentResources {
@@ -456,6 +463,7 @@ namespace spectra::rasterizer {
         void record_pending_volume_upload(const vk::raii::CommandBuffer& command_buffer, FrameVolumeResources& frame_volume);
         void update_camera_uniform(std::uint32_t frame_index);
 
+        void transition_external_debug_vertex_buffers(const vk::raii::CommandBuffer& command_buffer);
         void record_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_transparent_mesh_pass(const vk::raii::CommandBuffer& command_buffer);
         void record_viewport_grid_pass(const vk::raii::CommandBuffer& command_buffer);

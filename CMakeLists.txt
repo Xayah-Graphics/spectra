@@ -540,6 +540,7 @@ set(SPECTRA_RASTERIZER_SOURCE_DIR ${SPECTRA_ROOT_DIR}/rasterizer)
 set(SPECTRA_RASTERIZER_GENERATED_DIR ${SPECTRA_BINARY_ROOT_DIR}/rasterizer/generated)
 
 file(GLOB SPECTRA_RASTERIZER_SHADER_FILES CONFIGURE_DEPENDS "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/*.slang")
+file(GLOB SPECTRA_RASTERIZER_SHADER_INCLUDE_FILES CONFIGURE_DEPENDS "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders/*.slangh")
 if (NOT SPECTRA_RASTERIZER_SHADER_FILES)
     message(FATAL_ERROR "Spectra rasterizer requires at least one Slang shader in ${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders")
 endif ()
@@ -551,8 +552,8 @@ function(spectra_rasterizer_shader_stage output_variable shader_file shader_name
     add_custom_command(
             OUTPUT "${output_file}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPECTRA_RASTERIZER_GENERATED_DIR}"
-            COMMAND "${SLANGC_EXECUTABLE}" "${shader_file}" -target spirv -profile glsl_460 -entry "${entry}" -stage "${stage}" -matrix-layout-row-major -source-embed-style u32 -source-embed-name "${embed_name}" -o "${output_file}"
-            DEPENDS "${shader_file}"
+            COMMAND "${SLANGC_EXECUTABLE}" "${shader_file}" -I "${SPECTRA_RASTERIZER_SOURCE_DIR}/shaders" -target spirv -profile glsl_460 -entry "${entry}" -stage "${stage}" -matrix-layout-row-major -source-embed-style u32 -source-embed-name "${embed_name}" -o "${output_file}"
+            DEPENDS "${shader_file}" ${SPECTRA_RASTERIZER_SHADER_INCLUDE_FILES}
             VERBATIM
     )
     set("${output_variable}" "${output_file}" PARENT_SCOPE)

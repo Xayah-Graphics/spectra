@@ -173,6 +173,22 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} has an unsupported voxel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
         }
 
+        void validate_point_cloud_source_kind(const Scene::PointCloud::SourceKind source_kind, const std::string_view context) {
+            switch (source_kind) {
+            case Scene::PointCloud::SourceKind::Values: return;
+            case Scene::PointCloud::SourceKind::ExternalGpuBuffer: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported point cloud source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+        }
+
+        void validate_viewport_segment_source_kind(const Scene::ViewportSegmentSet::SourceKind source_kind, const std::string_view context) {
+            switch (source_kind) {
+            case Scene::ViewportSegmentSet::SourceKind::Values: return;
+            case Scene::ViewportSegmentSet::SourceKind::ExternalGpuBuffer: return;
+            }
+            throw std::runtime_error(std::format("{} has an unsupported segment source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+        }
+
         void validate_volume_channel_source_kind(const Scene::VolumeChannelSourceKind source_kind, const std::string_view context) {
             switch (source_kind) {
             case Scene::VolumeChannelSourceKind::Values: return;
@@ -282,13 +298,67 @@ namespace spectra::scene {
             if (!scene_entity_exists(entity, frame, document)) throw std::runtime_error(std::format("{} references missing {} owner \"{}\"", context, scene_entity_kind_name(entity.kind), entity.name));
         }
 
+        void validate_point_cloud(const Scene::PointCloud& point_cloud, const Scene::Document& document) {
+            if (point_cloud.name.empty()) throw std::runtime_error("Point cloud name must not be empty");
+            if (!contains_scene_item_name(document.materials, point_cloud.material_name)) throw std::runtime_error(std::format("Point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
+            validate_viewport_annotation_transform(point_cloud.transform, std::format("Point cloud \"{}\"", point_cloud.name));
+            validate_point_cloud_source_kind(point_cloud.source_kind, std::format("Point cloud \"{}\"", point_cloud.name));
+            const auto validate_explicit_bounds = [&point_cloud]() {
+                if (!is_finite(point_cloud.bounds->minimum) || !is_finite(point_cloud.bounds->maximum)) throw std::runtime_error(std::format("Point cloud \"{}\" explicit bounds must be finite", point_cloud.name));
+                if (point_cloud.bounds->minimum.x > point_cloud.bounds->maximum.x || point_cloud.bounds->minimum.y > point_cloud.bounds->maximum.y || point_cloud.bounds->minimum.z > point_cloud.bounds->maximum.z) throw std::runtime_error(std::format("Point cloud \"{}\" explicit bounds minimum must not exceed maximum", point_cloud.name));
+            };
+            if (point_cloud.source_kind == Scene::PointCloud::SourceKind::Values) {
+                if (point_cloud.bounds.has_value()) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide explicit bounds", point_cloud.name));
+                if (!point_cloud.normals.empty() && point_cloud.normals.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Point cloud \"{}\" normal count does not match point count", point_cloud.name));
+                if (!point_cloud.colors.empty() && point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Point cloud \"{}\" color count does not match point count", point_cloud.name));
+                if (!point_cloud.radii.empty() && point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Point cloud \"{}\" radius count does not match point count", point_cloud.name));
+                for (std::size_t index = 0u; index < point_cloud.positions.size(); ++index) {
+                    if (!is_finite(point_cloud.positions.at(index))) throw std::runtime_error(std::format("Point cloud \"{}\" contains a non-finite position", point_cloud.name));
+                    if (!point_cloud.normals.empty() && !is_finite(point_cloud.normals.at(index))) throw std::runtime_error(std::format("Point cloud \"{}\" contains a non-finite normal", point_cloud.name));
+                    if (!point_cloud.colors.empty()) validate_viewport_annotation_color(point_cloud.colors.at(index), std::format("Point cloud \"{}\" point #{}", point_cloud.name, index));
+                    if (!point_cloud.radii.empty() && (!std::isfinite(point_cloud.radii.at(index)) || point_cloud.radii.at(index) <= 0.0f)) throw std::runtime_error(std::format("Point cloud \"{}\" contains an invalid radius", point_cloud.name));
+                }
+                if (point_cloud.point_count != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide an external point count", point_cloud.name));
+                if (point_cloud.buffer_id != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide a GPU buffer id", point_cloud.name));
+                if (point_cloud.source_byte_size != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide a GPU byte size", point_cloud.name));
+                if (point_cloud.revision != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide a GPU revision", point_cloud.name));
+                return;
+            }
+            if (!point_cloud.bounds.has_value()) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source must provide explicit bounds", point_cloud.name));
+            validate_explicit_bounds();
+            if (!point_cloud.positions.empty() || !point_cloud.normals.empty() || !point_cloud.colors.empty() || !point_cloud.radii.empty()) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source must not provide CPU values", point_cloud.name));
+            if (point_cloud.point_count == 0u) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source must contain at least one point", point_cloud.name));
+            if (point_cloud.point_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Point cloud \"{}\" point count exceeds uint32 draw range", point_cloud.name));
+            if (point_cloud.buffer_id == 0u) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source has no buffer id", point_cloud.name));
+            if (point_cloud.point_count > std::numeric_limits<std::uint64_t>::max() / PointCloudExternalPointBytes) throw std::runtime_error(std::format("Point cloud \"{}\" byte count exceeds uint64 range", point_cloud.name));
+            if (point_cloud.source_byte_size < point_cloud.point_count * PointCloudExternalPointBytes) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source byte size is too small", point_cloud.name));
+            if (point_cloud.revision == 0u) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source revision must not be zero", point_cloud.name));
+        }
+
+        void validate_point_clouds(const std::vector<Scene::PointCloud>& point_clouds, const Scene::Document& document) {
+            validate_unique_scene_item_names(point_clouds, "Scene resolved frame", "point cloud");
+            for (const Scene::PointCloud& point_cloud : point_clouds) validate_point_cloud(point_cloud, document);
+        }
+
         void validate_viewport_segment_set(const Scene::ViewportSegmentSet& segment_set) {
             if (segment_set.name.empty()) throw std::runtime_error("Viewport segment set name must not be empty");
             if (!std::isfinite(segment_set.width) || segment_set.width <= 0.0f) throw std::runtime_error(std::format("Viewport segment set \"{}\" has an invalid default width", segment_set.name));
-            if (!segment_set.widths.empty() && segment_set.widths.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" width count does not match segment count", segment_set.name));
-            if (!segment_set.colors.empty() && segment_set.colors.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" color count does not match segment count", segment_set.name));
             validate_viewport_segment_width_mode(segment_set.width_mode, std::format("Viewport segment set \"{}\"", segment_set.name));
             validate_viewport_segment_depth_mode(segment_set.depth_mode, std::format("Viewport segment set \"{}\"", segment_set.name));
+            validate_viewport_segment_source_kind(segment_set.source_kind, std::format("Viewport segment set \"{}\"", segment_set.name));
+            validate_viewport_annotation_transform(segment_set.transform, std::format("Viewport segment set \"{}\"", segment_set.name));
+            if (segment_set.source_kind == Scene::ViewportSegmentSet::SourceKind::ExternalGpuBuffer) {
+                if (!segment_set.segments.empty() || !segment_set.colors.empty() || !segment_set.widths.empty()) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source must not provide CPU values", segment_set.name));
+                if (segment_set.segment_count == 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source must contain at least one segment", segment_set.name));
+                if (segment_set.segment_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Viewport segment set \"{}\" segment count exceeds uint32 draw range", segment_set.name));
+                if (segment_set.buffer_id == 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source has no buffer id", segment_set.name));
+                if (segment_set.segment_count > std::numeric_limits<std::uint64_t>::max() / ViewportSegmentExternalSegmentBytes) throw std::runtime_error(std::format("Viewport segment set \"{}\" byte count exceeds uint64 range", segment_set.name));
+                if (segment_set.source_byte_size < segment_set.segment_count * ViewportSegmentExternalSegmentBytes) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source byte size is too small", segment_set.name));
+                if (segment_set.revision == 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source revision must not be zero", segment_set.name));
+                return;
+            }
+            if (!segment_set.widths.empty() && segment_set.widths.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" width count does not match segment count", segment_set.name));
+            if (!segment_set.colors.empty() && segment_set.colors.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" color count does not match segment count", segment_set.name));
             for (std::size_t index = 0u; index < segment_set.segments.size(); ++index) {
                 const Scene::ViewportSegment& segment = segment_set.segments.at(index);
                 if (!is_finite(segment.start) || !is_finite(segment.end)) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains a non-finite segment endpoint", segment_set.name));
@@ -296,6 +366,10 @@ namespace spectra::scene {
                 if (!segment_set.widths.empty() && (!std::isfinite(segment_set.widths.at(index)) || segment_set.widths.at(index) <= 0.0f)) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains an invalid segment width", segment_set.name));
                 if (!segment_set.colors.empty()) validate_viewport_annotation_color(segment_set.colors.at(index), std::format("Viewport segment set \"{}\" segment #{}", segment_set.name, index));
             }
+            if (segment_set.segment_count != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide an external segment count", segment_set.name));
+            if (segment_set.buffer_id != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide a GPU buffer id", segment_set.name));
+            if (segment_set.source_byte_size != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide a GPU byte size", segment_set.name));
+            if (segment_set.revision != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide a GPU revision", segment_set.name));
         }
 
         void validate_viewport_segment_sets(const std::vector<Scene::ViewportSegmentSet>& segment_sets, const Scene::ResolvedFrame& frame, const Scene::Document& document) {
@@ -906,6 +980,7 @@ namespace spectra::scene {
 
         void append_point_cloud_shapes(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::PointCloud& point_cloud) {
             if (point_cloud.name.empty()) throw std::runtime_error("Preview point cloud name must not be empty when building canonical scene");
+            if (point_cloud.source_kind == Scene::PointCloud::SourceKind::ExternalGpuBuffer) throw std::runtime_error(std::format("Preview point cloud \"{}\" uses an external GPU source; canonical pathtracer scene construction requires CPU point values", point_cloud.name));
             if (point_cloud.positions.size() != point_cloud.radii.size()) throw std::runtime_error(std::format("Preview point cloud \"{}\" radius count does not match point count when building canonical scene", point_cloud.name));
             const Scene::PreviewMaterial* material = find_preview_material(document, point_cloud.material_name);
             if (material == nullptr) throw std::runtime_error(std::format("Preview point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
@@ -1142,6 +1217,7 @@ namespace spectra::scene {
                 .debug_attachments = resolve_debug_attachment_set(document.debug_attachments, frame.debug_attachments),
             };
             validate_cameras(resolved.cameras, document.active_camera_name, "Scene resolved frame");
+            validate_point_clouds(resolved.point_clouds, document);
             validate_volumes(resolved.volumes, document);
             validate_debug_attachment_set(resolved.debug_attachments, resolved, document);
             return resolved;

@@ -1,27 +1,14 @@
-static const uint MaxViewportDirectLights = 8;
+#include "camera_uniform.slangh"
+
 static const uint ViewportSegmentWidthModeWorld = 1;
 
-struct CameraUniform {
-    row_major float4x4 worldToClip;
-    row_major float4x4 clipToWorld;
-    float3 cameraPosition;
-    float _pad0;
-    float3 environmentColor;
-    float environmentIntensity;
-    float4 lightDirections[MaxViewportDirectLights];
-    float4 lightPositions[MaxViewportDirectLights];
-    float4 lightColorIntensities[MaxViewportDirectLights];
-    uint4 lightCounts;
-    float3 cameraForward;
-    float _pad1;
-    float3 cameraRight;
-    float _pad2;
-    float3 cameraUp;
-    float _pad3;
-    float4 viewport;
+[[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
+
+struct ViewportSegmentPushConstants {
+    row_major float4x4 model;
 };
 
-[[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
+[[vk::push_constant]] ConstantBuffer<ViewportSegmentPushConstants> segmentSet;
 
 struct ViewportSegmentInput {
     [[vk::location(0)]] float4 startWidth : POSITION0;
@@ -61,9 +48,9 @@ float2 safe_normalize_2d(float2 value, float2 alternate) {
 
 [shader("vertex")]
 VertexOutput vertex_main(ViewportSegmentInput input, uint vertexIndex : SV_VertexID) {
-    float3 start = input.startWidth.xyz;
+    float3 start = mul(float4(input.startWidth.xyz, 1.0), segmentSet.model).xyz;
     float width = input.startWidth.w;
-    float3 end = input.end;
+    float3 end = mul(float4(input.end, 1.0), segmentSet.model).xyz;
     float endpoint = segment_endpoint(vertexIndex);
     float side = segment_side(vertexIndex);
 

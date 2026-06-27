@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 13u;
+    constexpr std::uint32_t plugin_abi_version = 14u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -11,6 +11,8 @@ export namespace spectra::scene {
     constexpr std::uint32_t SPECTRA_SCENE_RESULT_ERROR = 1u;
     constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_VOLUME_CHANNEL = 0u;
     constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_VOXEL_GRID = 1u;
+    constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_POINT_CLOUD = 2u;
+    constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_SEGMENT_SET = 3u;
     constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_STATIC = 0u;
     constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_LIVE = 1u;
     constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_INDEXED = 2u;
@@ -304,8 +306,16 @@ export namespace spectra::scene {
     struct SpectraScenePointCloud {
         const char* name{};
         SpectraScenePointSpan points{};
+        std::uint32_t source_kind{};
+        std::uint64_t point_count{};
+        std::uint64_t buffer_id{};
+        std::uint64_t source_byte_size{};
+        std::uint64_t revision{};
         const char* material_name{};
         SpectraSceneTransform transform{};
+        float bounds_min[3]{};
+        float bounds_max[3]{};
+        std::uint32_t bounds_valid{};
     };
 
     struct SpectraScenePointCloudSpan {
@@ -380,6 +390,11 @@ export namespace spectra::scene {
         SpectraSceneViewportSegmentSpan segments{};
         SpectraSceneColorSpan colors{};
         SpectraSceneFloatSpan widths{};
+        std::uint32_t source_kind{};
+        std::uint64_t segment_count{};
+        std::uint64_t buffer_id{};
+        std::uint64_t source_byte_size{};
+        std::uint64_t revision{};
         float width{};
         std::uint32_t width_mode{};
         std::uint32_t depth_mode{};
