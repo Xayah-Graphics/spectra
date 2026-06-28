@@ -444,6 +444,7 @@ export namespace spectra::scene {
         std::uint32_t kind{};
         double frame_rate{};
         std::uint64_t frame_count{};
+        std::uint32_t initial_playing{};
     };
 
     struct SpectraSceneDocumentView {

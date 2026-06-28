@@ -599,6 +599,7 @@ namespace spectra::scene {
             TimelineKind kind{TimelineKind::Static};
             double frame_rate{};
             std::uint64_t frame_count{};
+            bool initial_playing{true};
         };
 
         struct Document {
@@ -638,6 +639,7 @@ namespace spectra::scene {
             TimelineDescriptor descriptor{};
             bool playing{true};
             bool loop{true};
+            bool step_requested{};
             double playback_accumulator_seconds{};
             FrameCursor cursor{};
             std::optional<FrameSnapshot> current_frame{};
@@ -733,6 +735,7 @@ namespace spectra::scene {
         void advance(std::uint64_t frame_number, double delta_seconds);
         void set_timeline_playing(bool playing);
         void toggle_timeline_playing();
+        void step_timeline();
         void set_timeline_loop(bool loop);
         void seek_timeline_frame(std::uint64_t frame_index);
         void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);

@@ -760,7 +760,7 @@ namespace spectra::scene {
             if (timeline.descriptor.kind == Scene::TimelineKind::Static) return;
             if (viewport_size.x < 260.0f || viewport_size.y < 140.0f) return;
 
-            const float width = timeline.descriptor.kind == Scene::TimelineKind::Indexed ? std::min(640.0f, viewport_size.x - 32.0f) : std::min(360.0f, viewport_size.x - 32.0f);
+            const float width = timeline.descriptor.kind == Scene::TimelineKind::Indexed ? std::min(680.0f, viewport_size.x - 32.0f) : std::min(400.0f, viewport_size.x - 32.0f);
             ImGui::SetNextWindowPos(ImVec2{viewport_position.x + viewport_size.x * 0.5f, viewport_position.y + viewport_size.y - 14.0f}, ImGuiCond_Always, ImVec2{0.5f, 1.0f});
             ImGui::SetNextWindowSize(ImVec2{width, 0.0f}, ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 8.0f});
@@ -781,6 +781,19 @@ namespace spectra::scene {
                         set_timeline_error(status, controls, error);
                     }
                 }
+                ImGui::SameLine(0.0f, 10.0f);
+                ImGui::BeginDisabled(timeline.playing);
+                if (ImGui::Button(ICON_MS_STEP_OVER, ImVec2{32.0f, 0.0f})) {
+                    try {
+                        scene_instance.step_timeline();
+                        controls.phase = SceneControlsPhase::Active;
+                        controls.error.clear();
+                        set_scene_status(status, "Stepped timeline", false);
+                    } catch (const std::exception& error) {
+                        set_timeline_error(status, controls, error);
+                    }
+                }
+                ImGui::EndDisabled();
                 ImGui::SameLine(0.0f, 10.0f);
                 ImGui::TextDisabled("%s", timeline_kind_label(timeline.descriptor.kind));
                 ImGui::SameLine(0.0f, 10.0f);

@@ -241,6 +241,7 @@ namespace spectra::scene {
             Scene::TimelineDescriptor descriptor{
                 .frame_rate = finite_double(timeline.frame_rate, std::format("{} frame rate", context)),
                 .frame_count = timeline.frame_count,
+                .initial_playing = timeline.initial_playing != 0u,
             };
             switch (timeline.kind) {
             case SPECTRA_SCENE_TIMELINE_STATIC:
@@ -1172,7 +1173,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v14");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v15");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));

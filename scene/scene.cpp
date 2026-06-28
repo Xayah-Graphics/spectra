@@ -1970,7 +1970,7 @@ namespace spectra::scene {
         const std::shared_ptr<const Document> scene_document = scene_instance.document();
         Timeline timeline{
             .descriptor = scene_document->timeline,
-            .playing = true,
+            .playing = scene_document->timeline.initial_playing,
         };
         commit_scene_timeline_and_frame(scene_instance, std::move(timeline), std::move(snapshot));
         this->reset_driver_runtime();
@@ -2000,12 +2000,14 @@ namespace spectra::scene {
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene delta time is invalid");
         Timeline timeline = this->timeline();
         validate_timeline_descriptor(timeline.descriptor, "Scene timeline");
+        const double fixed_delta_seconds = timeline_frame_delta_seconds(timeline.descriptor);
+        const bool scene_tick = timeline.playing || timeline.step_requested;
         const auto mark_updated = [this, frame_number] {
             this->driver_runtime.updated_frame_number = frame_number;
         };
         runtime.host->update(*runtime.instance, UpdateInfo{
             .wall_delta_seconds = delta_seconds,
-            .scene_delta_seconds = timeline.descriptor.kind == TimelineKind::Live && timeline.playing ? delta_seconds : 0.0,
+            .scene_delta_seconds = scene_tick ? (timeline.step_requested ? fixed_delta_seconds : delta_seconds) : 0.0,
             .time_seconds = timeline.cursor.time_seconds,
             .frame_index = timeline.cursor.frame_index,
             .timeline_playing = timeline.playing,
@@ -2013,12 +2015,13 @@ namespace spectra::scene {
         this->commit_driver_revision("Scene update");
         timeline = this->timeline();
         validate_timeline_descriptor(timeline.descriptor, "Scene timeline");
-        const double fixed_delta_seconds = timeline_frame_delta_seconds(timeline.descriptor);
-        if (!timeline.playing) {
+        const bool step_requested = timeline.step_requested;
+        if (!timeline.playing && !step_requested) {
             mark_updated();
             return;
         }
-        timeline.playback_accumulator_seconds += delta_seconds;
+        timeline.step_requested = false;
+        timeline.playback_accumulator_seconds += step_requested ? fixed_delta_seconds : delta_seconds;
         bool cursor_changed = false;
         while (timeline.playback_accumulator_seconds >= fixed_delta_seconds) {
             timeline.playback_accumulator_seconds -= fixed_delta_seconds;
@@ -2045,6 +2048,7 @@ namespace spectra::scene {
         }
         this->current_timeline.playback_accumulator_seconds = timeline.playback_accumulator_seconds;
         if (!cursor_changed) {
+            if (step_requested) commit_scene_timeline(*this, std::move(timeline));
             mark_updated();
             return;
         }
@@ -2057,8 +2061,9 @@ namespace spectra::scene {
         const std::shared_ptr<const Document> document = this->document();
         if (!timeline_is_dynamic(document->timeline)) throw std::runtime_error("Scene does not support timeline control");
         Timeline timeline = this->timeline();
-        if (timeline.playing == playing) return;
+        if (timeline.playing == playing && !timeline.step_requested) return;
         timeline.playing = playing;
+        timeline.step_requested = false;
         timeline.playback_accumulator_seconds = 0.0;
         commit_scene_timeline(*this, std::move(timeline));
         this->driver_runtime.updated_frame_number.reset();
@@ -2068,6 +2073,17 @@ namespace spectra::scene {
     void Scene::toggle_timeline_playing() {
         const Timeline timeline = this->timeline();
         this->set_timeline_playing(!timeline.playing);
+    }
+
+    void Scene::step_timeline() {
+        const std::shared_ptr<const Document> document = this->document();
+        if (!timeline_is_dynamic(document->timeline)) throw std::runtime_error("Scene does not support timeline stepping");
+        Timeline timeline = this->timeline();
+        timeline.playing = false;
+        timeline.step_requested = true;
+        timeline.playback_accumulator_seconds = 0.0;
+        commit_scene_timeline(*this, std::move(timeline));
+        this->driver_runtime.updated_frame_number.reset();
     }
 
     void Scene::set_timeline_loop(const bool loop) {
@@ -2090,6 +2106,7 @@ namespace spectra::scene {
             .frame_index = frame_index,
             .time_seconds = static_cast<double>(frame_index) * fixed_delta_seconds,
         };
+        timeline.step_requested = false;
         timeline.playback_accumulator_seconds = 0.0;
         FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, 0.0));
         commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
