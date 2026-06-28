@@ -241,18 +241,12 @@ namespace spectra::scene {
             Scene::TimelineDescriptor descriptor{
                 .frame_rate = finite_double(timeline.frame_rate, std::format("{} frame rate", context)),
                 .frame_count = timeline.frame_count,
-                .initial_playing = timeline.initial_playing != 0u,
             };
             switch (timeline.kind) {
             case SPECTRA_SCENE_TIMELINE_STATIC:
                 descriptor.kind = Scene::TimelineKind::Static;
                 if (descriptor.frame_rate != 0.0) throw std::runtime_error(std::format("{} static timeline frame rate must be zero", context));
                 if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} static timeline frame count must be zero", context));
-                return descriptor;
-            case SPECTRA_SCENE_TIMELINE_LIVE:
-                descriptor.kind = Scene::TimelineKind::Live;
-                if (descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} live timeline frame rate must be positive", context));
-                if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} live timeline frame count must be zero", context));
                 return descriptor;
             case SPECTRA_SCENE_TIMELINE_INDEXED:
                 descriptor.kind = Scene::TimelineKind::Indexed;
@@ -262,6 +256,17 @@ namespace spectra::scene {
             default:
                 throw std::runtime_error(std::format("{} timeline kind {} is invalid", context, timeline.kind));
             }
+        }
+
+        [[nodiscard]] Scene::UpdateDescriptor make_update_descriptor(const SpectraSceneUpdateDescriptor& update, const std::string_view context) {
+            Scene::UpdateDescriptor descriptor{
+                .enabled = update.enabled != 0u,
+                .initial_running = update.initial_running != 0u,
+                .step_delta_seconds = finite_double(update.step_delta_seconds, std::format("{} step delta", context)),
+            };
+            if (!descriptor.enabled && descriptor.initial_running) throw std::runtime_error(std::format("{} disabled update clock cannot be initially running", context));
+            if (descriptor.step_delta_seconds <= 0.0) throw std::runtime_error(std::format("{} step delta must be positive", context));
+            return descriptor;
         }
 
         [[nodiscard]] Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
@@ -590,6 +595,7 @@ namespace spectra::scene {
         void append_document_view(Scene::Document& document, const SpectraSceneDocumentView& view, std::set<std::string>& material_names, std::set<std::string>& light_names) {
             if (view.struct_size != sizeof(SpectraSceneDocumentView)) throw std::runtime_error("Scene document view ABI size mismatch");
             document.timeline = make_timeline_descriptor(view.timeline, "Scene document");
+            document.update = make_update_descriptor(view.update, "Scene document update");
             const std::string active_camera_name = abi_string(view.active_camera_name, "Scene document active camera name", true);
             if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
 
@@ -1092,12 +1098,12 @@ namespace spectra::scene {
         }
 
         void ensure_scene_camera(Scene::Document& document, const std::string_view plugin_id) {
+            if (!document.active_camera_name.empty()) return;
             if (document.cameras.empty()) {
                 document.cameras.push_back(make_host_inspection_camera());
                 document.active_camera_name = document.cameras.back().name;
                 return;
             }
-            if (!document.active_camera_name.empty()) return;
             if (document.cameras.size() != 1u) throw std::runtime_error(std::format("Scene plugin \"{}\" provided {} cameras but no active camera name", plugin_id, document.cameras.size()));
             document.active_camera_name = document.cameras.front().name;
         }
@@ -1173,7 +1179,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v15");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v16");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));
@@ -1249,10 +1255,10 @@ namespace spectra::scene {
             const SpectraSceneUpdateInfo update_info{
                 .struct_size = sizeof(SpectraSceneUpdateInfo),
                 .wall_delta_seconds = update.wall_delta_seconds,
-                .scene_delta_seconds = update.scene_delta_seconds,
-                .time_seconds = update.time_seconds,
-                .frame_index = update.frame_index,
-                .timeline_playing = update.timeline_playing ? 1u : 0u,
+                .update_delta_seconds = update.update_delta_seconds,
+                .timeline_time_seconds = update.timeline_time_seconds,
+                .timeline_frame_index = update.timeline_frame_index,
+                .update_running = update.update_running ? 1u : 0u,
             };
             this->check_result(this->plugin->update(instance, &update_info), instance, "Scene plugin update");
         }

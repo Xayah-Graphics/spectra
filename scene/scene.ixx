@@ -161,10 +161,10 @@ namespace spectra::scene {
 
     export struct UpdateInfo {
         double wall_delta_seconds{};
-        double scene_delta_seconds{};
-        double time_seconds{};
-        std::uint64_t frame_index{};
-        bool timeline_playing{};
+        double update_delta_seconds{};
+        double timeline_time_seconds{};
+        std::uint64_t timeline_frame_index{};
+        bool update_running{};
     };
 
     export enum class Kind {
@@ -591,15 +591,19 @@ namespace spectra::scene {
 
         enum class TimelineKind : std::uint32_t {
             Static  = 0u,
-            Live    = 1u,
-            Indexed = 2u,
+            Indexed = 1u,
         };
 
         struct TimelineDescriptor {
             TimelineKind kind{TimelineKind::Static};
             double frame_rate{};
             std::uint64_t frame_count{};
-            bool initial_playing{true};
+        };
+
+        struct UpdateDescriptor {
+            bool enabled{};
+            bool initial_running{};
+            double step_delta_seconds{1.0 / 60.0};
         };
 
         struct Document {
@@ -608,6 +612,7 @@ namespace spectra::scene {
             std::string title{};
             std::string source{};
             TimelineDescriptor timeline{};
+            UpdateDescriptor update{};
             std::vector<Camera> cameras{};
             std::string active_camera_name{};
             std::vector<PreviewMaterial> materials{};
@@ -637,12 +642,14 @@ namespace spectra::scene {
 
         struct Timeline {
             TimelineDescriptor descriptor{};
-            bool playing{true};
-            bool loop{true};
-            bool step_requested{};
-            double playback_accumulator_seconds{};
             FrameCursor cursor{};
             std::optional<FrameSnapshot> current_frame{};
+        };
+
+        struct UpdateClock {
+            UpdateDescriptor descriptor{};
+            bool running{};
+            bool step_requested{};
         };
 
         struct ResolvedFrame {
@@ -728,15 +735,15 @@ namespace spectra::scene {
         [[nodiscard]] const PluginInfo& plugin_info() const;
         [[nodiscard]] std::shared_ptr<HostServiceRouter> host_services() const;
         [[nodiscard]] ControlState control_state() const;
+        [[nodiscard]] UpdateClock update_clock() const;
         void close();
         void open_static_scene(std::string id, std::string title, Scene scene);
         void open_pbrt_file(const std::filesystem::path& scene_path);
         void open_plugin(PluginOpenRequest request);
         void advance(std::uint64_t frame_number, double delta_seconds);
-        void set_timeline_playing(bool playing);
-        void toggle_timeline_playing();
-        void step_timeline();
-        void set_timeline_loop(bool loop);
+        void set_update_running(bool running);
+        void toggle_update_running();
+        void step_update();
         void seek_timeline_frame(std::uint64_t frame_index);
         void execute_control_action(std::string_view action_id, std::span<const ControlOption> options);
         void update_control_setting(std::string_view key, std::string_view value);
@@ -775,11 +782,12 @@ namespace spectra::scene {
         void reset_driver_runtime();
         [[nodiscard]] PluginRuntime& active_plugin_runtime() const;
         void commit_driver_revision(std::string_view context);
-        void sync_driver_timeline_state(std::string_view context);
+        void sync_driver_update_state(std::string_view context);
 
         Revision current_revision{};
         mutable std::shared_ptr<const Document> current_document{};
         Timeline current_timeline{};
+        UpdateClock current_update{};
         std::optional<ResolvedScene> canonical_scene{};
         Descriptor current_descriptor{};
         bool descriptor_valid{};

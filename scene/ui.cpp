@@ -743,7 +743,6 @@ namespace spectra::scene {
         [[nodiscard]] const char* timeline_kind_label(const Scene::TimelineKind kind) {
             switch (kind) {
             case Scene::TimelineKind::Static: return "Static";
-            case Scene::TimelineKind::Live: return "Live";
             case Scene::TimelineKind::Indexed: return "Indexed";
             }
             throw std::runtime_error("Scene timeline kind is invalid");
@@ -757,10 +756,13 @@ namespace spectra::scene {
 
         void draw_timeline_overlay(Scene& scene_instance, StatusState& status, ControlsState& controls, const ImVec2 viewport_position, const ImVec2 viewport_size) {
             const Scene::Timeline timeline = scene_instance.timeline();
-            if (timeline.descriptor.kind == Scene::TimelineKind::Static) return;
+            const Scene::UpdateClock update = scene_instance.update_clock();
+            const bool show_update_controls = update.descriptor.enabled;
+            const bool show_timeline_controls = timeline.descriptor.kind == Scene::TimelineKind::Indexed;
+            if (!show_update_controls && !show_timeline_controls) return;
             if (viewport_size.x < 260.0f || viewport_size.y < 140.0f) return;
 
-            const float width = timeline.descriptor.kind == Scene::TimelineKind::Indexed ? std::min(680.0f, viewport_size.x - 32.0f) : std::min(400.0f, viewport_size.x - 32.0f);
+            const float width = show_timeline_controls ? std::min(760.0f, viewport_size.x - 32.0f) : std::min(360.0f, viewport_size.x - 32.0f);
             ImGui::SetNextWindowPos(ImVec2{viewport_position.x + viewport_size.x * 0.5f, viewport_position.y + viewport_size.y - 14.0f}, ImGuiCond_Always, ImVec2{0.5f, 1.0f});
             ImGui::SetNextWindowSize(ImVec2{width, 0.0f}, ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 8.0f});
@@ -770,40 +772,44 @@ namespace spectra::scene {
             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.24f, 0.50f, 0.54f, 0.36f});
             constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
             if (ImGui::Begin("##SceneTimelineOverlay", nullptr, flags)) {
-                const char* const play_label = timeline.playing ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW;
-                if (ImGui::Button(play_label, ImVec2{32.0f, 0.0f})) {
-                    try {
-                        scene_instance.toggle_timeline_playing();
-                        controls.phase = SceneControlsPhase::Active;
-                        controls.error.clear();
-                        set_scene_status(status, timeline.playing ? "Paused timeline" : "Resumed timeline", false);
-                    } catch (const std::exception& error) {
-                        set_timeline_error(status, controls, error);
+                if (show_update_controls) {
+                    const char* const play_label = update.running ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW;
+                    if (ImGui::Button(play_label, ImVec2{32.0f, 0.0f})) {
+                        try {
+                            scene_instance.toggle_update_running();
+                            controls.phase = SceneControlsPhase::Active;
+                            controls.error.clear();
+                            set_scene_status(status, update.running ? "Paused updates" : "Started updates", false);
+                        } catch (const std::exception& error) {
+                            set_timeline_error(status, controls, error);
+                        }
                     }
-                }
-                ImGui::SameLine(0.0f, 10.0f);
-                ImGui::BeginDisabled(timeline.playing);
-                if (ImGui::Button(ICON_MS_STEP_OVER, ImVec2{32.0f, 0.0f})) {
-                    try {
-                        scene_instance.step_timeline();
-                        controls.phase = SceneControlsPhase::Active;
-                        controls.error.clear();
-                        set_scene_status(status, "Stepped timeline", false);
-                    } catch (const std::exception& error) {
-                        set_timeline_error(status, controls, error);
+                    ImGui::SameLine(0.0f, 10.0f);
+                    ImGui::BeginDisabled(update.running);
+                    if (ImGui::Button(ICON_MS_STEP_OVER, ImVec2{32.0f, 0.0f})) {
+                        try {
+                            scene_instance.step_update();
+                            controls.phase = SceneControlsPhase::Active;
+                            controls.error.clear();
+                            set_scene_status(status, "Stepped updates", false);
+                        } catch (const std::exception& error) {
+                            set_timeline_error(status, controls, error);
+                        }
                     }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine(0.0f, 10.0f);
+                    ImGui::TextDisabled("Updates");
+                    ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::Text("%s", update.running ? "Running" : "Paused");
                 }
-                ImGui::EndDisabled();
-                ImGui::SameLine(0.0f, 10.0f);
-                ImGui::TextDisabled("%s", timeline_kind_label(timeline.descriptor.kind));
-                ImGui::SameLine(0.0f, 10.0f);
-                if (timeline.descriptor.kind == Scene::TimelineKind::Live) {
-                    ImGui::Text("%s f%llu %.2fs", timeline.playing ? "Playing" : "Paused", static_cast<unsigned long long>(timeline.cursor.frame_index), timeline.cursor.time_seconds);
-                } else {
+                if (show_timeline_controls) {
+                    if (show_update_controls) ImGui::SameLine(0.0f, 14.0f);
+                    ImGui::TextDisabled("%s", timeline_kind_label(timeline.descriptor.kind));
+                    ImGui::SameLine(0.0f, 10.0f);
                     std::uint64_t frame_value = timeline.cursor.frame_index;
                     const std::uint64_t frame_min = 0u;
                     const std::uint64_t frame_max = timeline.descriptor.frame_count - 1u;
-                    const float slider_width = std::max(120.0f, ImGui::GetContentRegionAvail().x - 112.0f);
+                    const float slider_width = std::max(120.0f, ImGui::GetContentRegionAvail().x - 118.0f);
                     ImGui::SetNextItemWidth(slider_width);
                     if (ImGui::SliderScalar("##SceneTimelineFrame", ImGuiDataType_U64, &frame_value, &frame_min, &frame_max, "%llu")) {
                         try {
@@ -817,17 +823,11 @@ namespace spectra::scene {
                     }
                     ImGui::SameLine(0.0f, 8.0f);
                     ImGui::Text("%llu/%llu", static_cast<unsigned long long>(timeline.cursor.frame_index + 1u), static_cast<unsigned long long>(timeline.descriptor.frame_count));
+                } else if (show_update_controls) {
+                    ImGui::SameLine(0.0f, 14.0f);
+                    ImGui::TextDisabled("%s", timeline_kind_label(timeline.descriptor.kind));
                     ImGui::SameLine(0.0f, 8.0f);
-                    bool loop = timeline.loop;
-                    if (ImGui::Checkbox("Loop", &loop)) {
-                        try {
-                            scene_instance.set_timeline_loop(loop);
-                            controls.phase = SceneControlsPhase::Active;
-                            controls.error.clear();
-                        } catch (const std::exception& error) {
-                            set_timeline_error(status, controls, error);
-                        }
-                    }
+                    ImGui::Text("f0");
                 }
             }
             ImGui::End();
@@ -908,8 +908,8 @@ namespace spectra::scene {
         if (io.WantTextInput) return;
         if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
         const std::shared_ptr<const Scene::Document> document = scene_instance.document();
-        if (document->timeline.kind == Scene::TimelineKind::Static) return;
-        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) scene_instance.toggle_timeline_playing();
+        if (!document->update.enabled) return;
+        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) scene_instance.toggle_update_running();
     }
 
     void SceneUi::register_to(Spectra& application) {

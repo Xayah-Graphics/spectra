@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 14u;
+    constexpr std::uint32_t plugin_abi_version = 16u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -14,8 +14,7 @@ export namespace spectra::scene {
     constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_POINT_CLOUD = 2u;
     constexpr std::uint32_t SPECTRA_SCENE_GPU_BUFFER_VIEWPORT_SEGMENT_SET = 3u;
     constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_STATIC = 0u;
-    constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_LIVE = 1u;
-    constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_INDEXED = 2u;
+    constexpr std::uint32_t SPECTRA_SCENE_TIMELINE_INDEXED = 1u;
 
     struct SpectraSceneOption {
         const char* key{};
@@ -129,10 +128,10 @@ export namespace spectra::scene {
     struct SpectraSceneUpdateInfo {
         std::uint64_t struct_size{};
         double wall_delta_seconds{};
-        double scene_delta_seconds{};
-        double time_seconds{};
-        std::uint64_t frame_index{};
-        std::uint32_t timeline_playing{};
+        double update_delta_seconds{};
+        double timeline_time_seconds{};
+        std::uint64_t timeline_frame_index{};
+        std::uint32_t update_running{};
     };
 
     struct SpectraSceneGpuDeviceIdentity {
@@ -444,12 +443,18 @@ export namespace spectra::scene {
         std::uint32_t kind{};
         double frame_rate{};
         std::uint64_t frame_count{};
-        std::uint32_t initial_playing{};
+    };
+
+    struct SpectraSceneUpdateDescriptor {
+        std::uint32_t enabled{};
+        std::uint32_t initial_running{};
+        double step_delta_seconds{};
     };
 
     struct SpectraSceneDocumentView {
         std::uint64_t struct_size{};
         SpectraSceneTimeline timeline{};
+        SpectraSceneUpdateDescriptor update{};
         const char* active_camera_name{};
         SpectraSceneItems items{};
     };

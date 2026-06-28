@@ -1540,19 +1540,11 @@ namespace spectra::scene {
             };
         }
 
-        [[nodiscard]] bool timeline_is_dynamic(const Scene::TimelineDescriptor& descriptor) {
-            return descriptor.kind == Scene::TimelineKind::Live || descriptor.kind == Scene::TimelineKind::Indexed;
-        }
-
         void validate_timeline_descriptor(const Scene::TimelineDescriptor& descriptor, const std::string_view context) {
             switch (descriptor.kind) {
             case Scene::TimelineKind::Static:
                 if (descriptor.frame_rate != 0.0) throw std::runtime_error(std::format("{} static timeline frame rate must be zero", context));
                 if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} static timeline frame count must be zero", context));
-                return;
-            case Scene::TimelineKind::Live:
-                if (!std::isfinite(descriptor.frame_rate) || descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} live timeline frame rate must be finite and positive", context));
-                if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} live timeline frame count must be zero", context));
                 return;
             case Scene::TimelineKind::Indexed:
                 if (!std::isfinite(descriptor.frame_rate) || descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} indexed timeline frame rate must be finite and positive", context));
@@ -1562,9 +1554,14 @@ namespace spectra::scene {
             throw std::runtime_error(std::format("{} timeline kind is invalid", context));
         }
 
+        void validate_update_descriptor(const Scene::UpdateDescriptor& descriptor, const std::string_view context) {
+            if (!descriptor.enabled && descriptor.initial_running) throw std::runtime_error(std::format("{} disabled update clock cannot be initially running", context));
+            if (!std::isfinite(descriptor.step_delta_seconds) || descriptor.step_delta_seconds <= 0.0) throw std::runtime_error(std::format("{} update step delta must be finite and positive", context));
+        }
+
         [[nodiscard]] double timeline_frame_delta_seconds(const Scene::TimelineDescriptor& descriptor) {
             validate_timeline_descriptor(descriptor, "Scene timeline");
-            if (descriptor.kind == Scene::TimelineKind::Static) throw std::runtime_error("Static scene timeline has no frame delta");
+            if (descriptor.kind != Scene::TimelineKind::Indexed) throw std::runtime_error("Scene timeline frame delta requires an indexed timeline");
             return 1.0 / descriptor.frame_rate;
         }
 
@@ -1769,9 +1766,12 @@ namespace spectra::scene {
     Scene::Scene(Document document) {
         if (document.revision.value == 0) document.revision = Revision{1};
         validate_timeline_descriptor(document.timeline, "Scene document");
+        validate_update_descriptor(document.update, "Scene document");
         this->current_revision = document.revision;
         this->current_document = std::make_shared<Document>(std::move(document));
         this->current_timeline.descriptor = this->current_document->timeline;
+        this->current_update.descriptor = this->current_document->update;
+        this->current_update.running = this->current_update.descriptor.initial_running;
     }
 
     Scene::Scene(ResolvedScene scene) {
@@ -1785,10 +1785,13 @@ namespace spectra::scene {
         if (scene.revision.value == 0) scene.revision = Revision{1};
         if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
         validate_timeline_descriptor(preview_document.timeline, "Scene preview document");
+        validate_update_descriptor(preview_document.update, "Scene preview document");
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
         this->current_document = std::make_shared<Document>(std::move(preview_document));
         this->current_timeline.descriptor = this->current_document->timeline;
+        this->current_update.descriptor = this->current_document->update;
+        this->current_update.running = this->current_update.descriptor.initial_running;
         this->canonical_scene = std::move(scene);
     }
 
@@ -1809,6 +1812,11 @@ namespace spectra::scene {
     Scene::Timeline Scene::timeline() const {
         if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
         return this->current_timeline;
+    }
+
+    Scene::UpdateClock Scene::update_clock() const {
+        if (this->current_document == nullptr && !this->canonical_scene.has_value()) throw std::runtime_error("Scene workspace does not contain a loaded scene");
+        return this->current_update;
     }
 
     Scene::ResolvedFrame Scene::resolved_frame() const {
@@ -1890,6 +1898,7 @@ namespace spectra::scene {
             this->current_document.reset();
         }
         this->current_timeline = std::move(scene.current_timeline);
+        this->current_update = scene.current_update;
         if (scene.canonical_scene.has_value()) {
             ResolvedScene resolved = std::move(*scene.canonical_scene);
             resolved.revision = replacement_revision;
@@ -1958,7 +1967,7 @@ namespace spectra::scene {
         std::shared_ptr<PluginHost::Instance> instance = plugin->create_instance();
         Document document = plugin->create_scene_document(*instance);
         validate_timeline_descriptor(document.timeline, "Plugin-driven scene document");
-        if (!timeline_is_dynamic(document.timeline)) throw std::runtime_error("Plugin-driven scene document must use a dynamic timeline");
+        validate_update_descriptor(document.update, "Plugin-driven scene document");
         if (document.title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
         Scene scene_instance{std::move(document)};
         FrameSnapshot snapshot = plugin->create_scene_frame(*instance, FrameInfo{
@@ -1970,9 +1979,13 @@ namespace spectra::scene {
         const std::shared_ptr<const Document> scene_document = scene_instance.document();
         Timeline timeline{
             .descriptor = scene_document->timeline,
-            .playing = scene_document->timeline.initial_playing,
+        };
+        UpdateClock update{
+            .descriptor = scene_document->update,
+            .running = scene_document->update.initial_running,
         };
         commit_scene_timeline_and_frame(scene_instance, std::move(timeline), std::move(snapshot));
+        scene_instance.current_update = update;
         this->reset_driver_runtime();
         this->replace_with_scene(std::move(scene_instance));
         this->driver_runtime.plugin = std::make_unique<PluginRuntime>(PluginRuntime{
@@ -1996,103 +2009,62 @@ namespace spectra::scene {
         PluginRuntime& runtime = this->active_plugin_runtime();
         const std::shared_ptr<const Document> document = this->document();
         validate_timeline_descriptor(document->timeline, "Plugin-driven scene document");
-        if (!timeline_is_dynamic(document->timeline)) throw std::runtime_error("Plugin-driven scene must use a dynamic timeline");
+        validate_update_descriptor(document->update, "Plugin-driven scene document");
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene delta time is invalid");
-        Timeline timeline = this->timeline();
-        validate_timeline_descriptor(timeline.descriptor, "Scene timeline");
-        const double fixed_delta_seconds = timeline_frame_delta_seconds(timeline.descriptor);
-        const bool scene_tick = timeline.playing || timeline.step_requested;
+        UpdateClock update = this->update_clock();
+        validate_update_descriptor(update.descriptor, "Scene update clock");
+        const bool update_tick = update.descriptor.enabled && (update.running || update.step_requested);
         const auto mark_updated = [this, frame_number] {
             this->driver_runtime.updated_frame_number = frame_number;
         };
+        if (!update_tick) {
+            mark_updated();
+            return;
+        }
+        const Timeline timeline = this->timeline();
         runtime.host->update(*runtime.instance, UpdateInfo{
             .wall_delta_seconds = delta_seconds,
-            .scene_delta_seconds = scene_tick ? (timeline.step_requested ? fixed_delta_seconds : delta_seconds) : 0.0,
-            .time_seconds = timeline.cursor.time_seconds,
-            .frame_index = timeline.cursor.frame_index,
-            .timeline_playing = timeline.playing,
+            .update_delta_seconds = update.step_requested ? update.descriptor.step_delta_seconds : delta_seconds,
+            .timeline_time_seconds = timeline.cursor.time_seconds,
+            .timeline_frame_index = timeline.cursor.frame_index,
+            .update_running = update.running,
         });
         this->commit_driver_revision("Scene update");
-        timeline = this->timeline();
-        validate_timeline_descriptor(timeline.descriptor, "Scene timeline");
-        const bool step_requested = timeline.step_requested;
-        if (!timeline.playing && !step_requested) {
-            mark_updated();
-            return;
+        update = this->update_clock();
+        if (update.step_requested) {
+            update.running = false;
+            update.step_requested = false;
+            this->current_update = update;
         }
-        timeline.step_requested = false;
-        timeline.playback_accumulator_seconds += step_requested ? fixed_delta_seconds : delta_seconds;
-        bool cursor_changed = false;
-        while (timeline.playback_accumulator_seconds >= fixed_delta_seconds) {
-            timeline.playback_accumulator_seconds -= fixed_delta_seconds;
-            if (timeline.descriptor.kind == TimelineKind::Live) {
-                ++timeline.cursor.frame_index;
-                timeline.cursor.time_seconds += fixed_delta_seconds;
-                cursor_changed = true;
-                continue;
-            }
-            if (timeline.descriptor.kind == TimelineKind::Indexed) {
-                if (timeline.cursor.frame_index + 1u < timeline.descriptor.frame_count) {
-                    ++timeline.cursor.frame_index;
-                } else if (timeline.loop) {
-                    timeline.cursor.frame_index = 0u;
-                } else {
-                    timeline.cursor.frame_index = timeline.descriptor.frame_count - 1u;
-                    timeline.playing = false;
-                    timeline.playback_accumulator_seconds = 0.0;
-                }
-                timeline.cursor.time_seconds = static_cast<double>(timeline.cursor.frame_index) * fixed_delta_seconds;
-                cursor_changed = true;
-                if (!timeline.playing) break;
-            }
-        }
-        this->current_timeline.playback_accumulator_seconds = timeline.playback_accumulator_seconds;
-        if (!cursor_changed) {
-            if (step_requested) commit_scene_timeline(*this, std::move(timeline));
-            mark_updated();
-            return;
-        }
-        FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, fixed_delta_seconds));
-        commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
         mark_updated();
     }
 
-    void Scene::set_timeline_playing(const bool playing) {
+    void Scene::set_update_running(const bool running) {
         const std::shared_ptr<const Document> document = this->document();
-        if (!timeline_is_dynamic(document->timeline)) throw std::runtime_error("Scene does not support timeline control");
-        Timeline timeline = this->timeline();
-        if (timeline.playing == playing && !timeline.step_requested) return;
-        timeline.playing = playing;
-        timeline.step_requested = false;
-        timeline.playback_accumulator_seconds = 0.0;
-        commit_scene_timeline(*this, std::move(timeline));
+        validate_update_descriptor(document->update, "Scene update clock");
+        if (!document->update.enabled) throw std::runtime_error("Scene does not support update control");
+        UpdateClock update = this->update_clock();
+        if (update.running == running && !update.step_requested) return;
+        update.running = running;
+        update.step_requested = false;
+        this->current_update = update;
         this->driver_runtime.updated_frame_number.reset();
-        this->sync_driver_timeline_state("Scene timeline");
+        this->sync_driver_update_state("Scene update clock");
     }
 
-    void Scene::toggle_timeline_playing() {
-        const Timeline timeline = this->timeline();
-        this->set_timeline_playing(!timeline.playing);
+    void Scene::toggle_update_running() {
+        const UpdateClock update = this->update_clock();
+        this->set_update_running(!update.running);
     }
 
-    void Scene::step_timeline() {
+    void Scene::step_update() {
         const std::shared_ptr<const Document> document = this->document();
-        if (!timeline_is_dynamic(document->timeline)) throw std::runtime_error("Scene does not support timeline stepping");
-        Timeline timeline = this->timeline();
-        timeline.playing = false;
-        timeline.step_requested = true;
-        timeline.playback_accumulator_seconds = 0.0;
-        commit_scene_timeline(*this, std::move(timeline));
-        this->driver_runtime.updated_frame_number.reset();
-    }
-
-    void Scene::set_timeline_loop(const bool loop) {
-        const std::shared_ptr<const Document> document = this->document();
-        if (document->timeline.kind != TimelineKind::Indexed) throw std::runtime_error("Only indexed scene timelines support loop control");
-        Timeline timeline = this->timeline();
-        if (timeline.loop == loop) return;
-        timeline.loop = loop;
-        commit_scene_timeline(*this, std::move(timeline));
+        validate_update_descriptor(document->update, "Scene update clock");
+        if (!document->update.enabled) throw std::runtime_error("Scene does not support update stepping");
+        UpdateClock update = this->update_clock();
+        update.running = false;
+        update.step_requested = true;
+        this->current_update = update;
         this->driver_runtime.updated_frame_number.reset();
     }
 
@@ -2106,12 +2078,9 @@ namespace spectra::scene {
             .frame_index = frame_index,
             .time_seconds = static_cast<double>(frame_index) * fixed_delta_seconds,
         };
-        timeline.step_requested = false;
-        timeline.playback_accumulator_seconds = 0.0;
         FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, 0.0));
         commit_scene_timeline_and_frame(*this, std::move(timeline), std::move(snapshot));
         this->driver_runtime.updated_frame_number.reset();
-        this->sync_driver_timeline_state("Scene timeline");
     }
 
     void Scene::execute_control_action(const std::string_view action_id, const std::span<const ControlOption> options) {
@@ -2136,7 +2105,7 @@ namespace spectra::scene {
         if (scene_revision == this->driver_runtime.observed_scene_revision) return;
         Document document = runtime.host->create_scene_document(*runtime.instance);
         validate_timeline_descriptor(document.timeline, "Plugin-driven scene document");
-        if (!timeline_is_dynamic(document.timeline)) throw std::runtime_error("Plugin-driven scene document must use a dynamic timeline");
+        validate_update_descriptor(document.update, "Plugin-driven scene document");
         const Timeline timeline = this->timeline();
         if (document.timeline.kind == TimelineKind::Indexed && timeline.cursor.frame_index >= document.timeline.frame_count) throw std::runtime_error("Plugin-driven scene document shrank indexed timeline below current frame");
         FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, 0.0));
@@ -2144,16 +2113,17 @@ namespace spectra::scene {
         this->driver_runtime.observed_scene_revision = scene_revision;
     }
 
-    void Scene::sync_driver_timeline_state(const std::string_view context) {
+    void Scene::sync_driver_update_state(const std::string_view context) {
         if (this->kind() == Kind::Static) return;
         PluginRuntime& runtime = this->active_plugin_runtime();
         const Timeline timeline = this->timeline();
+        const UpdateClock update = this->update_clock();
         runtime.host->update(*runtime.instance, UpdateInfo{
             .wall_delta_seconds = 0.0,
-            .scene_delta_seconds = 0.0,
-            .time_seconds = timeline.cursor.time_seconds,
-            .frame_index = timeline.cursor.frame_index,
-            .timeline_playing = timeline.playing,
+            .update_delta_seconds = 0.0,
+            .timeline_time_seconds = timeline.cursor.time_seconds,
+            .timeline_frame_index = timeline.cursor.frame_index,
+            .update_running = update.running,
         });
         this->commit_driver_revision(context);
     }
@@ -2176,8 +2146,14 @@ namespace spectra::scene {
             Document document = std::move(*edit.document_replacement);
             document.revision = this->current_revision;
             validate_timeline_descriptor(document.timeline, "Scene document");
+            validate_update_descriptor(document.update, "Scene document");
             this->current_document = std::make_shared<Document>(std::move(document));
             this->current_timeline.descriptor = this->current_document->timeline;
+            this->current_update.descriptor = this->current_document->update;
+            if (!this->current_update.descriptor.enabled) {
+                this->current_update.running = false;
+                this->current_update.step_requested = false;
+            }
             this->canonical_scene.reset();
         }
         if (edit.timeline_replacement.has_value()) this->current_timeline = std::move(*edit.timeline_replacement);

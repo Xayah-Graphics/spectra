@@ -3717,22 +3717,24 @@ namespace spectra::rasterizer {
         return scene->name;
     }
 
-    scene::ViewportCamera Renderer::initial_camera_state_from_scene() const {
+    scene::Scene::Camera Renderer::active_scene_camera() const {
         const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
-        const scene::Scene::Camera* active_camera{};
         for (const scene::Scene::Camera& camera : resolved_frame.cameras) {
             if (camera.name != document->active_camera_name) continue;
-            active_camera = &camera;
-            break;
+            return camera;
         }
-        if (active_camera == nullptr) throw std::runtime_error(std::format("Spectra rasterizer viewport requires active scene camera \"{}\"", document->active_camera_name));
-        const scene::CameraFrame active_frame = scene::camera_frame(active_camera->pose);
+        throw std::runtime_error(std::format("Spectra rasterizer viewport requires active scene camera \"{}\"", document->active_camera_name));
+    }
+
+    scene::ViewportCamera Renderer::initial_camera_state_from_scene() const {
+        const scene::Scene::Camera active_camera = this->active_scene_camera();
+        const scene::CameraFrame active_frame = scene::camera_frame(active_camera.pose);
         scene::ViewportCamera state{
-            .pose = active_camera->pose,
+            .pose = active_camera.pose,
             .focus = active_frame.position + active_frame.forward,
             .navigation_up = -active_frame.down,
-            .projection = active_camera->projection,
+            .projection = active_camera.projection,
         };
 
         const SceneBounds bounds = this->scene_bounds();
@@ -3786,8 +3788,7 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::apply_viewport_camera_state(const scene::CameraSnapshot& snapshot) {
-        const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
-        if (document->active_camera_name.empty() || document->cameras.empty()) throw std::runtime_error("Spectra rasterizer viewport requires a scene camera");
+        static_cast<void>(this->active_scene_camera());
         this->viewport.camera_state = snapshot.state;
         this->viewport.camera_near_plane = snapshot.state.projection.near_plane;
         this->viewport.camera_far_plane = snapshot.state.projection.far_plane;

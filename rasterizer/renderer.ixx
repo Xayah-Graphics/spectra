@@ -487,6 +487,7 @@ namespace spectra::rasterizer {
         void consume_completed_screenshot(std::uint32_t frame_index);
 
         [[nodiscard]] std::string active_scene_id() const;
+        [[nodiscard]] scene::Scene::Camera active_scene_camera() const;
         [[nodiscard]] scene::ViewportCamera initial_camera_state_from_scene() const;
         [[nodiscard]] scene::ViewportCamera current_viewport_camera_state() const;
         [[nodiscard]] float current_viewport_camera_distance() const;
