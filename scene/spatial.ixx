@@ -43,6 +43,14 @@ namespace spectra::scene {
         CameraProjection projection{};
     };
 
+    export struct ViewportNavigationTarget {
+        std::uint64_t revision{1u};
+        Vector3 focus{};
+        Vector3 bounds_minimum{};
+        Vector3 bounds_maximum{};
+        Vector3 navigation_up{0.0f, 1.0f, 0.0f};
+    };
+
     export struct VulkanCameraMatrices {
         std::array<float, 16> world_to_clip{};
         std::array<float, 16> clip_to_world{};
@@ -69,6 +77,7 @@ namespace spectra::scene {
     export struct CameraSnapshot {
         CameraRevision revision{};
         ViewportCamera state{};
+        std::uint64_t seed_revision{};
     };
 
     export class CameraWorkspace {
@@ -81,8 +90,8 @@ namespace spectra::scene {
         CameraWorkspace& operator=(CameraWorkspace&& other) = delete;
         ~CameraWorkspace() = default;
 
-        void ensure_camera(std::string scene_id, ViewportCamera state);
-        [[nodiscard]] CameraSnapshot reset_camera(std::string scene_id, ViewportCamera state);
+        void ensure_camera(std::string scene_id, ViewportCamera state, std::uint64_t seed_revision);
+        [[nodiscard]] CameraSnapshot reset_camera(std::string scene_id, ViewportCamera state, std::uint64_t seed_revision);
         [[nodiscard]] CameraSnapshot snapshot(std::string_view scene_id) const;
         [[nodiscard]] CameraSnapshot commit(std::string_view scene_id, ViewportCamera state);
 
@@ -94,6 +103,9 @@ namespace spectra::scene {
     export [[nodiscard]] CameraPose camera_pose_from_look_at(Vector3 eye, Vector3 target, Vector3 navigation_up);
     export [[nodiscard]] CameraPose camera_pose_from_frame(Vector3 position, Vector3 right, Vector3 down, Vector3 forward);
     export [[nodiscard]] ViewportCamera viewport_camera_from_look_at(Vector3 eye, Vector3 target, Vector3 navigation_up, CameraProjection projection);
+    export void validate_viewport_navigation_target(const ViewportNavigationTarget& target, std::string_view context);
+    export [[nodiscard]] ViewportCamera viewport_camera_from_navigation_target(CameraPose pose, CameraProjection projection, const ViewportNavigationTarget& target);
+    export [[nodiscard]] ViewportCamera frame_viewport_camera_to_navigation_target(ViewportCamera state, const ViewportNavigationTarget& target, float distance_scale);
     export [[nodiscard]] CameraFrame camera_frame(const CameraPose& pose);
     export [[nodiscard]] SceneTransform camera_world_from_camera(const CameraPose& pose);
     export [[nodiscard]] CameraPose camera_pose_from_world_from_camera(const SceneTransform& world_from_camera);

@@ -1559,6 +1559,12 @@ namespace spectra::scene {
             if (!std::isfinite(descriptor.step_delta_seconds) || descriptor.step_delta_seconds <= 0.0) throw std::runtime_error(std::format("{} update step delta must be finite and positive", context));
         }
 
+        void validate_document_descriptors(const Scene::Document& document, const std::string_view context) {
+            validate_timeline_descriptor(document.timeline, context);
+            validate_update_descriptor(document.update, context);
+            if (document.navigation_target.has_value()) validate_viewport_navigation_target(*document.navigation_target, context);
+        }
+
         [[nodiscard]] double timeline_frame_delta_seconds(const Scene::TimelineDescriptor& descriptor) {
             validate_timeline_descriptor(descriptor, "Scene timeline");
             if (descriptor.kind != Scene::TimelineKind::Indexed) throw std::runtime_error("Scene timeline frame delta requires an indexed timeline");
@@ -1765,8 +1771,7 @@ namespace spectra::scene {
 
     Scene::Scene(Document document) {
         if (document.revision.value == 0) document.revision = Revision{1};
-        validate_timeline_descriptor(document.timeline, "Scene document");
-        validate_update_descriptor(document.update, "Scene document");
+        validate_document_descriptors(document, "Scene document");
         this->current_revision = document.revision;
         this->current_document = std::make_shared<Document>(std::move(document));
         this->current_timeline.descriptor = this->current_document->timeline;
@@ -1784,8 +1789,7 @@ namespace spectra::scene {
     Scene::Scene(ResolvedScene scene, Document preview_document) {
         if (scene.revision.value == 0) scene.revision = Revision{1};
         if (preview_document.revision.value == 0) preview_document.revision = scene.revision;
-        validate_timeline_descriptor(preview_document.timeline, "Scene preview document");
-        validate_update_descriptor(preview_document.update, "Scene preview document");
+        validate_document_descriptors(preview_document, "Scene preview document");
         validate_canonical_scene(scene);
         this->current_revision = scene.revision;
         this->current_document = std::make_shared<Document>(std::move(preview_document));
@@ -1966,8 +1970,7 @@ namespace spectra::scene {
         if (scene_id.empty()) throw std::runtime_error("Plugin-driven scene id must not be empty");
         std::shared_ptr<PluginHost::Instance> instance = plugin->create_instance();
         Document document = plugin->create_scene_document(*instance);
-        validate_timeline_descriptor(document.timeline, "Plugin-driven scene document");
-        validate_update_descriptor(document.update, "Plugin-driven scene document");
+        validate_document_descriptors(document, "Plugin-driven scene document");
         if (document.title.empty()) throw std::runtime_error("Plugin-driven scene title must not be empty");
         Scene scene_instance{std::move(document)};
         FrameSnapshot snapshot = plugin->create_scene_frame(*instance, FrameInfo{
@@ -2008,8 +2011,7 @@ namespace spectra::scene {
         if (this->driver_runtime.updated_frame_number.has_value() && *this->driver_runtime.updated_frame_number == frame_number) return;
         PluginRuntime& runtime = this->active_plugin_runtime();
         const std::shared_ptr<const Document> document = this->document();
-        validate_timeline_descriptor(document->timeline, "Plugin-driven scene document");
-        validate_update_descriptor(document->update, "Plugin-driven scene document");
+        validate_document_descriptors(*document, "Plugin-driven scene document");
         if (!std::isfinite(delta_seconds) || delta_seconds < 0.0) throw std::runtime_error("Scene delta time is invalid");
         UpdateClock update = this->update_clock();
         validate_update_descriptor(update.descriptor, "Scene update clock");
@@ -2104,8 +2106,7 @@ namespace spectra::scene {
         const std::uint64_t scene_revision = runtime.host->scene_revision(*runtime.instance);
         if (scene_revision == this->driver_runtime.observed_scene_revision) return;
         Document document = runtime.host->create_scene_document(*runtime.instance);
-        validate_timeline_descriptor(document.timeline, "Plugin-driven scene document");
-        validate_update_descriptor(document.update, "Plugin-driven scene document");
+        validate_document_descriptors(document, "Plugin-driven scene document");
         const Timeline timeline = this->timeline();
         if (document.timeline.kind == TimelineKind::Indexed && timeline.cursor.frame_index >= document.timeline.frame_count) throw std::runtime_error("Plugin-driven scene document shrank indexed timeline below current frame");
         FrameSnapshot snapshot = runtime.host->create_scene_frame(*runtime.instance, frame_info_from_cursor(timeline.cursor, 0.0));
@@ -2145,8 +2146,7 @@ namespace spectra::scene {
         if (edit.document_replacement.has_value()) {
             Document document = std::move(*edit.document_replacement);
             document.revision = this->current_revision;
-            validate_timeline_descriptor(document.timeline, "Scene document");
-            validate_update_descriptor(document.update, "Scene document");
+            validate_document_descriptors(document, "Scene document");
             this->current_document = std::make_shared<Document>(std::move(document));
             this->current_timeline.descriptor = this->current_document->timeline;
             this->current_update.descriptor = this->current_document->update;

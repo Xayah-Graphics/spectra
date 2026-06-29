@@ -269,6 +269,18 @@ namespace spectra::scene {
             return descriptor;
         }
 
+        [[nodiscard]] ViewportNavigationTarget make_viewport_navigation_target(const SpectraSceneViewportNavigationTarget& navigation, const std::string_view context) {
+            ViewportNavigationTarget target{
+                .revision = navigation.revision,
+                .focus = make_vector3(navigation.focus, std::format("{} viewport navigation focus", context)),
+                .bounds_minimum = make_vector3(navigation.bounds_minimum, std::format("{} viewport navigation bounds minimum", context)),
+                .bounds_maximum = make_vector3(navigation.bounds_maximum, std::format("{} viewport navigation bounds maximum", context)),
+                .navigation_up = make_vector3(navigation.navigation_up, std::format("{} viewport navigation up", context)),
+            };
+            validate_viewport_navigation_target(target, context);
+            return target;
+        }
+
         [[nodiscard]] Scene::PreviewSurfaceKind preview_surface_kind_from_string(const std::string_view value, const std::string_view material_name) {
             if (value == "lit_surface") return Scene::PreviewSurfaceKind::LitSurface;
             if (value == "unlit_surface") return Scene::PreviewSurfaceKind::UnlitSurface;
@@ -596,6 +608,7 @@ namespace spectra::scene {
             if (view.struct_size != sizeof(SpectraSceneDocumentView)) throw std::runtime_error("Scene document view ABI size mismatch");
             document.timeline = make_timeline_descriptor(view.timeline, "Scene document");
             document.update = make_update_descriptor(view.update, "Scene document update");
+            document.navigation_target = make_viewport_navigation_target(view.navigation_target, "Scene document");
             const std::string active_camera_name = abi_string(view.active_camera_name, "Scene document active camera name", true);
             if (!active_camera_name.empty()) document.active_camera_name = active_camera_name;
 
@@ -1228,7 +1241,7 @@ namespace spectra::scene {
 
     struct PluginHost::State final {
         explicit State(PluginOpenRequestStorage open_request) : open_request(std::move(open_request)), native(this->open_request.plugin_path) {
-            void* entry_address = this->native.symbol("spectra_scene_plugin_v16");
+            void* entry_address = this->native.symbol("spectra_scene_plugin_v17");
             const auto entry = reinterpret_cast<SpectraScenePluginEntryFn>(entry_address);
             this->plugin = entry();
             if (this->plugin == nullptr) throw std::runtime_error(std::format("{}: Scene plugin entry returned null", this->open_request.plugin_path.string()));

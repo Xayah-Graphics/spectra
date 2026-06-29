@@ -488,7 +488,11 @@ namespace spectra::rasterizer {
 
         [[nodiscard]] std::string active_scene_id() const;
         [[nodiscard]] scene::Scene::Camera active_scene_camera() const;
+        [[nodiscard]] std::optional<scene::ViewportNavigationTarget> explicit_viewport_navigation_target() const;
+        [[nodiscard]] scene::ViewportNavigationTarget viewport_navigation_target_from_bounds(SceneBounds bounds, scene::Vector3 navigation_up) const;
+        [[nodiscard]] std::optional<scene::ViewportNavigationTarget> viewport_navigation_target() const;
         [[nodiscard]] scene::ViewportCamera initial_camera_state_from_scene() const;
+        [[nodiscard]] std::uint64_t viewport_camera_seed_revision() const;
         [[nodiscard]] scene::ViewportCamera current_viewport_camera_state() const;
         [[nodiscard]] float current_viewport_camera_distance() const;
         void ensure_viewport_camera_session();

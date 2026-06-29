@@ -3727,6 +3727,39 @@ namespace spectra::rasterizer {
         throw std::runtime_error(std::format("Spectra rasterizer viewport requires active scene camera \"{}\"", document->active_camera_name));
     }
 
+    std::optional<scene::ViewportNavigationTarget> Renderer::explicit_viewport_navigation_target() const {
+        const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
+        if (!document->navigation_target.has_value()) return std::nullopt;
+        scene::validate_viewport_navigation_target(*document->navigation_target, "Spectra rasterizer document");
+        return *document->navigation_target;
+    }
+
+    scene::ViewportNavigationTarget Renderer::viewport_navigation_target_from_bounds(const SceneBounds bounds, const scene::Vector3 navigation_up) const {
+        if (!bounds.valid) throw std::runtime_error("Spectra rasterizer cannot build a viewport navigation target without scene bounds");
+        scene::ViewportNavigationTarget target{
+            .revision = std::max<std::uint64_t>(1u, this->scene.instance->revision().value),
+            .focus = scene::Vector3{
+                (bounds.minimum.x + bounds.maximum.x) * 0.5f,
+                (bounds.minimum.y + bounds.maximum.y) * 0.5f,
+                (bounds.minimum.z + bounds.maximum.z) * 0.5f,
+            },
+            .bounds_minimum = bounds.minimum,
+            .bounds_maximum = bounds.maximum,
+            .navigation_up = navigation_up,
+        };
+        scene::validate_viewport_navigation_target(target, "Spectra rasterizer scene bounds");
+        return target;
+    }
+
+    std::optional<scene::ViewportNavigationTarget> Renderer::viewport_navigation_target() const {
+        const std::optional<scene::ViewportNavigationTarget> explicit_target = this->explicit_viewport_navigation_target();
+        if (explicit_target.has_value()) return explicit_target;
+        const SceneBounds bounds = this->scene_bounds();
+        if (!bounds.valid) return std::nullopt;
+        const scene::CameraFrame active_frame = scene::camera_frame(this->active_scene_camera().pose);
+        return this->viewport_navigation_target_from_bounds(bounds, -active_frame.down);
+    }
+
     scene::ViewportCamera Renderer::initial_camera_state_from_scene() const {
         const scene::Scene::Camera active_camera = this->active_scene_camera();
         const scene::CameraFrame active_frame = scene::camera_frame(active_camera.pose);
@@ -3737,24 +3770,15 @@ namespace spectra::rasterizer {
             .projection = active_camera.projection,
         };
 
-        const SceneBounds bounds = this->scene_bounds();
-        if (!bounds.valid) return state;
-        const scene::Vector3 center{
-            (bounds.minimum.x + bounds.maximum.x) * 0.5f,
-            (bounds.minimum.y + bounds.maximum.y) * 0.5f,
-            (bounds.minimum.z + bounds.maximum.z) * 0.5f,
-        };
-        const scene::Vector3 view_direction = center - state.pose.position;
-        if (scene::length_squared(view_direction) <= 1.0e-12f) throw std::runtime_error("Spectra rasterizer viewport camera position overlaps the scene bounds center");
-        if (scene::length_squared(scene::cross(view_direction, state.navigation_up)) <= 1.0e-12f) throw std::runtime_error("Spectra rasterizer viewport camera up is parallel to the scene bounds center direction");
-        const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
-        const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
-        const float camera_distance = spectra::rasterizer::math::length(to_render_vector(view_direction));
-        if (!std::isfinite(camera_distance) || camera_distance <= 0.0f) throw std::runtime_error("Spectra rasterizer viewport camera distance must be positive");
-        state.focus = center;
-        state.pose = scene::camera_pose_from_look_at(state.pose.position, state.focus, state.navigation_up);
-        state.projection.far_plane = std::max(state.projection.far_plane, camera_distance + radius * 4.0f);
-        return state;
+        const std::optional<scene::ViewportNavigationTarget> target = this->viewport_navigation_target();
+        if (!target.has_value()) return state;
+        return scene::viewport_camera_from_navigation_target(active_camera.pose, active_camera.projection, *target);
+    }
+
+    std::uint64_t Renderer::viewport_camera_seed_revision() const {
+        const std::optional<scene::ViewportNavigationTarget> target = this->viewport_navigation_target();
+        if (target.has_value()) return target->revision;
+        return std::max<std::uint64_t>(1u, this->scene.instance->revision().value);
     }
 
     scene::ViewportCamera Renderer::current_viewport_camera_state() const {
@@ -3771,17 +3795,17 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::ensure_viewport_camera_session() {
-        this->scene.camera_workspace->ensure_camera(this->active_scene_id(), this->initial_camera_state_from_scene());
+        this->scene.camera_workspace->ensure_camera(this->active_scene_id(), this->initial_camera_state_from_scene(), this->viewport_camera_seed_revision());
     }
 
     void Renderer::reset_viewport_camera_session() {
-        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->reset_camera(this->active_scene_id(), this->initial_camera_state_from_scene());
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->reset_camera(this->active_scene_id(), this->initial_camera_state_from_scene(), this->viewport_camera_seed_revision());
         this->apply_viewport_camera_state(snapshot);
     }
 
     void Renderer::synchronize_viewport_camera() {
         const std::string scene_id = this->active_scene_id();
-        this->scene.camera_workspace->ensure_camera(scene_id, this->initial_camera_state_from_scene());
+        this->scene.camera_workspace->ensure_camera(scene_id, this->initial_camera_state_from_scene(), this->viewport_camera_seed_revision());
         const scene::CameraSnapshot snapshot = this->scene.camera_workspace->snapshot(scene_id);
         if (this->viewport.camera_initialized && scene_id == this->scene.observed_camera_scene_id && snapshot.revision == this->scene.observed_camera_revision) return;
         this->apply_viewport_camera_state(snapshot);
@@ -3803,7 +3827,7 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::reset_viewport_camera_from_scene() {
-        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->commit(this->active_scene_id(), this->initial_camera_state_from_scene());
+        const scene::CameraSnapshot snapshot = this->scene.camera_workspace->reset_camera(this->active_scene_id(), this->initial_camera_state_from_scene(), this->viewport_camera_seed_revision());
         this->apply_viewport_camera_state(snapshot);
     }
 
@@ -3917,27 +3941,14 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::frame_viewport_scene() {
-        const SceneBounds bounds = this->scene_bounds();
-        if (!bounds.valid) {
+        const std::optional<scene::ViewportNavigationTarget> target = this->viewport_navigation_target();
+        if (!target.has_value()) {
             this->reset_viewport_camera_from_scene();
             return;
         }
-        const scene::Vector3 center{
-            (bounds.minimum.x + bounds.maximum.x) * 0.5f,
-            (bounds.minimum.y + bounds.maximum.y) * 0.5f,
-            (bounds.minimum.z + bounds.maximum.z) * 0.5f,
-        };
-        const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
-        const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
         if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
-        scene::ViewportCamera state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.pose.position) - to_render_vector(state.focus));
-        const float distance = std::clamp(radius * 2.6f, 0.02f, 1000000.0f);
-        state.focus = center;
-        state.pose.position = to_scene_vector(to_render_vector(center) + direction * distance);
-        state.pose = scene::camera_pose_from_look_at(state.pose.position, state.focus, state.navigation_up);
-        state.projection.far_plane = std::max(state.projection.far_plane, distance + radius * 6.0f);
-        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, distance + radius * 6.0f);
+        scene::ViewportCamera state = scene::frame_viewport_camera_to_navigation_target(this->current_viewport_camera_state(), *target, 2.6f);
+        this->viewport.camera_far_plane = std::max(this->viewport.camera_far_plane, state.projection.far_plane);
         this->commit_viewport_camera_state(std::move(state));
     }
 

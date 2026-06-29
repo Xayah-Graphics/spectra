@@ -61,6 +61,21 @@ namespace spectra::scene {
             if (!std::isfinite(viewport.width) || !std::isfinite(viewport.height) || !(viewport.width > 0.0f) || !(viewport.height > 0.0f)) throw std::runtime_error("Scene viewport camera size must be finite and positive");
         }
 
+        [[nodiscard]] Vector3 viewport_navigation_target_center(const ViewportNavigationTarget& target) {
+            return Vector3{
+                (target.bounds_minimum.x + target.bounds_maximum.x) * 0.5f,
+                (target.bounds_minimum.y + target.bounds_maximum.y) * 0.5f,
+                (target.bounds_minimum.z + target.bounds_maximum.z) * 0.5f,
+            };
+        }
+
+        [[nodiscard]] float viewport_navigation_target_radius(const ViewportNavigationTarget& target) {
+            const Vector3 diagonal = target.bounds_maximum - target.bounds_minimum;
+            const float radius = length(diagonal) * 0.5f;
+            if (!std::isfinite(radius) || radius <= 0.0f) throw std::runtime_error("Scene viewport navigation target radius must be positive");
+            return std::max(0.1f, radius);
+        }
+
         [[nodiscard]] float clamp_viewport_camera_pitch(const float pitch) {
             constexpr float limit = std::numbers::pi_v<float> * 0.49f;
             return std::clamp(pitch, -limit, limit);
@@ -174,6 +189,58 @@ namespace spectra::scene {
         return view;
     }
 
+    void validate_viewport_navigation_target(const ViewportNavigationTarget& target, const std::string_view context) {
+        if (target.revision == 0u) throw std::runtime_error(std::format("{} viewport navigation revision must be positive", context));
+        if (!is_finite(target.focus)) throw std::runtime_error(std::format("{} viewport navigation focus must be finite", context));
+        if (!is_finite(target.bounds_minimum)) throw std::runtime_error(std::format("{} viewport navigation bounds minimum must be finite", context));
+        if (!is_finite(target.bounds_maximum)) throw std::runtime_error(std::format("{} viewport navigation bounds maximum must be finite", context));
+        if (!(target.bounds_minimum.x < target.bounds_maximum.x) || !(target.bounds_minimum.y < target.bounds_maximum.y) || !(target.bounds_minimum.z < target.bounds_maximum.z)) throw std::runtime_error(std::format("{} viewport navigation bounds must have positive extent on every axis", context));
+        if (!is_finite(target.navigation_up)) throw std::runtime_error(std::format("{} viewport navigation up must be finite", context));
+        static_cast<void>(normalize(target.navigation_up, std::format("{} viewport navigation up", context)));
+    }
+
+    ViewportCamera viewport_camera_from_navigation_target(CameraPose pose, CameraProjection projection, const ViewportNavigationTarget& target) {
+        validate_camera_pose(pose);
+        validate_camera_projection(projection);
+        validate_viewport_navigation_target(target, "Scene");
+        const Vector3 navigation_up = normalize(target.navigation_up, "Scene viewport navigation target up");
+        const Vector3 view_direction = target.focus - pose.position;
+        if (length_squared(view_direction) <= 1.0e-12f) throw std::runtime_error("Scene viewport camera position overlaps the navigation target focus");
+        if (length_squared(cross(view_direction, navigation_up)) <= 1.0e-12f) throw std::runtime_error("Scene viewport camera up is parallel to the navigation target direction");
+        const float radius = viewport_navigation_target_radius(target);
+        const float camera_distance = length(view_direction);
+        if (!std::isfinite(camera_distance) || camera_distance <= 0.0f) throw std::runtime_error("Scene viewport camera distance must be positive");
+        projection.far_plane = std::max(projection.far_plane, camera_distance + radius * 4.0f);
+        ViewportCamera state{
+            .pose = camera_pose_from_look_at(pose.position, target.focus, navigation_up),
+            .focus = target.focus,
+            .navigation_up = navigation_up,
+            .projection = projection,
+        };
+        validate_viewport_camera(state);
+        return state;
+    }
+
+    ViewportCamera frame_viewport_camera_to_navigation_target(ViewportCamera state, const ViewportNavigationTarget& target, const float distance_scale) {
+        validate_viewport_camera(state);
+        validate_viewport_navigation_target(target, "Scene");
+        if (!std::isfinite(distance_scale) || distance_scale <= 0.0f) throw std::runtime_error("Scene viewport frame distance scale must be positive");
+        const Vector3 center = viewport_navigation_target_center(target);
+        Vector3 direction = state.pose.position - state.focus;
+        const float direction_length = length(direction);
+        if (!std::isfinite(direction_length) || direction_length <= 0.0f) throw std::runtime_error("Scene viewport frame direction must be valid");
+        direction = direction / direction_length;
+        const float radius = viewport_navigation_target_radius(target);
+        const float distance = std::clamp(radius * distance_scale, 0.02f, 1000000.0f);
+        state.focus = center;
+        state.navigation_up = normalize(target.navigation_up, "Scene viewport navigation target up");
+        state.pose.position = center + direction * distance;
+        state.pose = camera_pose_from_look_at(state.pose.position, state.focus, state.navigation_up);
+        state.projection.far_plane = std::max(state.projection.far_plane, distance + radius * 6.0f);
+        validate_viewport_camera(state);
+        return state;
+    }
+
     CameraFrame camera_frame(const CameraPose& pose) {
         validate_camera_pose(pose);
         const Quaternion rotation = normalized_quaternion(pose.orientation, "Scene camera pose");
@@ -278,26 +345,32 @@ namespace spectra::scene {
         };
     }
 
-    void CameraWorkspace::ensure_camera(std::string scene_id, ViewportCamera state) {
+    void CameraWorkspace::ensure_camera(std::string scene_id, ViewportCamera state, const std::uint64_t seed_revision) {
         validate_scene_id(scene_id);
         validate_viewport_camera(state);
+        if (seed_revision == 0u) throw std::runtime_error("Scene camera workspace seed revision must be positive");
         std::scoped_lock lock{this->mutex};
-        if (this->cameras.contains(scene_id)) return;
-        this->cameras.emplace(std::move(scene_id), CameraSnapshot{
-                                                       .revision = CameraRevision{1},
-                                                       .state    = std::move(state),
-                                                   });
+        const std::map<std::string, CameraSnapshot>::iterator found = this->cameras.find(scene_id);
+        if (found != this->cameras.end() && found->second.seed_revision == seed_revision) return;
+        const CameraRevision revision = found == this->cameras.end() ? CameraRevision{1u} : CameraRevision{found->second.revision.value + 1u};
+        this->cameras.insert_or_assign(std::move(scene_id), CameraSnapshot{
+                                                           .revision = revision,
+                                                           .state = std::move(state),
+                                                           .seed_revision = seed_revision,
+                                                       });
     }
 
-    CameraSnapshot CameraWorkspace::reset_camera(std::string scene_id, ViewportCamera state) {
+    CameraSnapshot CameraWorkspace::reset_camera(std::string scene_id, ViewportCamera state, const std::uint64_t seed_revision) {
         validate_scene_id(scene_id);
         validate_viewport_camera(state);
+        if (seed_revision == 0u) throw std::runtime_error("Scene camera workspace seed revision must be positive");
         std::scoped_lock lock{this->mutex};
         const std::map<std::string, CameraSnapshot>::iterator found = this->cameras.find(scene_id);
         const CameraRevision revision = found == this->cameras.end() ? CameraRevision{1u} : CameraRevision{found->second.revision.value + 1u};
         CameraSnapshot snapshot{
             .revision = revision,
             .state    = std::move(state),
+            .seed_revision = seed_revision,
         };
         this->cameras.insert_or_assign(std::move(scene_id), snapshot);
         return snapshot;
@@ -320,6 +393,7 @@ namespace spectra::scene {
         found->second = CameraSnapshot{
             .revision = CameraRevision{found->second.revision.value + 1u},
             .state    = std::move(state),
+            .seed_revision = found->second.seed_revision,
         };
         return found->second;
     }

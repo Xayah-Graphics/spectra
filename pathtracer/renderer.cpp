@@ -828,10 +828,6 @@ namespace spectra::pathtracer {
 
 
 namespace {
-    void validate_finite_vector(const spectra::Vector3f& vector, const char* message) {
-        if (!std::isfinite(vector.x) || !std::isfinite(vector.y) || !std::isfinite(vector.z)) throw std::runtime_error(message);
-    }
-
     void validate_transform_matrix(const spectra::Transform& transform, const char* message) {
         const spectra::SquareMatrix<4>& matrix  = transform.GetMatrix();
         const spectra::SquareMatrix<4>& inverse = transform.GetInverseMatrix();
@@ -840,52 +836,6 @@ namespace {
                 if (!std::isfinite(static_cast<float>(matrix[row][column])) || !std::isfinite(static_cast<float>(inverse[row][column]))) throw std::runtime_error(message);
             }
         }
-    }
-
-    [[nodiscard]] float finite_length(const spectra::Vector3f& vector, const char* error_message) {
-        validate_finite_vector(vector, error_message);
-        const float length = spectra::Length(vector);
-        if (!std::isfinite(length)) throw std::runtime_error(error_message);
-        return length;
-    }
-
-    [[nodiscard]] spectra::Vector3f normalized_vector(const spectra::Vector3f& vector, const char* error_message) {
-        const float length = finite_length(vector, error_message);
-        if (!(length > 1.0e-20f)) throw std::runtime_error(error_message);
-        return vector / length;
-    }
-
-    [[nodiscard]] spectra::Point3f camera_focus_center_from_bounds(const spectra::Point3f& eye, const spectra::Vector3f& forward, const spectra::Bounds3f& focus_bounds) {
-        validate_bounds(focus_bounds, "Camera focus bounds are invalid");
-
-        const spectra::Point3f bounds_center{
-            (focus_bounds.pMin.x + focus_bounds.pMax.x) * 0.5f,
-            (focus_bounds.pMin.y + focus_bounds.pMax.y) * 0.5f,
-            (focus_bounds.pMin.z + focus_bounds.pMax.z) * 0.5f,
-        };
-        float focus_distance = spectra::Dot(bounds_center - eye, forward);
-
-        constexpr float parallel_epsilon = 1.0e-7f;
-        constexpr float distance_epsilon = 1.0e-5f;
-        float ray_min                    = 0.0f;
-        float ray_max                    = std::numeric_limits<float>::infinity();
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            if (std::abs(forward[axis]) <= parallel_epsilon) {
-                if (eye[axis] < focus_bounds.pMin[axis] || eye[axis] > focus_bounds.pMax[axis]) throw std::runtime_error("Camera focus bounds do not intersect the initial view ray");
-            } else {
-                float t0 = (focus_bounds.pMin[axis] - eye[axis]) / forward[axis];
-                float t1 = (focus_bounds.pMax[axis] - eye[axis]) / forward[axis];
-                if (t0 > t1) std::swap(t0, t1);
-                ray_min = std::max(ray_min, t0);
-                ray_max = std::min(ray_max, t1);
-                if (ray_min > ray_max) throw std::runtime_error("Camera focus bounds do not intersect the initial view ray");
-            }
-        }
-        if (!(ray_max > distance_epsilon)) throw std::runtime_error("Camera focus bounds must be in front of the initial camera");
-        const float lower_bound = std::max(ray_min, distance_epsilon);
-        focus_distance          = std::clamp(focus_distance, lower_bound, ray_max);
-        if (!(focus_distance > distance_epsilon) || !std::isfinite(focus_distance)) throw std::runtime_error("Camera focus distance is invalid");
-        return eye + forward * focus_distance;
     }
 
     [[nodiscard]] spectra::scene::SceneTransform scene_transform_from_pathtracer_transform(const spectra::Transform& transform) {
@@ -943,24 +893,36 @@ namespace spectra::pathtracer {
         return info.camera_fov_degrees;
     }
 
-    [[nodiscard]] scene::ViewportCamera viewport_camera_from_base_transform(const spectra::Transform& camera_from_world, const spectra::Bounds3f& focus_bounds, const float fov_degrees) {
+    [[nodiscard]] scene::ViewportNavigationTarget viewport_navigation_target_from_pathtracer_bounds(const spectra::Bounds3f& focus_bounds, const scene::Vector3 navigation_up, const std::uint64_t revision) {
+        validate_bounds(focus_bounds, "Spectra pathtracer camera initial focus bounds are invalid");
+        scene::ViewportNavigationTarget target{
+            .revision = revision,
+            .focus = scene::Vector3{
+                (focus_bounds.pMin.x + focus_bounds.pMax.x) * 0.5f,
+                (focus_bounds.pMin.y + focus_bounds.pMax.y) * 0.5f,
+                (focus_bounds.pMin.z + focus_bounds.pMax.z) * 0.5f,
+            },
+            .bounds_minimum = scene::Vector3{focus_bounds.pMin.x, focus_bounds.pMin.y, focus_bounds.pMin.z},
+            .bounds_maximum = scene::Vector3{focus_bounds.pMax.x, focus_bounds.pMax.y, focus_bounds.pMax.z},
+            .navigation_up = navigation_up,
+        };
+        scene::validate_viewport_navigation_target(target, "Spectra pathtracer scene bounds");
+        return target;
+    }
+
+    [[nodiscard]] scene::ViewportCamera viewport_camera_from_base_transform(const spectra::Transform& camera_from_world, const scene::ViewportNavigationTarget& target, const float fov_degrees) {
         const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
-        const spectra::Point3f eye      = world_from_camera(spectra::Point3f{0.0f, 0.0f, 0.0f});
-        const spectra::Vector3f forward = normalized_vector(world_from_camera(spectra::Vector3f{0.0f, 0.0f, 1.0f}), "Base camera forward vector is invalid");
         const scene::SceneTransform scene_world_from_camera = scene_transform_from_pathtracer_transform(world_from_camera);
         const scene::CameraPose pose = scene::camera_pose_from_world_from_camera(scene_world_from_camera);
-        const scene::CameraFrame frame = scene::camera_frame(pose);
-        return scene::ViewportCamera{
-            .pose = pose,
-            .focus = to_scene_vector(camera_focus_center_from_bounds(eye, forward, focus_bounds)),
-            .navigation_up = -frame.down,
-            .projection = scene::CameraProjection{
+        return scene::viewport_camera_from_navigation_target(
+            pose,
+            scene::CameraProjection{
                 .kind = scene::CameraProjectionKind::Perspective,
                 .vertical_fov_degrees = fov_degrees,
                 .near_plane = 0.01f,
                 .far_plane = 200.0f,
             },
-        };
+            target);
     }
 
     [[nodiscard]] spectra::Transform moving_from_camera_from_viewport_camera(const spectra::Transform& base_camera_from_world, const scene::ViewportCamera& state) {
@@ -1182,6 +1144,11 @@ namespace spectra::pathtracer {
         void request_viewport_screenshot();
         void record_viewport_screenshot_copy(const vk::raii::CommandBuffer& command_buffer);
         void consume_completed_screenshot(std::uint32_t frame_index);
+        [[nodiscard]] std::optional<scene::ViewportNavigationTarget> explicit_viewport_navigation_target() const;
+        [[nodiscard]] scene::ViewportNavigationTarget fallback_viewport_navigation_target(scene::CameraPose pose) const;
+        [[nodiscard]] scene::ViewportNavigationTarget viewport_navigation_target(scene::CameraPose pose) const;
+        [[nodiscard]] scene::ViewportCamera initial_camera_state() const;
+        [[nodiscard]] std::uint64_t viewport_camera_seed_revision() const;
         void initialize_camera_state();
         void synchronize_camera_workspace();
         void apply_camera_snapshot(const scene::CameraSnapshot& snapshot);
@@ -1744,13 +1711,44 @@ namespace spectra::pathtracer {
         this->screenshot.path.clear();
     }
 
-    void Renderer::Impl::initialize_camera_state() {
+    std::optional<scene::ViewportNavigationTarget> Renderer::Impl::explicit_viewport_navigation_target() const {
+        const std::shared_ptr<const scene::Scene::Document> document = this->source_scene->document();
+        if (!document->navigation_target.has_value()) return std::nullopt;
+        scene::validate_viewport_navigation_target(*document->navigation_target, "Spectra pathtracer document");
+        return *document->navigation_target;
+    }
+
+    scene::ViewportNavigationTarget Renderer::Impl::fallback_viewport_navigation_target(const scene::CameraPose pose) const {
+        if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
+        const scene::CameraFrame frame = scene::camera_frame(pose);
+        return viewport_navigation_target_from_pathtracer_bounds(this->render_pipeline->camera_initial_focus_bounds(), -frame.down, std::max<std::uint64_t>(1u, this->source_scene->revision().value));
+    }
+
+    scene::ViewportNavigationTarget Renderer::Impl::viewport_navigation_target(const scene::CameraPose pose) const {
+        const std::optional<scene::ViewportNavigationTarget> explicit_target = this->explicit_viewport_navigation_target();
+        if (explicit_target.has_value()) return *explicit_target;
+        return this->fallback_viewport_navigation_target(pose);
+    }
+
+    scene::ViewportCamera Renderer::Impl::initial_camera_state() const {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
+        const spectra::Transform world_from_camera = spectra::Inverse(this->scene_camera_from_world);
+        const scene::CameraPose pose = scene::camera_pose_from_world_from_camera(scene_transform_from_pathtracer_transform(world_from_camera));
+        return viewport_camera_from_base_transform(this->scene_camera_from_world, this->viewport_navigation_target(pose), interactive_camera_fov_degrees(this->active_scene_info()));
+    }
+
+    std::uint64_t Renderer::Impl::viewport_camera_seed_revision() const {
+        const std::optional<scene::ViewportNavigationTarget> explicit_target = this->explicit_viewport_navigation_target();
+        if (explicit_target.has_value()) return explicit_target->revision;
+        return std::max<std::uint64_t>(1u, this->source_scene->revision().value);
+    }
+
+    void Renderer::Impl::initialize_camera_state() {
         this->camera.camera_from_world = this->scene_camera_from_world;
         this->camera.input_enabled    = false;
-        const scene::ViewportCamera state = viewport_camera_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
-        this->camera_workspace->ensure_camera(this->active_scene_id(), state);
+        const scene::ViewportCamera state = this->initial_camera_state();
+        this->camera_workspace->ensure_camera(this->active_scene_id(), state, this->viewport_camera_seed_revision());
         this->apply_camera_snapshot(this->camera_workspace->snapshot(this->active_scene_id()));
     }
 
@@ -1781,8 +1779,8 @@ namespace spectra::pathtracer {
     void Renderer::Impl::reset_camera() {
         if (!this->camera.initialized) throw std::runtime_error("Cannot reset camera before camera state is initialized");
         if (!this->pipeline_ready()) throw std::runtime_error("Cannot reset camera without an active Spectra pathtracer");
-        const scene::ViewportCamera state = viewport_camera_from_base_transform(this->camera.camera_from_world, this->render_pipeline->camera_initial_focus_bounds(), interactive_camera_fov_degrees(this->active_scene_info()));
-        const scene::CameraSnapshot snapshot = this->camera_workspace->commit(this->active_scene_id(), state);
+        const scene::ViewportCamera state = this->initial_camera_state();
+        const scene::CameraSnapshot snapshot = this->camera_workspace->reset_camera(this->active_scene_id(), state, this->viewport_camera_seed_revision());
         this->apply_camera_snapshot(snapshot);
         this->request_accumulation_reset();
     }

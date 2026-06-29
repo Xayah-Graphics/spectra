@@ -613,6 +613,7 @@ namespace spectra::scene {
             std::string source{};
             TimelineDescriptor timeline{};
             UpdateDescriptor update{};
+            std::optional<ViewportNavigationTarget> navigation_target{};
             std::vector<Camera> cameras{};
             std::string active_camera_name{};
             std::vector<PreviewMaterial> materials{};

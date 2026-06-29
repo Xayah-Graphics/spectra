@@ -3,7 +3,7 @@ export module spectra.scene.plugin_abi;
 import std;
 
 export namespace spectra::scene {
-    constexpr std::uint32_t plugin_abi_version = 16u;
+    constexpr std::uint32_t plugin_abi_version = 17u;
     typedef void SpectraSceneInstance;
 
     typedef std::uint32_t SpectraSceneResult;
@@ -451,10 +451,19 @@ export namespace spectra::scene {
         double step_delta_seconds{};
     };
 
+    struct SpectraSceneViewportNavigationTarget {
+        std::uint64_t revision{};
+        float focus[3]{};
+        float bounds_minimum[3]{};
+        float bounds_maximum[3]{};
+        float navigation_up[3]{};
+    };
+
     struct SpectraSceneDocumentView {
         std::uint64_t struct_size{};
         SpectraSceneTimeline timeline{};
         SpectraSceneUpdateDescriptor update{};
+        SpectraSceneViewportNavigationTarget navigation_target{};
         const char* active_camera_name{};
         SpectraSceneItems items{};
     };
