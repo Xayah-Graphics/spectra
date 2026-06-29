@@ -967,11 +967,57 @@ namespace spectra::scene {
             };
         }
 
+#if defined(_WIN32)
+        class PathDllDirectories final {
+        public:
+            PathDllDirectories() {
+                const DWORD required_size = GetEnvironmentVariableW(L"PATH", nullptr, 0u);
+                if (required_size == 0u) return;
+
+                std::wstring path_value(required_size, L'\0');
+                const DWORD written_size = GetEnvironmentVariableW(L"PATH", path_value.data(), required_size);
+                if (written_size == 0u) throw std::runtime_error(std::format("GetEnvironmentVariableW(PATH) failed, Win32 error {}", GetLastError()));
+                path_value.resize(written_size);
+
+                std::set<std::wstring> registered_paths{};
+                std::size_t offset = 0u;
+                while (offset <= path_value.size()) {
+                    const std::size_t separator = path_value.find(L';', offset);
+                    std::wstring entry = separator == std::wstring::npos ? path_value.substr(offset) : path_value.substr(offset, separator - offset);
+                    if (entry.size() >= 2u && entry.front() == L'"' && entry.back() == L'"') entry = entry.substr(1u, entry.size() - 2u);
+                    if (!entry.empty()) {
+                        const std::filesystem::path directory{entry};
+                        std::error_code error{};
+                        if (directory.is_absolute() && std::filesystem::is_directory(directory, error) && registered_paths.insert(directory.lexically_normal().wstring()).second) {
+                            const DLL_DIRECTORY_COOKIE cookie = AddDllDirectory(directory.wstring().c_str());
+                            if (cookie == nullptr) throw std::runtime_error(std::format("{}: AddDllDirectory failed, Win32 error {}", directory.string(), GetLastError()));
+                            this->cookies.push_back(cookie);
+                        }
+                    }
+                    if (separator == std::wstring::npos) break;
+                    offset = separator + 1u;
+                }
+            }
+
+            PathDllDirectories(const PathDllDirectories& other) = delete;
+            PathDllDirectories(PathDllDirectories&& other) = delete;
+            PathDllDirectories& operator=(const PathDllDirectories& other) = delete;
+            PathDllDirectories& operator=(PathDllDirectories&& other) = delete;
+
+            ~PathDllDirectories() noexcept {
+                for (const DLL_DIRECTORY_COOKIE cookie : this->cookies) static_cast<void>(RemoveDllDirectory(cookie));
+            }
+
+        private:
+            std::vector<DLL_DIRECTORY_COOKIE> cookies{};
+        };
+#endif
+
         class NativeLibrary final {
         public:
             explicit NativeLibrary(std::filesystem::path path) : path(std::move(path)) {
 #if defined(_WIN32)
-                this->handle = static_cast<void*>(LoadLibraryExW(this->path.wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
+                this->handle = static_cast<void*>(LoadLibraryExW(this->path.wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS));
                 if (this->handle == nullptr) throw std::runtime_error(std::format("{}: failed to load Scene plugin, Win32 error {}", this->path.string(), GetLastError()));
 #else
                 this->handle = ::dlopen(this->path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
@@ -1008,6 +1054,9 @@ namespace spectra::scene {
 
         private:
             std::filesystem::path path{};
+#if defined(_WIN32)
+            PathDllDirectories path_dll_directories{};
+#endif
             void* handle{};
         };
 
