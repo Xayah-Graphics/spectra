@@ -101,7 +101,7 @@ namespace spectra::pathtracer {
         CUDA_CHECK(cudaFree(ptr));
     }
 
-    bool PathtracerMemoryScope::do_is_equal(const pstd::pmr::memory_resource& other) const noexcept {
+    bool PathtracerMemoryScope::do_is_equal(const memory_resource& other) const noexcept {
         return this == &other;
     }
 

@@ -114,7 +114,7 @@ namespace spectra::pathtracer {
         bool haveMedia{false};
         MeshBufferCache meshBufferCache{};
         InternCache<DenselySampledSpectrum> lightSpectrumCache;
-        std::map<std::string, spectra::MeasuredBxDFData*> measuredBxDFData{};
+        std::map<std::string, MeasuredBxDFData*> measuredBxDFData{};
         ThreadLocal<Allocator> threadAllocators;
     };
 } // namespace spectra::pathtracer

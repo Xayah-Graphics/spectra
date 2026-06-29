@@ -296,9 +296,9 @@ namespace spectra::pathtracer {
         [[nodiscard]] int sampler_sample_count() const;
         [[nodiscard]] int target_sample_count() const;
         [[nodiscard]] float current_exposure() const;
-        [[nodiscard]] spectra::Bounds3f camera_initial_focus_bounds() const;
+        [[nodiscard]] Bounds3f camera_initial_focus_bounds() const;
         [[nodiscard]] std::array<int, 2> film_resolution() const;
-        [[nodiscard]] spectra::Transform camera_from_world_transform() const;
+        [[nodiscard]] Transform camera_from_world_transform() const;
         [[nodiscard]] float completion_ratio() const;
         [[nodiscard]] VkDescriptorSet active_descriptor() const;
         [[nodiscard]] vk::Semaphore active_cuda_complete_semaphore() const;
@@ -307,7 +307,7 @@ namespace spectra::pathtracer {
         void request_reset_accumulation();
         void release_viewport_descriptors_noexcept() noexcept;
         void create_viewport_descriptors();
-        [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const spectra::Transform& moving_from_camera);
+        [[nodiscard]] RenderFrameResult render_frame(std::uint32_t frame_index, const Transform& moving_from_camera);
         void record_copy(const vk::raii::CommandBuffer& command_buffer);
         void record_copy(const vk::raii::CommandBuffer& command_buffer, vk::Buffer screenshot_buffer);
 
@@ -316,14 +316,14 @@ namespace spectra::pathtracer {
         std::unique_ptr<WavefrontIntegrator> integrator{};
         RenderConfig render_config{};
         scene::Scene::Revision scene_revision{};
-        spectra::Bounds2i pixel_bounds{};
-        spectra::Vector2i resolution{};
-        spectra::Transform render_from_camera{};
-        spectra::Transform camera_from_render{};
-        spectra::Transform camera_from_world{};
+        Bounds2i pixel_bounds{};
+        Vector2i resolution{};
+        Transform render_from_camera{};
+        Transform camera_from_render{};
+        Transform camera_from_world{};
         vk::Format display_format{vk::Format::eR32G32B32A32Sfloat};
         float exposure{1.0f};
-        spectra::Bounds3f initial_focus_bounds{};
+        Bounds3f initial_focus_bounds{};
         int sample_index{0};
         int max_samples{0};
         int target_samples{0};
@@ -664,7 +664,7 @@ namespace spectra::pathtracer {
         return this->exposure;
     }
 
-    [[nodiscard]] spectra::Bounds3f RenderPipeline::camera_initial_focus_bounds() const {
+    [[nodiscard]] Bounds3f RenderPipeline::camera_initial_focus_bounds() const {
         const RenderPipeline& pipeline = *this;
         validate_bounds(pipeline.initial_focus_bounds, "Spectra pathtracer camera initial focus bounds are invalid");
         return pipeline.initial_focus_bounds;
@@ -676,7 +676,7 @@ namespace spectra::pathtracer {
         return {pipeline.resolution.x, pipeline.resolution.y};
     }
 
-    [[nodiscard]] spectra::Transform RenderPipeline::camera_from_world_transform() const {
+    [[nodiscard]] Transform RenderPipeline::camera_from_world_transform() const {
         return this->camera_from_world;
     }
 
@@ -725,25 +725,25 @@ namespace spectra::pathtracer {
         create_pipeline_viewport_descriptors(*this);
     }
 
-    [[nodiscard]] RenderPipeline::RenderFrameResult RenderPipeline::render_frame(const std::uint32_t frame_index, const spectra::Transform& moving_from_camera) {
+    [[nodiscard]] RenderPipeline::RenderFrameResult RenderPipeline::render_frame(const std::uint32_t frame_index, const Transform& moving_from_camera) {
         RenderPipeline& pipeline = *this;
         if (frame_index >= pipeline.frames.size()) throw std::runtime_error("Spectra pathtracer frame index is out of range");
         if (pipeline.resolution.x <= 0 || pipeline.resolution.y <= 0) throw std::runtime_error("Spectra pathtracer film resolution must be positive before statistics are queried");
         pipeline.active_frame_index = frame_index;
         RenderFrameResult result{};
         const std::uint64_t sample_pixels      = static_cast<std::uint64_t>(pipeline.resolution.x) * static_cast<std::uint64_t>(pipeline.resolution.y);
-        const spectra::Transform camera_motion = pipeline.render_from_camera * moving_from_camera * pipeline.camera_from_render;
+        const Transform camera_motion = pipeline.render_from_camera * moving_from_camera * pipeline.camera_from_render;
         if (pipeline.reset_requested) {
             if (pipeline.physical_device == nullptr || pipeline.device == nullptr) throw std::runtime_error("Spectra pathtracer Vulkan handles are not available for reset");
             pipeline.device->waitIdle();
             destroy_pipeline_frame_resources_noexcept(pipeline);
             pipeline.integrator->ResetFilm(pipeline.pixel_bounds);
-            spectra::GPUWait();
+            GPUWait();
             pipeline.sample_index    = 0;
             pipeline.reset_requested = false;
             pipeline.integrator->RenderSample(pipeline.pixel_bounds, camera_motion, pipeline.sample_index);
             ++pipeline.sample_index;
-            spectra::GPUWait();
+            GPUWait();
             create_pipeline_frame_resources(pipeline, *pipeline.physical_device, *pipeline.device, pipeline.frame_count);
             create_pipeline_viewport_descriptors(pipeline);
             pipeline.active_frame_index = frame_index;
@@ -871,20 +871,20 @@ namespace {
 } // namespace
 
 namespace spectra::pathtracer {
-    [[nodiscard]] scene::Vector3 to_scene_vector(const spectra::Point3f& value) {
+    [[nodiscard]] scene::Vector3 to_scene_vector(const Point3f& value) {
         return scene::Vector3{value.x, value.y, value.z};
     }
 
-    [[nodiscard]] scene::Vector3 to_scene_vector(const spectra::Vector3f& value) {
+    [[nodiscard]] scene::Vector3 to_scene_vector(const Vector3f& value) {
         return scene::Vector3{value.x, value.y, value.z};
     }
 
-    [[nodiscard]] spectra::Point3f to_point(const scene::Vector3 value) {
-        return spectra::Point3f{value.x, value.y, value.z};
+    [[nodiscard]] Point3f to_point(const scene::Vector3 value) {
+        return Point3f{value.x, value.y, value.z};
     }
 
-    [[nodiscard]] spectra::Vector3f to_vector(const scene::Vector3 value) {
-        return spectra::Vector3f{value.x, value.y, value.z};
+    [[nodiscard]] Vector3f to_vector(const scene::Vector3 value) {
+        return Vector3f{value.x, value.y, value.z};
     }
 
     [[nodiscard]] float interactive_camera_fov_degrees(const scene::Scene::Info& info) {
@@ -893,7 +893,7 @@ namespace spectra::pathtracer {
         return info.camera_fov_degrees;
     }
 
-    [[nodiscard]] scene::ViewportNavigationTarget viewport_navigation_target_from_pathtracer_bounds(const spectra::Bounds3f& focus_bounds, const scene::Vector3 navigation_up, const std::uint64_t revision) {
+    [[nodiscard]] scene::ViewportNavigationTarget viewport_navigation_target_from_pathtracer_bounds(const Bounds3f& focus_bounds, const scene::Vector3 navigation_up, const std::uint64_t revision) {
         validate_bounds(focus_bounds, "Spectra pathtracer camera initial focus bounds are invalid");
         scene::ViewportNavigationTarget target{
             .revision = revision,
@@ -910,8 +910,8 @@ namespace spectra::pathtracer {
         return target;
     }
 
-    [[nodiscard]] scene::ViewportCamera viewport_camera_from_base_transform(const spectra::Transform& camera_from_world, const scene::ViewportNavigationTarget& target, const float fov_degrees) {
-        const spectra::Transform world_from_camera = spectra::Inverse(camera_from_world);
+    [[nodiscard]] scene::ViewportCamera viewport_camera_from_base_transform(const Transform& camera_from_world, const scene::ViewportNavigationTarget& target, const float fov_degrees) {
+        const Transform world_from_camera = Inverse(camera_from_world);
         const scene::SceneTransform scene_world_from_camera = scene_transform_from_pathtracer_transform(world_from_camera);
         const scene::CameraPose pose = scene::camera_pose_from_world_from_camera(scene_world_from_camera);
         return scene::viewport_camera_from_navigation_target(
@@ -925,10 +925,10 @@ namespace spectra::pathtracer {
             target);
     }
 
-    [[nodiscard]] spectra::Transform moving_from_camera_from_viewport_camera(const spectra::Transform& base_camera_from_world, const scene::ViewportCamera& state) {
+    [[nodiscard]] Transform moving_from_camera_from_viewport_camera(const Transform& base_camera_from_world, const scene::ViewportCamera& state) {
         const scene::SceneTransform world_from_current_camera = scene::camera_world_from_camera(state.pose);
-        const spectra::Transform current_camera_from_world = spectra::Inverse(pathtracer_transform_from_scene_transform(world_from_current_camera));
-        return base_camera_from_world * spectra::Inverse(current_camera_from_world);
+        const Transform current_camera_from_world = Inverse(pathtracer_transform_from_scene_transform(world_from_current_camera));
+        return base_camera_from_world * Inverse(current_camera_from_world);
     }
 
     [[nodiscard]] std::uint64_t checked_volume_cell_count(const scene::Scene::VolumeGrid& volume) {
@@ -1186,7 +1186,7 @@ namespace spectra::pathtracer {
         RuntimeConfig runtime_config{.thread_count = 30, .cuda_device = 0};
         RenderConfig render_config{.rendering_space = RenderingSpace::CameraWorld, .default_pixel_samples = interactive_default_pixel_samples};
         std::array<int, 2> scene_film_resolution{0, 0};
-        spectra::Transform scene_camera_from_world{};
+        Transform scene_camera_from_world{};
         int scene_sampler_sample_count{0};
         int override_pixel_samples_input{interactive_default_pixel_samples};
         bool sample_config_rebuild_requested{false};
@@ -1225,8 +1225,8 @@ namespace spectra::pathtracer {
                     .far_plane = 200.0f,
                 }
             );
-            spectra::Transform moving_from_camera{};
-            spectra::Transform camera_from_world{};
+            Transform moving_from_camera{};
+            Transform camera_from_world{};
             scene::CameraRevision observed_revision{};
         } camera;
 
@@ -1405,7 +1405,7 @@ namespace spectra::pathtracer {
             const SceneSupportReport report = analyze_scene(source_snapshot);
             if (!report.supported) {
                 this->scene_status_state = "Unsupported";
-                this->scene_status_detail = std::format("{} cannot translate scene \"{}\"", Renderer::name(), source_snapshot.name);
+                this->scene_status_detail = std::format("{} cannot translate scene \"{}\"", name(), source_snapshot.name);
                 if (!report.diagnostics.empty()) this->scene_status_detail = std::format("{}: {}", this->scene_status_detail, report.diagnostics.front().message);
                 return;
             }
@@ -1415,7 +1415,7 @@ namespace spectra::pathtracer {
             this->scene_status_state.clear();
             this->scene_status_detail.clear();
             this->scene_film_resolution      = {0, 0};
-            this->scene_camera_from_world    = spectra::Transform{};
+            this->scene_camera_from_world    = Transform{};
             this->scene_sampler_sample_count = 0;
         } catch (const scene::EmptySceneError&) {
             this->scene_status_state = "Empty Scene";
@@ -1503,7 +1503,7 @@ namespace spectra::pathtracer {
         this->scene_status_state = "Not Renderable";
         this->scene_status_detail = "Scene is empty. Add geometry or open a PBRT scene.";
         this->scene_film_resolution      = {0, 0};
-        this->scene_camera_from_world    = spectra::Transform{};
+        this->scene_camera_from_world    = Transform{};
         this->scene_sampler_sample_count = 0;
         this->camera.initialized         = false;
         this->camera.observed_revision   = scene::CameraRevision{};
@@ -1733,7 +1733,7 @@ namespace spectra::pathtracer {
     scene::ViewportCamera Renderer::Impl::initial_camera_state() const {
         if (!this->scene_info.has_value()) throw std::runtime_error("Cannot initialize camera state without an active Spectra scene");
         if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer camera focus bounds requested without an active render pipeline");
-        const spectra::Transform world_from_camera = spectra::Inverse(this->scene_camera_from_world);
+        const Transform world_from_camera = Inverse(this->scene_camera_from_world);
         const scene::CameraPose pose = scene::camera_pose_from_world_from_camera(scene_transform_from_pathtracer_transform(world_from_camera));
         return viewport_camera_from_base_transform(this->scene_camera_from_world, this->viewport_navigation_target(pose), interactive_camera_fov_degrees(this->active_scene_info()));
     }
@@ -2324,7 +2324,7 @@ namespace spectra::pathtracer {
         host.register_panel(Panel{
             .id                  = "pathtracer.viewport",
             .title               = "Viewport",
-            .owner_renderer      = std::string{Renderer::name()},
+            .owner_renderer      = std::string{name()},
             .window_flags        = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground,
             .closable            = false,
             .zero_window_padding = true,
@@ -2334,7 +2334,7 @@ namespace spectra::pathtracer {
             .id             = "renderer.settings",
             .title          = "Renderer",
             .icon           = ICON_MS_TUNE,
-            .owner_renderer = std::string{Renderer::name()},
+            .owner_renderer = std::string{name()},
             .shortcut_label = "F8",
             .shortcut_key   = ImGuiKey_F8,
             .draw           = [this] { this->draw_workspace_tab(); },

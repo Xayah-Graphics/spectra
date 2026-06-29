@@ -152,7 +152,7 @@ namespace spectra::pathtracer {
 
     void GpuRuntime::UploadKernelConfig(const KernelConfig& config) {
         if (!this->initialized) throw std::runtime_error(diagnostics::Format("Spectra GPU runtime is not initialized."));
-        spectra::pathtracer::UploadKernelConfig(config);
+        pathtracer::UploadKernelConfig(config);
     }
 
     void GpuRuntime::WaitGpuNoexcept() const noexcept {
@@ -1234,7 +1234,8 @@ namespace spectra::pathtracer {
         ParallelFor(resolution.x * resolution.y, [=] __host__ __device__(int index) mutable {
             Point2i p(index % resolution.x, index / resolution.x);
             RGB rgb          = exposure * film.GetPixelRGB(p + pixelBounds.pMin);
-            int offset       = 4 * index;
+            const int outputIndex = p.x + (resolution.y - 1 - p.y) * resolution.x;
+            const int offset      = 4 * outputIndex;
             rgba[offset]     = static_cast<float>(rgb.r);
             rgba[offset + 1] = static_cast<float>(rgb.g);
             rgba[offset + 2] = static_cast<float>(rgb.b);

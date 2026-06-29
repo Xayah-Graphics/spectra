@@ -219,9 +219,9 @@ namespace spectra::optix {
                         edgeLength,
                         [&](Point3f* pCPU, const Normal3f* nCPU, const Point2f* uvCPU, int nVertices) {
                             pathtracer::PathtracerMemoryScope displacementMemory(pathtracer::PathtracerMemoryScopeKind::Transient, "ply displacement");
-                            Point3f* p  = static_cast<Point3f*>(displacementMemory.allocate(nVertices * sizeof(spectra::Point3f), alignof(spectra::Point3f)));
-                            Normal3f* n = static_cast<Normal3f*>(displacementMemory.allocate(nVertices * sizeof(spectra::Normal3f), alignof(spectra::Normal3f)));
-                            Point2f* uv = static_cast<Point2f*>(displacementMemory.allocate(nVertices * sizeof(spectra::Point2f), alignof(spectra::Point2f)));
+                            Point3f* p  = static_cast<Point3f*>(displacementMemory.allocate(nVertices * sizeof(Point3f), alignof(Point3f)));
+                            Normal3f* n = static_cast<Normal3f*>(displacementMemory.allocate(nVertices * sizeof(Normal3f), alignof(Normal3f)));
+                            Point2f* uv = static_cast<Point2f*>(displacementMemory.allocate(nVertices * sizeof(Point2f), alignof(Point2f)));
 
                             std::memcpy(p, pCPU, nVertices * sizeof(Point3f));
                             std::memcpy(n, nCPU, nVertices * sizeof(Normal3f));

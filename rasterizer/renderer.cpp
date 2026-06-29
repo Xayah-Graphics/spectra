@@ -3098,7 +3098,7 @@ namespace spectra::rasterizer {
             if (point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" must provide one color per position", point_cloud.name));
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer point cloud instance count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
-            const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            const math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
             const float emission_red = material.emission_color.x * material.emission_strength;
             const float emission_green = material.emission_color.y * material.emission_strength;
             const float emission_blue = material.emission_color.z * material.emission_strength;
@@ -3109,7 +3109,7 @@ namespace spectra::rasterizer {
                 const scene::Vector4 color = point_cloud.colors.at(point_index);
                 if (!finite_scene_vector(color)) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains a non-finite color", point_cloud.name));
                 if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(std::format("Rasterizer point cloud \"{}\" contains an invalid color", point_cloud.name));
-                const spectra::rasterizer::math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(point_cloud.positions.at(point_index)));
+                const math::Vector3 position = spectra::rasterizer::math::transform_point(transform, to_render_vector(point_cloud.positions.at(point_index)));
                 instances.push_back(PointCloudInstance{
                     .px = position.x,
                     .py = position.y,
@@ -3150,8 +3150,8 @@ namespace spectra::rasterizer {
         std::vector<ViewportSegmentInstance> instances{};
         std::vector<ViewportSegmentDrawCommand> draw_commands{};
         const scene::Scene::ResolvedFrame resolved_frame = this->scene.instance->resolved_frame();
-        const auto append_segment_instance = [&instances](const spectra::rasterizer::math::Vector3 start, const spectra::rasterizer::math::Vector3 end, const scene::Vector4 color, const float width, const scene::Scene::ViewportSegmentWidthMode width_mode, const std::string_view context) {
-            const spectra::rasterizer::math::Vector3 delta = end - start;
+        const auto append_segment_instance = [&instances](const math::Vector3 start, const math::Vector3 end, const scene::Vector4 color, const float width, const scene::Scene::ViewportSegmentWidthMode width_mode, const std::string_view context) {
+            const math::Vector3 delta = end - start;
             if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z) || spectra::rasterizer::math::dot(delta, delta) <= 0.0f) throw std::runtime_error(std::format("{} contains an invalid transformed segment", context));
             instances.push_back(ViewportSegmentInstance{
                 .sx = start.x,
@@ -3188,7 +3188,7 @@ namespace spectra::rasterizer {
             if (segment_set.segments.empty()) continue;
             if (instances.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) throw std::runtime_error("Rasterizer viewport segment instance count exceeds uint32 range");
             const std::uint32_t first_instance = static_cast<std::uint32_t>(instances.size());
-            const spectra::rasterizer::math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(segment_set.transform));
+            const math::Matrix4 transform = spectra::rasterizer::math::transform_matrix(to_render_transform(segment_set.transform));
             instances.reserve(instances.size() + segment_set.segments.size());
             for (std::size_t segment_index = 0u; segment_index < segment_set.segments.size(); ++segment_index) {
                 const scene::Scene::ViewportSegment& segment = segment_set.segments.at(segment_index);
@@ -3197,8 +3197,8 @@ namespace spectra::rasterizer {
                 const scene::Vector4 color = segment_set.colors.empty() ? scene::Vector4{1.0f, 1.0f, 1.0f, 0.75f} : segment_set.colors.at(segment_index);
                 if (!finite_scene_vector(color)) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" contains a non-finite color", segment_set.name));
                 if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(std::format("Rasterizer viewport segment set \"{}\" contains an invalid color", segment_set.name));
-                const spectra::rasterizer::math::Vector3 start = spectra::rasterizer::math::transform_point(transform, to_render_vector(segment.start));
-                const spectra::rasterizer::math::Vector3 end = spectra::rasterizer::math::transform_point(transform, to_render_vector(segment.end));
+                const math::Vector3 start = spectra::rasterizer::math::transform_point(transform, to_render_vector(segment.start));
+                const math::Vector3 end = spectra::rasterizer::math::transform_point(transform, to_render_vector(segment.end));
                 append_segment_instance(start, end, color, width, segment_set.width_mode, std::format("Rasterizer viewport segment set \"{}\"", segment_set.name));
             }
             draw_commands.push_back(ViewportSegmentDrawCommand{
@@ -3788,7 +3788,7 @@ namespace spectra::rasterizer {
 
     float Renderer::current_viewport_camera_distance() const {
         const scene::ViewportCamera state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 offset = to_render_vector(state.pose.position) - to_render_vector(state.focus);
+        const math::Vector3 offset = to_render_vector(state.pose.position) - to_render_vector(state.focus);
         const float distance = spectra::rasterizer::math::length(offset);
         if (!std::isfinite(distance) || distance <= 0.0f) throw std::runtime_error("Spectra rasterizer viewport camera distance must be positive");
         return distance;
@@ -3848,7 +3848,7 @@ namespace spectra::rasterizer {
             bounds.maximum.z = std::max(bounds.maximum.z, point.z);
         };
         const auto include_transformed_point = [&include_point](const scene::Vector3& point, const scene::Transform& transform) {
-            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
+            const math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
         const auto include_transformed_bounds = [&include_transformed_point](const scene::Scene::PointCloudBounds& point_bounds, const scene::Transform& transform) {
@@ -3865,7 +3865,7 @@ namespace spectra::rasterizer {
                 include_transformed_bounds(*point_cloud.bounds, point_cloud.transform);
                 continue;
             }
-            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            const math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
             for (std::size_t index = 0; index < point_cloud.positions.size(); ++index) {
                 const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point_cloud.positions.at(index))));
                 const float radius = index < point_cloud.radii.size() ? std::max(0.0f, point_cloud.radii.at(index)) : 0.0f;
@@ -3901,7 +3901,7 @@ namespace spectra::rasterizer {
             bounds.maximum.z = std::max(bounds.maximum.z, point.z);
         };
         const auto include_transformed_point = [&include_point](const scene::Vector3& point, const scene::Transform& transform) {
-            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
+            const math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(transform));
             include_point(to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point))));
         };
         const auto include_transformed_bounds = [&include_transformed_point](const scene::Scene::PointCloudBounds& point_bounds, const scene::Transform& transform) {
@@ -3920,7 +3920,7 @@ namespace spectra::rasterizer {
                 include_transformed_bounds(*point_cloud.bounds, point_cloud.transform);
                 continue;
             }
-            const spectra::rasterizer::math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
+            const math::Matrix4 matrix = spectra::rasterizer::math::transform_matrix(to_render_transform(point_cloud.transform));
             for (std::size_t index = 0; index < point_cloud.positions.size(); ++index) {
                 const scene::Vector3 center = to_scene_vector(spectra::rasterizer::math::transform_point(matrix, to_render_vector(point_cloud.positions.at(index))));
                 const float radius = index < point_cloud.radii.size() ? std::max(0.0f, point_cloud.radii.at(index)) : 0.0f;
@@ -3963,11 +3963,11 @@ namespace spectra::rasterizer {
             (bounds.minimum.y + bounds.maximum.y) * 0.5f,
             (bounds.minimum.z + bounds.maximum.z) * 0.5f,
         };
-        const spectra::rasterizer::math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
+        const math::Vector3 diagonal = to_render_vector(bounds.maximum) - to_render_vector(bounds.minimum);
         const float radius = std::max(0.1f, spectra::rasterizer::math::length(diagonal) * 0.5f);
         if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
         scene::ViewportCamera state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.pose.position) - to_render_vector(state.focus));
+        const math::Vector3 direction = spectra::rasterizer::math::normalize(to_render_vector(state.pose.position) - to_render_vector(state.focus));
         const float distance = std::clamp(radius * 2.3f, 0.02f, 1000000.0f);
         state.focus = center;
         state.pose.position = to_scene_vector(to_render_vector(center) + direction * distance);
@@ -3978,7 +3978,7 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::set_viewport_axis_view(const scene::Vector3 direction) {
-        const spectra::rasterizer::math::Vector3 normalized = spectra::rasterizer::math::normalize(to_render_vector(direction));
+        const math::Vector3 normalized = spectra::rasterizer::math::normalize(to_render_vector(direction));
         if (!this->viewport.camera_initialized) this->reset_viewport_camera_from_scene();
         scene::ViewportCamera state = this->current_viewport_camera_state();
         const scene::Vector3 normalized_scene = to_scene_vector(normalized);
@@ -4099,11 +4099,11 @@ namespace spectra::rasterizer {
         std::vector<TransparentMeshSortItem> draw_commands{};
         draw_commands.reserve(frame_scene.drawCommands.size());
         const scene::ViewportCamera camera_state = this->current_viewport_camera_state();
-        const spectra::rasterizer::math::Vector3 camera_position = to_render_vector(camera_state.pose.position);
+        const math::Vector3 camera_position = to_render_vector(camera_state.pose.position);
         for (const RenderDrawCommand& draw_command : frame_scene.drawCommands) {
             if (draw_command.material.alpha_mode != scene::Scene::PreviewAlphaMode::Blend) continue;
-            const spectra::rasterizer::math::Vector3 sort_point = spectra::rasterizer::math::transform_point(spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform)), to_render_vector(draw_command.sortPoint));
-            const spectra::rasterizer::math::Vector3 delta = sort_point - camera_position;
+            const math::Vector3 sort_point = spectra::rasterizer::math::transform_point(spectra::rasterizer::math::transform_matrix(to_render_transform(draw_command.transform)), to_render_vector(draw_command.sortPoint));
+            const math::Vector3 delta = sort_point - camera_position;
             draw_commands.push_back(TransparentMeshSortItem{
                 .command = &draw_command,
                 .distanceSquared = spectra::rasterizer::math::dot(delta, delta),
@@ -4842,7 +4842,7 @@ namespace spectra::rasterizer {
         struct GizmoAxis {
             const char* id{};
             const char* label{};
-            spectra::rasterizer::math::Vector3 axis{};
+            math::Vector3 axis{};
             scene::Vector3 view_direction{};
             std::uint8_t line_red{};
             std::uint8_t line_green{};
@@ -4856,9 +4856,9 @@ namespace spectra::rasterizer {
         const scene::ViewportCamera state = this->current_viewport_camera_state();
         const scene::CameraFrame frame = scene::camera_frame(state.pose);
 
-        const auto project_axis = [&](const spectra::rasterizer::math::Vector3 axis) {
+        const auto project_axis = [&](const math::Vector3 axis) {
             const scene::Vector3 scene_axis = to_scene_vector(axis);
-            return spectra::rasterizer::math::Vector3{
+            return math::Vector3{
                 scene::dot(scene_axis, frame.right),
                 -scene::dot(scene_axis, frame.down),
                 -scene::dot(scene_axis, frame.forward),
@@ -4869,7 +4869,7 @@ namespace spectra::rasterizer {
             GizmoAxis{
                 .id             = "x",
                 .label          = "X",
-                .axis           = spectra::rasterizer::math::Vector3{1.0f, 0.0f, 0.0f},
+                .axis           = math::Vector3{1.0f, 0.0f, 0.0f},
                 .view_direction = scene::Vector3{1.0f, 0.0f, 0.0f},
                 .line_red       = 232,
                 .line_green     = 94,
@@ -4878,7 +4878,7 @@ namespace spectra::rasterizer {
             GizmoAxis{
                 .id             = "y",
                 .label          = "Y",
-                .axis           = spectra::rasterizer::math::Vector3{0.0f, 1.0f, 0.0f},
+                .axis           = math::Vector3{0.0f, 1.0f, 0.0f},
                 .view_direction = scene::Vector3{0.0f, 1.0f, 0.0f},
                 .line_red       = 112,
                 .line_green     = 202,
@@ -4887,7 +4887,7 @@ namespace spectra::rasterizer {
             GizmoAxis{
                 .id             = "z",
                 .label          = "Z",
-                .axis           = spectra::rasterizer::math::Vector3{0.0f, 0.0f, 1.0f},
+                .axis           = math::Vector3{0.0f, 0.0f, 1.0f},
                 .view_direction = scene::Vector3{0.0f, 0.0f, 1.0f},
                 .line_red       = 96,
                 .line_green     = 152,
@@ -4896,7 +4896,7 @@ namespace spectra::rasterizer {
         }};
 
         for (GizmoAxis& axis : axes) {
-            const spectra::rasterizer::math::Vector3 projected = project_axis(axis.axis);
+            const math::Vector3 projected = project_axis(axis.axis);
             axis.tip = ImVec2{center.x + projected.x * axis_radius, center.y - projected.y * axis_radius};
             axis.depth = projected.z;
         }
