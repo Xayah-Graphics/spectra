@@ -369,7 +369,7 @@ namespace {
     void create_pipeline_viewport_descriptors(spectra::pathtracer::RenderPipeline& pipeline) {
         for (spectra::pathtracer::RenderPipeline::FrameResource& frame : pipeline.frames) {
             if (frame.imgui_descriptor != VkDescriptorSet{}) throw std::runtime_error("Spectra pathtracer viewport descriptor is already allocated");
-            frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.sampler), static_cast<VkImageView>(*frame.image_view), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+            frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(*frame.sampler, *frame.image_view, static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
             if (frame.imgui_descriptor == VkDescriptorSet{}) throw std::runtime_error("Failed to allocate Spectra pathtracer viewport descriptor");
         }
     }

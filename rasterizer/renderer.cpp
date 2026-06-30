@@ -1124,7 +1124,7 @@ namespace spectra::rasterizer {
     void Renderer::create_imgui_descriptor() {
         if (!*this->viewport.sampler || !*this->viewport.view) throw std::runtime_error("Cannot create Spectra rasterizer descriptor before viewport resources exist");
         if (this->viewport.imgui_descriptor != ImTextureID{}) throw std::runtime_error("Spectra rasterizer viewport descriptor is already allocated");
-        const VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*this->viewport.sampler), static_cast<VkImageView>(*this->viewport.view), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+        const VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(*this->viewport.sampler, *this->viewport.view, static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
         this->viewport.imgui_descriptor  = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
         if (this->viewport.imgui_descriptor == ImTextureID{}) throw std::runtime_error("Failed to allocate Spectra rasterizer viewport descriptor");
     }
