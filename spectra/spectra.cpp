@@ -15,7 +15,6 @@ module;
 #endif
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <material_symbols/material_symbols_rounded_regular.h>
-#include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
 
 #include <ranges>
@@ -90,10 +89,6 @@ namespace {
         constexpr std::array<ImWchar, 3> icon_ranges{ICON_MIN_MS, ICON_MAX_MS, 0};
         if (io.Fonts->AddFontFromMemoryCompressedTTF(g_materialSymbolsRounded_compressed_data, g_materialSymbolsRounded_compressed_size, icon_size, &icon_config, icon_ranges.data()) == nullptr) throw std::runtime_error("Failed to load Material Symbols icon font");
 
-        ImFontConfig mono_config{};
-        mono_config.OversampleH = 3;
-        mono_config.OversampleV = 3;
-        if (io.Fonts->AddFontFromMemoryCompressedTTF(g_roboto_mono_compressed_data, g_roboto_mono_compressed_size, font_size, &mono_config) == nullptr) throw std::runtime_error("Failed to load Roboto mono font");
         io.FontDefault = default_font;
     }
 

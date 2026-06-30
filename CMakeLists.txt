@@ -35,8 +35,6 @@ set(SPECTRA_SCENES_ROOT "${SPECTRA_ROOT_DIR}/scenes")
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Threads REQUIRED)
 
-add_subdirectory(vendor)
-
 function(spectra_download_if_needed url out_path)
     if (EXISTS "${out_path}")
         message(STATUS "Using cached file: ${out_path}")
@@ -65,8 +63,64 @@ function(spectra_download_if_needed url out_path)
     file(RENAME "${tmp_path}" "${out_path}")
 endfunction()
 
+function(spectra_download_archive_if_needed url out_path sha256)
+    string(TOLOWER "${sha256}" expected_sha256)
+    if (EXISTS "${out_path}")
+        file(SHA256 "${out_path}" existing_sha256)
+        string(TOLOWER "${existing_sha256}" existing_sha256)
+        if (NOT existing_sha256 STREQUAL expected_sha256)
+            message(FATAL_ERROR "Cached archive hash mismatch for ${out_path}: expected ${expected_sha256}, got ${existing_sha256}")
+        endif ()
+        message(STATUS "Using cached archive: ${out_path}")
+        return()
+    endif ()
+
+    get_filename_component(out_dir "${out_path}" DIRECTORY)
+    file(MAKE_DIRECTORY "${out_dir}")
+
+    message(STATUS "Downloading ${url}")
+    set(tmp_path "${out_path}.download")
+    file(REMOVE "${tmp_path}")
+    file(DOWNLOAD
+            "${url}"
+            "${tmp_path}"
+            TLS_VERIFY ON
+            EXPECTED_HASH "SHA256=${sha256}"
+            STATUS dl_status
+    )
+
+    list(GET dl_status 0 dl_code)
+    list(GET dl_status 1 dl_msg)
+    if (NOT dl_code EQUAL 0)
+        file(REMOVE "${tmp_path}")
+        message(FATAL_ERROR "Failed to download ${url}: [${dl_code}] ${dl_msg}")
+    endif ()
+    file(RENAME "${tmp_path}" "${out_path}")
+endfunction()
+
+function(spectra_prepare_archive_dependency out_source_dir owner repository commit archive_sha256 cache_name)
+    set(cache_dir "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/${cache_name}/${commit}")
+    set(archive_path "${cache_dir}/${cache_name}.zip")
+    set(extract_dir "${cache_dir}/source")
+    set(source_dir "${extract_dir}/${repository}-${commit}")
+    spectra_download_archive_if_needed(
+            "https://codeload.github.com/${owner}/${repository}/zip/${commit}"
+            "${archive_path}"
+            "${archive_sha256}"
+    )
+    if (NOT EXISTS "${source_dir}")
+        file(REMOVE_RECURSE "${extract_dir}")
+        file(MAKE_DIRECTORY "${extract_dir}")
+        file(ARCHIVE_EXTRACT INPUT "${archive_path}" DESTINATION "${extract_dir}")
+    endif ()
+    if (NOT EXISTS "${source_dir}")
+        message(FATAL_ERROR "Failed to extract ${cache_name} archive to ${source_dir}.")
+    endif ()
+    set(${out_source_dir} "${source_dir}" PARENT_SCOPE)
+endfunction()
+
 set(SPECTRA_XCLI_COMMIT "bb261075e7c8a4722b23f42c3be01aa24024731a")
-set(SPECTRA_XCLI_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor/util/${SPECTRA_XCLI_COMMIT}")
+set(SPECTRA_XCLI_VENDOR_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/util/${SPECTRA_XCLI_COMMIT}")
 spectra_download_if_needed(
         "https://raw.githubusercontent.com/Xayah-Graphics/util/${SPECTRA_XCLI_COMMIT}/xcli.ixx"
         "${SPECTRA_XCLI_VENDOR_DIR}/xcli.ixx"
@@ -87,17 +141,234 @@ target_sources(
 )
 set_property(TARGET xayah-util-xcli PROPERTY CXX_MODULE_STD ON)
 
+set(SPECTRA_LODEPNG_COMMIT "ed6fe5825c6a4fbb7f58ab35a4231c7543cd452a")
+set(SPECTRA_LODEPNG_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/lodepng/${SPECTRA_LODEPNG_COMMIT}")
+foreach (lodepng_file IN ITEMS
+        lodepng.cpp
+        lodepng.h
+)
+    spectra_download_if_needed(
+            "https://raw.githubusercontent.com/lvandeve/lodepng/${SPECTRA_LODEPNG_COMMIT}/${lodepng_file}"
+            "${SPECTRA_LODEPNG_DIR}/lodepng/${lodepng_file}"
+    )
+endforeach ()
+
+add_library(spectra_lodepng STATIC "${SPECTRA_LODEPNG_DIR}/lodepng/lodepng.cpp")
+add_library(spectra::lodepng ALIAS spectra_lodepng)
+target_include_directories(spectra_lodepng PUBLIC "${SPECTRA_LODEPNG_DIR}")
+
+set(SPECTRA_STB_COMMIT "31c1ad37456438565541f4919958214b6e762fb4")
+set(SPECTRA_STB_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/stb/${SPECTRA_STB_COMMIT}")
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/nothings/stb/${SPECTRA_STB_COMMIT}/stb_image.h"
+        "${SPECTRA_STB_DIR}/stb/stb_image.h"
+)
+
+set(SPECTRA_QOI_COMMIT "97bacc86a9c4abf5a2d452102dc26546c4c670b9")
+set(SPECTRA_QOI_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/qoi/${SPECTRA_QOI_COMMIT}")
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/phoboslab/qoi/${SPECTRA_QOI_COMMIT}/qoi.h"
+        "${SPECTRA_QOI_DIR}/qoi/qoi.h"
+)
+
+set(SPECTRA_NVPRO_CORE2_COMMIT "eb7c2f25859b0ff279e3bbd8376a8418528da556")
+set(SPECTRA_UI_ASSET_INCLUDE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}")
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/third_party/roboto/roboto_regular.h"
+        "${SPECTRA_UI_ASSET_INCLUDE_DIR}/roboto/roboto_regular.h"
+)
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/third_party/material_symbols/material_symbols_rounded_regular.h"
+        "${SPECTRA_UI_ASSET_INCLUDE_DIR}/material_symbols/material_symbols_rounded_regular.h"
+)
+spectra_download_if_needed(
+        "https://raw.githubusercontent.com/nvpro-samples/nvpro_core2/${SPECTRA_NVPRO_CORE2_COMMIT}/nvgui/IconsMaterialSymbols.h"
+        "${SPECTRA_UI_ASSET_INCLUDE_DIR}/material_symbols/IconsMaterialSymbols.h"
+)
+
+set(SPECTRA_GLFW_COMMIT "7b6aead9fb88b3623e3b3725ebb42670cbe4c579")
+set(SPECTRA_GLFW_ARCHIVE_SHA256 "699BF0B3D0BD422C0212263F30C4B6FC1AB4F67320824B27854F1E5C6949A2A0")
+spectra_prepare_archive_dependency(
+        SPECTRA_GLFW_SOURCE_DIR
+        glfw
+        glfw
+        "${SPECTRA_GLFW_COMMIT}"
+        "${SPECTRA_GLFW_ARCHIVE_SHA256}"
+        glfw
+)
+
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
+add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/glfw-build/${SPECTRA_GLFW_COMMIT}")
+
+set(SPECTRA_ZLIB_COMMIT "da607da739fa6047df13e66a2af6b8bec7c2a498")
+set(SPECTRA_ZLIB_ARCHIVE_SHA256 "21DE001766ABB1F5BFDFB3C23AA42D30A6BBD7EDDD37131D5E7FE89C5EC068F8")
+spectra_prepare_archive_dependency(
+        SPECTRA_ZLIB_SOURCE_DIR
+        madler
+        zlib
+        "${SPECTRA_ZLIB_COMMIT}"
+        "${SPECTRA_ZLIB_ARCHIVE_SHA256}"
+        zlib
+)
+set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
+set(ZLIB_CONF_WRITTEN OFF CACHE BOOL "" FORCE)
+set(SPECTRA_ZLIB_BINARY_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/zlib-build/${SPECTRA_ZLIB_COMMIT}")
+add_subdirectory("${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}")
+if (NOT TARGET zlibstatic)
+    message(FATAL_ERROR "Downloaded zlib did not define the zlibstatic target.")
+endif ()
+if (NOT TARGET ZLIB::ZLIB)
+    add_library(ZLIB::ZLIB ALIAS zlibstatic)
+endif ()
+set(ZLIB_LIBRARIES ZLIB::ZLIB CACHE STRING "zlib target" FORCE)
+set(ZLIB_INCLUDE_DIRS "${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}" CACHE STRING "zlib include dirs" FORCE)
+set(ZLIB_LIBRARY ZLIB::ZLIB CACHE STRING "zlib target" FORCE)
+set(ZLIB_INCLUDE_DIR "${SPECTRA_ZLIB_SOURCE_DIR}" "${SPECTRA_ZLIB_BINARY_DIR}" CACHE STRING "zlib include dir" FORCE)
+set(ZLIB_FOUND TRUE CACHE BOOL "zlib found" FORCE)
+
+set(SPECTRA_RPLY_COMMIT "5f7a606806a4ac7b939131ded9d7a30ebd02416e")
+set(SPECTRA_RPLY_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/rply/${SPECTRA_RPLY_COMMIT}")
+foreach (rply_file IN ITEMS
+        rply.cpp
+        rply.h
+)
+    spectra_download_if_needed(
+            "https://raw.githubusercontent.com/mmp/pbrt-v4/${SPECTRA_RPLY_COMMIT}/src/ext/rply/${rply_file}"
+            "${SPECTRA_RPLY_DIR}/rply/${rply_file}"
+    )
+endforeach ()
+add_library(spectra_rply STATIC "${SPECTRA_RPLY_DIR}/rply/rply.cpp")
+add_library(spectra::rply ALIAS spectra_rply)
+target_include_directories(spectra_rply PUBLIC "${SPECTRA_RPLY_DIR}")
+target_link_libraries(spectra_rply PUBLIC ZLIB::ZLIB)
+
+set(SPECTRA_LIBDEFLATE_COMMIT "c8c56a20f8f621e6a966b716b31f1dedab6a41e3")
+set(SPECTRA_LIBDEFLATE_ARCHIVE_SHA256 "BC0DDBC4E26C8B1379A0FC639E9B8159744C13A435017BB8EF3A30BBB53BDF47")
+spectra_prepare_archive_dependency(
+        SPECTRA_LIBDEFLATE_SOURCE_DIR
+        ebiggers
+        libdeflate
+        "${SPECTRA_LIBDEFLATE_COMMIT}"
+        "${SPECTRA_LIBDEFLATE_ARCHIVE_SHA256}"
+        libdeflate
+)
+set(LIBDEFLATE_BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
+set(LIBDEFLATE_BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(LIBDEFLATE_BUILD_GZIP OFF CACHE BOOL "" FORCE)
+set(LIBDEFLATE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${SPECTRA_LIBDEFLATE_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/libdeflate-build/${SPECTRA_LIBDEFLATE_COMMIT}")
+if (NOT TARGET libdeflate::libdeflate_static)
+    message(FATAL_ERROR "Downloaded libdeflate did not define libdeflate::libdeflate_static.")
+endif ()
+
+set(SPECTRA_IMATH_COMMIT "1e480d11cb98b032a2dece9b9a8730512effc7f6")
+set(SPECTRA_IMATH_ARCHIVE_SHA256 "B707D359CF0ADC0E75DD4C68AB06601D58433E301295F04D44B8A60FF148C939")
+spectra_prepare_archive_dependency(
+        SPECTRA_IMATH_SOURCE_DIR
+        AcademySoftwareFoundation
+        Imath
+        "${SPECTRA_IMATH_COMMIT}"
+        "${SPECTRA_IMATH_ARCHIVE_SHA256}"
+        imath
+)
+foreach (cache_var IN ITEMS
+        IMATH_INTERNAL_NAMESPACE
+        IMATH_LIB_SUFFIX
+        IMATH_PACKAGE_NAME
+        IMATH_STATIC_LIB_SUFFIX
+        IMATH_VERSION_RELEASE_TYPE)
+    unset(${cache_var} CACHE)
+endforeach ()
+set(IMATH_INSTALL OFF CACHE BOOL "" FORCE)
+set(IMATH_INSTALL_PKG_CONFIG OFF CACHE BOOL "" FORCE)
+set(IMATH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${SPECTRA_IMATH_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/imath-build/${SPECTRA_IMATH_COMMIT}")
+
+set(SPECTRA_OPENEXR_COMMIT "d1dcb760459e6cf9985b98deb118abc6de12f9bb")
+set(SPECTRA_OPENEXR_ARCHIVE_SHA256 "1EAC27323A849E936E85D1B6AB245D1547BCD267B1379F0045B08FF227B926F9")
+spectra_prepare_archive_dependency(
+        SPECTRA_OPENEXR_SOURCE_DIR
+        AcademySoftwareFoundation
+        openexr
+        "${SPECTRA_OPENEXR_COMMIT}"
+        "${SPECTRA_OPENEXR_ARCHIVE_SHA256}"
+        openexr
+)
+foreach (cache_var IN ITEMS
+        OPENEXR_IMATH_REPO
+        OPENEXR_IMATH_TAG
+        OPENEXR_INTERNAL_IMF_NAMESPACE
+        OPENEXR_LIB_SUFFIX
+        OPENEXR_PACKAGE_NAME
+        OPENEXR_STATIC_LIB_SUFFIX
+        OPENEXR_VERSION_RELEASE_TYPE)
+    unset(${cache_var} CACHE)
+endforeach ()
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_PKG_CONFIG OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_DEVELOPER_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_OSS_FUZZ OFF CACHE BOOL "" FORCE)
+set(OPENEXR_TEST_LIBRARIES OFF CACHE BOOL "" FORCE)
+set(OPENEXR_TEST_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_TEST_PYTHON OFF CACHE BOOL "" FORCE)
+set(OPENEXR_FORCE_INTERNAL_DEFLATE OFF CACHE BOOL "" FORCE)
+set(OPENEXR_FORCE_INTERNAL_IMATH OFF CACHE BOOL "" FORCE)
+set(EXR_DEFLATE_LIB libdeflate::libdeflate_static CACHE STRING "" FORCE)
+set(EXR_DEFLATE_VERSION 1.25 CACHE STRING "" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig ON CACHE BOOL "" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate ON CACHE BOOL "" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Imath ON CACHE BOOL "" FORCE)
+add_subdirectory("${SPECTRA_OPENEXR_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/openexr-build/${SPECTRA_OPENEXR_COMMIT}")
+set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig OFF CACHE BOOL "" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_libdeflate OFF CACHE BOOL "" FORCE)
+set(CMAKE_DISABLE_FIND_PACKAGE_Imath OFF CACHE BOOL "" FORCE)
+
+set(SPECTRA_PTEX_COMMIT "a3729367596c827ace086f4baa6cab89b6a7f439")
+set(SPECTRA_PTEX_ARCHIVE_SHA256 "5C079E439B4910826F8D4BA29698A325C886EC6C0D471AEF9BAC8FE63931BDBC")
+spectra_prepare_archive_dependency(
+        SPECTRA_PTEX_SOURCE_DIR
+        wdas
+        ptex
+        "${SPECTRA_PTEX_COMMIT}"
+        "${SPECTRA_PTEX_ARCHIVE_SHA256}"
+        ptex
+)
+include(GNUInstallDirs)
+set(PTEX_BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(PTEX_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(PTEX_MAJOR_VERSION 2)
+set(PTEX_MINOR_VERSION 5)
+add_subdirectory("${SPECTRA_PTEX_SOURCE_DIR}/src/ptex" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/ptex-build/${SPECTRA_PTEX_COMMIT}/src/ptex")
+set(PTEX_INCLUDE "${SPECTRA_PTEX_SOURCE_DIR}/src/ptex")
+
+set(SPECTRA_OPENVDB_COMMIT "7c03e1f084873cd1b3422c7ff7aec6ee681b3b38")
+set(SPECTRA_OPENVDB_ARCHIVE_SHA256 "7492C5D80F56E961193FD6DD27F17642C7A5250960FFBDE72BC39806237BFDA4")
+spectra_prepare_archive_dependency(
+        SPECTRA_OPENVDB_SOURCE_DIR
+        AcademySoftwareFoundation
+        openvdb
+        "${SPECTRA_OPENVDB_COMMIT}"
+        "${SPECTRA_OPENVDB_ARCHIVE_SHA256}"
+        openvdb
+)
+set(NANOVDB_INCLUDE "${SPECTRA_OPENVDB_SOURCE_DIR}/nanovdb")
+
 set(SPECTRA_IMGUI_MODULE_COMMIT "8fff16535a92346f681bfb8a61ee1454142eef82")
 set(SPECTRA_IMGUI_SOURCE_COMMIT "b61e56346a92cfcaf1f43a545ca37b0b32239654")
 set(SPECTRA_IMGUI_MODULE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}")
 set(SPECTRA_IMGUI_SOURCE_DIR "${SPECTRA_IMGUI_MODULE_DIR}/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}")
-
-function(spectra_download_imgui_source_file relative_path)
-    spectra_download_if_needed(
-            "https://raw.githubusercontent.com/ocornut/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}/${relative_path}"
-            "${SPECTRA_IMGUI_SOURCE_DIR}/${relative_path}"
-    )
-endfunction()
 
 foreach (imgui_module_file IN ITEMS
         generated/imgui.cppm
@@ -106,8 +377,8 @@ foreach (imgui_module_file IN ITEMS
         generated/backends/imgui_impl_vulkan.cppm
 )
     spectra_download_if_needed(
-            "https://raw.githubusercontent.com/stripe2933/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}/${relative_path}"
-            "${SPECTRA_IMGUI_MODULE_DIR}/${relative_path}"
+            "https://raw.githubusercontent.com/stripe2933/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}/${imgui_module_file}"
+            "${SPECTRA_IMGUI_MODULE_DIR}/${imgui_module_file}"
     )
 endforeach ()
 
@@ -127,7 +398,10 @@ foreach (imgui_source_file IN ITEMS
         backends/imgui_impl_vulkan.cpp
         backends/imgui_impl_vulkan.h
 )
-    spectra_download_imgui_source_file("${imgui_source_file}")
+    spectra_download_if_needed(
+            "https://raw.githubusercontent.com/ocornut/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}/${imgui_source_file}"
+            "${SPECTRA_IMGUI_SOURCE_DIR}/${imgui_source_file}"
+    )
 endforeach ()
 
 add_library(spectra_imgui)
@@ -169,7 +443,7 @@ target_sources(
         spectra/spectra.cpp
 )
 target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan spectra::imgui PRIVATE glfw)
-target_include_directories(spectra_core PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
+target_include_directories(spectra_core PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
 
@@ -195,7 +469,7 @@ target_sources(
         scene/plugin_host.cpp
 )
 target_compile_definitions(spectra_scene PRIVATE "SPECTRA_SCENES_ROOT=\"${SPECTRA_SCENES_ROOT}\"")
-target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB vendor::lodepng ${CMAKE_DL_LIBS})
+target_link_libraries(spectra_scene PRIVATE ZLIB::ZLIB spectra::lodepng ${CMAKE_DL_LIBS})
 set_property(TARGET spectra_scene PROPERTY CXX_MODULE_STD ON)
 
 
@@ -348,9 +622,9 @@ file(WRITE "${SPECTRA_PATHTRACER_GENERATED_DIR}/spectra_optix_config.h"
 
 set(SPECTRA_PATHTRACER_INCLUDE_DIRS
         ${SPECTRA_ROOT_DIR}
-        ${SPECTRA_ROOT_DIR}/vendor
-        ${STB_INCLUDE}
-        ${QOI_INCLUDE}
+        ${SPECTRA_UI_ASSET_INCLUDE_DIR}
+        ${SPECTRA_STB_DIR}
+        ${SPECTRA_QOI_DIR}
         ${ZLIB_INCLUDE_DIRS}
         ${PTEX_INCLUDE}
         ${NANOVDB_INCLUDE}
@@ -574,8 +848,8 @@ target_link_libraries(
         spectra::imgui
         spectra::scene
         PRIVATE
-        vendor::lodepng
-        vendor::rply
+        spectra::lodepng
+        spectra::rply
         OpenEXR::OpenEXR
         Ptex_static
         ZLIB::ZLIB
@@ -667,7 +941,7 @@ target_sources(
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
 target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::imgui spectra::scene)
-target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")
+target_include_directories(spectra_rasterizer PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}" "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 
 
@@ -696,4 +970,5 @@ target_link_libraries(
         spectra::rasterizer
         xayah-util-xcli
 )
+target_include_directories(spectra PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)

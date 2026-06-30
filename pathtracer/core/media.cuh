@@ -2,8 +2,8 @@
 #define SPECTRA_PATHTRACER_CORE_MEDIA_H
 
 #include <nanovdb/NanoVDB.h>
-#include <nanovdb/util/GridHandle.h>
-#include <nanovdb/util/SampleFromVoxels.h>
+#include <nanovdb/GridHandle.h>
+#include <nanovdb/math/SampleFromVoxels.h>
 #include <pathtracer/base/medium.cuh>
 #include <pathtracer/core/diagnostics.cuh>
 #include <pathtracer/core/interaction.cuh>
@@ -18,7 +18,7 @@
 #include <pathtracer/util/spectrum.cuh>
 #include <pathtracer/util/transform.cuh>
 #if defined(__NVCC__)
-#include <nanovdb/util/CudaDeviceBuffer.h>
+#include <nanovdb/cuda/DeviceBuffer.h>
 #endif // __NVCC__
 
 #include <algorithm>
@@ -534,8 +534,8 @@ namespace spectra {
             // Scale scattering coefficients by medium density at _p_
             p = renderFromMedium.ApplyInverse(p);
 
-            nanovdb::Vec3<float> pIndex = densityFloatGrid->worldToIndexF(nanovdb::Vec3<float>(p.x, p.y, p.z));
-            using Sampler               = nanovdb::SampleFromVoxels<nanovdb::FloatGrid::TreeType, 1, false>;
+            nanovdb::math::Vec3<float> pIndex = densityFloatGrid->worldToIndexF(nanovdb::math::Vec3<float>(p.x, p.y, p.z));
+            using Sampler                     = nanovdb::math::SampleFromVoxels<nanovdb::FloatGrid::TreeType, 1, false>;
             Float d                     = Sampler(densityFloatGrid->tree())(pIndex);
 
             return MediumProperties{sigma_a * d, sigma_s * d, &phase, Le(p, lambda)};
@@ -560,8 +560,8 @@ namespace spectra {
         // NanoVDBMedium Private Methods
         __host__ __device__ SampledSpectrum Le(Point3f p, const SampledWavelengths& lambda) const {
             if (!temperatureFloatGrid) return SampledSpectrum(0.f);
-            nanovdb::Vec3<float> pIndex = temperatureFloatGrid->worldToIndexF(nanovdb::Vec3<float>(p.x, p.y, p.z));
-            using Sampler               = nanovdb::SampleFromVoxels<nanovdb::FloatGrid::TreeType, 1, false>;
+            nanovdb::math::Vec3<float> pIndex = temperatureFloatGrid->worldToIndexF(nanovdb::math::Vec3<float>(p.x, p.y, p.z));
+            using Sampler                     = nanovdb::math::SampleFromVoxels<nanovdb::FloatGrid::TreeType, 1, false>;
             Float temp                  = Sampler(temperatureFloatGrid->tree())(pIndex);
             temp                        = (temp - temperatureOffset) * temperatureScale;
             if (temp <= 100.f) return SampledSpectrum(0.f);

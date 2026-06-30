@@ -7,7 +7,7 @@
 #include <pathtracer/util/memory.cuh>
 #define NANOVDB_USE_ZIP 1
 #include <algorithm>
-#include <nanovdb/util/IO.h>
+#include <nanovdb/io/IO.h>
 
 namespace spectra {
     // HenyeyGreenstein Method Definitions
@@ -331,7 +331,7 @@ namespace spectra {
         sigma_a_spec.Scale(sigmaScale);
         sigma_s_spec.Scale(sigmaScale);
 
-        nanovdb::BBox<nanovdb::Vec3R> bbox = densityFloatGrid->worldBBox();
+        nanovdb::math::BBox<nanovdb::math::Vec3d> bbox = densityFloatGrid->worldBBox();
         bounds                             = Bounds3f(Point3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]), Point3f(bbox.max()[0], bbox.max()[1], bbox.max()[2]));
 
         if (temperatureGrid) {
@@ -339,7 +339,7 @@ namespace spectra {
             float minTemperature, maxTemperature;
             temperatureFloatGrid->tree().extrema(minTemperature, maxTemperature);
 
-            nanovdb::BBox<nanovdb::Vec3R> bbox = temperatureFloatGrid->worldBBox();
+            nanovdb::math::BBox<nanovdb::math::Vec3d> bbox = temperatureFloatGrid->worldBBox();
             bounds                             = Union(bounds, Bounds3f(Point3f(bbox.min()[0], bbox.min()[1], bbox.min()[2]), Point3f(bbox.max()[0], bbox.max()[1], bbox.max()[2])));
         }
 
@@ -358,8 +358,8 @@ namespace spectra {
             Bounds3f wb(bounds.Lerp(Point3f(Float(x) / majorantGrid.res.x, Float(y) / majorantGrid.res.y, Float(z) / majorantGrid.res.z)), bounds.Lerp(Point3f(Float(x + 1) / majorantGrid.res.x, Float(y + 1) / majorantGrid.res.y, Float(z + 1) / majorantGrid.res.z)));
 
             // Compute corresponding NanoVDB index-space bounds in floating-point.
-            nanovdb::Vec3R i0 = densityFloatGrid->worldToIndexF(nanovdb::Vec3R(wb.pMin.x, wb.pMin.y, wb.pMin.z));
-            nanovdb::Vec3R i1 = densityFloatGrid->worldToIndexF(nanovdb::Vec3R(wb.pMax.x, wb.pMax.y, wb.pMax.z));
+            nanovdb::math::Vec3d i0 = densityFloatGrid->worldToIndexF(nanovdb::math::Vec3d(wb.pMin.x, wb.pMin.y, wb.pMin.z));
+            nanovdb::math::Vec3d i1 = densityFloatGrid->worldToIndexF(nanovdb::math::Vec3d(wb.pMax.x, wb.pMax.y, wb.pMax.z));
 
             // Now find integer index-space bounds, accounting for both
             // filtering and the overall index bounding box.
