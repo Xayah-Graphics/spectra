@@ -1,10 +1,10 @@
 module;
 
-#include <imgui.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 
 module spectra.scene.ui;
 
+import imgui;
 import std;
 
 namespace spectra::scene {

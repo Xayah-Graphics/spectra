@@ -47,9 +47,11 @@ function(spectra_download_if_needed url out_path)
     file(MAKE_DIRECTORY "${out_dir}")
 
     message(STATUS "Downloading ${url}")
+    set(tmp_path "${out_path}.download")
+    file(REMOVE "${tmp_path}")
     file(DOWNLOAD
             "${url}"
-            "${out_path}"
+            "${tmp_path}"
             TLS_VERIFY ON
             STATUS dl_status
     )
@@ -57,8 +59,10 @@ function(spectra_download_if_needed url out_path)
     list(GET dl_status 0 dl_code)
     list(GET dl_status 1 dl_msg)
     if (NOT dl_code EQUAL 0)
+        file(REMOVE "${tmp_path}")
         message(FATAL_ERROR "Failed to download ${url}: [${dl_code}] ${dl_msg}")
     endif ()
+    file(RENAME "${tmp_path}" "${out_path}")
 endfunction()
 
 set(SPECTRA_XCLI_COMMIT "bb261075e7c8a4722b23f42c3be01aa24024731a")
@@ -83,6 +87,73 @@ target_sources(
 )
 set_property(TARGET xayah-util-xcli PROPERTY CXX_MODULE_STD ON)
 
+set(SPECTRA_IMGUI_MODULE_COMMIT "8fff16535a92346f681bfb8a61ee1454142eef82")
+set(SPECTRA_IMGUI_SOURCE_COMMIT "b61e56346a92cfcaf1f43a545ca37b0b32239654")
+set(SPECTRA_IMGUI_MODULE_DIR "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}")
+set(SPECTRA_IMGUI_SOURCE_DIR "${SPECTRA_IMGUI_MODULE_DIR}/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}")
+
+function(spectra_download_imgui_source_file relative_path)
+    spectra_download_if_needed(
+            "https://raw.githubusercontent.com/ocornut/imgui/${SPECTRA_IMGUI_SOURCE_COMMIT}/${relative_path}"
+            "${SPECTRA_IMGUI_SOURCE_DIR}/${relative_path}"
+    )
+endfunction()
+
+foreach (imgui_module_file IN ITEMS
+        generated/imgui.cppm
+        generated/imgui_internal.cppm
+        generated/backends/imgui_impl_glfw.cppm
+        generated/backends/imgui_impl_vulkan.cppm
+)
+    spectra_download_if_needed(
+            "https://raw.githubusercontent.com/stripe2933/imgui-module/${SPECTRA_IMGUI_MODULE_COMMIT}/${relative_path}"
+            "${SPECTRA_IMGUI_MODULE_DIR}/${relative_path}"
+    )
+endforeach ()
+
+foreach (imgui_source_file IN ITEMS
+        imgui.cpp
+        imgui_draw.cpp
+        imgui_tables.cpp
+        imgui_widgets.cpp
+        imgui.h
+        imgui_internal.h
+        imconfig.h
+        imstb_rectpack.h
+        imstb_textedit.h
+        imstb_truetype.h
+        backends/imgui_impl_glfw.cpp
+        backends/imgui_impl_glfw.h
+        backends/imgui_impl_vulkan.cpp
+        backends/imgui_impl_vulkan.h
+)
+    spectra_download_imgui_source_file("${imgui_source_file}")
+endforeach ()
+
+add_library(spectra_imgui)
+add_library(spectra::imgui ALIAS spectra_imgui)
+target_sources(
+        spectra_imgui
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES
+        BASE_DIRS "${SPECTRA_IMGUI_MODULE_DIR}/generated"
+        FILES
+        "${SPECTRA_IMGUI_MODULE_DIR}/generated/imgui.cppm"
+        "${SPECTRA_IMGUI_MODULE_DIR}/generated/imgui_internal.cppm"
+        "${SPECTRA_IMGUI_MODULE_DIR}/generated/backends/imgui_impl_glfw.cppm"
+        "${SPECTRA_IMGUI_MODULE_DIR}/generated/backends/imgui_impl_vulkan.cppm"
+        PRIVATE
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_draw.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_tables.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/imgui_widgets.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
+        "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
+)
+target_include_directories(spectra_imgui PUBLIC "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
+target_link_libraries(spectra_imgui PUBLIC Vulkan::Vulkan PRIVATE glfw)
+set_property(TARGET spectra_imgui PROPERTY CXX_MODULE_STD ON)
+
 
 # ============================================================================
 # Spectra Core
@@ -97,8 +168,8 @@ target_sources(
         PRIVATE
         spectra/spectra.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan PRIVATE glfw vendor::imgui)
-target_include_directories(spectra_core PUBLIC ${SPECTRA_ROOT_DIR}/vendor/imgui PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
+target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan spectra::imgui PRIVATE glfw)
+target_include_directories(spectra_core PRIVATE ${SPECTRA_ROOT_DIR}/vendor)
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
 
@@ -500,7 +571,7 @@ target_link_libraries(
         spectra_pathtracer
         PUBLIC
         Vulkan::Vulkan
-        vendor::imgui
+        spectra::imgui
         spectra::scene
         PRIVATE
         vendor::lodepng
@@ -595,7 +666,7 @@ target_sources(
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan vendor::imgui spectra::scene)
+target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::imgui spectra::scene)
 target_include_directories(spectra_rasterizer PRIVATE ${SPECTRA_ROOT_DIR}/vendor "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 

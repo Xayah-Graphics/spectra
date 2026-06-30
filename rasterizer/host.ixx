@@ -7,11 +7,11 @@ module;
 #endif
 #endif
 
-#include <imgui.h>
 #include <vulkan/vulkan_raii.hpp>
 
 export module spectra.rasterizer.host;
 
+export import imgui;
 import std;
 
 namespace spectra::rasterizer {

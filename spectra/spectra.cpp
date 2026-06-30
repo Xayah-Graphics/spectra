@@ -13,10 +13,6 @@ module;
 #if defined(_WIN32)
 #include <GLFW/glfw3native.h>
 #endif
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_vulkan.h>
-#include <imgui.h>
-#include <imgui_internal.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <material_symbols/material_symbols_rounded_regular.h>
 #include <roboto/roboto_mono.h>
@@ -27,6 +23,9 @@ module;
 
 module spectra;
 
+import imgui_impl_glfw;
+import imgui_impl_vulkan;
+import imgui_internal;
 import std;
 
 namespace {
@@ -553,7 +552,7 @@ namespace spectra {
             const auto imgui_image_count     = static_cast<std::uint32_t>(this->swapchain.images.size());
             if (imgui_image_count < imgui_min_image_count) throw std::runtime_error("ImGui image count is smaller than minimum image count");
 
-            IMGUI_CHECKVERSION();
+            ImGui::DebugCheckVersionAndDataLayout("1.92.8", sizeof(ImGuiIO), sizeof(ImGuiStyle), sizeof(ImVec2), sizeof(ImVec4), sizeof(ImDrawVert), sizeof(ImDrawIdx));
             ImGui::CreateContext();
             context_created = true;
 

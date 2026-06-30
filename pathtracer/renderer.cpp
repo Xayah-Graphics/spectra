@@ -10,10 +10,8 @@ module;
 #include <unistd.h>
 #endif
 
-#include <backends/imgui_impl_vulkan.h>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
-#include <imgui.h>
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <pathtracer/base/film.cuh>
 #include <pathtracer/base/sampler.cuh>
@@ -32,12 +30,17 @@ module;
 
 module spectra.pathtracer.renderer;
 
+import imgui_impl_vulkan;
 import spectra.pathtracer.host;
 import spectra.scene;
 import std;
 
 namespace {
     constexpr int interactive_default_pixel_samples = 256;
+
+    constexpr ImU32 imgui_color(const int red, const int green, const int blue, const int alpha) {
+        return static_cast<ImU32>(red) | static_cast<ImU32>(green) << 8 | static_cast<ImU32>(blue) << 16 | static_cast<ImU32>(alpha) << 24;
+    }
 
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
         const vk::ImageMemoryBarrier2 image_memory_barrier{
@@ -2245,8 +2248,8 @@ namespace spectra::pathtracer {
                 const ImVec2 hud_size = ImGui::CalcTextSize(hud.c_str());
                 const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
                 const ImVec2 hud_max{hud_min.x + hud_size.x + hud_padding.x * 2.0f, hud_min.y + hud_size.y + hud_padding.y * 2.0f};
-                draw_list->AddRectFilled(hud_min, hud_max, IM_COL32(15, 18, 22, 184), 7.0f);
-                draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
+                draw_list->AddRectFilled(hud_min, hud_max, imgui_color(15, 18, 22, 184), 7.0f);
+                draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, imgui_color(232, 236, 238, 255), hud.c_str());
             }
         }
 
@@ -2269,8 +2272,8 @@ namespace spectra::pathtracer {
             const ImVec2 chip_size = ImGui::CalcTextSize(chip.c_str());
             const ImVec2 chip_min{image_max.x - chip_size.x - chip_padding.x * 2.0f - 12.0f, image_max.y - chip_size.y - chip_padding.y * 2.0f - 12.0f};
             const ImVec2 chip_max{chip_min.x + chip_size.x + chip_padding.x * 2.0f, chip_min.y + chip_size.y + chip_padding.y * 2.0f};
-            draw_list->AddRectFilled(chip_min, chip_max, IM_COL32(15, 18, 22, 164), 7.0f);
-            draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, IM_COL32(206, 214, 220, 255), chip.c_str());
+            draw_list->AddRectFilled(chip_min, chip_max, imgui_color(15, 18, 22, 164), 7.0f);
+            draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, imgui_color(206, 214, 220, 255), chip.c_str());
         }
         if (this->draw_external_viewport_overlays) this->draw_external_viewport_overlays(image_min, image_size);
         ImGui::PopClipRect();
@@ -2287,8 +2290,8 @@ namespace spectra::pathtracer {
         const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
         const ImVec2 padding{6.0f, 5.0f};
         const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 3.0f + gap * 2.0f, origin.y + padding.y * 2.0f + button_size};
-        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 198), 7.0f);
-        draw_list->AddRect(origin, background_max, IM_COL32(86, 98, 108, 72), 7.0f);
+        draw_list->AddRectFilled(origin, background_max, imgui_color(14, 16, 19, 198), 7.0f);
+        draw_list->AddRect(origin, background_max, imgui_color(86, 98, 108, 72), 7.0f);
 
         ImGui::PushClipRect(image_min, image_max, true);
         ImGui::PushID("SpectraPathtracerViewportToolbar");

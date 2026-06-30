@@ -8,25 +8,28 @@ module;
 #include <Windows.h>
 #endif
 
-#include <backends/imgui_impl_vulkan.h>
-#include <imgui.h>
-#include <material_symbols/IconsMaterialSymbols.h>
-#include <spectra_rasterizer_shaders_spv.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+
+#include <material_symbols/IconsMaterialSymbols.h>
+#include <spectra_rasterizer_shaders_spv.h>
 
 #include <vulkan/vulkan_raii.hpp>
 
 module spectra.rasterizer.renderer;
 
+import imgui_impl_vulkan;
 import spectra.rasterizer.host;
 import spectra.rasterizer.math;
 import spectra.scene;
 import std;
 
 namespace {
+    constexpr ImU32 imgui_color(const int red, const int green, const int blue, const int alpha) {
+        return static_cast<ImU32>(red) | static_cast<ImU32>(green) << 8 | static_cast<ImU32>(blue) << 16 | static_cast<ImU32>(alpha) << 24;
+    }
+
     struct RasterizerVertex {
         float px{};
         float py{};
@@ -4775,8 +4778,8 @@ namespace spectra::rasterizer {
         const ImVec2 origin{image_min.x + 12.0f, image_min.y + 12.0f};
         const ImVec2 padding{6.0f, 5.0f};
         const ImVec2 background_max{origin.x + padding.x * 2.0f + button_size * 6.0f + gap * 5.0f, origin.y + padding.y * 2.0f + button_size};
-        draw_list->AddRectFilled(origin, background_max, IM_COL32(14, 16, 19, 198), 7.0f);
-        draw_list->AddRect(origin, background_max, IM_COL32(86, 98, 108, 72), 7.0f);
+        draw_list->AddRectFilled(origin, background_max, imgui_color(14, 16, 19, 198), 7.0f);
+        draw_list->AddRect(origin, background_max, imgui_color(86, 98, 108, 72), 7.0f);
 
         ImGui::PushClipRect(image_min, image_max, true);
         ImGui::PushID("SpectraRasterizerViewportToolbar");
@@ -4836,8 +4839,8 @@ namespace spectra::rasterizer {
         const ImVec2 size{78.0f, 78.0f};
         const ImVec2 center{origin.x + size.x * 0.5f, origin.y + size.y * 0.5f};
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        draw_list->AddRectFilled(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(13, 15, 18, 186), 9.0f);
-        draw_list->AddRect(origin, ImVec2{origin.x + size.x, origin.y + size.y}, IM_COL32(96, 106, 116, 90), 9.0f);
+        draw_list->AddRectFilled(origin, ImVec2{origin.x + size.x, origin.y + size.y}, imgui_color(13, 15, 18, 186), 9.0f);
+        draw_list->AddRect(origin, ImVec2{origin.x + size.x, origin.y + size.y}, imgui_color(96, 106, 116, 90), 9.0f);
 
         struct GizmoAxis {
             const char* id{};
@@ -4916,15 +4919,15 @@ namespace spectra::rasterizer {
             const ImVec2 arrow_base{axis.tip.x - direction.x * arrow_length, axis.tip.y - direction.y * arrow_length};
             const ImVec2 arrow_left{arrow_base.x + perpendicular.x * arrow_half_width, arrow_base.y + perpendicular.y * arrow_half_width};
             const ImVec2 arrow_right{arrow_base.x - perpendicular.x * arrow_half_width, arrow_base.y - perpendicular.y * arrow_half_width};
-            draw_list->AddLine(center, arrow_base, IM_COL32(0, 0, 0, 95), 3.0f);
-            draw_list->AddLine(center, arrow_base, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, line_alpha), 2.0f);
-            draw_list->AddTriangleFilled(axis.tip, arrow_left, arrow_right, IM_COL32(0, 0, 0, 86));
-            draw_list->AddTriangleFilled(axis.tip, arrow_left, arrow_right, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, line_alpha));
+            draw_list->AddLine(center, arrow_base, imgui_color(0, 0, 0, 95), 3.0f);
+            draw_list->AddLine(center, arrow_base, imgui_color(axis.line_red, axis.line_green, axis.line_blue, line_alpha), 2.0f);
+            draw_list->AddTriangleFilled(axis.tip, arrow_left, arrow_right, imgui_color(0, 0, 0, 86));
+            draw_list->AddTriangleFilled(axis.tip, arrow_left, arrow_right, imgui_color(axis.line_red, axis.line_green, axis.line_blue, line_alpha));
             axis.label_center = ImVec2{axis.tip.x + direction.x * label_gap, axis.tip.y + direction.y * label_gap};
             const ImVec2 text_size = ImGui::CalcTextSize(axis.label);
             const ImVec2 text_position{axis.label_center.x - text_size.x * 0.5f, axis.label_center.y - text_size.y * 0.5f};
-            draw_list->AddText(ImVec2{text_position.x + 1.0f, text_position.y + 1.0f}, IM_COL32(0, 0, 0, 180), axis.label);
-            draw_list->AddText(text_position, IM_COL32(axis.line_red, axis.line_green, axis.line_blue, text_alpha), axis.label);
+            draw_list->AddText(ImVec2{text_position.x + 1.0f, text_position.y + 1.0f}, imgui_color(0, 0, 0, 180), axis.label);
+            draw_list->AddText(text_position, imgui_color(axis.line_red, axis.line_green, axis.line_blue, text_alpha), axis.label);
         }
 
         ImGui::PushID("SpectraRasterizerOrientationGizmo");
@@ -4957,8 +4960,8 @@ namespace spectra::rasterizer {
         }
         const ImVec2 hud_min{image_min.x + 12.0f, image_min.y + 58.0f};
         const ImVec2 hud_max{hud_min.x + hud_text.x + hud_padding.x * 2.0f, hud_min.y + hud_text.y + hud_padding.y * 2.0f};
-        draw_list->AddRectFilled(hud_min, hud_max, IM_COL32(15, 18, 22, 184), 7.0f);
-        draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, IM_COL32(232, 236, 238, 255), hud.c_str());
+        draw_list->AddRectFilled(hud_min, hud_max, imgui_color(15, 18, 22, 184), 7.0f);
+        draw_list->AddText(ImVec2{hud_min.x + hud_padding.x, hud_min.y + hud_padding.y}, imgui_color(232, 236, 238, 255), hud.c_str());
 
         float next_left_overlay_y = hud_max.y + 8.0f;
         std::string selection_text = this->scene_selection_summary();
@@ -4970,10 +4973,10 @@ namespace spectra::rasterizer {
         }
         const ImVec2 selection_min{image_min.x + 12.0f, next_left_overlay_y};
         const ImVec2 selection_max{selection_min.x + selection_size.x + selection_padding.x * 2.0f, selection_min.y + selection_size.y + selection_padding.y * 2.0f};
-        const ImU32 selection_background = this->selection.active_scene_object.has_value() ? IM_COL32(12, 38, 48, 190) : IM_COL32(15, 18, 22, 150);
+        const ImU32 selection_background = this->selection.active_scene_object.has_value() ? imgui_color(12, 38, 48, 190) : imgui_color(15, 18, 22, 150);
         draw_list->AddRectFilled(selection_min, selection_max, selection_background, 7.0f);
-        draw_list->AddRect(selection_min, selection_max, this->selection.active_scene_object.has_value() ? IM_COL32(60, 198, 232, 112) : IM_COL32(92, 102, 112, 72), 7.0f);
-        draw_list->AddText(ImVec2{selection_min.x + selection_padding.x, selection_min.y + selection_padding.y}, IM_COL32(218, 236, 242, 255), selection_text.c_str());
+        draw_list->AddRect(selection_min, selection_max, this->selection.active_scene_object.has_value() ? imgui_color(60, 198, 232, 112) : imgui_color(92, 102, 112, 72), 7.0f);
+        draw_list->AddText(ImVec2{selection_min.x + selection_padding.x, selection_min.y + selection_padding.y}, imgui_color(218, 236, 242, 255), selection_text.c_str());
 
         std::size_t primitive_count{};
         for (const SceneObjectRecord& object : this->ui.scene_ui_cache.objects) {
@@ -4989,8 +4992,8 @@ namespace spectra::rasterizer {
         }
         const ImVec2 chip_min{image_max.x - chip_text.x - chip_padding.x * 2.0f - 12.0f, image_max.y - chip_text.y - chip_padding.y * 2.0f - 12.0f};
         const ImVec2 chip_max{chip_min.x + chip_text.x + chip_padding.x * 2.0f, chip_min.y + chip_text.y + chip_padding.y * 2.0f};
-        draw_list->AddRectFilled(chip_min, chip_max, IM_COL32(15, 18, 22, 164), 7.0f);
-        draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, IM_COL32(206, 214, 220, 255), chip.c_str());
+        draw_list->AddRectFilled(chip_min, chip_max, imgui_color(15, 18, 22, 164), 7.0f);
+        draw_list->AddText(ImVec2{chip_min.x + chip_padding.x, chip_min.y + chip_padding.y}, imgui_color(206, 214, 220, 255), chip.c_str());
 
         if (this->host.draw_viewport_overlays) this->host.draw_viewport_overlays(image_min.x, image_min.y, image_size.x, image_size.y);
         this->draw_orientation_gizmo(image_rect);
@@ -5002,7 +5005,7 @@ namespace spectra::rasterizer {
         if (available.x > 1.0f && available.y > 1.0f) this->ui.requested_extent = vk::Extent2D{static_cast<std::uint32_t>(available.x), static_cast<std::uint32_t>(available.y)};
         const ImVec2 image_min = ImGui::GetCursorScreenPos();
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        draw_list->AddRectFilled(image_min, ImVec2{image_min.x + available.x, image_min.y + available.y}, IM_COL32(9, 11, 14, 255));
+        draw_list->AddRectFilled(image_min, ImVec2{image_min.x + available.x, image_min.y + available.y}, imgui_color(9, 11, 14, 255));
         if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) {
             ImGui::Dummy(available);
             return;

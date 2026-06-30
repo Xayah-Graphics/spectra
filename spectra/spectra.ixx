@@ -8,12 +8,12 @@ module;
 #endif
 
 #include <GLFW/glfw3.h>
-#include <imgui.h>
 
 #include <vulkan/vulkan_raii.hpp>
 
 export module spectra;
 
+export import imgui;
 import std;
 
 namespace spectra {
