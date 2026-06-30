@@ -1,18 +1,10 @@
 module;
 
-#if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#endif
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module spectra.rasterizer.renderer;
 
 export import spectra.rasterizer.host;
 export import spectra.scene;
+export import vulkan;
 
 import std;
 
@@ -560,7 +552,7 @@ namespace spectra::rasterizer {
             vk::raii::DeviceMemory memory{nullptr};
             vk::raii::ImageView view{nullptr};
             vk::raii::Sampler sampler{nullptr};
-            VkDescriptorSet imgui_descriptor{VK_NULL_HANDLE};
+            ImTextureID imgui_descriptor{};
             vk::Format depth_format{vk::Format::eD32Sfloat};
             vk::ImageLayout depth_layout{vk::ImageLayout::eUndefined};
             vk::raii::Image depth_image{nullptr};

@@ -204,6 +204,22 @@ set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
 add_subdirectory("${SPECTRA_GLFW_SOURCE_DIR}" "${SPECTRA_BINARY_ROOT_DIR}/vendor-cache/glfw-build/${SPECTRA_GLFW_COMMIT}")
 
+add_library(spectra_vulkan)
+add_library(spectra::vulkan ALIAS spectra_vulkan)
+target_sources(
+        spectra_vulkan
+        PUBLIC
+        FILE_SET cxx_modules TYPE CXX_MODULES
+        BASE_DIRS "${Vulkan_INCLUDE_DIRS}"
+        FILES
+        "${Vulkan_INCLUDE_DIRS}/vulkan/vulkan.cppm"
+)
+if (WIN32)
+    target_compile_definitions(spectra_vulkan PUBLIC VK_USE_PLATFORM_WIN32_KHR NOMINMAX)
+endif ()
+target_link_libraries(spectra_vulkan PUBLIC Vulkan::Vulkan)
+set_property(TARGET spectra_vulkan PROPERTY CXX_MODULE_STD ON)
+
 set(SPECTRA_ZLIB_COMMIT "da607da739fa6047df13e66a2af6b8bec7c2a498")
 set(SPECTRA_ZLIB_ARCHIVE_SHA256 "21DE001766ABB1F5BFDFB3C23AA42D30A6BBD7EDDD37131D5E7FE89C5EC068F8")
 spectra_prepare_archive_dependency(
@@ -425,7 +441,7 @@ target_sources(
         "${SPECTRA_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
 )
 target_include_directories(spectra_imgui PUBLIC "${SPECTRA_IMGUI_SOURCE_DIR}" "${SPECTRA_IMGUI_SOURCE_DIR}/backends")
-target_link_libraries(spectra_imgui PUBLIC Vulkan::Vulkan PRIVATE glfw)
+target_link_libraries(spectra_imgui PUBLIC spectra::vulkan PRIVATE glfw)
 set_property(TARGET spectra_imgui PROPERTY CXX_MODULE_STD ON)
 
 
@@ -442,7 +458,7 @@ target_sources(
         PRIVATE
         spectra/spectra.cpp
 )
-target_link_libraries(spectra_core PUBLIC Vulkan::Vulkan spectra::imgui PRIVATE glfw)
+target_link_libraries(spectra_core PUBLIC spectra::vulkan spectra::imgui PRIVATE glfw)
 target_include_directories(spectra_core PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
@@ -844,7 +860,7 @@ target_compile_options(
 target_link_libraries(
         spectra_pathtracer
         PUBLIC
-        Vulkan::Vulkan
+        spectra::vulkan
         spectra::imgui
         spectra::scene
         PRIVATE
@@ -940,7 +956,7 @@ target_sources(
         "${SPECTRA_RASTERIZER_SHADER_AGGREGATE_HEADER}"
         ${SPECTRA_RASTERIZER_SHADER_HEADERS}
 )
-target_link_libraries(spectra_rasterizer PUBLIC Vulkan::Vulkan spectra::imgui spectra::scene)
+target_link_libraries(spectra_rasterizer PUBLIC spectra::vulkan spectra::imgui spectra::scene)
 target_include_directories(spectra_rasterizer PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}" "${SPECTRA_RASTERIZER_GENERATED_DIR}")
 set_property(TARGET spectra_rasterizer PROPERTY CXX_MODULE_STD ON)
 

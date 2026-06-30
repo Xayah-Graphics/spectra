@@ -1,19 +1,11 @@
 module;
 
-#if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#endif
-
 #include <GLFW/glfw3.h>
-
-#include <vulkan/vulkan_raii.hpp>
 
 export module spectra;
 
 export import imgui;
+export import vulkan;
 import std;
 
 namespace spectra {
@@ -320,7 +312,7 @@ namespace spectra {
             vk::raii::DeviceMemory memory{nullptr};
             vk::raii::ImageView view{nullptr};
             vk::raii::Sampler sampler{nullptr};
-            VkDescriptorSet descriptor{VK_NULL_HANDLE};
+            ImTextureID descriptor{};
             vk::ImageLayout layout{vk::ImageLayout::eUndefined};
         };
 

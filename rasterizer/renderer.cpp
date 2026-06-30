@@ -1,7 +1,6 @@
 module;
 
 #if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -15,8 +14,6 @@ module;
 #include <material_symbols/IconsMaterialSymbols.h>
 #include <spectra_rasterizer_shaders_spv.h>
 
-#include <vulkan/vulkan_raii.hpp>
-
 module spectra.rasterizer.renderer;
 
 import imgui_impl_vulkan;
@@ -24,6 +21,7 @@ import spectra.rasterizer.host;
 import spectra.rasterizer.math;
 import spectra.scene;
 import std;
+import vulkan;
 
 namespace {
     constexpr ImU32 imgui_color(const int red, const int green, const int blue, const int alpha) {
@@ -473,8 +471,8 @@ namespace {
             dst_access,
             old_layout,
             new_layout,
-            VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
             image,
             {aspect, 0, 1, 0, 1},
         };
@@ -488,11 +486,11 @@ namespace {
             src_access,
             dst_stage,
             dst_access,
-            VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
             buffer,
             0u,
-            VK_WHOLE_SIZE,
+            vk::WholeSize,
         };
         const vk::DependencyInfo dependency_info{{}, 0, nullptr, 1, &buffer_memory_barrier, 0, nullptr};
         command_buffer.pipelineBarrier2(dependency_info);
@@ -960,7 +958,7 @@ namespace spectra::rasterizer {
 
     void Renderer::after_imgui_created() {
         this->lifecycle.imgui_ready = true;
-        if (*this->viewport.image && this->viewport.imgui_descriptor == VK_NULL_HANDLE) this->create_imgui_descriptor();
+        if (*this->viewport.image && this->viewport.imgui_descriptor == ImTextureID{}) this->create_imgui_descriptor();
     }
 
     void Renderer::update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, const std::uint32_t frame_count, const vk::Extent2D swapchain_extent) {
@@ -1045,14 +1043,14 @@ namespace spectra::rasterizer {
             vk::SamplerAddressMode::eClampToEdge,
             vk::SamplerAddressMode::eClampToEdge,
             0.0f,
-            VK_FALSE,
+            vk::False,
             1.0f,
-            VK_FALSE,
+            vk::False,
             vk::CompareOp::eAlways,
             0.0f,
             0.0f,
             vk::BorderColor::eFloatOpaqueBlack,
-            VK_FALSE,
+            vk::False,
         };
         this->viewport.sampler = vk::raii::Sampler{*this->host.device, sampler_create_info};
 
@@ -1087,10 +1085,10 @@ namespace spectra::rasterizer {
     }
 
     void Renderer::destroy_imgui_descriptor() noexcept {
-        if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) return;
+        if (this->viewport.imgui_descriptor == ImTextureID{}) return;
         this->wait_device_idle_for_cleanup();
-        ImGui_ImplVulkan_RemoveTexture(this->viewport.imgui_descriptor);
-        this->viewport.imgui_descriptor = VK_NULL_HANDLE;
+        ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(static_cast<std::uintptr_t>(this->viewport.imgui_descriptor)));
+        this->viewport.imgui_descriptor = ImTextureID{};
     }
 
     void Renderer::destroy_viewport_resources() noexcept {
@@ -1125,13 +1123,14 @@ namespace spectra::rasterizer {
 
     void Renderer::create_imgui_descriptor() {
         if (!*this->viewport.sampler || !*this->viewport.view) throw std::runtime_error("Cannot create Spectra rasterizer descriptor before viewport resources exist");
-        if (this->viewport.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra rasterizer viewport descriptor is already allocated");
-        this->viewport.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*this->viewport.sampler), static_cast<VkImageView>(*this->viewport.view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra rasterizer viewport descriptor");
+        if (this->viewport.imgui_descriptor != ImTextureID{}) throw std::runtime_error("Spectra rasterizer viewport descriptor is already allocated");
+        const VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*this->viewport.sampler), static_cast<VkImageView>(*this->viewport.view), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+        this->viewport.imgui_descriptor  = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
+        if (this->viewport.imgui_descriptor == ImTextureID{}) throw std::runtime_error("Failed to allocate Spectra rasterizer viewport descriptor");
     }
 
     void Renderer::destroy_host_buffer(GpuBuffer& buffer) noexcept {
-        if (buffer.mapped != nullptr && this->host.device != nullptr && *buffer.memory) vkUnmapMemory(static_cast<VkDevice>(**this->host.device), static_cast<VkDeviceMemory>(*buffer.memory));
+        if (buffer.mapped != nullptr && *buffer.memory) buffer.memory.unmapMemory();
         buffer.mapped   = nullptr;
         buffer.buffer   = nullptr;
         buffer.memory   = nullptr;
@@ -1162,7 +1161,7 @@ namespace spectra::rasterizer {
         const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
         buffer.memory = vk::raii::DeviceMemory{*this->host.device, memory_allocate_info};
         buffer.buffer.bindMemory(*buffer.memory, 0);
-        if (vkMapMemory(static_cast<VkDevice>(**this->host.device), static_cast<VkDeviceMemory>(*buffer.memory), 0, required_size, 0, &buffer.mapped) != VK_SUCCESS) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
+        buffer.mapped = buffer.memory.mapMemory(0, required_size);
         buffer.capacity = required_size;
         if (buffer.mapped == nullptr) throw std::runtime_error("Failed to map Spectra rasterizer buffer memory");
     }
@@ -1769,14 +1768,14 @@ namespace spectra::rasterizer {
             vk::VertexInputAttributeDescription{1u, 0u, vk::Format::eR32G32B32Sfloat, static_cast<std::uint32_t>(offsetof(RasterizerVertex, nx))},
         };
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1u, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo opaque_depth_stencil_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo transparent_depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo opaque_depth_stencil_state{{}, vk::True, vk::True, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo transparent_depth_stencil_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState opaque_color_blend_attachment{
-            VK_FALSE,
+            vk::False,
             vk::BlendFactor::eOne,
             vk::BlendFactor::eZero,
             vk::BlendOp::eAdd,
@@ -1786,7 +1785,7 @@ namespace spectra::rasterizer {
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
         constexpr vk::PipelineColorBlendAttachmentState transparent_color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -1795,8 +1794,8 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo opaque_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &opaque_color_blend_attachment};
-        const vk::PipelineColorBlendStateCreateInfo transparent_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &transparent_color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo opaque_color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &opaque_color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo transparent_color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &transparent_color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::PushConstantRange push_constant_range{vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0u, sizeof(DrawPushConstantsData)};
@@ -1847,13 +1846,13 @@ namespace spectra::rasterizer {
         };
 
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState grid_color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -1862,7 +1861,7 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo grid_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &grid_color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo grid_color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &grid_color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::Format color_format = this->viewport.format;
@@ -1910,13 +1909,13 @@ namespace spectra::rasterizer {
             vk::VertexInputAttributeDescription{1u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(PointCloudInstance, r))},
         };
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1u, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOne,
             vk::BlendOp::eAdd,
@@ -1925,7 +1924,7 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::Format color_format = this->viewport.format;
@@ -1976,14 +1975,14 @@ namespace spectra::rasterizer {
             vk::VertexInputAttributeDescription{3u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportSegmentInstance, r))},
         };
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1u, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, vk::False, vk::False, vk::CompareOp::eAlways, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -1992,7 +1991,7 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::Format color_format = this->viewport.format;
@@ -2068,14 +2067,14 @@ namespace spectra::rasterizer {
         this->viewport_voxel_grid_pass.compaction_pipeline = vk::raii::Pipeline{*this->host.device, nullptr, compaction_pipeline_create_info};
 
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, vk::False, vk::False, vk::CompareOp::eAlways, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -2084,7 +2083,7 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::Format color_format = this->viewport.format;
@@ -2135,14 +2134,14 @@ namespace spectra::rasterizer {
             vk::SamplerAddressMode::eClampToEdge,
             vk::SamplerAddressMode::eClampToEdge,
             0.0f,
-            VK_FALSE,
+            vk::False,
             1.0f,
-            VK_FALSE,
+            vk::False,
             vk::CompareOp::eAlways,
             0.0f,
             0.0f,
             vk::BorderColor::eFloatTransparentBlack,
-            VK_FALSE,
+            vk::False,
         };
         this->viewport_image_plane_pass.sampler = vk::raii::Sampler{*this->host.device, sampler_create_info};
 
@@ -2169,14 +2168,14 @@ namespace spectra::rasterizer {
             vk::VertexInputAttributeDescription{3u, 0u, vk::Format::eR32G32B32A32Sfloat, static_cast<std::uint32_t>(offsetof(ViewportImagePlaneInstance, tint))},
         };
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{{}, 1u, &vertex_binding, static_cast<std::uint32_t>(vertex_attributes.size()), vertex_attributes.data()};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo depth_tested_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo always_visible_state{{}, vk::False, vk::False, vk::CompareOp::eAlways, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -2185,7 +2184,7 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::Format color_format = this->viewport.format;
@@ -2257,14 +2256,14 @@ namespace spectra::rasterizer {
             vk::SamplerAddressMode::eClampToBorder,
             vk::SamplerAddressMode::eClampToBorder,
             0.0f,
-            VK_FALSE,
+            vk::False,
             1.0f,
-            VK_FALSE,
+            vk::False,
             vk::CompareOp::eAlways,
             0.0f,
             0.0f,
             vk::BorderColor::eFloatTransparentBlack,
-            VK_FALSE,
+            vk::False,
         };
         this->volume_pass.sampler = vk::raii::Sampler{*this->host.device, sampler_create_info};
 
@@ -2297,13 +2296,13 @@ namespace spectra::rasterizer {
         };
 
         const vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, VK_TRUE, VK_FALSE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{{}, vk::True, vk::False, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
         constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -2312,7 +2311,7 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &color_blend_attachment};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         const vk::Format color_format = this->viewport.format;
@@ -2356,14 +2355,14 @@ namespace spectra::rasterizer {
             vk::SamplerAddressMode::eClampToEdge,
             vk::SamplerAddressMode::eClampToEdge,
             0.0f,
-            VK_FALSE,
+            vk::False,
             1.0f,
-            VK_FALSE,
+            vk::False,
             vk::CompareOp::eAlways,
             0.0f,
             0.0f,
             vk::BorderColor::eFloatTransparentBlack,
-            VK_FALSE,
+            vk::False,
         };
         this->selection.mask_sampler = vk::raii::Sampler{*this->host.device, mask_sampler_create_info};
 
@@ -2393,14 +2392,14 @@ namespace spectra::rasterizer {
 
         const vk::DescriptorSetLayout camera_descriptor_set_layout = *this->camera.descriptor_set_layout;
         const vk::DescriptorSetLayout volume_descriptor_set_layout = *this->volume_pass.descriptor_set_layout;
-        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, VK_FALSE};
+        const vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{{}, vk::PrimitiveTopology::eTriangleList, vk::False};
         const vk::PipelineViewportStateCreateInfo viewport_state{{}, 1u, nullptr, 1u, nullptr};
-        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f};
-        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, VK_FALSE};
+        const vk::PipelineRasterizationStateCreateInfo rasterization_state{{}, vk::False, vk::False, vk::PolygonMode::eFill, vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise, vk::False, 0.0f, 0.0f, 0.0f, 1.0f};
+        const vk::PipelineMultisampleStateCreateInfo multisample_state{{}, vk::SampleCountFlagBits::e1, vk::False};
         constexpr std::array dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         const vk::PipelineDynamicStateCreateInfo dynamic_state{{}, static_cast<std::uint32_t>(dynamic_states.size()), dynamic_states.data()};
         constexpr vk::PipelineColorBlendAttachmentState write_color_blend_attachment{
-            VK_FALSE,
+            vk::False,
             vk::BlendFactor::eOne,
             vk::BlendFactor::eZero,
             vk::BlendOp::eAdd,
@@ -2409,9 +2408,9 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo write_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &write_color_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo write_color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &write_color_blend_attachment};
         constexpr vk::PipelineColorBlendAttachmentState write_id_blend_attachment{
-            VK_FALSE,
+            vk::False,
             vk::BlendFactor::eOne,
             vk::BlendFactor::eZero,
             vk::BlendOp::eAdd,
@@ -2420,9 +2419,9 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR,
         };
-        const vk::PipelineColorBlendStateCreateInfo write_id_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &write_id_blend_attachment};
+        const vk::PipelineColorBlendStateCreateInfo write_id_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &write_id_blend_attachment};
         constexpr vk::PipelineColorBlendAttachmentState outline_color_blend_attachment{
-            VK_TRUE,
+            vk::True,
             vk::BlendFactor::eSrcAlpha,
             vk::BlendFactor::eOneMinusSrcAlpha,
             vk::BlendOp::eAdd,
@@ -2431,9 +2430,9 @@ namespace spectra::rasterizer {
             vk::BlendOp::eAdd,
             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
         };
-        const vk::PipelineColorBlendStateCreateInfo outline_color_blend_state{{}, VK_FALSE, vk::LogicOp::eCopy, 1u, &outline_color_blend_attachment};
-        const vk::PipelineDepthStencilStateCreateInfo selection_depth_state{{}, VK_TRUE, VK_TRUE, vk::CompareOp::eLessOrEqual, VK_FALSE, VK_FALSE};
-        const vk::PipelineDepthStencilStateCreateInfo no_depth_state{{}, VK_FALSE, VK_FALSE, vk::CompareOp::eAlways, VK_FALSE, VK_FALSE};
+        const vk::PipelineColorBlendStateCreateInfo outline_color_blend_state{{}, vk::False, vk::LogicOp::eCopy, 1u, &outline_color_blend_attachment};
+        const vk::PipelineDepthStencilStateCreateInfo selection_depth_state{{}, vk::True, vk::True, vk::CompareOp::eLessOrEqual, vk::False, vk::False};
+        const vk::PipelineDepthStencilStateCreateInfo no_depth_state{{}, vk::False, vk::False, vk::CompareOp::eAlways, vk::False, vk::False};
 
         const vk::VertexInputBindingDescription mesh_vertex_binding{0u, sizeof(RasterizerVertex), vk::VertexInputRate::eVertex};
         const std::array mesh_vertex_attributes{
@@ -5006,11 +5005,11 @@ namespace spectra::rasterizer {
         const ImVec2 image_min = ImGui::GetCursorScreenPos();
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         draw_list->AddRectFilled(image_min, ImVec2{image_min.x + available.x, image_min.y + available.y}, imgui_color(9, 11, 14, 255));
-        if (this->viewport.imgui_descriptor == VK_NULL_HANDLE) {
+        if (this->viewport.imgui_descriptor == ImTextureID{}) {
             ImGui::Dummy(available);
             return;
         }
-        ImGui::Image(reinterpret_cast<ImTextureID>(this->viewport.imgui_descriptor), available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
+        ImGui::Image(this->viewport.imgui_descriptor, available, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
         const ImVec2 item_min = ImGui::GetItemRectMin();
         const ImVec2 item_size = ImGui::GetItemRectSize();
         const ViewportImageRect image_rect{

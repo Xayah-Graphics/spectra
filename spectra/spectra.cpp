@@ -1,7 +1,6 @@
 module;
 
 #if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_EXPOSE_NATIVE_WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -18,7 +17,6 @@ module;
 #include <roboto/roboto_regular.h>
 
 #include <ranges>
-#include <vulkan/vulkan_raii.hpp>
 
 module spectra;
 
@@ -26,6 +24,7 @@ import imgui_impl_glfw;
 import imgui_impl_vulkan;
 import imgui_internal;
 import std;
+import vulkan;
 
 namespace {
     void transition_image_layout(const vk::raii::CommandBuffer& command_buffer, const vk::Image image, const vk::ImageLayout old_layout, const vk::ImageLayout new_layout, const vk::ImageAspectFlags aspect, const vk::PipelineStageFlags2 src_stage, const vk::AccessFlags2 src_access, const vk::PipelineStageFlags2 dst_stage, const vk::AccessFlags2 dst_access) {
@@ -36,8 +35,8 @@ namespace {
             dst_access,
             old_layout,
             new_layout,
-            VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
             image,
             {aspect, 0, 1, 0, 1},
         };
@@ -64,7 +63,7 @@ namespace {
 
     VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(const vk::DebugUtilsMessageSeverityFlagBitsEXT severity, const vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void*) {
         if (vk::DebugUtilsMessageSeverityFlagsEXT{severity} & (vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError)) std::cerr << "validation layer: type " << vk::to_string(type) << " msg: " << callback_data->pMessage << std::endl;
-        return VK_FALSE;
+        return vk::False;
     }
 
     void load_imgui_fonts() {
@@ -321,7 +320,7 @@ namespace spectra {
                 if (const auto found = std::ranges::find(available_extensions, std::string_view{required_extension}, [](const vk::ExtensionProperties& extension) { return std::string_view{extension.extensionName.data()}; }); found == available_extensions.end()) throw std::runtime_error(std::string{"Required Vulkan instance extension not supported: "} + required_extension);
             }
 
-            const vk::ApplicationInfo application_info{app_name_string.c_str(), VK_MAKE_VERSION(1, 0, 0), engine_name_string.c_str(), VK_MAKE_VERSION(1, 0, 0), vk::ApiVersion14};
+            const vk::ApplicationInfo application_info{app_name_string.c_str(), vk::makeApiVersion(0u, 1u, 0u, 0u), engine_name_string.c_str(), vk::makeApiVersion(0u, 1u, 0u, 0u), vk::ApiVersion14};
             const vk::InstanceCreateInfo instance_create_info{{}, &application_info, static_cast<std::uint32_t>(enabled_instance_layers.size()), enabled_instance_layers.data(), static_cast<std::uint32_t>(enabled_instance_extensions.size()), enabled_instance_extensions.data()};
             this->context.instance = vk::raii::Instance{this->context.context, instance_create_info};
         }
@@ -358,8 +357,8 @@ namespace spectra {
     }
 
     void Spectra::create_surface() {
-        VkSurfaceKHR surface = VK_NULL_HANDLE;
-        if (glfwCreateWindowSurface(*this->context.instance, this->surface.window.get(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan surface");
+        VkSurfaceKHR surface{};
+        if (glfwCreateWindowSurface(*this->context.instance, this->surface.window.get(), nullptr, &surface) != static_cast<VkResult>(vk::Result::eSuccess)) throw std::runtime_error("Failed to create Vulkan surface");
         this->surface.surface = vk::raii::SurfaceKHR{this->context.instance, surface};
     }
 
@@ -374,7 +373,7 @@ namespace spectra {
         constexpr std::array<const char*, 5> enabled_device_extensions = required_device_extensions();
         bool selected                                                  = false;
         for (const vk::raii::PhysicalDevice& physical_device : this->context.instance.enumeratePhysicalDevices()) {
-            if (physical_device.getProperties().apiVersion < VK_API_VERSION_1_4) continue;
+            if (physical_device.getProperties().apiVersion < vk::ApiVersion14) continue;
 
             const std::vector<vk::ExtensionProperties> available_extensions = physical_device.enumerateDeviceExtensionProperties();
             bool required_extensions_available                              = true;
@@ -404,9 +403,9 @@ namespace spectra {
         if (!supported_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering) throw std::runtime_error("Device does not support dynamicRendering");
 
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features> enabled_features{{}, {}, {}};
-        enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = VK_TRUE;
-        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2     = VK_TRUE;
-        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering     = VK_TRUE;
+        enabled_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = vk::True;
+        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2     = vk::True;
+        enabled_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering     = vk::True;
 
         constexpr std::array<const char*, 5> enabled_device_extensions = required_device_extensions();
         constexpr std::array queue_priorities{1.0f};
@@ -482,7 +481,7 @@ namespace spectra {
 
         const vk::SurfaceTransformFlagBitsKHR pre_transform     = surface_capabilities.currentTransform;
         constexpr auto composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-        const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, VK_TRUE, *old_swapchain};
+        const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, vk::True, *old_swapchain};
         this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
 
         this->swapchain.images = this->swapchain.handle.getImages();
@@ -561,12 +560,12 @@ namespace spectra {
 
             auto color_attachment_format = static_cast<VkFormat>(imgui_color_format);
             VkPipelineRenderingCreateInfoKHR pipeline_rendering_create_info{};
-            pipeline_rendering_create_info.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+            pipeline_rendering_create_info.sType                   = static_cast<VkStructureType>(vk::StructureType::ePipelineRenderingCreateInfo);
             pipeline_rendering_create_info.colorAttachmentCount    = 1;
             pipeline_rendering_create_info.pColorAttachmentFormats = &color_attachment_format;
 
             ImGui_ImplVulkan_InitInfo init_info{};
-            init_info.ApiVersion                                   = VK_API_VERSION_1_4;
+            init_info.ApiVersion                                   = vk::ApiVersion14;
             init_info.Instance                                     = static_cast<VkInstance>(*this->context.instance);
             init_info.PhysicalDevice                               = static_cast<VkPhysicalDevice>(*this->context.physical_device);
             init_info.Device                                       = static_cast<VkDevice>(*this->context.device);
@@ -575,7 +574,7 @@ namespace spectra {
             init_info.DescriptorPool                               = static_cast<VkDescriptorPool>(*this->imgui.descriptor_pool);
             init_info.MinImageCount                                = imgui_min_image_count;
             init_info.ImageCount                                   = imgui_image_count;
-            init_info.PipelineInfoMain.MSAASamples                 = VK_SAMPLE_COUNT_1_BIT;
+            init_info.PipelineInfoMain.MSAASamples                 = static_cast<VkSampleCountFlagBits>(vk::SampleCountFlagBits::e1);
             init_info.UseDynamicRendering                          = true;
             init_info.PipelineInfoMain.PipelineRenderingCreateInfo = pipeline_rendering_create_info;
             if (!ImGui_ImplVulkan_Init(&init_info)) throw std::runtime_error("ImGui_ImplVulkan_Init failed");
@@ -610,7 +609,7 @@ namespace spectra {
         this->timing.last_frame_time       = now;
         this->timing.last_frame_time_valid = true;
         if (!std::isfinite(frame.delta_seconds) || frame.delta_seconds < 0.0) throw std::runtime_error("Spectra frame delta time is invalid");
-        if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_slot_index], VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
+        if (this->context.device.waitForFences(*this->sync.in_flight_fences[frame.frame_slot_index], vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for frame fence");
 
         try {
             const vk::ResultValue<std::uint32_t> acquired_image = this->swapchain.handle.acquireNextImage(std::numeric_limits<std::uint64_t>::max(), *this->sync.image_available_semaphores[frame.frame_slot_index], nullptr);
@@ -623,7 +622,7 @@ namespace spectra {
         }
 
         if (const std::uint32_t previous_frame_slot_index = this->sync.image_in_flight_frame.at(frame.image_index); previous_frame_slot_index != std::numeric_limits<std::uint32_t>::max()) {
-            if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_slot_index), VK_TRUE, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
+            if (this->context.device.waitForFences(*this->sync.in_flight_fences.at(previous_frame_slot_index), vk::True, std::numeric_limits<std::uint64_t>::max()) != vk::Result::eSuccess) throw std::runtime_error("Failed to wait for swapchain image fence");
         }
         this->sync.image_in_flight_frame.at(frame.image_index) = frame.frame_slot_index;
         this->context.device.resetFences(*this->sync.in_flight_fences[frame.frame_slot_index]);
@@ -646,7 +645,7 @@ namespace spectra {
         };
         const FrameResult frame_result = this->renderer_registry.slots[this->renderer_registry.active_index].begin_frame(*this, frame_info);
         if (frame_result.completion_semaphore.has_value()) {
-            if (*frame_result.completion_semaphore == VK_NULL_HANDLE) throw std::runtime_error("External completion semaphore must not be null");
+            if (*frame_result.completion_semaphore == vk::Semaphore{}) throw std::runtime_error("External completion semaphore must not be null");
             frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
         }
         if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
@@ -678,8 +677,8 @@ namespace spectra {
                 vk::AccessFlagBits2::eColorAttachmentWrite,
                 this->swapchain.image_layouts[frame.image_index],
                 vk::ImageLayout::eColorAttachmentOptimal,
-                VK_QUEUE_FAMILY_IGNORED,
-                VK_QUEUE_FAMILY_IGNORED,
+                vk::QueueFamilyIgnored,
+                vk::QueueFamilyIgnored,
                 this->swapchain.images[frame.image_index],
                 {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             };
@@ -849,10 +848,10 @@ namespace spectra {
 
     void Spectra::destroy_imgui_rgba8_texture(ImGuiRgba8Texture& texture) const noexcept {
         try {
-            if (texture.descriptor != VK_NULL_HANDLE && this->imgui.initialized) ImGui_ImplVulkan_RemoveTexture(texture.descriptor);
+            if (texture.descriptor != ImTextureID{} && this->imgui.initialized) ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(static_cast<std::uintptr_t>(texture.descriptor)));
         } catch (...) {
         }
-        texture.descriptor = VK_NULL_HANDLE;
+        texture.descriptor = ImTextureID{};
         texture.sampler = nullptr;
         texture.view = nullptr;
         texture.image = nullptr;
@@ -894,10 +893,9 @@ namespace spectra {
         const vk::MemoryAllocateInfo staging_memory_allocate_info{staging_memory_requirements.size, staging_memory_type};
         vk::raii::DeviceMemory staging_memory{this->context.device, staging_memory_allocate_info};
         staging_buffer.bindMemory(*staging_memory, 0);
-        void* mapped{};
-        if (const VkResult result = vkMapMemory(*this->context.device, *staging_memory, 0, texture_bytes, 0, &mapped); result != VK_SUCCESS) throw std::runtime_error(std::format("Failed to map Spectra ImGui RGBA8 staging texture memory: {}", static_cast<int>(result)));
+        void* mapped = staging_memory.mapMemory(0, texture_bytes);
         std::memcpy(mapped, data, texture_bytes);
-        vkUnmapMemory(*this->context.device, *staging_memory);
+        staging_memory.unmapMemory();
 
         const vk::ImageCreateInfo image_create_info{{}, vk::ImageType::e2D, vk::Format::eR8G8B8A8Unorm, vk::Extent3D{texture.source.width, texture.source.height, 1u}, 1u, 1u, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::SharingMode::eExclusive, {}, vk::ImageLayout::eUndefined};
         texture.image = vk::raii::Image{this->context.device, image_create_info};
@@ -925,8 +923,9 @@ namespace spectra {
         this->context.graphics_queue.submit2(submit_info);
         this->context.graphics_queue.waitIdle();
         texture.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        texture.descriptor = ImGui_ImplVulkan_AddTexture(*texture.sampler, *texture.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        if (texture.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra ImGui RGBA8 texture descriptor");
+        const VkDescriptorSet descriptor = ImGui_ImplVulkan_AddTexture(*texture.sampler, *texture.view, static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+        texture.descriptor               = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
+        if (texture.descriptor == ImTextureID{}) throw std::runtime_error("Failed to allocate Spectra ImGui RGBA8 texture descriptor");
     }
 
     Spectra::ImGuiRgba8Texture& Spectra::ensure_imgui_rgba8_texture(const std::string_view cache_key, const Rgba8ImageSource& source) {
@@ -944,7 +943,7 @@ namespace spectra {
         };
         const std::string key{cache_key};
         auto texture = this->imgui.rgba8_textures.find(key);
-        if (texture != this->imgui.rgba8_textures.end() && texture->second.source == texture_source && texture->second.descriptor != VK_NULL_HANDLE) return texture->second;
+        if (texture != this->imgui.rgba8_textures.end() && texture->second.source == texture_source && texture->second.descriptor != ImTextureID{}) return texture->second;
         if (texture != this->imgui.rgba8_textures.end()) {
             this->destroy_imgui_rgba8_texture(texture->second);
         } else {
@@ -957,7 +956,7 @@ namespace spectra {
 
     void Spectra::draw_imgui_rgba8_image(const std::string_view cache_key, const Rgba8ImageSource& source, const ImVec2 display_size) {
         const ImGuiRgba8Texture& texture = this->ensure_imgui_rgba8_texture(cache_key, source);
-        if (texture.descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra ImGui RGBA8 texture descriptor is null");
+        if (texture.descriptor == ImTextureID{}) throw std::runtime_error("Spectra ImGui RGBA8 texture descriptor is null");
         ImGui::Image(texture.descriptor, display_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
     }
 

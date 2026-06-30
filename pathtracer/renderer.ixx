@@ -1,18 +1,10 @@
 module;
 
-#if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#endif
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module spectra.pathtracer.renderer;
 
 export import spectra.pathtracer.host;
 export import spectra.scene;
+export import vulkan;
 
 import std;
 

@@ -1,17 +1,9 @@
 module;
 
-#if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#endif
-
-#include <vulkan/vulkan_raii.hpp>
-
 export module spectra.rasterizer.host;
 
 export import imgui;
+export import vulkan;
 import std;
 
 namespace spectra::rasterizer {

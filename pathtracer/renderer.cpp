@@ -1,7 +1,6 @@
 module;
 
 #if defined(_WIN32)
-#define VK_USE_PLATFORM_WIN32_KHR
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -26,14 +25,13 @@ module;
 #include <pathtracer/util/transform.cuh>
 #include <pathtracer/util/vecmath.cuh>
 
-#include <vulkan/vulkan_raii.hpp>
-
 module spectra.pathtracer.renderer;
 
 import imgui_impl_vulkan;
 import spectra.pathtracer.host;
 import spectra.scene;
 import std;
+import vulkan;
 
 namespace {
     constexpr int interactive_default_pixel_samples = 256;
@@ -50,8 +48,8 @@ namespace {
             dst_access,
             old_layout,
             new_layout,
-            VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
             image,
             {aspect, 0, 1, 0, 1},
         };
@@ -283,7 +281,7 @@ namespace spectra::pathtracer {
             vk::raii::Image image{nullptr};
             vk::raii::ImageView image_view{nullptr};
             vk::raii::Sampler sampler{nullptr};
-            VkDescriptorSet imgui_descriptor{VK_NULL_HANDLE};
+            VkDescriptorSet imgui_descriptor{};
             vk::ImageLayout image_layout{vk::ImageLayout::eUndefined};
         };
 
@@ -349,11 +347,11 @@ namespace {
         const vk::PhysicalDeviceIDProperties& vulkan_id = vulkan_properties.get<vk::PhysicalDeviceIDProperties>();
 #if defined(_WIN32)
         if (!vulkan_id.deviceLUIDValid) throw std::runtime_error("Selected Vulkan device does not expose a valid LUID for CUDA interop");
-        for (std::size_t index = 0; index < VK_LUID_SIZE; ++index) {
+        for (std::size_t index = 0; index < vk::LuidSize; ++index) {
             if (static_cast<unsigned char>(cuda_properties.luid[index]) != vulkan_id.deviceLUID[index]) throw std::runtime_error("CUDA device LUID does not match selected Vulkan device LUID");
         }
 #else
-        for (std::size_t index = 0; index < VK_UUID_SIZE; ++index) {
+        for (std::size_t index = 0; index < vk::UuidSize; ++index) {
             if (static_cast<unsigned char>(cuda_properties.uuid.bytes[index]) != vulkan_id.deviceUUID[index]) throw std::runtime_error("CUDA device UUID does not match selected Vulkan device UUID");
         }
 #endif
@@ -361,18 +359,18 @@ namespace {
 
     void release_pipeline_viewport_descriptors_noexcept(spectra::pathtracer::RenderPipeline& pipeline) noexcept {
         for (spectra::pathtracer::RenderPipeline::FrameResource& frame : pipeline.frames) {
-            if (frame.imgui_descriptor != VK_NULL_HANDLE) {
+            if (frame.imgui_descriptor != VkDescriptorSet{}) {
                 ImGui_ImplVulkan_RemoveTexture(frame.imgui_descriptor);
-                frame.imgui_descriptor = VK_NULL_HANDLE;
+                frame.imgui_descriptor = VkDescriptorSet{};
             }
         }
     }
 
     void create_pipeline_viewport_descriptors(spectra::pathtracer::RenderPipeline& pipeline) {
         for (spectra::pathtracer::RenderPipeline::FrameResource& frame : pipeline.frames) {
-            if (frame.imgui_descriptor != VK_NULL_HANDLE) throw std::runtime_error("Spectra pathtracer viewport descriptor is already allocated");
-            frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.sampler), static_cast<VkImageView>(*frame.image_view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            if (frame.imgui_descriptor == VK_NULL_HANDLE) throw std::runtime_error("Failed to allocate Spectra pathtracer viewport descriptor");
+            if (frame.imgui_descriptor != VkDescriptorSet{}) throw std::runtime_error("Spectra pathtracer viewport descriptor is already allocated");
+            frame.imgui_descriptor = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*frame.sampler), static_cast<VkImageView>(*frame.image_view), static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal));
+            if (frame.imgui_descriptor == VkDescriptorSet{}) throw std::runtime_error("Failed to allocate Spectra pathtracer viewport descriptor");
         }
     }
 
@@ -496,14 +494,14 @@ namespace {
             vk::SamplerAddressMode::eClampToEdge,
             vk::SamplerAddressMode::eClampToEdge,
             0.0f,
-            VK_FALSE,
+            vk::False,
             1.0f,
-            VK_FALSE,
+            vk::False,
             vk::CompareOp::eNever,
             0.0f,
             0.0f,
             vk::BorderColor::eFloatOpaqueBlack,
-            VK_FALSE,
+            vk::False,
         };
         frame.sampler = vk::raii::Sampler{device, sampler_create_info};
     }
@@ -693,7 +691,7 @@ namespace spectra::pathtracer {
 
     [[nodiscard]] VkDescriptorSet RenderPipeline::active_descriptor() const {
         const RenderPipeline& pipeline = *this;
-        if (pipeline.frames.empty()) return VK_NULL_HANDLE;
+        if (pipeline.frames.empty()) return VkDescriptorSet{};
         return pipeline.frames.at(pipeline.active_frame_index).imgui_descriptor;
     }
 
@@ -785,8 +783,8 @@ namespace spectra::pathtracer {
             vk::AccessFlagBits2::eMemoryWrite,
             vk::PipelineStageFlagBits2::eTransfer,
             vk::AccessFlagBits2::eTransferRead,
-            VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
             *frame.interop_buffer,
             0,
             frame.interop_buffer_size,
@@ -813,11 +811,11 @@ namespace spectra::pathtracer {
                 vk::AccessFlagBits2::eTransferWrite,
                 vk::PipelineStageFlagBits2::eHost,
                 vk::AccessFlagBits2::eHostRead,
-                VK_QUEUE_FAMILY_IGNORED,
-                VK_QUEUE_FAMILY_IGNORED,
+                vk::QueueFamilyIgnored,
+                vk::QueueFamilyIgnored,
                 screenshot_buffer,
                 0,
-                VK_WHOLE_SIZE,
+                vk::WholeSize,
             };
             const vk::DependencyInfo screenshot_dependency_info{{}, 0, nullptr, 1, &screenshot_buffer_barrier, 0, nullptr};
             command_buffer.pipelineBarrier2(screenshot_dependency_info);
@@ -1643,7 +1641,7 @@ namespace spectra::pathtracer {
     }
 
     void Renderer::Impl::destroy_readback_buffer(ReadbackBuffer& buffer) noexcept {
-        if (buffer.mapped != nullptr && this->device != nullptr && *buffer.memory) vkUnmapMemory(static_cast<VkDevice>(**this->device), static_cast<VkDeviceMemory>(*buffer.memory));
+        if (buffer.mapped != nullptr && *buffer.memory) buffer.memory.unmapMemory();
         buffer.mapped   = nullptr;
         buffer.buffer   = nullptr;
         buffer.memory   = nullptr;
@@ -1662,7 +1660,7 @@ namespace spectra::pathtracer {
         const vk::MemoryAllocateInfo memory_allocate_info{memory_requirements.size, memory_type};
         buffer.memory = vk::raii::DeviceMemory{*this->device, memory_allocate_info};
         buffer.buffer.bindMemory(*buffer.memory, 0);
-        if (vkMapMemory(static_cast<VkDevice>(**this->device), static_cast<VkDeviceMemory>(*buffer.memory), 0, required_size, 0, &buffer.mapped) != VK_SUCCESS) throw std::runtime_error("Failed to map Spectra pathtracer readback buffer memory");
+        buffer.mapped = buffer.memory.mapMemory(0, required_size);
         buffer.capacity = required_size;
         if (buffer.mapped == nullptr) throw std::runtime_error("Failed to map Spectra pathtracer readback buffer memory");
     }
@@ -2047,7 +2045,7 @@ namespace spectra::pathtracer {
         if (this->pipeline_ready()) {
             if (this->render_pipeline == nullptr) throw std::runtime_error("Spectra pathtracer viewport descriptor requested without an active render pipeline");
             const VkDescriptorSet descriptor = this->render_pipeline->active_descriptor();
-            if (descriptor == VK_NULL_HANDLE) throw std::runtime_error("Spectra pathtracer viewport descriptor is null");
+            if (descriptor == VkDescriptorSet{}) throw std::runtime_error("Spectra pathtracer viewport descriptor is null");
             const ImTextureID texture_id = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(descriptor));
             ImGui::Image(ImTextureRef{texture_id}, viewport_size, ImVec2{0.0f, 0.0f}, ImVec2{1.0f, 1.0f});
         } else if (this->scene_info.has_value()) {
