@@ -361,6 +361,27 @@ namespace spectra::scene {
             Blend  = 2u,
         };
 
+        enum class VolumeMaterialMode : std::uint32_t {
+            Medium      = 0u,
+            ScalarDebug = 1u,
+        };
+
+        struct VolumeChannelBinding {
+            std::string channel_name{};
+            std::uint32_t component{};
+            float scale{1.0f};
+            float bias{};
+            bool enabled{};
+        };
+
+        struct VolumeMaterial {
+            VolumeMaterialMode mode{VolumeMaterialMode::Medium};
+            VolumeChannelBinding density{.channel_name = "density", .scale = 0.08f, .enabled = true};
+            VolumeChannelBinding emission{};
+            VolumeChannelBinding color{};
+            VolumeChannelBinding debug_scalar{};
+        };
+
         struct PreviewMaterial {
             std::string name{};
             PreviewSurfaceKind surface_kind{PreviewSurfaceKind::LitSurface};
@@ -375,8 +396,7 @@ namespace spectra::scene {
             float metallic{};
             float alpha_cutoff{0.5f};
             std::string normal_texture{};
-            float volume_density_scale{0.08f};
-            float volume_temperature_scale{0.035f};
+            VolumeMaterial volume{};
             Entity pathtracer_material{};
         };
 
@@ -459,7 +479,9 @@ namespace spectra::scene {
 
         enum class VolumeChannelFormat : std::uint32_t {
             Float32   = 0u,
-            Float32x3 = 1u,
+            Float32x2 = 1u,
+            Float32x3 = 2u,
+            Float32x4 = 3u,
         };
 
         struct VolumeChannel {

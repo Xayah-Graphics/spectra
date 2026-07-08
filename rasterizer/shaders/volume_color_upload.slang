@@ -1,10 +1,11 @@
-struct VolumeColorUploadPushConstants {
+struct VolumeVectorUploadPushConstants {
     uint4 dimensions;
+    uint4 format;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<float> sourceValues;
 [[vk::binding(1, 0)]] RWTexture3D<float4> outputTexture;
-[[vk::push_constant]] ConstantBuffer<VolumeColorUploadPushConstants> volumeColorUpload;
+[[vk::push_constant]] ConstantBuffer<VolumeVectorUploadPushConstants> volumeVectorUpload;
 
 uint part1by2(uint value) {
     value &= 0x000003ffu;
@@ -22,14 +23,19 @@ uint encode_morton3d(uint3 value) {
 [shader("compute")]
 [numthreads(8, 8, 4)]
 void compute_main(uint3 dispatchThreadID : SV_DispatchThreadID) {
-    uint dimX = volumeColorUpload.dimensions.x;
-    uint dimY = volumeColorUpload.dimensions.y;
-    uint dimZ = volumeColorUpload.dimensions.z;
+    uint dimX = volumeVectorUpload.dimensions.x;
+    uint dimY = volumeVectorUpload.dimensions.y;
+    uint dimZ = volumeVectorUpload.dimensions.z;
     if (dispatchThreadID.x >= dimX || dispatchThreadID.y >= dimY || dispatchThreadID.z >= dimZ) return;
 
     uint linearIndex = dispatchThreadID.x + dimX * (dispatchThreadID.y + dimY * dispatchThreadID.z);
-    uint sourceIndex = volumeColorUpload.dimensions.w == 1u ? encode_morton3d(dispatchThreadID) : linearIndex;
-    uint sourceValueIndex = sourceIndex * 3u;
-    float3 color = float3(sourceValues[sourceValueIndex + 0u], sourceValues[sourceValueIndex + 1u], sourceValues[sourceValueIndex + 2u]);
-    outputTexture[int3(dispatchThreadID)] = float4(max(color, float3(0.0, 0.0, 0.0)), 1.0);
+    uint sourceIndex = volumeVectorUpload.dimensions.w == 1u ? encode_morton3d(dispatchThreadID) : linearIndex;
+    uint componentCount = volumeVectorUpload.format.x;
+    uint sourceValueIndex = sourceIndex * componentCount;
+    float4 value = float4(0.0, 0.0, 0.0, 1.0);
+    if (componentCount > 0u) value.x = sourceValues[sourceValueIndex + 0u];
+    if (componentCount > 1u) value.y = sourceValues[sourceValueIndex + 1u];
+    if (componentCount > 2u) value.z = sourceValues[sourceValueIndex + 2u];
+    if (componentCount > 3u) value.w = sourceValues[sourceValueIndex + 3u];
+    outputTexture[int3(dispatchThreadID)] = value;
 }

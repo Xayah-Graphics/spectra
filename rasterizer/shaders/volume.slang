@@ -1,18 +1,21 @@
 #include "camera_uniform.slangh"
 
+static const uint invalidVolumeChannelSlot = 0xffffffffu;
+
 struct VolumePushConstants {
-    float4 originDensityScale;
+    float4 originMode;
     float4 extentStepScale;
     float4 base_color;
     float4 emission;
-    float4 material;
+    float4 densityEmissionScaleBias;
+    float4 colorDebugScaleBias;
+    uint4 channelSlots;
+    uint4 channelComponents;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
-[[vk::binding(1, 0)]] Texture3D<float> densityTexture;
-[[vk::binding(2, 0)]] Texture3D<float> temperatureTexture;
-[[vk::binding(3, 0)]] SamplerState volumeSampler;
-[[vk::binding(4, 0)]] Texture3D<float4> colorTexture;
+[[vk::binding(1, 0)]] Texture3D<float4> volumeChannels[16];
+[[vk::binding(2, 0)]] SamplerState volumeSampler;
 [[vk::push_constant]] ConstantBuffer<VolumePushConstants> volume;
 
 struct VertexOutput {
@@ -75,7 +78,7 @@ float3 cube_corner(uint cornerIndex) {
 [shader("vertex")]
 VertexOutput vertex_main(uint vertexIndex : SV_VertexID) {
     float3 localPosition = cube_corner(cube_index(vertexIndex));
-    float3 origin = volume.originDensityScale.xyz;
+    float3 origin = volume.originMode.xyz;
     float3 extent = volume.extentStepScale.xyz;
     float3 worldPosition = origin + localPosition * extent;
     VertexOutput output;
@@ -87,7 +90,7 @@ VertexOutput vertex_main(uint vertexIndex : SV_VertexID) {
 
 float2 intersect_unit_box(float3 rayOrigin, float3 rayDirection) {
     float3 inverseDirection = 1.0 / rayDirection;
-    float3 t0 = (float3(0.0, 0.0, 0.0) - rayOrigin) * inverseDirection;
+    float3 t0 = -rayOrigin * inverseDirection;
     float3 t1 = (float3(1.0, 1.0, 1.0) - rayOrigin) * inverseDirection;
     float3 nearT = min(t0, t1);
     float3 farT = max(t0, t1);
@@ -100,13 +103,45 @@ float world_step_length(float3 localRayDirection, float3 extent, float localStep
     return length(localRayDirection * extent) * localStepLength;
 }
 
+uint role_component(uint packedComponent) {
+    return packedComponent & 0xffu;
+}
+
+uint role_component_count(uint packedComponent) {
+    return (packedComponent >> 8u) & 0xffu;
+}
+
+float select_component(float4 value, uint component) {
+    if (component == 0u) return value.x;
+    if (component == 1u) return value.y;
+    if (component == 2u) return value.z;
+    return value.w;
+}
+
+float sample_scalar(uint slot, uint packedComponent, float3 samplePosition, float scale, float bias) {
+    if (slot == invalidVolumeChannelSlot) return 0.0;
+    float4 value = volumeChannels[slot].SampleLevel(volumeSampler, samplePosition, 0.0);
+    return select_component(value, role_component(packedComponent)) * scale + bias;
+}
+
+float3 sample_color(uint slot, uint packedComponent, float3 samplePosition, float scale, float bias) {
+    if (slot == invalidVolumeChannelSlot) return float3(1.0, 1.0, 1.0);
+    float4 value = volumeChannels[slot].SampleLevel(volumeSampler, samplePosition, 0.0);
+    uint component = role_component(packedComponent);
+    uint componentCount = role_component_count(packedComponent);
+    if (componentCount == 1u) {
+        float scalar = value.x * scale + bias;
+        return max(float3(scalar, scalar, scalar), float3(0.0, 0.0, 0.0));
+    }
+    float3 color = float3(select_component(value, component), select_component(value, component + 1u), select_component(value, component + 2u)) * scale + float3(bias, bias, bias);
+    return max(color, float3(0.0, 0.0, 0.0));
+}
+
 [shader("fragment")]
 float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_Target {
     if (!isFrontFace) discard;
-    float3 origin = volume.originDensityScale.xyz;
-    float densityScale = volume.originDensityScale.w;
-    float temperatureScale = volume.material.x;
-    bool hasColor = volume.material.y > 0.5;
+    float3 origin = volume.originMode.xyz;
+    uint mode = uint(volume.originMode.w + 0.5);
     float3 extent = volume.extentStepScale.xyz;
     float stepScale = volume.extentStepScale.w;
     float3 cameraLocal = (camera.cameraPosition.xyz - origin) / extent;
@@ -123,11 +158,19 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
         float t = startT + (float(stepIndex) + 0.5) * stepLength;
         if (t > endT || accumulated.a > 0.985) break;
         float3 samplePosition = cameraLocal + rayDirection * t;
-        float density = max(densityTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0) * densityScale;
-        float temperature = max(temperatureTexture.SampleLevel(volumeSampler, samplePosition, 0.0), 0.0);
+        float density = 0.0;
+        float3 smokeColor = volume.base_color.rgb;
+        if (mode == 1u) {
+            float scalar = max(sample_scalar(volume.channelSlots.w, volume.channelComponents.w, samplePosition, volume.colorDebugScaleBias.z, volume.colorDebugScaleBias.w), 0.0);
+            density = scalar;
+            smokeColor = lerp(float3(0.08, 0.28, 0.95), float3(1.0, 0.58, 0.08), saturate(scalar));
+        } else {
+            density = max(sample_scalar(volume.channelSlots.x, volume.channelComponents.x, samplePosition, volume.densityEmissionScaleBias.x, volume.densityEmissionScaleBias.y), 0.0);
+            float emissionValue = max(sample_scalar(volume.channelSlots.y, volume.channelComponents.y, samplePosition, volume.densityEmissionScaleBias.z, volume.densityEmissionScaleBias.w), 0.0);
+            float3 channelColor = sample_color(volume.channelSlots.z, volume.channelComponents.z, samplePosition, volume.colorDebugScaleBias.x, volume.colorDebugScaleBias.y);
+            smokeColor = volume.base_color.rgb * channelColor + volume.emission.rgb * saturate(emissionValue);
+        }
         float alpha = saturate(1.0 - exp(-density * stepWorldLength));
-        float3 channelColor = hasColor ? max(colorTexture.SampleLevel(volumeSampler, samplePosition, 0.0).rgb, float3(0.0, 0.0, 0.0)) : float3(1.0, 1.0, 1.0);
-        float3 smokeColor = volume.base_color.rgb * channelColor + volume.emission.rgb * saturate(temperature * temperatureScale);
         float contribution = (1.0 - accumulated.a) * alpha;
         accumulated.rgb += smokeColor * contribution;
         accumulated.a += contribution;

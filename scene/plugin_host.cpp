@@ -205,7 +205,9 @@ namespace spectra::scene {
         [[nodiscard]] Scene::VolumeChannelFormat volume_channel_format_from_u32(const std::uint32_t value, const std::string_view context) {
             switch (value) {
             case 0u: return Scene::VolumeChannelFormat::Float32;
-            case 1u: return Scene::VolumeChannelFormat::Float32x3;
+            case 1u: return Scene::VolumeChannelFormat::Float32x2;
+            case 2u: return Scene::VolumeChannelFormat::Float32x3;
+            case 3u: return Scene::VolumeChannelFormat::Float32x4;
             }
             throw std::runtime_error(std::format("{} has invalid volume channel format {}", context, value));
         }
@@ -213,9 +215,32 @@ namespace spectra::scene {
         [[nodiscard]] std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
             switch (format) {
             case Scene::VolumeChannelFormat::Float32: return 1u;
+            case Scene::VolumeChannelFormat::Float32x2: return 2u;
             case Scene::VolumeChannelFormat::Float32x3: return 3u;
+            case Scene::VolumeChannelFormat::Float32x4: return 4u;
             }
             throw std::runtime_error("Unknown Scene volume channel format");
+        }
+
+        [[nodiscard]] Scene::VolumeMaterialMode volume_material_mode_from_u32(const std::uint32_t value, const std::string_view context) {
+            switch (value) {
+            case 0u: return Scene::VolumeMaterialMode::Medium;
+            case 1u: return Scene::VolumeMaterialMode::ScalarDebug;
+            }
+            throw std::runtime_error(std::format("{} has invalid volume material mode {}", context, value));
+        }
+
+        [[nodiscard]] Scene::VolumeChannelBinding make_volume_channel_binding(const SpectraSceneVolumeChannelBinding& binding, const std::string_view context) {
+            if (binding.enabled > 1u) throw std::runtime_error(std::format("{} enabled must be 0 or 1", context));
+            Scene::VolumeChannelBinding result{
+                .channel_name = abi_string(binding.channel_name, std::format("{} channel name", context), binding.enabled == 0u),
+                .component = binding.component,
+                .scale = finite_float(binding.scale, std::format("{} scale", context)),
+                .bias = finite_float(binding.bias, std::format("{} bias", context)),
+                .enabled = binding.enabled != 0u,
+            };
+            if (!result.enabled) result.channel_name.clear();
+            return result;
         }
 
         [[nodiscard]] Scene::SceneEntityKind scene_entity_kind_from_u32(const std::uint32_t value, const std::string_view context) {
@@ -318,8 +343,13 @@ namespace spectra::scene {
                 .roughness = finite_float(material.roughness, std::format("Scene material \"{}\" roughness", name)),
                 .metallic = finite_float(material.metallic, std::format("Scene material \"{}\" metallic", name)),
                 .alpha_cutoff = finite_float(material.alpha_cutoff, std::format("Scene material \"{}\" alpha cutoff", name)),
-                .volume_density_scale = finite_float(material.volume_density_scale, std::format("Scene material \"{}\" volume density scale", name)),
-                .volume_temperature_scale = finite_float(material.volume_temperature_scale, std::format("Scene material \"{}\" volume temperature scale", name)),
+                .volume = Scene::VolumeMaterial{
+                    .mode = volume_material_mode_from_u32(material.volume_mode, std::format("Scene material \"{}\" volume", name)),
+                    .density = make_volume_channel_binding(material.volume_density, std::format("Scene material \"{}\" volume density", name)),
+                    .emission = make_volume_channel_binding(material.volume_emission, std::format("Scene material \"{}\" volume emission", name)),
+                    .color = make_volume_channel_binding(material.volume_color, std::format("Scene material \"{}\" volume color", name)),
+                    .debug_scalar = make_volume_channel_binding(material.volume_debug_scalar, std::format("Scene material \"{}\" volume debug scalar", name)),
+                },
             };
         }
 

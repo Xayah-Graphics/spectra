@@ -1,5 +1,6 @@
 struct VolumeUploadPushConstants {
     uint4 dimensions;
+    uint4 format;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<float> sourceValues;

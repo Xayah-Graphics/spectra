@@ -341,20 +341,37 @@ namespace spectra::rasterizer {
             bool uploadPending{};
         };
 
+        struct VolumeChannelResource {
+            std::string name{};
+            scene::Scene::VolumeChannelFormat format{scene::Scene::VolumeChannelFormat::Float32};
+            scene::Scene::VolumeChannelSourceKind source_kind{scene::Scene::VolumeChannelSourceKind::Values};
+            scene::Scene::VolumeChannelIndexEncoding index_encoding{scene::Scene::VolumeChannelIndexEncoding::Linear};
+            GpuBuffer stagingBuffer{};
+            GpuImage3D image{};
+            vk::raii::DescriptorSets externalUploadDescriptorSets{nullptr};
+            bool externalUploadPending{};
+        };
+
+        struct VolumeRoleSlots {
+            std::uint32_t density{0xffffffffu};
+            std::uint32_t emission{0xffffffffu};
+            std::uint32_t color{0xffffffffu};
+            std::uint32_t debug_scalar{0xffffffffu};
+        };
+
+        struct VolumeRoleComponents {
+            std::uint32_t density{};
+            std::uint32_t emission{};
+            std::uint32_t color{};
+            std::uint32_t debug_scalar{};
+        };
+
         struct FrameVolumeResources {
-            GpuBuffer densityStagingBuffer{};
-            GpuBuffer temperatureStagingBuffer{};
-            GpuBuffer colorStagingBuffer{};
-            GpuImage3D densityImage{};
-            GpuImage3D temperatureImage{};
-            GpuImage3D colorImage{};
-            vk::raii::DescriptorSets externalDensityUploadDescriptorSets{nullptr};
-            vk::raii::DescriptorSets externalColorUploadDescriptorSets{nullptr};
+            std::vector<VolumeChannelResource> channels{};
+            VolumeRoleSlots roleSlots{};
+            VolumeRoleComponents roleComponents{};
             scene::Scene::Revision uploadedRevision{};
             bool uploadPending{};
-            bool externalDensityUploadPending{};
-            bool externalColorUploadPending{};
-            bool hasColorChannel{};
             bool descriptorValid{};
             VolumeDrawCommand drawCommand{};
         };
@@ -414,8 +431,6 @@ namespace spectra::rasterizer {
         void ensure_selection_resources();
 
         [[nodiscard]] scene::Scene::PreviewMaterial resolve_material(std::string_view material_name) const;
-        [[nodiscard]] const scene::Scene::VolumeChannel* find_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
-        [[nodiscard]] const scene::Scene::VolumeChannel& require_volume_channel(const scene::Scene::VolumeGrid& volume, std::string_view channel_name) const;
         [[nodiscard]] const scene::Scene::VolumeGrid* select_render_volume_grid(std::span<const scene::Scene::VolumeGrid> volumes) const;
         void rebuild_scene_ui_cache_if_needed();
         void prune_scene_selection_to_cache();
@@ -660,7 +675,7 @@ namespace spectra::rasterizer {
             vk::raii::PipelineLayout upload_pipeline_layout{nullptr};
             vk::raii::Pipeline pipeline{nullptr};
             vk::raii::Pipeline upload_pipeline{nullptr};
-            vk::raii::Pipeline color_upload_pipeline{nullptr};
+            vk::raii::Pipeline vector_upload_pipeline{nullptr};
             std::vector<FrameVolumeResources> frame_volumes{};
         } volume_pass;
 

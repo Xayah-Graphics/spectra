@@ -31,6 +31,11 @@ namespace spectra::scene {
             return std::string_view{value} == "1" || std::string_view{value} == "true" || std::string_view{value} == "TRUE";
         }
 
+        template <typename... Args>
+        [[nodiscard]] std::string format_message(const std::string_view text, const Args&... args) {
+            return std::vformat(text, std::make_format_args(args...));
+        }
+
         [[nodiscard]] VolumeFloatStats compute_volume_float_stats(const std::span<const float> values) {
             VolumeFloatStats stats{.count = static_cast<std::uint64_t>(values.size())};
             if (values.empty()) return stats;
@@ -86,8 +91,8 @@ namespace spectra::scene {
             const double density_positive_percent = density_stats.count == 0u ? 0.0 : static_cast<double>(density_stats.positive_count) * 100.0 / static_cast<double>(density_stats.count);
             const double majorant_positive_percent = majorant_stats.count == 0u ? 0.0 : static_cast<double>(majorant_stats.positive_count) * 100.0 / static_cast<double>(majorant_stats.count);
             std::cerr
-                << std::format(
-                       "[spectra.volume.debug] pathtracer_volume name=\"{}\" material=\"{}\" dims={}x{}x{} density_min={} density_max={} density_mean={} density_positive={}/{} ({:.3f}%) scale={} approx_majorant_min={} approx_majorant_max={} approx_majorant_mean={} approx_majorant_positive={}/{} ({:.3f}%) approx_scaled_majorant_max={} approx_scaled_majorant_mean={}\n",
+                << format_message(
+                       "[spectra.volume.debug] pathtracer_volume name=\"{}\" material=\"{}\" dims={}x{}x{} density_min={} density_max={} density_mean={} density_positive={}/{} ({:.3f}%) approx_majorant_min={} approx_majorant_max={} approx_majorant_mean={} approx_majorant_positive={}/{} ({:.3f}%)\n",
                        volume.name,
                        material.name,
                        volume.dimensions[0],
@@ -99,15 +104,12 @@ namespace spectra::scene {
                        density_stats.positive_count,
                        density_stats.count,
                        density_positive_percent,
-                       material.volume_density_scale,
                        majorant_stats.min,
                        majorant_stats.max,
                        majorant_stats.mean,
                        majorant_stats.positive_count,
                        majorant_stats.count,
-                       majorant_positive_percent,
-                       static_cast<double>(majorant_stats.max) * static_cast<double>(material.volume_density_scale),
-                       majorant_stats.mean * static_cast<double>(material.volume_density_scale)
+                       majorant_positive_percent
                    );
         }
 
@@ -115,8 +117,8 @@ namespace spectra::scene {
         void validate_unique_scene_item_names(const std::vector<Item>& items, const std::string_view layer, const std::string_view kind) {
             std::set<std::string_view> names{};
             for (const Item& item : items) {
-                if (item.name.empty()) throw std::runtime_error(std::format("{} {} item names must not be empty", layer, kind));
-                if (!names.insert(std::string_view{item.name}).second) throw std::runtime_error(std::format("{} {} item \"{}\" is duplicated", layer, kind, item.name));
+                if (item.name.empty()) throw std::runtime_error(format_message("{} {} item names must not be empty", layer, kind));
+                if (!names.insert(std::string_view{item.name}).second) throw std::runtime_error(format_message("{} {} item \"{}\" is duplicated", layer, kind, item.name));
             }
         }
 
@@ -146,7 +148,7 @@ namespace spectra::scene {
             case Scene::ViewportSegmentWidthMode::Screen: return;
             case Scene::ViewportSegmentWidthMode::World: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported width mode value {}", context, static_cast<std::uint32_t>(width_mode)));
+            throw std::runtime_error(format_message("{} has an unsupported width mode value {}", context, static_cast<std::uint32_t>(width_mode)));
         }
 
         void validate_viewport_segment_depth_mode(const Scene::ViewportSegmentDepthMode depth_mode, const std::string_view context) {
@@ -154,7 +156,7 @@ namespace spectra::scene {
             case Scene::ViewportSegmentDepthMode::DepthTested: return;
             case Scene::ViewportSegmentDepthMode::AlwaysVisible: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported depth mode value {}", context, static_cast<std::uint32_t>(depth_mode)));
+            throw std::runtime_error(format_message("{} has an unsupported depth mode value {}", context, static_cast<std::uint32_t>(depth_mode)));
         }
 
         void validate_viewport_voxel_grid_source_kind(const Scene::ViewportVoxelGridSourceKind source_kind, const std::string_view context) {
@@ -162,7 +164,7 @@ namespace spectra::scene {
             case Scene::ViewportVoxelGridSourceKind::IndexList: return;
             case Scene::ViewportVoxelGridSourceKind::Bitfield: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported voxel source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+            throw std::runtime_error(format_message("{} has an unsupported voxel source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
         }
 
         void validate_viewport_voxel_grid_index_encoding(const Scene::ViewportVoxelGridIndexEncoding index_encoding, const std::string_view context) {
@@ -170,7 +172,7 @@ namespace spectra::scene {
             case Scene::ViewportVoxelGridIndexEncoding::Linear: return;
             case Scene::ViewportVoxelGridIndexEncoding::Morton3D: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported voxel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
+            throw std::runtime_error(format_message("{} has an unsupported voxel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
         }
 
         void validate_point_cloud_source_kind(const Scene::PointCloud::SourceKind source_kind, const std::string_view context) {
@@ -178,7 +180,7 @@ namespace spectra::scene {
             case Scene::PointCloud::SourceKind::Values: return;
             case Scene::PointCloud::SourceKind::ExternalGpuBuffer: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported point cloud source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+            throw std::runtime_error(format_message("{} has an unsupported point cloud source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
         }
 
         void validate_viewport_segment_source_kind(const Scene::ViewportSegmentSet::SourceKind source_kind, const std::string_view context) {
@@ -186,7 +188,7 @@ namespace spectra::scene {
             case Scene::ViewportSegmentSet::SourceKind::Values: return;
             case Scene::ViewportSegmentSet::SourceKind::ExternalGpuBuffer: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported segment source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+            throw std::runtime_error(format_message("{} has an unsupported segment source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
         }
 
         void validate_volume_channel_source_kind(const Scene::VolumeChannelSourceKind source_kind, const std::string_view context) {
@@ -194,7 +196,7 @@ namespace spectra::scene {
             case Scene::VolumeChannelSourceKind::Values: return;
             case Scene::VolumeChannelSourceKind::ExternalGpuBuffer: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported volume channel source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
+            throw std::runtime_error(format_message("{} has an unsupported volume channel source kind value {}", context, static_cast<std::uint32_t>(source_kind)));
         }
 
         void validate_volume_channel_index_encoding(const Scene::VolumeChannelIndexEncoding index_encoding, const std::string_view context) {
@@ -202,21 +204,25 @@ namespace spectra::scene {
             case Scene::VolumeChannelIndexEncoding::Linear: return;
             case Scene::VolumeChannelIndexEncoding::Morton3D: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported volume channel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
+            throw std::runtime_error(format_message("{} has an unsupported volume channel index encoding value {}", context, static_cast<std::uint32_t>(index_encoding)));
         }
 
         void validate_volume_channel_format(const Scene::VolumeChannelFormat format, const std::string_view context) {
             switch (format) {
             case Scene::VolumeChannelFormat::Float32: return;
+            case Scene::VolumeChannelFormat::Float32x2: return;
             case Scene::VolumeChannelFormat::Float32x3: return;
+            case Scene::VolumeChannelFormat::Float32x4: return;
             }
-            throw std::runtime_error(std::format("{} has an unsupported volume channel format value {}", context, static_cast<std::uint32_t>(format)));
+            throw std::runtime_error(format_message("{} has an unsupported volume channel format value {}", context, static_cast<std::uint32_t>(format)));
         }
 
         [[nodiscard]] std::uint32_t volume_channel_component_count(const Scene::VolumeChannelFormat format) {
             switch (format) {
             case Scene::VolumeChannelFormat::Float32: return 1u;
+            case Scene::VolumeChannelFormat::Float32x2: return 2u;
             case Scene::VolumeChannelFormat::Float32x3: return 3u;
+            case Scene::VolumeChannelFormat::Float32x4: return 4u;
             }
             throw std::runtime_error("Unknown Spectra volume channel format");
         }
@@ -225,17 +231,17 @@ namespace spectra::scene {
             const std::uint64_t dim_x = volume.dimensions[0];
             const std::uint64_t dim_y = volume.dimensions[1];
             const std::uint64_t dim_z = volume.dimensions[2];
-            if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(std::format("Volume \"{}\" dimensions must be positive", volume.name));
-            if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(std::format("Volume \"{}\" cell count exceeds uint64 range", volume.name));
+            if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(format_message("Volume \"{}\" dimensions must be positive", volume.name));
+            if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(format_message("Volume \"{}\" cell count exceeds uint64 range", volume.name));
             const std::uint64_t slice = dim_x * dim_y;
-            if (slice > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(std::format("Volume \"{}\" cell count exceeds uint64 range", volume.name));
+            if (slice > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(format_message("Volume \"{}\" cell count exceeds uint64 range", volume.name));
             return slice * dim_z;
         }
 
         [[nodiscard]] std::uint64_t checked_volume_channel_value_count(const Scene::VolumeGrid& volume, const Scene::VolumeChannel& channel) {
             const std::uint64_t cell_count = checked_volume_cell_count(volume);
             const std::uint32_t component_count = volume_channel_component_count(channel.format);
-            if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" value count exceeds uint64 range", volume.name, channel.name));
+            if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" value count exceeds uint64 range", volume.name, channel.name));
             return cell_count * component_count;
         }
 
@@ -243,24 +249,24 @@ namespace spectra::scene {
             const std::uint64_t dim_x = voxel_grid.dimensions[0];
             const std::uint64_t dim_y = voxel_grid.dimensions[1];
             const std::uint64_t dim_z = voxel_grid.dimensions[2];
-            if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" dimensions must be positive", voxel_grid.name));
-            if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" cell count exceeds uint64 range", voxel_grid.name));
+            if (dim_x == 0u || dim_y == 0u || dim_z == 0u) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" dimensions must be positive", voxel_grid.name));
+            if (dim_x > std::numeric_limits<std::uint64_t>::max() / dim_y) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" cell count exceeds uint64 range", voxel_grid.name));
             const std::uint64_t slice = dim_x * dim_y;
-            if (slice > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" cell count exceeds uint64 range", voxel_grid.name));
+            if (slice > std::numeric_limits<std::uint64_t>::max() / dim_z) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" cell count exceeds uint64 range", voxel_grid.name));
             return slice * dim_z;
         }
 
         void validate_viewport_annotation_transform(const Transform& transform, const std::string_view context) {
-            if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
-            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
-            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            if (!is_finite(transform.position)) throw std::runtime_error(format_message("{} has a non-finite transform position", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(format_message("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(format_message("{} has a zero transform scale component", context));
             const float length_squared_value = transform.rotation.x * transform.rotation.x + transform.rotation.y * transform.rotation.y + transform.rotation.z * transform.rotation.z + transform.rotation.w * transform.rotation.w;
-            if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(std::format("{} has an invalid rotation quaternion", context));
+            if (!std::isfinite(length_squared_value) || length_squared_value <= 1.0e-12f) throw std::runtime_error(format_message("{} has an invalid rotation quaternion", context));
         }
 
         void validate_viewport_annotation_color(const Vector4 color, const std::string_view context) {
-            if (!std::isfinite(color.x) || !std::isfinite(color.y) || !std::isfinite(color.z) || !std::isfinite(color.w)) throw std::runtime_error(std::format("{} has a non-finite color", context));
-            if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(std::format("{} has an invalid color", context));
+            if (!std::isfinite(color.x) || !std::isfinite(color.y) || !std::isfinite(color.z) || !std::isfinite(color.w)) throw std::runtime_error(format_message("{} has a non-finite color", context));
+            if (color.x < 0.0f || color.y < 0.0f || color.z < 0.0f || color.w < 0.0f || color.w > 1.0f) throw std::runtime_error(format_message("{} has an invalid color", context));
         }
 
         [[nodiscard]] const char* scene_entity_kind_name(const Scene::SceneEntityKind kind) {
@@ -294,45 +300,45 @@ namespace spectra::scene {
 
         void validate_scene_entity_ref(const Scene::SceneEntityRef& entity, const Scene::ResolvedFrame& frame, const Scene::Document& document, const std::string_view context) {
             static_cast<void>(scene_entity_kind_name(entity.kind));
-            if (entity.name.empty()) throw std::runtime_error(std::format("{} owner entity name must not be empty", context));
-            if (!scene_entity_exists(entity, frame, document)) throw std::runtime_error(std::format("{} references missing {} owner \"{}\"", context, scene_entity_kind_name(entity.kind), entity.name));
+            if (entity.name.empty()) throw std::runtime_error(format_message("{} owner entity name must not be empty", context));
+            if (!scene_entity_exists(entity, frame, document)) throw std::runtime_error(format_message("{} references missing {} owner \"{}\"", context, scene_entity_kind_name(entity.kind), entity.name));
         }
 
         void validate_point_cloud(const Scene::PointCloud& point_cloud, const Scene::Document& document) {
             if (point_cloud.name.empty()) throw std::runtime_error("Point cloud name must not be empty");
-            if (!contains_scene_item_name(document.materials, point_cloud.material_name)) throw std::runtime_error(std::format("Point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
-            validate_viewport_annotation_transform(point_cloud.transform, std::format("Point cloud \"{}\"", point_cloud.name));
-            validate_point_cloud_source_kind(point_cloud.source_kind, std::format("Point cloud \"{}\"", point_cloud.name));
+            if (!contains_scene_item_name(document.materials, point_cloud.material_name)) throw std::runtime_error(format_message("Point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
+            validate_viewport_annotation_transform(point_cloud.transform, format_message("Point cloud \"{}\"", point_cloud.name));
+            validate_point_cloud_source_kind(point_cloud.source_kind, format_message("Point cloud \"{}\"", point_cloud.name));
             const auto validate_explicit_bounds = [&point_cloud]() {
-                if (!is_finite(point_cloud.bounds->minimum) || !is_finite(point_cloud.bounds->maximum)) throw std::runtime_error(std::format("Point cloud \"{}\" explicit bounds must be finite", point_cloud.name));
-                if (point_cloud.bounds->minimum.x > point_cloud.bounds->maximum.x || point_cloud.bounds->minimum.y > point_cloud.bounds->maximum.y || point_cloud.bounds->minimum.z > point_cloud.bounds->maximum.z) throw std::runtime_error(std::format("Point cloud \"{}\" explicit bounds minimum must not exceed maximum", point_cloud.name));
+                if (!is_finite(point_cloud.bounds->minimum) || !is_finite(point_cloud.bounds->maximum)) throw std::runtime_error(format_message("Point cloud \"{}\" explicit bounds must be finite", point_cloud.name));
+                if (point_cloud.bounds->minimum.x > point_cloud.bounds->maximum.x || point_cloud.bounds->minimum.y > point_cloud.bounds->maximum.y || point_cloud.bounds->minimum.z > point_cloud.bounds->maximum.z) throw std::runtime_error(format_message("Point cloud \"{}\" explicit bounds minimum must not exceed maximum", point_cloud.name));
             };
             if (point_cloud.source_kind == Scene::PointCloud::SourceKind::Values) {
-                if (point_cloud.bounds.has_value()) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide explicit bounds", point_cloud.name));
-                if (!point_cloud.normals.empty() && point_cloud.normals.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Point cloud \"{}\" normal count does not match point count", point_cloud.name));
-                if (!point_cloud.colors.empty() && point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Point cloud \"{}\" color count does not match point count", point_cloud.name));
-                if (!point_cloud.radii.empty() && point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(std::format("Point cloud \"{}\" radius count does not match point count", point_cloud.name));
+                if (point_cloud.bounds.has_value()) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide explicit bounds", point_cloud.name));
+                if (!point_cloud.normals.empty() && point_cloud.normals.size() != point_cloud.positions.size()) throw std::runtime_error(format_message("Point cloud \"{}\" normal count does not match point count", point_cloud.name));
+                if (!point_cloud.colors.empty() && point_cloud.colors.size() != point_cloud.positions.size()) throw std::runtime_error(format_message("Point cloud \"{}\" color count does not match point count", point_cloud.name));
+                if (!point_cloud.radii.empty() && point_cloud.radii.size() != point_cloud.positions.size()) throw std::runtime_error(format_message("Point cloud \"{}\" radius count does not match point count", point_cloud.name));
                 for (std::size_t index = 0u; index < point_cloud.positions.size(); ++index) {
-                    if (!is_finite(point_cloud.positions.at(index))) throw std::runtime_error(std::format("Point cloud \"{}\" contains a non-finite position", point_cloud.name));
-                    if (!point_cloud.normals.empty() && !is_finite(point_cloud.normals.at(index))) throw std::runtime_error(std::format("Point cloud \"{}\" contains a non-finite normal", point_cloud.name));
-                    if (!point_cloud.colors.empty()) validate_viewport_annotation_color(point_cloud.colors.at(index), std::format("Point cloud \"{}\" point #{}", point_cloud.name, index));
-                    if (!point_cloud.radii.empty() && (!std::isfinite(point_cloud.radii.at(index)) || point_cloud.radii.at(index) <= 0.0f)) throw std::runtime_error(std::format("Point cloud \"{}\" contains an invalid radius", point_cloud.name));
+                    if (!is_finite(point_cloud.positions.at(index))) throw std::runtime_error(format_message("Point cloud \"{}\" contains a non-finite position", point_cloud.name));
+                    if (!point_cloud.normals.empty() && !is_finite(point_cloud.normals.at(index))) throw std::runtime_error(format_message("Point cloud \"{}\" contains a non-finite normal", point_cloud.name));
+                    if (!point_cloud.colors.empty()) validate_viewport_annotation_color(point_cloud.colors.at(index), format_message("Point cloud \"{}\" point #{}", point_cloud.name, index));
+                    if (!point_cloud.radii.empty() && (!std::isfinite(point_cloud.radii.at(index)) || point_cloud.radii.at(index) <= 0.0f)) throw std::runtime_error(format_message("Point cloud \"{}\" contains an invalid radius", point_cloud.name));
                 }
-                if (point_cloud.point_count != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide an external point count", point_cloud.name));
-                if (point_cloud.buffer_id != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide a GPU buffer id", point_cloud.name));
-                if (point_cloud.source_byte_size != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide a GPU byte size", point_cloud.name));
-                if (point_cloud.revision != 0u) throw std::runtime_error(std::format("Point cloud \"{}\" CPU source must not provide a GPU revision", point_cloud.name));
+                if (point_cloud.point_count != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide an external point count", point_cloud.name));
+                if (point_cloud.buffer_id != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide a GPU buffer id", point_cloud.name));
+                if (point_cloud.source_byte_size != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide a GPU byte size", point_cloud.name));
+                if (point_cloud.revision != 0u) throw std::runtime_error(format_message("Point cloud \"{}\" CPU source must not provide a GPU revision", point_cloud.name));
                 return;
             }
-            if (!point_cloud.bounds.has_value()) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source must provide explicit bounds", point_cloud.name));
+            if (!point_cloud.bounds.has_value()) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must provide explicit bounds", point_cloud.name));
             validate_explicit_bounds();
-            if (!point_cloud.positions.empty() || !point_cloud.normals.empty() || !point_cloud.colors.empty() || !point_cloud.radii.empty()) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source must not provide CPU values", point_cloud.name));
-            if (point_cloud.point_count == 0u) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source must contain at least one point", point_cloud.name));
-            if (point_cloud.point_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Point cloud \"{}\" point count exceeds uint32 draw range", point_cloud.name));
-            if (point_cloud.buffer_id == 0u) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source has no buffer id", point_cloud.name));
-            if (point_cloud.point_count > std::numeric_limits<std::uint64_t>::max() / PointCloudExternalPointBytes) throw std::runtime_error(std::format("Point cloud \"{}\" byte count exceeds uint64 range", point_cloud.name));
-            if (point_cloud.source_byte_size < point_cloud.point_count * PointCloudExternalPointBytes) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source byte size is too small", point_cloud.name));
-            if (point_cloud.revision == 0u) throw std::runtime_error(std::format("Point cloud \"{}\" external GPU source revision must not be zero", point_cloud.name));
+            if (!point_cloud.positions.empty() || !point_cloud.normals.empty() || !point_cloud.colors.empty() || !point_cloud.radii.empty()) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must not provide CPU values", point_cloud.name));
+            if (point_cloud.point_count == 0u) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source must contain at least one point", point_cloud.name));
+            if (point_cloud.point_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(format_message("Point cloud \"{}\" point count exceeds uint32 draw range", point_cloud.name));
+            if (point_cloud.buffer_id == 0u) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source has no buffer id", point_cloud.name));
+            if (point_cloud.point_count > std::numeric_limits<std::uint64_t>::max() / PointCloudExternalPointBytes) throw std::runtime_error(format_message("Point cloud \"{}\" byte count exceeds uint64 range", point_cloud.name));
+            if (point_cloud.source_byte_size < point_cloud.point_count * PointCloudExternalPointBytes) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source byte size is too small", point_cloud.name));
+            if (point_cloud.revision == 0u) throw std::runtime_error(format_message("Point cloud \"{}\" external GPU source revision must not be zero", point_cloud.name));
         }
 
         void validate_point_clouds(const std::vector<Scene::PointCloud>& point_clouds, const Scene::Document& document) {
@@ -342,74 +348,74 @@ namespace spectra::scene {
 
         void validate_viewport_segment_set(const Scene::ViewportSegmentSet& segment_set) {
             if (segment_set.name.empty()) throw std::runtime_error("Viewport segment set name must not be empty");
-            if (!std::isfinite(segment_set.width) || segment_set.width <= 0.0f) throw std::runtime_error(std::format("Viewport segment set \"{}\" has an invalid default width", segment_set.name));
-            validate_viewport_segment_width_mode(segment_set.width_mode, std::format("Viewport segment set \"{}\"", segment_set.name));
-            validate_viewport_segment_depth_mode(segment_set.depth_mode, std::format("Viewport segment set \"{}\"", segment_set.name));
-            validate_viewport_segment_source_kind(segment_set.source_kind, std::format("Viewport segment set \"{}\"", segment_set.name));
-            validate_viewport_annotation_transform(segment_set.transform, std::format("Viewport segment set \"{}\"", segment_set.name));
+            if (!std::isfinite(segment_set.width) || segment_set.width <= 0.0f) throw std::runtime_error(format_message("Viewport segment set \"{}\" has an invalid default width", segment_set.name));
+            validate_viewport_segment_width_mode(segment_set.width_mode, format_message("Viewport segment set \"{}\"", segment_set.name));
+            validate_viewport_segment_depth_mode(segment_set.depth_mode, format_message("Viewport segment set \"{}\"", segment_set.name));
+            validate_viewport_segment_source_kind(segment_set.source_kind, format_message("Viewport segment set \"{}\"", segment_set.name));
+            validate_viewport_annotation_transform(segment_set.transform, format_message("Viewport segment set \"{}\"", segment_set.name));
             if (segment_set.source_kind == Scene::ViewportSegmentSet::SourceKind::ExternalGpuBuffer) {
-                if (!segment_set.segments.empty() || !segment_set.colors.empty() || !segment_set.widths.empty()) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source must not provide CPU values", segment_set.name));
-                if (segment_set.segment_count == 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source must contain at least one segment", segment_set.name));
-                if (segment_set.segment_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("Viewport segment set \"{}\" segment count exceeds uint32 draw range", segment_set.name));
-                if (segment_set.buffer_id == 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source has no buffer id", segment_set.name));
-                if (segment_set.segment_count > std::numeric_limits<std::uint64_t>::max() / ViewportSegmentExternalSegmentBytes) throw std::runtime_error(std::format("Viewport segment set \"{}\" byte count exceeds uint64 range", segment_set.name));
-                if (segment_set.source_byte_size < segment_set.segment_count * ViewportSegmentExternalSegmentBytes) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source byte size is too small", segment_set.name));
-                if (segment_set.revision == 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" external GPU source revision must not be zero", segment_set.name));
+                if (!segment_set.segments.empty() || !segment_set.colors.empty() || !segment_set.widths.empty()) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source must not provide CPU values", segment_set.name));
+                if (segment_set.segment_count == 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source must contain at least one segment", segment_set.name));
+                if (segment_set.segment_count > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(format_message("Viewport segment set \"{}\" segment count exceeds uint32 draw range", segment_set.name));
+                if (segment_set.buffer_id == 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source has no buffer id", segment_set.name));
+                if (segment_set.segment_count > std::numeric_limits<std::uint64_t>::max() / ViewportSegmentExternalSegmentBytes) throw std::runtime_error(format_message("Viewport segment set \"{}\" byte count exceeds uint64 range", segment_set.name));
+                if (segment_set.source_byte_size < segment_set.segment_count * ViewportSegmentExternalSegmentBytes) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source byte size is too small", segment_set.name));
+                if (segment_set.revision == 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" external GPU source revision must not be zero", segment_set.name));
                 return;
             }
-            if (!segment_set.widths.empty() && segment_set.widths.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" width count does not match segment count", segment_set.name));
-            if (!segment_set.colors.empty() && segment_set.colors.size() != segment_set.segments.size()) throw std::runtime_error(std::format("Viewport segment set \"{}\" color count does not match segment count", segment_set.name));
+            if (!segment_set.widths.empty() && segment_set.widths.size() != segment_set.segments.size()) throw std::runtime_error(format_message("Viewport segment set \"{}\" width count does not match segment count", segment_set.name));
+            if (!segment_set.colors.empty() && segment_set.colors.size() != segment_set.segments.size()) throw std::runtime_error(format_message("Viewport segment set \"{}\" color count does not match segment count", segment_set.name));
             for (std::size_t index = 0u; index < segment_set.segments.size(); ++index) {
                 const Scene::ViewportSegment& segment = segment_set.segments.at(index);
-                if (!is_finite(segment.start) || !is_finite(segment.end)) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains a non-finite segment endpoint", segment_set.name));
-                if (length_squared(segment.end - segment.start) <= 0.0f) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains a zero-length segment", segment_set.name));
-                if (!segment_set.widths.empty() && (!std::isfinite(segment_set.widths.at(index)) || segment_set.widths.at(index) <= 0.0f)) throw std::runtime_error(std::format("Viewport segment set \"{}\" contains an invalid segment width", segment_set.name));
-                if (!segment_set.colors.empty()) validate_viewport_annotation_color(segment_set.colors.at(index), std::format("Viewport segment set \"{}\" segment #{}", segment_set.name, index));
+                if (!is_finite(segment.start) || !is_finite(segment.end)) throw std::runtime_error(format_message("Viewport segment set \"{}\" contains a non-finite segment endpoint", segment_set.name));
+                if (length_squared(segment.end - segment.start) <= 0.0f) throw std::runtime_error(format_message("Viewport segment set \"{}\" contains a zero-length segment", segment_set.name));
+                if (!segment_set.widths.empty() && (!std::isfinite(segment_set.widths.at(index)) || segment_set.widths.at(index) <= 0.0f)) throw std::runtime_error(format_message("Viewport segment set \"{}\" contains an invalid segment width", segment_set.name));
+                if (!segment_set.colors.empty()) validate_viewport_annotation_color(segment_set.colors.at(index), format_message("Viewport segment set \"{}\" segment #{}", segment_set.name, index));
             }
-            if (segment_set.segment_count != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide an external segment count", segment_set.name));
-            if (segment_set.buffer_id != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide a GPU buffer id", segment_set.name));
-            if (segment_set.source_byte_size != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide a GPU byte size", segment_set.name));
-            if (segment_set.revision != 0u) throw std::runtime_error(std::format("Viewport segment set \"{}\" CPU source must not provide a GPU revision", segment_set.name));
+            if (segment_set.segment_count != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide an external segment count", segment_set.name));
+            if (segment_set.buffer_id != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide a GPU buffer id", segment_set.name));
+            if (segment_set.source_byte_size != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide a GPU byte size", segment_set.name));
+            if (segment_set.revision != 0u) throw std::runtime_error(format_message("Viewport segment set \"{}\" CPU source must not provide a GPU revision", segment_set.name));
         }
 
         void validate_viewport_segment_sets(const std::vector<Scene::ViewportSegmentSet>& segment_sets, const Scene::ResolvedFrame& frame, const Scene::Document& document) {
             validate_unique_scene_item_names(segment_sets, "Scene resolved frame", "viewport segment set");
             for (const Scene::ViewportSegmentSet& segment_set : segment_sets) {
-                validate_scene_entity_ref(segment_set.owner, frame, document, std::format("Viewport segment set \"{}\"", segment_set.name));
+                validate_scene_entity_ref(segment_set.owner, frame, document, format_message("Viewport segment set \"{}\"", segment_set.name));
                 validate_viewport_segment_set(segment_set);
             }
         }
 
         void validate_viewport_voxel_grid(const Scene::ViewportVoxelGrid& voxel_grid) {
             if (voxel_grid.name.empty()) throw std::runtime_error("Viewport voxel grid name must not be empty");
-            validate_viewport_annotation_color(voxel_grid.color, std::format("Viewport voxel grid \"{}\" color", voxel_grid.name));
-            validate_viewport_segment_depth_mode(voxel_grid.depth_mode, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
-            validate_viewport_voxel_grid_source_kind(voxel_grid.source_kind, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
-            validate_viewport_voxel_grid_index_encoding(voxel_grid.index_encoding, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
-            if (!is_finite(voxel_grid.origin)) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" origin must be finite", voxel_grid.name));
-            if (!is_finite(voxel_grid.voxel_size) || voxel_grid.voxel_size.x <= 0.0f || voxel_grid.voxel_size.y <= 0.0f || voxel_grid.voxel_size.z <= 0.0f) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" voxel size must be finite and positive", voxel_grid.name));
-            if (!std::isfinite(voxel_grid.cell_scale) || voxel_grid.cell_scale <= 0.0f || voxel_grid.cell_scale > 1.0f) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" cell scale must be in (0, 1]", voxel_grid.name));
+            validate_viewport_annotation_color(voxel_grid.color, format_message("Viewport voxel grid \"{}\" color", voxel_grid.name));
+            validate_viewport_segment_depth_mode(voxel_grid.depth_mode, format_message("Viewport voxel grid \"{}\"", voxel_grid.name));
+            validate_viewport_voxel_grid_source_kind(voxel_grid.source_kind, format_message("Viewport voxel grid \"{}\"", voxel_grid.name));
+            validate_viewport_voxel_grid_index_encoding(voxel_grid.index_encoding, format_message("Viewport voxel grid \"{}\"", voxel_grid.name));
+            if (!is_finite(voxel_grid.origin)) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" origin must be finite", voxel_grid.name));
+            if (!is_finite(voxel_grid.voxel_size) || voxel_grid.voxel_size.x <= 0.0f || voxel_grid.voxel_size.y <= 0.0f || voxel_grid.voxel_size.z <= 0.0f) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" voxel size must be finite and positive", voxel_grid.name));
+            if (!std::isfinite(voxel_grid.cell_scale) || voxel_grid.cell_scale <= 0.0f || voxel_grid.cell_scale > 1.0f) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" cell scale must be in (0, 1]", voxel_grid.name));
             const std::uint64_t cell_count = checked_viewport_voxel_grid_cell_count(voxel_grid);
             if (voxel_grid.source_kind == Scene::ViewportVoxelGridSourceKind::IndexList) {
-                if (voxel_grid.index_count > cell_count) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" index count exceeds grid cell count", voxel_grid.name));
+                if (voxel_grid.index_count > cell_count) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" index count exceeds grid cell count", voxel_grid.name));
                 if (voxel_grid.index_count == 0u) return;
-                if (voxel_grid.buffer_id == 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" has indices but no voxel buffer id", voxel_grid.name));
-                if (voxel_grid.index_count > std::numeric_limits<std::uint64_t>::max() / sizeof(std::uint32_t)) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" index byte count exceeds uint64 range", voxel_grid.name));
-                if (voxel_grid.source_byte_size < voxel_grid.index_count * sizeof(std::uint32_t)) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" source byte size is smaller than its index list", voxel_grid.name));
+                if (voxel_grid.buffer_id == 0u) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" has indices but no voxel buffer id", voxel_grid.name));
+                if (voxel_grid.index_count > std::numeric_limits<std::uint64_t>::max() / sizeof(std::uint32_t)) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" index byte count exceeds uint64 range", voxel_grid.name));
+                if (voxel_grid.source_byte_size < voxel_grid.index_count * sizeof(std::uint32_t)) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" source byte size is smaller than its index list", voxel_grid.name));
                 return;
             }
-            if (voxel_grid.buffer_id == 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" bitfield source has no voxel buffer id", voxel_grid.name));
-            if (voxel_grid.index_count != 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" bitfield source must not provide an index count", voxel_grid.name));
+            if (voxel_grid.buffer_id == 0u) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" bitfield source has no voxel buffer id", voxel_grid.name));
+            if (voxel_grid.index_count != 0u) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" bitfield source must not provide an index count", voxel_grid.name));
             const std::uint64_t bitfield_byte_count = (cell_count + 7u) / 8u;
-            if (voxel_grid.source_byte_size < bitfield_byte_count) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" source byte size is smaller than its bitfield", voxel_grid.name));
-            if (voxel_grid.source_byte_size % sizeof(std::uint32_t) != 0u) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" bitfield source byte size must be uint32 aligned", voxel_grid.name));
+            if (voxel_grid.source_byte_size < bitfield_byte_count) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" source byte size is smaller than its bitfield", voxel_grid.name));
+            if (voxel_grid.source_byte_size % sizeof(std::uint32_t) != 0u) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" bitfield source byte size must be uint32 aligned", voxel_grid.name));
         }
 
         void validate_viewport_voxel_grids(const std::vector<Scene::ViewportVoxelGrid>& voxel_grids, const Scene::ResolvedFrame& frame, const Scene::Document& document) {
             validate_unique_scene_item_names(voxel_grids, "Scene resolved frame", "viewport voxel grid");
             for (const Scene::ViewportVoxelGrid& voxel_grid : voxel_grids) {
-                if (voxel_grid.owner.kind != Scene::SceneEntityKind::VolumeGrid) throw std::runtime_error(std::format("Viewport voxel grid \"{}\" owner must be a volume grid", voxel_grid.name));
-                validate_scene_entity_ref(voxel_grid.owner, frame, document, std::format("Viewport voxel grid \"{}\"", voxel_grid.name));
+                if (voxel_grid.owner.kind != Scene::SceneEntityKind::VolumeGrid) throw std::runtime_error(format_message("Viewport voxel grid \"{}\" owner must be a volume grid", voxel_grid.name));
+                validate_scene_entity_ref(voxel_grid.owner, frame, document, format_message("Viewport voxel grid \"{}\"", voxel_grid.name));
                 validate_viewport_voxel_grid(voxel_grid);
             }
         }
@@ -420,43 +426,70 @@ namespace spectra::scene {
         }
 
         void validate_volume_channel(const Scene::VolumeChannel& channel, const Scene::VolumeGrid& volume) {
-            if (channel.name.empty()) throw std::runtime_error(std::format("Volume \"{}\" contains an unnamed channel", volume.name));
-            validate_volume_channel_format(channel.format, std::format("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
-            validate_volume_channel_source_kind(channel.source_kind, std::format("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
-            validate_volume_channel_index_encoding(channel.index_encoding, std::format("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
-            if (channel.dimensions != volume.dimensions) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" dimensions do not match", volume.name, channel.name));
-            if (channel.name == "density" && channel.format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Volume \"{}\" density channel must use Float32 format", volume.name));
-            if (channel.name == "temperature" && channel.format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Volume \"{}\" temperature channel must use Float32 format", volume.name));
-            if (channel.name == "color" && channel.format != Scene::VolumeChannelFormat::Float32x3) throw std::runtime_error(std::format("Volume \"{}\" color channel must use Float32x3 format", volume.name));
+            if (channel.name.empty()) throw std::runtime_error(format_message("Volume \"{}\" contains an unnamed channel", volume.name));
+            validate_volume_channel_format(channel.format, format_message("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
+            validate_volume_channel_source_kind(channel.source_kind, format_message("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
+            validate_volume_channel_index_encoding(channel.index_encoding, format_message("Volume \"{}\" channel \"{}\"", volume.name, channel.name));
+            if (channel.dimensions != volume.dimensions) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" dimensions do not match", volume.name, channel.name));
             const std::uint64_t value_count = checked_volume_channel_value_count(volume, channel);
             if (channel.source_kind == Scene::VolumeChannelSourceKind::Values) {
-                if (channel.values.size() != value_count) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" value count does not match dimensions", volume.name, channel.name));
+                if (channel.values.size() != value_count) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" value count does not match dimensions", volume.name, channel.name));
                 for (const float value : channel.values)
-                    if (!std::isfinite(value)) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
-                if (channel.name == "color")
-                    for (const float value : channel.values)
-                        if (value < 0.0f) throw std::runtime_error(std::format("Volume \"{}\" color channel contains a negative value", volume.name));
-                if (channel.buffer_id != 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU buffer id", volume.name, channel.name));
-                if (channel.external_device_pointer != 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" CPU source must not provide an external device pointer", volume.name, channel.name));
-                if (channel.source_byte_size != 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU byte size", volume.name, channel.name));
+                    if (!std::isfinite(value)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
+                if (channel.buffer_id != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU buffer id", volume.name, channel.name));
+                if (channel.external_device_pointer != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide an external device pointer", volume.name, channel.name));
+                if (channel.source_byte_size != 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" CPU source must not provide a GPU byte size", volume.name, channel.name));
                 return;
             }
-            if (!channel.values.empty()) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" external GPU source must not provide CPU values", volume.name, channel.name));
-            if (channel.buffer_id == 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" external GPU source has no buffer id", volume.name, channel.name));
-            if (channel.external_device_pointer == 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" external GPU source has no external device pointer", volume.name, channel.name));
-            if (value_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" byte count exceeds uint64 range", volume.name, channel.name));
-            if (channel.source_byte_size < value_count * sizeof(float)) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" external GPU source byte size is too small", volume.name, channel.name));
-            if (channel.revision == 0u) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" external GPU source revision must not be zero", volume.name, channel.name));
+            if (!channel.values.empty()) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source must not provide CPU values", volume.name, channel.name));
+            if (channel.buffer_id == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source has no buffer id", volume.name, channel.name));
+            if (channel.external_device_pointer == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source has no external device pointer", volume.name, channel.name));
+            if (value_count > std::numeric_limits<std::uint64_t>::max() / sizeof(float)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" byte count exceeds uint64 range", volume.name, channel.name));
+            if (channel.source_byte_size < value_count * sizeof(float)) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source byte size is too small", volume.name, channel.name));
+            if (channel.revision == 0u) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" external GPU source revision must not be zero", volume.name, channel.name));
         }
 
         void validate_volume_grid(const Scene::VolumeGrid& volume, const Scene::Document& document) {
             if (volume.name.empty()) throw std::runtime_error("Volume name must not be empty");
-            if (volume.dimensions[0] == 0u || volume.dimensions[1] == 0u || volume.dimensions[2] == 0u) throw std::runtime_error(std::format("Volume \"{}\" dimensions must be positive", volume.name));
-            if (!is_finite(volume.origin)) throw std::runtime_error(std::format("Volume \"{}\" origin must be finite", volume.name));
-            if (!is_finite(volume.voxel_size) || volume.voxel_size.x <= 0.0f || volume.voxel_size.y <= 0.0f || volume.voxel_size.z <= 0.0f) throw std::runtime_error(std::format("Volume \"{}\" voxel size must be finite and positive", volume.name));
-            if (!contains_scene_item_name(document.materials, volume.material_name)) throw std::runtime_error(std::format("Volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
-            validate_unique_scene_item_names(volume.channels, std::format("Volume \"{}\"", volume.name), "channel");
+            if (volume.dimensions[0] == 0u || volume.dimensions[1] == 0u || volume.dimensions[2] == 0u) throw std::runtime_error(format_message("Volume \"{}\" dimensions must be positive", volume.name));
+            if (!is_finite(volume.origin)) throw std::runtime_error(format_message("Volume \"{}\" origin must be finite", volume.name));
+            if (!is_finite(volume.voxel_size) || volume.voxel_size.x <= 0.0f || volume.voxel_size.y <= 0.0f || volume.voxel_size.z <= 0.0f) throw std::runtime_error(format_message("Volume \"{}\" voxel size must be finite and positive", volume.name));
+            if (!contains_scene_item_name(document.materials, volume.material_name)) throw std::runtime_error(format_message("Volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
+            validate_unique_scene_item_names(volume.channels, format_message("Volume \"{}\"", volume.name), "channel");
             for (const Scene::VolumeChannel& channel : volume.channels) validate_volume_channel(channel, volume);
+            const Scene::PreviewMaterial* material = nullptr;
+            for (const Scene::PreviewMaterial& candidate : document.materials)
+                if (candidate.name == volume.material_name) material = &candidate;
+            if (material == nullptr) throw std::runtime_error(format_message("Volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
+            if (material->surface_kind != Scene::PreviewSurfaceKind::Volume) throw std::runtime_error(format_message("Volume \"{}\" material \"{}\" is not a volume material", volume.name, volume.material_name));
+            const auto validate_binding = [&volume](const Scene::VolumeChannelBinding& binding, const std::string_view role, const bool required) {
+                if (!binding.enabled) {
+                    if (required) throw std::runtime_error(format_message("Volume \"{}\" material role \"{}\" must be enabled", volume.name, role));
+                    return;
+                }
+                if (binding.channel_name.empty()) throw std::runtime_error(format_message("Volume \"{}\" material role \"{}\" has no channel name", volume.name, role));
+                const Scene::VolumeChannel* channel = nullptr;
+                for (const Scene::VolumeChannel& candidate : volume.channels)
+                    if (candidate.name == binding.channel_name) channel = &candidate;
+                if (channel == nullptr) throw std::runtime_error(format_message("Volume \"{}\" material role \"{}\" references missing channel \"{}\"", volume.name, role, binding.channel_name));
+                const std::uint32_t component_count = volume_channel_component_count(channel->format);
+                if (binding.component >= component_count) throw std::runtime_error(format_message("Volume \"{}\" material role \"{}\" component {} exceeds channel \"{}\" component count {}", volume.name, role, binding.component, binding.channel_name, component_count));
+                if (!std::isfinite(binding.scale) || !std::isfinite(binding.bias)) throw std::runtime_error(format_message("Volume \"{}\" material role \"{}\" scale and bias must be finite", volume.name, role));
+            };
+            switch (material->volume.mode) {
+            case Scene::VolumeMaterialMode::Medium:
+                validate_binding(material->volume.density, "density", true);
+                validate_binding(material->volume.emission, "emission", false);
+                validate_binding(material->volume.color, "color", false);
+                validate_binding(material->volume.debug_scalar, "debug_scalar", false);
+                break;
+            case Scene::VolumeMaterialMode::ScalarDebug:
+                validate_binding(material->volume.density, "density", false);
+                validate_binding(material->volume.emission, "emission", false);
+                validate_binding(material->volume.color, "color", false);
+                validate_binding(material->volume.debug_scalar, "debug_scalar", true);
+                break;
+            }
         }
 
         void validate_volumes(const std::vector<Scene::VolumeGrid>& volumes, const Scene::Document& document) {
@@ -465,33 +498,33 @@ namespace spectra::scene {
         }
 
         void validate_camera_image(const Scene::CameraImage& image, const std::string_view context) {
-            if (image.width == 0u || image.height == 0u) throw std::runtime_error(std::format("{} RGBA8 image dimensions must be non-zero", context));
+            if (image.width == 0u || image.height == 0u) throw std::runtime_error(format_message("{} RGBA8 image dimensions must be non-zero", context));
             const std::uint64_t byte_count = static_cast<std::uint64_t>(image.width) * static_cast<std::uint64_t>(image.height) * 4u;
-            if (image.rgba8_size != byte_count) throw std::runtime_error(std::format("{} RGBA8 image byte count must be width * height * 4", context));
-            if (image.rgba8 == nullptr) throw std::runtime_error(std::format("{} RGBA8 image pointer must not be null", context));
+            if (image.rgba8_size != byte_count) throw std::runtime_error(format_message("{} RGBA8 image byte count must be width * height * 4", context));
+            if (image.rgba8 == nullptr) throw std::runtime_error(format_message("{} RGBA8 image pointer must not be null", context));
         }
 
         void validate_camera(const Scene::Camera& camera, const std::string_view context) {
-            if (camera.name.empty()) throw std::runtime_error(std::format("{} camera name must not be empty", context));
+            if (camera.name.empty()) throw std::runtime_error(format_message("{} camera name must not be empty", context));
             static_cast<void>(make_vulkan_camera_matrices(camera.pose, camera.projection, 1.0f, camera.projection.far_plane));
-            if (camera.image.has_value()) validate_camera_image(*camera.image, std::format("{} camera \"{}\"", context, camera.name));
+            if (camera.image.has_value()) validate_camera_image(*camera.image, format_message("{} camera \"{}\"", context, camera.name));
         }
 
         void validate_cameras(const std::vector<Scene::Camera>& cameras, const std::string& active_camera_name, const std::string_view context) {
             validate_unique_scene_item_names(cameras, context, "camera");
-            if (active_camera_name.empty()) throw std::runtime_error(std::format("{} active camera name must not be empty", context));
+            if (active_camera_name.empty()) throw std::runtime_error(format_message("{} active camera name must not be empty", context));
             bool found_active_camera = false;
             for (const Scene::Camera& camera : cameras) {
                 validate_camera(camera, context);
                 found_active_camera = found_active_camera || camera.name == active_camera_name;
             }
-            if (!found_active_camera) throw std::runtime_error(std::format("{} active camera \"{}\" does not exist", context, active_camera_name));
+            if (!found_active_camera) throw std::runtime_error(format_message("{} active camera \"{}\" does not exist", context, active_camera_name));
         }
 
         [[nodiscard]] const Scene::Camera& require_active_camera(const std::vector<Scene::Camera>& cameras, const std::string& active_camera_name, const std::string_view context) {
             for (const Scene::Camera& camera : cameras)
                 if (camera.name == active_camera_name) return camera;
-            throw std::runtime_error(std::format("{} active camera \"{}\" does not exist", context, active_camera_name));
+            throw std::runtime_error(format_message("{} active camera \"{}\" does not exist", context, active_camera_name));
         }
 
         [[nodiscard]] float pathtracer_camera_fov_degrees(const Scene::Camera& camera) {
@@ -503,11 +536,11 @@ namespace spectra::scene {
                 const float centered_x = static_cast<float>(camera.projection.image_width) * 0.5f;
                 const float centered_y = static_cast<float>(camera.projection.image_height) * 0.5f;
                 if (std::abs(camera.projection.cx - centered_x) > principal_point_tolerance || std::abs(camera.projection.cy - centered_y) > principal_point_tolerance)
-                    throw std::runtime_error(std::format("Active camera \"{}\" uses off-center pinhole intrinsics; current pathtracer camera adapter requires a centered principal point", camera.name));
+                    throw std::runtime_error(format_message("Active camera \"{}\" uses off-center pinhole intrinsics; current pathtracer camera adapter requires a centered principal point", camera.name));
                 return camera_projection_vertical_fov_degrees(camera.projection);
             }
             case CameraProjectionKind::Orthographic:
-                throw std::runtime_error(std::format("Active camera \"{}\" uses orthographic projection; preview pathtracer conversion currently requires a perspective camera", camera.name));
+                throw std::runtime_error(format_message("Active camera \"{}\" uses orthographic projection; preview pathtracer conversion currently requires a perspective camera", camera.name));
             }
             throw std::runtime_error("Unknown scene camera projection kind");
         }
@@ -518,20 +551,20 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string scene_source_string(const Scene::SourceLocation& source) {
             if (source.filename.empty()) return "<generated>";
-            return std::format("{}:{}:{}", source.filename, source.line, source.column);
+            return format_message("{}:{}:{}", source.filename, source.line, source.column);
         }
 
         [[noreturn]] void throw_scene_validation_error(const Scene::SourceLocation& source, const std::string_view message) {
-            throw std::runtime_error(std::format("{}: {}", scene_source_string(source), message));
+            throw std::runtime_error(format_message("{}: {}", scene_source_string(source), message));
         }
 
         void require_supported_entity(const Scene::Entity& entity, const std::set<std::string>& supported, const std::string_view kind) {
-            if (entity.type.empty()) throw_scene_validation_error(entity.source, std::format("Scene {} type must not be empty", kind));
-            if (!contains_name(supported, entity.type)) throw_scene_validation_error(entity.source, std::format("Scene pathtracer backend does not support {} type \"{}\"", kind, entity.type));
+            if (entity.type.empty()) throw_scene_validation_error(entity.source, format_message("Scene {} type must not be empty", kind));
+            if (!contains_name(supported, entity.type)) throw_scene_validation_error(entity.source, format_message("Scene pathtracer backend does not support {} type \"{}\"", kind, entity.type));
         }
 
         void require_static_scene_transform(const SceneTransformSet& transform, const Scene::SourceLocation& source, const std::string_view owner) {
-            if (transform.animated) throw_scene_validation_error(source, std::format("{} uses animated transforms, which are not supported by the canonical pathtracer backend", owner));
+            if (transform.animated) throw_scene_validation_error(source, format_message("{} uses animated transforms, which are not supported by the canonical pathtracer backend", owner));
         }
 
         [[nodiscard]] std::string scene_string_parameter(const std::vector<Scene::Parameter>& parameters, const std::string_view name) {
@@ -545,8 +578,8 @@ namespace spectra::scene {
 
         void require_unique_canonical_name(std::set<std::string>* names, const std::string& name, const Scene::SourceLocation& source, const std::string_view kind) {
             if (names == nullptr) throw std::runtime_error("Scene canonical validation requires a name set");
-            if (name.empty()) throw_scene_validation_error(source, std::format("Scene {} name must not be empty", kind));
-            if (!names->insert(name).second) throw_scene_validation_error(source, std::format("Scene {} \"{}\" is duplicated", kind, name));
+            if (name.empty()) throw_scene_validation_error(source, format_message("Scene {} name must not be empty", kind));
+            if (!names->insert(name).second) throw_scene_validation_error(source, format_message("Scene {} \"{}\" is duplicated", kind, name));
         }
 
         void validate_canonical_scene(const Scene::ResolvedScene& scene) {
@@ -576,10 +609,10 @@ namespace spectra::scene {
             require_supported_entity(scene.render_settings.integrator, supported_integrators, "integrator");
             require_supported_entity(scene.render_settings.accelerator, supported_accelerators, "accelerator");
             require_static_scene_transform(scene.render_settings.camera_transform, scene.render_settings.camera.source, "Scene camera");
-            if (!scene.render_settings.options.empty()) throw_scene_validation_error(scene.render_settings.options.front().source, std::format("Scene Option \"{}\" is represented but not supported by the canonical pathtracer backend", scene.render_settings.options.front().name));
+            if (!scene.render_settings.options.empty()) throw_scene_validation_error(scene.render_settings.options.front().source, format_message("Scene Option \"{}\" is represented but not supported by the canonical pathtracer backend", scene.render_settings.options.front().name));
 
             const std::string light_sampler = scene_string_parameter(scene.render_settings.integrator.parameters, "lightsampler");
-            if (!light_sampler.empty() && !contains_name(supported_light_samplers, light_sampler)) throw_scene_validation_error(scene.render_settings.integrator.source, std::format("Scene pathtracer backend does not support light sampler \"{}\"", light_sampler));
+            if (!light_sampler.empty() && !contains_name(supported_light_samplers, light_sampler)) throw_scene_validation_error(scene.render_settings.integrator.source, format_message("Scene pathtracer backend does not support light sampler \"{}\"", light_sampler));
 
             std::set<std::string> material_names{};
             for (const Scene::Material& material : scene.materials) {
@@ -591,41 +624,41 @@ namespace spectra::scene {
             for (const Scene::Medium& medium : scene.media) {
                 require_unique_canonical_name(&medium_names, medium.name, medium.entity.source, "medium");
                 require_supported_entity(medium.entity, supported_media, "medium");
-                require_static_scene_transform(medium.transform, medium.entity.source, std::format("Scene medium \"{}\"", medium.name));
+                require_static_scene_transform(medium.transform, medium.entity.source, format_message("Scene medium \"{}\"", medium.name));
             }
 
             std::set<std::string> texture_names{};
             for (const Scene::Texture& texture : scene.textures) {
                 require_unique_canonical_name(&texture_names, texture.name, texture.entity.source, "texture");
-                if (texture.kind != "float" && texture.kind != "spectrum") throw_scene_validation_error(texture.entity.source, std::format("Scene pathtracer backend does not support texture value kind \"{}\"", texture.kind));
+                if (texture.kind != "float" && texture.kind != "spectrum") throw_scene_validation_error(texture.entity.source, format_message("Scene pathtracer backend does not support texture value kind \"{}\"", texture.kind));
                 require_supported_entity(texture.entity, supported_textures, "texture");
                 if (texture.kind == "float" && texture.entity.type == "marble") throw_scene_validation_error(texture.entity.source, "\"marble\" is only a spectrum texture in the canonical pathtracer backend");
-                if (texture.kind == "spectrum" && (texture.entity.type == "fbm" || texture.entity.type == "wrinkled" || texture.entity.type == "windy")) throw_scene_validation_error(texture.entity.source, std::format("\"{}\" is only a float texture in the canonical pathtracer backend", texture.entity.type));
-                require_static_scene_transform(texture.transform, texture.entity.source, std::format("Scene texture \"{}\"", texture.name));
+                if (texture.kind == "spectrum" && (texture.entity.type == "fbm" || texture.entity.type == "wrinkled" || texture.entity.type == "windy")) throw_scene_validation_error(texture.entity.source, format_message("\"{}\" is only a float texture in the canonical pathtracer backend", texture.entity.type));
+                require_static_scene_transform(texture.transform, texture.entity.source, format_message("Scene texture \"{}\"", texture.name));
             }
 
             const auto validate_shape = [&material_names, &medium_names](const Scene::Shape& shape, const std::string_view owner) {
-                if (shape.name.empty()) throw_scene_validation_error(shape.entity.source, std::format("{} name must not be empty", owner));
+                if (shape.name.empty()) throw_scene_validation_error(shape.entity.source, format_message("{} name must not be empty", owner));
                 require_supported_entity(shape.entity, supported_shapes, "shape");
                 require_static_scene_transform(shape.transform, shape.entity.source, owner);
-                if (shape.material_name.empty() || !contains_name(material_names, shape.material_name)) throw_scene_validation_error(shape.entity.source, std::format("{} references unknown material \"{}\"", owner, shape.material_name));
-                if (!shape.medium_interface.inside.empty() && !contains_name(medium_names, shape.medium_interface.inside)) throw_scene_validation_error(shape.entity.source, std::format("{} references unknown inside medium \"{}\"", owner, shape.medium_interface.inside));
-                if (!shape.medium_interface.outside.empty() && !contains_name(medium_names, shape.medium_interface.outside)) throw_scene_validation_error(shape.entity.source, std::format("{} references unknown outside medium \"{}\"", owner, shape.medium_interface.outside));
+                if (shape.material_name.empty() || !contains_name(material_names, shape.material_name)) throw_scene_validation_error(shape.entity.source, format_message("{} references unknown material \"{}\"", owner, shape.material_name));
+                if (!shape.medium_interface.inside.empty() && !contains_name(medium_names, shape.medium_interface.inside)) throw_scene_validation_error(shape.entity.source, format_message("{} references unknown inside medium \"{}\"", owner, shape.medium_interface.inside));
+                if (!shape.medium_interface.outside.empty() && !contains_name(medium_names, shape.medium_interface.outside)) throw_scene_validation_error(shape.entity.source, format_message("{} references unknown outside medium \"{}\"", owner, shape.medium_interface.outside));
                 if (shape.area_light.has_value()) require_supported_entity(shape.area_light->entity, supported_area_lights, "area light");
             };
 
             std::set<std::string> shape_names{};
             for (const Scene::Shape& shape : scene.shapes) {
                 require_unique_canonical_name(&shape_names, shape.name, shape.entity.source, "shape");
-                validate_shape(shape, std::format("Scene shape \"{}\"", shape.name));
+                validate_shape(shape, format_message("Scene shape \"{}\"", shape.name));
             }
 
             std::set<std::string> light_names{};
             for (const Scene::Light& light : scene.lights) {
                 require_unique_canonical_name(&light_names, light.name, light.entity.source, "light");
                 require_supported_entity(light.entity, supported_lights, "light");
-                require_static_scene_transform(light.transform, light.entity.source, std::format("Scene light \"{}\"", light.name));
-                if (!light.medium.empty() && !contains_name(medium_names, light.medium)) throw_scene_validation_error(light.entity.source, std::format("Scene light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
+                require_static_scene_transform(light.transform, light.entity.source, format_message("Scene light \"{}\"", light.name));
+                if (!light.medium.empty() && !contains_name(medium_names, light.medium)) throw_scene_validation_error(light.entity.source, format_message("Scene light \"{}\" references unknown medium \"{}\"", light.name, light.medium));
             }
 
             std::set<std::string> object_definition_names{};
@@ -634,16 +667,16 @@ namespace spectra::scene {
                 std::set<std::string> definition_shape_names{};
                 for (const Scene::Shape& shape : definition.shapes) {
                     require_unique_canonical_name(&definition_shape_names, shape.name, shape.entity.source, "object definition shape");
-                    validate_shape(shape, std::format("Scene object definition \"{}\" shape", definition.name));
-                    if (shape.area_light.has_value()) throw_scene_validation_error(shape.entity.source, std::format("Scene object definition \"{}\" contains an area light shape; instanced area lights are not supported by the canonical pathtracer backend", definition.name));
+                    validate_shape(shape, format_message("Scene object definition \"{}\" shape", definition.name));
+                    if (shape.area_light.has_value()) throw_scene_validation_error(shape.entity.source, format_message("Scene object definition \"{}\" contains an area light shape; instanced area lights are not supported by the canonical pathtracer backend", definition.name));
                 }
             }
 
             std::set<std::string> object_instance_names{};
             for (const Scene::ObjectInstance& instance : scene.object_instances) {
                 require_unique_canonical_name(&object_instance_names, instance.name, instance.source, "object instance");
-                if (!contains_name(object_definition_names, instance.definition_name)) throw_scene_validation_error(instance.source, std::format("Scene object instance references unknown definition \"{}\"", instance.definition_name));
-                require_static_scene_transform(instance.transform, instance.source, std::format("Scene object instance \"{}\"", instance.name));
+                if (!contains_name(object_definition_names, instance.definition_name)) throw_scene_validation_error(instance.source, format_message("Scene object instance references unknown definition \"{}\"", instance.definition_name));
+                require_static_scene_transform(instance.transform, instance.source, format_message("Scene object instance \"{}\"", instance.name));
             }
         }
 
@@ -684,16 +717,16 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] Vector3 transform_point(const Transform& transform, const Vector3 point, const std::string_view context) {
-            if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
-            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
-            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            if (!is_finite(transform.position)) throw std::runtime_error(format_message("{} has a non-finite transform position", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(format_message("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(format_message("{} has a zero transform scale component", context));
             const Quaternion rotation = normalized_quaternion(transform.rotation, context);
             return transform.position + rotate_vector(rotation, Vector3{point.x * transform.scale.x, point.y * transform.scale.y, point.z * transform.scale.z});
         }
 
         [[nodiscard]] Vector3 transform_normal(const Transform& transform, const Vector3 normal, const std::string_view context) {
-            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
-            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(format_message("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(format_message("{} has a zero transform scale component", context));
             const Quaternion rotation = normalized_quaternion(transform.rotation, context);
             return normalize(rotate_vector(rotation, Vector3{normal.x / transform.scale.x, normal.y / transform.scale.y, normal.z / transform.scale.z}), context);
         }
@@ -710,9 +743,9 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] SceneTransform make_preview_scene_transform(const Transform& transform, const std::string_view context) {
-            if (!is_finite(transform.position)) throw std::runtime_error(std::format("{} has a non-finite transform position", context));
-            if (!is_finite(transform.scale)) throw std::runtime_error(std::format("{} has a non-finite transform scale", context));
-            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(std::format("{} has a zero transform scale component", context));
+            if (!is_finite(transform.position)) throw std::runtime_error(format_message("{} has a non-finite transform position", context));
+            if (!is_finite(transform.scale)) throw std::runtime_error(format_message("{} has a non-finite transform scale", context));
+            if (transform.scale.x == 0.0f || transform.scale.y == 0.0f || transform.scale.z == 0.0f) throw std::runtime_error(format_message("{} has a zero transform scale component", context));
             const Quaternion rotation = normalized_quaternion(transform.rotation, context);
             const float x = rotation.x;
             const float y = rotation.y;
@@ -792,8 +825,8 @@ namespace spectra::scene {
             std::set<std::string> names{};
             for (const Scene::Texture& texture : document.textures) {
                 if (texture.name.empty()) throw std::runtime_error("Preview texture name must not be empty when building canonical scene");
-                if (!names.insert(texture.name).second) throw std::runtime_error(std::format("Preview texture \"{}\" is duplicated when building canonical scene", texture.name));
-                require_static_scene_transform(texture.transform, texture.entity.source, std::format("Preview texture \"{}\"", texture.name));
+                if (!names.insert(texture.name).second) throw std::runtime_error(format_message("Preview texture \"{}\" is duplicated when building canonical scene", texture.name));
+                require_static_scene_transform(texture.transform, texture.entity.source, format_message("Preview texture \"{}\"", texture.name));
                 scene.textures.push_back(texture);
             }
             return names;
@@ -801,14 +834,14 @@ namespace spectra::scene {
 
         void require_preview_texture_reference(const std::set<std::string>& texture_names, const std::string& texture_name, const std::string_view material_name, const std::string_view parameter_name) {
             if (texture_name.empty()) return;
-            if (!texture_names.contains(texture_name)) throw std::runtime_error(std::format("Preview material \"{}\" references unknown {} texture \"{}\"", material_name, parameter_name, texture_name));
+            if (!texture_names.contains(texture_name)) throw std::runtime_error(format_message("Preview material \"{}\" references unknown {} texture \"{}\"", material_name, parameter_name, texture_name));
         }
 
         void append_canonical_materials(Scene::ResolvedScene& scene, const Scene::Document& document, const std::set<std::string>& texture_names, const bool needs_volume_interface_material) {
             std::set<std::string> names{};
             for (const Scene::PreviewMaterial& material : document.materials) {
                 if (material.name.empty()) throw std::runtime_error("Preview material name must not be empty when building canonical scene");
-                if (!names.insert(material.name).second) throw std::runtime_error(std::format("Preview material \"{}\" is duplicated when building canonical scene", material.name));
+                if (!names.insert(material.name).second) throw std::runtime_error(format_message("Preview material \"{}\" is duplicated when building canonical scene", material.name));
                 if (material.surface_kind == Scene::PreviewSurfaceKind::Volume) continue;
                 require_preview_texture_reference(texture_names, material.base_color_texture, material.name, "base color");
                 require_preview_texture_reference(texture_names, material.emission_texture, material.name, "emission");
@@ -837,7 +870,7 @@ namespace spectra::scene {
             }
             if (needs_volume_interface_material) {
                 constexpr std::string_view volume_interface_material_name = "__spectra_volume_interface";
-                if (names.contains(std::string{volume_interface_material_name})) throw std::runtime_error(std::format("Preview material \"{}\" conflicts with a reserved canonical volume material name", volume_interface_material_name));
+                if (names.contains(std::string{volume_interface_material_name})) throw std::runtime_error(format_message("Preview material \"{}\" conflicts with a reserved canonical volume material name", volume_interface_material_name));
                 scene.materials.push_back(Scene::Material{
                     .name = std::string{volume_interface_material_name},
                     .entity = Scene::Entity{.type = "interface"},
@@ -847,12 +880,12 @@ namespace spectra::scene {
 
         [[nodiscard]] std::optional<Scene::AreaLight> make_preview_area_light(const Scene::Document& document, const std::string& material_name, const Scene::SourceLocation& source) {
             const Scene::PreviewMaterial* material = find_preview_material(document, material_name);
-            if (material == nullptr) throw std::runtime_error(std::format("Preview shape references unknown material \"{}\"", material_name));
+            if (material == nullptr) throw std::runtime_error(format_message("Preview shape references unknown material \"{}\"", material_name));
             if (material->surface_kind != Scene::PreviewSurfaceKind::EmissiveSurface) return {};
-            if (!is_finite(material->emission_color)) throw std::runtime_error(std::format("Preview emissive material \"{}\" emission color must be finite when building canonical scene", material_name));
-            if (material->emission_color.x < 0.0f || material->emission_color.y < 0.0f || material->emission_color.z < 0.0f) throw std::runtime_error(std::format("Preview emissive material \"{}\" emission color must be non-negative when building canonical scene", material_name));
-            if (!std::isfinite(material->emission_strength) || material->emission_strength < 0.0f) throw std::runtime_error(std::format("Preview emissive material \"{}\" emission strength must be finite and non-negative when building canonical scene", material_name));
-            if (!material->emission_texture.empty()) throw std::runtime_error(std::format("Preview emissive material \"{}\" uses an emission texture, which cannot be converted to a canonical diffuse area light", material_name));
+            if (!is_finite(material->emission_color)) throw std::runtime_error(format_message("Preview emissive material \"{}\" emission color must be finite when building canonical scene", material_name));
+            if (material->emission_color.x < 0.0f || material->emission_color.y < 0.0f || material->emission_color.z < 0.0f) throw std::runtime_error(format_message("Preview emissive material \"{}\" emission color must be non-negative when building canonical scene", material_name));
+            if (!std::isfinite(material->emission_strength) || material->emission_strength < 0.0f) throw std::runtime_error(format_message("Preview emissive material \"{}\" emission strength must be finite and non-negative when building canonical scene", material_name));
+            if (!material->emission_texture.empty()) throw std::runtime_error(format_message("Preview emissive material \"{}\" uses an emission texture, which cannot be converted to a canonical diffuse area light", material_name));
             return Scene::AreaLight{
                 .entity = Scene::Entity{
                     .type = "diffuse",
@@ -867,10 +900,10 @@ namespace spectra::scene {
 
         void append_mesh_shape(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::Mesh& mesh) {
             if (mesh.name.empty()) throw std::runtime_error("Preview mesh name must not be empty when building canonical scene");
-            if (mesh.material_name.empty()) throw std::runtime_error(std::format("Preview mesh \"{}\" material name must not be empty when building canonical scene", mesh.name));
-            if (mesh.positions.empty()) throw std::runtime_error(std::format("Preview mesh \"{}\" has no positions when building canonical scene", mesh.name));
-            if (mesh.normals.size() != mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" normal count does not match position count when building canonical scene", mesh.name));
-            if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("Preview mesh \"{}\" has invalid triangle indices when building canonical scene", mesh.name));
+            if (mesh.material_name.empty()) throw std::runtime_error(format_message("Preview mesh \"{}\" material name must not be empty when building canonical scene", mesh.name));
+            if (mesh.positions.empty()) throw std::runtime_error(format_message("Preview mesh \"{}\" has no positions when building canonical scene", mesh.name));
+            if (mesh.normals.size() != mesh.positions.size()) throw std::runtime_error(format_message("Preview mesh \"{}\" normal count does not match position count when building canonical scene", mesh.name));
+            if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(format_message("Preview mesh \"{}\" has invalid triangle indices when building canonical scene", mesh.name));
             std::vector<float> positions{};
             std::vector<float> normals{};
             std::vector<int> indices{};
@@ -878,9 +911,9 @@ namespace spectra::scene {
             positions.reserve(mesh.positions.size() * 3u);
             normals.reserve(mesh.normals.size() * 3u);
             indices.reserve(mesh.indices.size());
-            if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" uv count does not match position count when building canonical scene", mesh.name));
+            if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.positions.size()) throw std::runtime_error(format_message("Preview mesh \"{}\" uv count does not match position count when building canonical scene", mesh.name));
             uvs.reserve(mesh.uvs.size() * 2u);
-            const std::string context = std::format("Preview mesh \"{}\"", mesh.name);
+            const std::string context = format_message("Preview mesh \"{}\"", mesh.name);
             for (std::size_t index = 0u; index < mesh.positions.size(); ++index) {
                 const Vector3 point = transform_point(mesh.transform, mesh.positions.at(index), context);
                 const Vector3 normal = transform_normal(mesh.transform, mesh.normals.at(index), context);
@@ -889,8 +922,8 @@ namespace spectra::scene {
                 if (!mesh.uvs.empty()) uvs.insert(uvs.end(), {mesh.uvs.at(index).at(0), mesh.uvs.at(index).at(1)});
             }
             for (const std::uint32_t index : mesh.indices) {
-                if (index >= mesh.positions.size()) throw std::runtime_error(std::format("Preview mesh \"{}\" has an out-of-range triangle index when building canonical scene", mesh.name));
-                if (index > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error(std::format("Preview mesh \"{}\" triangle index exceeds PBRT integer range", mesh.name));
+                if (index >= mesh.positions.size()) throw std::runtime_error(format_message("Preview mesh \"{}\" has an out-of-range triangle index when building canonical scene", mesh.name));
+                if (index > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) throw std::runtime_error(format_message("Preview mesh \"{}\" triangle index exceeds PBRT integer range", mesh.name));
                 indices.push_back(static_cast<int>(index));
             }
             std::vector<Scene::Parameter> parameters{
@@ -913,9 +946,9 @@ namespace spectra::scene {
 
         void append_sphere_shape(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::Sphere& sphere) {
             if (sphere.name.empty()) throw std::runtime_error("Preview sphere name must not be empty when building canonical scene");
-            if (sphere.material_name.empty()) throw std::runtime_error(std::format("Preview sphere \"{}\" material name must not be empty when building canonical scene", sphere.name));
-            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(std::format("Preview sphere \"{}\" radius must be finite and positive when building canonical scene", sphere.name));
-            const SceneTransform transform = make_preview_scene_transform(sphere.transform, std::format("Preview sphere \"{}\"", sphere.name));
+            if (sphere.material_name.empty()) throw std::runtime_error(format_message("Preview sphere \"{}\" material name must not be empty when building canonical scene", sphere.name));
+            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(format_message("Preview sphere \"{}\" radius must be finite and positive when building canonical scene", sphere.name));
+            const SceneTransform transform = make_preview_scene_transform(sphere.transform, format_message("Preview sphere \"{}\"", sphere.name));
             scene.shapes.push_back(Scene::Shape{
                 .name = sphere.name,
                 .entity = Scene::Entity{
@@ -931,9 +964,9 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::Mesh make_sphere_preview_mesh(const Scene::Sphere& sphere) {
             if (sphere.name.empty()) throw std::runtime_error("Preview sphere name must not be empty when building rasterizer mesh");
-            if (sphere.material_name.empty()) throw std::runtime_error(std::format("Preview sphere \"{}\" material name must not be empty when building rasterizer mesh", sphere.name));
-            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(std::format("Preview sphere \"{}\" radius must be finite and positive when building rasterizer mesh", sphere.name));
-            static_cast<void>(make_preview_scene_transform(sphere.transform, std::format("Preview sphere \"{}\"", sphere.name)));
+            if (sphere.material_name.empty()) throw std::runtime_error(format_message("Preview sphere \"{}\" material name must not be empty when building rasterizer mesh", sphere.name));
+            if (!std::isfinite(sphere.radius) || sphere.radius <= 0.0f) throw std::runtime_error(format_message("Preview sphere \"{}\" radius must be finite and positive when building rasterizer mesh", sphere.name));
+            static_cast<void>(make_preview_scene_transform(sphere.transform, format_message("Preview sphere \"{}\"", sphere.name)));
             constexpr std::uint32_t latitude_segments = 32u;
             constexpr std::uint32_t longitude_segments = 64u;
             const std::uint32_t latitude_count = latitude_segments + 1u;
@@ -980,18 +1013,18 @@ namespace spectra::scene {
 
         void append_point_cloud_shapes(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::PointCloud& point_cloud) {
             if (point_cloud.name.empty()) throw std::runtime_error("Preview point cloud name must not be empty when building canonical scene");
-            if (point_cloud.source_kind == Scene::PointCloud::SourceKind::ExternalGpuBuffer) throw std::runtime_error(std::format("Preview point cloud \"{}\" uses an external GPU source; canonical pathtracer scene construction requires CPU point values", point_cloud.name));
-            if (point_cloud.positions.size() != point_cloud.radii.size()) throw std::runtime_error(std::format("Preview point cloud \"{}\" radius count does not match point count when building canonical scene", point_cloud.name));
+            if (point_cloud.source_kind == Scene::PointCloud::SourceKind::ExternalGpuBuffer) throw std::runtime_error(format_message("Preview point cloud \"{}\" uses an external GPU source; canonical pathtracer scene construction requires CPU point values", point_cloud.name));
+            if (point_cloud.positions.size() != point_cloud.radii.size()) throw std::runtime_error(format_message("Preview point cloud \"{}\" radius count does not match point count when building canonical scene", point_cloud.name));
             const Scene::PreviewMaterial* material = find_preview_material(document, point_cloud.material_name);
-            if (material == nullptr) throw std::runtime_error(std::format("Preview point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
+            if (material == nullptr) throw std::runtime_error(format_message("Preview point cloud \"{}\" references unknown material \"{}\"", point_cloud.name, point_cloud.material_name));
             const float material_scale = std::max(1.0e-4f, preview_scalar(material->base_color));
-            const std::string context = std::format("Preview point cloud \"{}\"", point_cloud.name);
+            const std::string context = format_message("Preview point cloud \"{}\"", point_cloud.name);
             for (std::size_t index = 0u; index < point_cloud.positions.size(); ++index) {
                 const float radius = point_cloud.radii.at(index);
-                if (!std::isfinite(radius) || radius <= 0.0f) throw std::runtime_error(std::format("Preview point cloud \"{}\" has an invalid radius", point_cloud.name));
+                if (!std::isfinite(radius) || radius <= 0.0f) throw std::runtime_error(format_message("Preview point cloud \"{}\" has an invalid radius", point_cloud.name));
                 const Vector3 point = transform_point(point_cloud.transform, point_cloud.positions.at(index), context);
                 const float point_scale = point_cloud.colors.size() == point_cloud.positions.size() ? std::max(1.0e-4f, preview_scalar(point_cloud.colors.at(index))) : 1.0f;
-                const std::string material_name = std::format("{}.__point_material_{}", point_cloud.name, index);
+                const std::string material_name = format_message("{}.__point_material_{}", point_cloud.name, index);
                 scene.materials.push_back(Scene::Material{
                     .name = material_name,
                     .entity = Scene::Entity{
@@ -1001,7 +1034,7 @@ namespace spectra::scene {
                     },
                 });
                 scene.shapes.push_back(Scene::Shape{
-                    .name = std::format("{}.__point_{}", point_cloud.name, index),
+                    .name = format_message("{}.__point_{}", point_cloud.name, index),
                     .entity = Scene::Entity{
                         .type = "sphere",
                         .parameters = {float_parameter("radius", {radius}, point_cloud.source)},
@@ -1013,57 +1046,93 @@ namespace spectra::scene {
             }
         }
 
-        [[nodiscard]] const Scene::VolumeChannel* find_volume_channel(const Scene::VolumeGrid& volume, const std::string_view name) {
-            for (const Scene::VolumeChannel& channel : volume.channels)
-                if (channel.name == name) return &channel;
-            return nullptr;
-        }
-
         [[nodiscard]] std::vector<float> materialize_pathtracer_volume_channel(const Scene::VolumeGrid& volume, const Scene::VolumeChannel& channel, const std::uint64_t value_count, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
             if (channel.source_kind == Scene::VolumeChannelSourceKind::Values) {
-                if (channel.values.size() != value_count) throw std::runtime_error(std::format("Preview volume \"{}\" channel \"{}\" count does not match dimensions", volume.name, channel.name));
+                if (channel.values.size() != value_count) throw std::runtime_error(format_message("Preview volume \"{}\" channel \"{}\" count does not match dimensions", volume.name, channel.name));
                 return channel.values;
             }
-            if (external_volume_materializer == nullptr || !*external_volume_materializer) throw std::runtime_error(std::format("Volume \"{}\" channel \"{}\" uses an external GPU source; pathtracer scene construction requires an explicit static volume snapshot materializer", volume.name, channel.name));
+            if (external_volume_materializer == nullptr || !*external_volume_materializer) throw std::runtime_error(format_message("Volume \"{}\" channel \"{}\" uses an external GPU source; pathtracer scene construction requires an explicit static volume snapshot materializer", volume.name, channel.name));
             std::vector<float> values = (*external_volume_materializer)(volume, channel);
-            if (values.size() != value_count) throw std::runtime_error(std::format("Pathtracer volume snapshot for \"{}\" channel \"{}\" produced {} values; expected {}", volume.name, channel.name, values.size(), value_count));
+            if (values.size() != value_count) throw std::runtime_error(format_message("Pathtracer volume snapshot for \"{}\" channel \"{}\" produced {} values; expected {}", volume.name, channel.name, values.size(), value_count));
             for (const float value : values)
-                if (!std::isfinite(value)) throw std::runtime_error(std::format("Pathtracer volume snapshot for \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
+                if (!std::isfinite(value)) throw std::runtime_error(format_message("Pathtracer volume snapshot for \"{}\" channel \"{}\" contains a non-finite value", volume.name, channel.name));
             return values;
+        }
+
+        [[nodiscard]] const Scene::VolumeChannel& require_bound_volume_channel(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::string_view role) {
+            if (!binding.enabled) throw std::runtime_error(format_message("Preview volume \"{}\" requires enabled material role \"{}\" for canonical path tracing", volume.name, role));
+            for (const Scene::VolumeChannel& channel : volume.channels)
+                if (channel.name == binding.channel_name) return channel;
+            throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" references missing channel \"{}\"", volume.name, role, binding.channel_name));
+        }
+
+        [[nodiscard]] std::vector<float> materialize_pathtracer_scalar_binding(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::string_view role, const std::uint64_t cell_count, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
+            const Scene::VolumeChannel& channel = require_bound_volume_channel(volume, binding, role);
+            const std::uint32_t component_count = volume_channel_component_count(channel.format);
+            if (binding.component >= component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" component exceeds channel \"{}\" component count", volume.name, role, channel.name));
+            if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" value count exceeds uint64 range", volume.name, role));
+            std::vector<float> values = materialize_pathtracer_volume_channel(volume, channel, cell_count * component_count, external_volume_materializer);
+            std::vector<float> result{};
+            result.reserve(static_cast<std::size_t>(cell_count));
+            for (std::uint64_t index = 0u; index < cell_count; ++index) {
+                const float transformed = values.at(static_cast<std::size_t>(index * component_count + binding.component)) * binding.scale + binding.bias;
+                if (!std::isfinite(transformed)) throw std::runtime_error(format_message("Preview volume \"{}\" material role \"{}\" produces a non-finite value", volume.name, role));
+                result.push_back(transformed);
+            }
+            return result;
+        }
+
+        [[nodiscard]] std::vector<float> materialize_pathtracer_color_binding(const Scene::VolumeGrid& volume, const Scene::VolumeChannelBinding& binding, const std::uint64_t cell_count, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
+            const Scene::VolumeChannel& channel = require_bound_volume_channel(volume, binding, "color");
+            const std::uint32_t component_count = volume_channel_component_count(channel.format);
+            if (binding.component >= component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material color role component exceeds channel \"{}\" component count", volume.name, channel.name));
+            if (cell_count > std::numeric_limits<std::uint64_t>::max() / component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material color role value count exceeds uint64 range", volume.name));
+            if (component_count != 1u && binding.component + 2u >= component_count) throw std::runtime_error(format_message("Preview volume \"{}\" material color role requires either a scalar channel or three contiguous components", volume.name));
+            std::vector<float> values = materialize_pathtracer_volume_channel(volume, channel, cell_count * component_count, external_volume_materializer);
+            std::vector<float> result{};
+            if (cell_count > std::numeric_limits<std::uint64_t>::max() / 3u) throw std::runtime_error(format_message("Preview volume \"{}\" color value count exceeds uint64 range", volume.name));
+            result.reserve(static_cast<std::size_t>(cell_count * 3u));
+            for (std::uint64_t index = 0u; index < cell_count; ++index) {
+                if (component_count == 1u) {
+                    const float value = values.at(static_cast<std::size_t>(index)) * binding.scale + binding.bias;
+                    if (!std::isfinite(value) || value < 0.0f) throw std::runtime_error(format_message("Preview volume \"{}\" material color role produces an invalid value", volume.name));
+                    result.push_back(value);
+                    result.push_back(value);
+                    result.push_back(value);
+                    continue;
+                }
+                for (std::uint32_t component = 0u; component < 3u; ++component) {
+                    const float value = values.at(static_cast<std::size_t>(index * component_count + binding.component + component)) * binding.scale + binding.bias;
+                    if (!std::isfinite(value) || value < 0.0f) throw std::runtime_error(format_message("Preview volume \"{}\" material color role produces an invalid value", volume.name));
+                    result.push_back(value);
+                }
+            }
+            return result;
         }
 
         void append_volume(Scene::ResolvedScene& scene, const Scene::Document& document, const Scene::VolumeGrid& volume, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
             if (volume.name.empty()) throw std::runtime_error("Preview volume name must not be empty when building canonical scene");
             const Scene::PreviewMaterial* material = find_preview_material(document, volume.material_name);
-            if (material == nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
-            const Scene::VolumeChannel* density = find_volume_channel(volume, "density");
-            if (density == nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" requires a density channel for canonical path tracing", volume.name));
-            const Scene::VolumeChannel* temperature = find_volume_channel(volume, "temperature");
-            const Scene::VolumeChannel* color = find_volume_channel(volume, "color");
-            if (density->format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Preview volume \"{}\" density channel must use Float32 format", volume.name));
-            if (temperature != nullptr && temperature->format != Scene::VolumeChannelFormat::Float32) throw std::runtime_error(std::format("Preview volume \"{}\" temperature channel must use Float32 format", volume.name));
-            if (color != nullptr && color->format != Scene::VolumeChannelFormat::Float32x3) throw std::runtime_error(std::format("Preview volume \"{}\" color channel must use Float32x3 format", volume.name));
-            if (color != nullptr && temperature != nullptr) throw std::runtime_error(std::format("Preview volume \"{}\" cannot build a colored rgbgrid medium with a temperature channel", volume.name));
+            if (material == nullptr) throw std::runtime_error(format_message("Preview volume \"{}\" references unknown material \"{}\"", volume.name, volume.material_name));
+            if (material->volume.mode != Scene::VolumeMaterialMode::Medium) throw std::runtime_error(format_message("Preview volume \"{}\" material mode is not convertible to a canonical path tracing medium", volume.name));
             const std::uint64_t value_count = checked_volume_cell_count(volume);
-            std::vector<float> density_values = materialize_pathtracer_volume_channel(volume, *density, value_count, external_volume_materializer);
+            std::vector<float> density_values = materialize_pathtracer_scalar_binding(volume, material->volume.density, "density", value_count, external_volume_materializer);
             log_volume_pathtracer_stats(volume, *material, density_values);
-            const std::string medium_type = color == nullptr ? "uniformgrid" : "rgbgrid";
+            const std::string medium_type = material->volume.color.enabled ? "rgbgrid" : "uniformgrid";
             std::vector<Scene::Parameter> parameters{
                 string_parameter("type", {medium_type}, volume.source),
                 integer_parameter("nx", {static_cast<int>(volume.dimensions[0])}, volume.source),
                 integer_parameter("ny", {static_cast<int>(volume.dimensions[1])}, volume.source),
                 integer_parameter("nz", {static_cast<int>(volume.dimensions[2])}, volume.source),
-                float_parameter("scale", {material->volume_density_scale}, volume.source),
+                float_parameter("scale", {1.0f}, volume.source),
             };
-            if (color == nullptr) {
+            if (!material->volume.color.enabled) {
                 parameters.push_back(float_parameter("density", std::move(density_values), volume.source));
-                parameters.push_back(float_parameter("temperaturescale", {material->volume_temperature_scale}, volume.source));
+                parameters.push_back(float_parameter("temperaturescale", {1.0f}, volume.source));
                 parameters.push_back(rgb_parameter("sigma_a", Vector3{0.08f, 0.08f, 0.08f}, volume.source));
                 parameters.push_back(rgb_parameter("sigma_s", Vector3{0.92f, 0.92f, 0.92f}, volume.source));
             } else {
-                if (value_count > std::numeric_limits<std::uint64_t>::max() / 3u) throw std::runtime_error(std::format("Preview volume \"{}\" color value count exceeds uint64 range", volume.name));
-                const std::uint64_t color_value_count = value_count * 3u;
-                std::vector<float> color_values = materialize_pathtracer_volume_channel(volume, *color, color_value_count, external_volume_materializer);
+                std::vector<float> color_values = materialize_pathtracer_color_binding(volume, material->volume.color, value_count, external_volume_materializer);
                 std::vector<float> sigma_a(color_values.size(), 0.0f);
                 std::vector<float> sigma_s{};
                 sigma_s.reserve(color_values.size());
@@ -1071,18 +1140,17 @@ namespace spectra::scene {
                     const float density_value = std::max(0.0f, density_values.at(static_cast<std::size_t>(index)));
                     for (std::uint32_t component = 0u; component < 3u; ++component) {
                         const float color_value = color_values.at(static_cast<std::size_t>(index * 3u + component));
-                        if (color_value < 0.0f) throw std::runtime_error(std::format("Preview volume \"{}\" color channel contains a negative value", volume.name));
                         sigma_s.push_back(density_value * color_value);
                     }
                 }
                 parameters.push_back(rgb_parameter("sigma_a", std::move(sigma_a), volume.source));
                 parameters.push_back(rgb_parameter("sigma_s", std::move(sigma_s), volume.source));
             }
-            if (temperature != nullptr) {
-                std::vector<float> temperature_values = materialize_pathtracer_volume_channel(volume, *temperature, value_count, external_volume_materializer);
-                parameters.push_back(float_parameter("temperature", std::move(temperature_values), volume.source));
+            if (material->volume.emission.enabled) {
+                std::vector<float> emission_values = materialize_pathtracer_scalar_binding(volume, material->volume.emission, "emission", value_count, external_volume_materializer);
+                parameters.push_back(float_parameter("temperature", std::move(emission_values), volume.source));
             }
-            const std::string medium_name = std::format("{}.__medium", volume.name);
+            const std::string medium_name = format_message("{}.__medium", volume.name);
             scene.media.push_back(Scene::Medium{
                 .name = medium_name,
                 .entity = Scene::Entity{.type = medium_type, .parameters = std::move(parameters), .source = volume.source},
@@ -1104,7 +1172,7 @@ namespace spectra::scene {
             };
             std::vector<int> indices{0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0};
             scene.shapes.push_back(Scene::Shape{
-                .name = std::format("{}.__medium_boundary", volume.name),
+                .name = format_message("{}.__medium_boundary", volume.name),
                 .entity = Scene::Entity{
                     .type = "trianglemesh",
                     .parameters = {
@@ -1122,12 +1190,12 @@ namespace spectra::scene {
         void append_preview_lights(Scene::ResolvedScene& scene, const Scene::Document& document) {
             for (const Scene::PreviewLight& light : document.lights) {
                 if (light.name.empty()) throw std::runtime_error("Preview light name must not be empty when building canonical scene");
-                if (light.kind == Scene::PreviewLightKind::Area) throw std::runtime_error(std::format("Preview light \"{}\" uses an area light kind without explicit area geometry", light.name));
-                if (!is_finite(light.color)) throw std::runtime_error(std::format("Preview light \"{}\" color must be finite when building canonical scene", light.name));
-                if (light.color.x < 0.0f || light.color.y < 0.0f || light.color.z < 0.0f) throw std::runtime_error(std::format("Preview light \"{}\" color must be non-negative when building canonical scene", light.name));
-                if (!std::isfinite(light.intensity) || light.intensity < 0.0f) throw std::runtime_error(std::format("Preview light \"{}\" intensity must be finite and non-negative when building canonical scene", light.name));
-                if (light.kind == Scene::PreviewLightKind::Spot && (!std::isfinite(light.cone_angle_degrees) || light.cone_angle_degrees <= 0.0f || light.cone_angle_degrees >= 180.0f)) throw std::runtime_error(std::format("Preview light \"{}\" cone angle must be inside (0, 180) when building canonical scene", light.name));
-                const SceneTransform transform = make_preview_scene_transform(light.transform, std::format("Preview light \"{}\"", light.name));
+                if (light.kind == Scene::PreviewLightKind::Area) throw std::runtime_error(format_message("Preview light \"{}\" uses an area light kind without explicit area geometry", light.name));
+                if (!is_finite(light.color)) throw std::runtime_error(format_message("Preview light \"{}\" color must be finite when building canonical scene", light.name));
+                if (light.color.x < 0.0f || light.color.y < 0.0f || light.color.z < 0.0f) throw std::runtime_error(format_message("Preview light \"{}\" color must be non-negative when building canonical scene", light.name));
+                if (!std::isfinite(light.intensity) || light.intensity < 0.0f) throw std::runtime_error(format_message("Preview light \"{}\" intensity must be finite and non-negative when building canonical scene", light.name));
+                if (light.kind == Scene::PreviewLightKind::Spot && (!std::isfinite(light.cone_angle_degrees) || light.cone_angle_degrees <= 0.0f || light.cone_angle_degrees >= 180.0f)) throw std::runtime_error(format_message("Preview light \"{}\" cone angle must be inside (0, 180) when building canonical scene", light.name));
+                const SceneTransform transform = make_preview_scene_transform(light.transform, format_message("Preview light \"{}\"", light.name));
                 std::vector<Scene::Parameter> parameters{};
                 std::string type{};
                 if (light.kind == Scene::PreviewLightKind::Directional) {
@@ -1155,7 +1223,7 @@ namespace spectra::scene {
                     parameters.push_back(point3_parameter("to", {0.0f, 0.0f, -1.0f}, light.source));
                     parameters.push_back(float_parameter("coneangle", {light.cone_angle_degrees}, light.source));
                 }
-                if (type.empty()) throw std::runtime_error(std::format("Preview light \"{}\" uses an unmapped light kind", light.name));
+                if (type.empty()) throw std::runtime_error(format_message("Preview light \"{}\" uses an unmapped light kind", light.name));
                 scene.lights.push_back(Scene::Light{
                     .name = light.name,
                     .entity = Scene::Entity{
@@ -1174,13 +1242,13 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::ResolvedScene make_resolved_scene_from_preview(const Scene::Document& document, const Scene::ResolvedFrame& frame, const Scene::Revision revision, std::move_only_function<std::vector<float>(const Scene::VolumeGrid&, const Scene::VolumeChannel&)>* external_volume_materializer) {
             if (document.name.empty()) throw std::runtime_error("Preview document name must not be empty when building canonical scene");
-            validate_cameras(frame.cameras, document.active_camera_name, std::format("Preview document \"{}\"", document.name));
-            const Scene::Camera& active_camera = require_active_camera(frame.cameras, document.active_camera_name, std::format("Preview document \"{}\"", document.name));
+            validate_cameras(frame.cameras, document.active_camera_name, format_message("Preview document \"{}\"", document.name));
+            const Scene::Camera& active_camera = require_active_camera(frame.cameras, document.active_camera_name, format_message("Preview document \"{}\"", document.name));
             Scene::ResolvedScene scene{
                 .revision = revision,
                 .name = document.name,
                 .title = document.title.empty() ? document.name : document.title,
-                .source = document.source.empty() ? std::format("scene://{}", document.name) : document.source,
+                .source = document.source.empty() ? format_message("scene://{}", document.name) : document.source,
             };
             scene.render_settings.camera = Scene::Entity{
                 .type = "perspective",
@@ -1196,7 +1264,7 @@ namespace spectra::scene {
             for (const Scene::Sphere& sphere : frame.spheres) append_sphere_shape(scene, document, sphere);
             for (const Scene::PointCloud& point_cloud : frame.point_clouds) append_point_cloud_shapes(scene, document, point_cloud);
             for (const Scene::VolumeGrid& volume : frame.volumes) append_volume(scene, document, volume, external_volume_materializer);
-            if (scene.shapes.empty()) throw EmptySceneError{std::format("Preview document \"{}\" produced no canonical pathtracer shapes", document.name)};
+            if (scene.shapes.empty()) throw EmptySceneError{format_message("Preview document \"{}\" produced no canonical pathtracer shapes", document.name)};
             return scene;
         }
 
@@ -1227,11 +1295,11 @@ namespace spectra::scene {
             std::set<std::string> mesh_names{};
             for (const Scene::Mesh& mesh : frame.meshes) {
                 if (mesh.name.empty()) throw std::runtime_error("Rasterizer preview mesh name must not be empty");
-                if (!mesh_names.insert(mesh.name).second) throw std::runtime_error(std::format("Rasterizer preview mesh \"{}\" is duplicated", mesh.name));
+                if (!mesh_names.insert(mesh.name).second) throw std::runtime_error(format_message("Rasterizer preview mesh \"{}\" is duplicated", mesh.name));
             }
             frame.meshes.reserve(frame.meshes.size() + frame.spheres.size());
             for (const Scene::Sphere& sphere : frame.spheres) {
-                if (!mesh_names.insert(sphere.name).second) throw std::runtime_error(std::format("Rasterizer preview sphere \"{}\" conflicts with a mesh name", sphere.name));
+                if (!mesh_names.insert(sphere.name).second) throw std::runtime_error(format_message("Rasterizer preview sphere \"{}\" conflicts with a mesh name", sphere.name));
                 frame.meshes.push_back(make_sphere_preview_mesh(sphere));
             }
             frame.spheres.clear();
@@ -1239,12 +1307,12 @@ namespace spectra::scene {
         }
 
         void require_pbrt_export_color_space(const Scene::ColorSpace color_space, const std::string_view context) {
-            if (color_space != Scene::ColorSpace::sRGB) throw std::runtime_error(std::format("{} uses a non-sRGB color space; PBRT export currently requires standard sRGB scene data", context));
+            if (color_space != Scene::ColorSpace::sRGB) throw std::runtime_error(format_message("{} uses a non-sRGB color space; PBRT export currently requires standard sRGB scene data", context));
         }
 
         [[nodiscard]] std::string pbrt_export_float(const float value, const std::string_view context) {
-            if (!std::isfinite(value)) throw std::runtime_error(std::format("{} contains a non-finite float value", context));
-            return std::format("{:.9g}", value);
+            if (!std::isfinite(value)) throw std::runtime_error(format_message("{} contains a non-finite float value", context));
+            return format_message("{:.9g}", value);
         }
 
         [[nodiscard]] std::string pbrt_export_quoted(const std::string_view value, const std::string_view context) {
@@ -1255,7 +1323,7 @@ namespace spectra::scene {
                     result.push_back(character);
                     continue;
                 }
-                if (std::iscntrl(static_cast<unsigned char>(character))) throw std::runtime_error(std::format("{} contains a control character that cannot be written to a PBRT quoted string", context));
+                if (std::iscntrl(static_cast<unsigned char>(character))) throw std::runtime_error(format_message("{} contains a control character that cannot be written to a PBRT quoted string", context));
                 result.push_back(character);
             }
             result.push_back('"');
@@ -1268,30 +1336,30 @@ namespace spectra::scene {
 
         void require_pbrt_export_matching_type_parameter(const Scene::Entity& entity, const Scene::Parameter& parameter, const std::string_view kind) {
             const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-            if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("PBRT export {} \"{}\" has an invalid string type parameter", kind, entity.type));
-            if (values->front() != entity.type) throw std::runtime_error(std::format("PBRT export {} type parameter \"{}\" does not match entity type \"{}\"", kind, values->front(), entity.type));
+            if (values == nullptr || values->size() != 1u) throw std::runtime_error(format_message("PBRT export {} \"{}\" has an invalid string type parameter", kind, entity.type));
+            if (values->front() != entity.type) throw std::runtime_error(format_message("PBRT export {} type parameter \"{}\" does not match entity type \"{}\"", kind, values->front(), entity.type));
         }
 
         void require_pbrt_export_entity_type(const Scene::Entity& entity, const std::set<std::string_view>& supported, const std::string_view kind) {
-            if (!supported.contains(std::string_view{entity.type.data(), entity.type.size()})) throw std::runtime_error(std::format("PBRT export does not support {} type \"{}\"", kind, entity.type));
+            if (!supported.contains(std::string_view{entity.type.data(), entity.type.size()})) throw std::runtime_error(format_message("PBRT export does not support {} type \"{}\"", kind, entity.type));
         }
 
         void write_pbrt_parameter_values(std::ostream& output, const Scene::Parameter& parameter, const std::string_view context) {
             std::visit(
                 [&output, &parameter, context](const auto& values) {
-                    if (values.empty()) throw std::runtime_error(std::format("{} parameter \"{} {}\" must not be empty when exporting PBRT", context, parameter.type, parameter.name));
+                    if (values.empty()) throw std::runtime_error(format_message("{} parameter \"{} {}\" must not be empty when exporting PBRT", context, parameter.type, parameter.name));
                     for (std::size_t index = 0u; index < values.size(); ++index) {
                         if (index != 0u) output << ' ';
                         if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, float>) {
                             output << pbrt_export_float(values.at(index), context);
                         } else if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, int>) {
-                            if (parameter.type != "integer") throw std::runtime_error(std::format("{} parameter \"{} {}\" stores integers but is not an integer parameter", context, parameter.type, parameter.name));
+                            if (parameter.type != "integer") throw std::runtime_error(format_message("{} parameter \"{} {}\" stores integers but is not an integer parameter", context, parameter.type, parameter.name));
                             output << values.at(index);
                         } else if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, std::string>) {
-                            if (parameter.type != "string" && parameter.type != "texture" && parameter.type != "spectrum") throw std::runtime_error(std::format("{} parameter \"{} {}\" stores strings but is not a string-like PBRT parameter", context, parameter.type, parameter.name));
+                            if (parameter.type != "string" && parameter.type != "texture" && parameter.type != "spectrum") throw std::runtime_error(format_message("{} parameter \"{} {}\" stores strings but is not a string-like PBRT parameter", context, parameter.type, parameter.name));
                             output << pbrt_export_quoted(values.at(index), context);
                         } else if constexpr (std::is_same_v<typename std::remove_cvref_t<decltype(values)>::value_type, std::uint8_t>) {
-                            if (parameter.type != "bool") throw std::runtime_error(std::format("{} parameter \"{} {}\" stores bool values but is not a bool parameter", context, parameter.type, parameter.name));
+                            if (parameter.type != "bool") throw std::runtime_error(format_message("{} parameter \"{} {}\" stores bool values but is not a bool parameter", context, parameter.type, parameter.name));
                             output << (values.at(index) == 0u ? "false" : "true");
                         }
                     }
@@ -1300,10 +1368,10 @@ namespace spectra::scene {
         }
 
         void write_pbrt_parameter(std::ostream& output, const Scene::Parameter& parameter, const std::size_t indent, const std::string_view context) {
-            if (parameter.type.empty() || parameter.name.empty()) throw std::runtime_error(std::format("{} contains a PBRT parameter with an empty declaration", context));
+            if (parameter.type.empty() || parameter.name.empty()) throw std::runtime_error(format_message("{} contains a PBRT parameter with an empty declaration", context));
             require_pbrt_export_color_space(parameter.color_space, context);
             write_pbrt_indent(output, indent);
-            output << pbrt_export_quoted(std::format("{} {}", parameter.type, parameter.name), context) << " [";
+            output << pbrt_export_quoted(format_message("{} {}", parameter.type, parameter.name), context) << " [";
             write_pbrt_parameter_values(output, parameter, context);
             output << "]\n";
         }
@@ -1346,18 +1414,18 @@ namespace spectra::scene {
             output << "MakeNamedMaterial " << pbrt_export_quoted(material.name, "PBRT export material name") << '\n';
             write_pbrt_indent(output, 4u);
             output << "\"string type\" [" << pbrt_export_quoted(material.entity.type, "PBRT export material type") << "]\n";
-            write_pbrt_entity_parameters(output, material.entity, 4u, true, std::format("PBRT export material \"{}\"", material.name));
+            write_pbrt_entity_parameters(output, material.entity, 4u, true, format_message("PBRT export material \"{}\"", material.name));
         }
 
         void write_pbrt_texture(std::ostream& output, const Scene::Texture& texture) {
             static const std::set<std::string_view> supported_textures{"constant", "imagemap", "scale", "mix"};
             require_pbrt_export_entity_type(texture.entity, supported_textures, "texture");
-            if (texture.kind != "float" && texture.kind != "spectrum") throw std::runtime_error(std::format("PBRT export texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
+            if (texture.kind != "float" && texture.kind != "spectrum") throw std::runtime_error(format_message("PBRT export texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
             output << "AttributeBegin\n";
-            write_pbrt_transform(output, texture.transform, texture.entity.source, std::format("PBRT export texture \"{}\"", texture.name), 4u);
+            write_pbrt_transform(output, texture.transform, texture.entity.source, format_message("PBRT export texture \"{}\"", texture.name), 4u);
             write_pbrt_indent(output, 4u);
             output << "Texture " << pbrt_export_quoted(texture.name, "PBRT export texture name") << ' ' << pbrt_export_quoted(texture.kind, "PBRT export texture kind") << ' ' << pbrt_export_quoted(texture.entity.type, "PBRT export texture type") << '\n';
-            write_pbrt_entity_parameters(output, texture.entity, 8u, false, std::format("PBRT export texture \"{}\"", texture.name));
+            write_pbrt_entity_parameters(output, texture.entity, 8u, false, format_message("PBRT export texture \"{}\"", texture.name));
             output << "AttributeEnd\n\n";
         }
 
@@ -1365,12 +1433,12 @@ namespace spectra::scene {
             static const std::set<std::string_view> supported_media{"homogeneous", "uniformgrid", "rgbgrid"};
             require_pbrt_export_entity_type(medium.entity, supported_media, "medium");
             output << "AttributeBegin\n";
-            write_pbrt_transform(output, medium.transform, medium.entity.source, std::format("PBRT export medium \"{}\"", medium.name), 4u);
+            write_pbrt_transform(output, medium.transform, medium.entity.source, format_message("PBRT export medium \"{}\"", medium.name), 4u);
             write_pbrt_indent(output, 4u);
             output << "MakeNamedMedium " << pbrt_export_quoted(medium.name, "PBRT export medium name") << '\n';
             write_pbrt_indent(output, 8u);
             output << "\"string type\" [" << pbrt_export_quoted(medium.entity.type, "PBRT export medium type") << "]\n";
-            write_pbrt_entity_parameters(output, medium.entity, 8u, true, std::format("PBRT export medium \"{}\"", medium.name));
+            write_pbrt_entity_parameters(output, medium.entity, 8u, true, format_message("PBRT export medium \"{}\"", medium.name));
             output << "AttributeEnd\n\n";
         }
 
@@ -1384,14 +1452,14 @@ namespace spectra::scene {
             static const std::set<std::string_view> supported_lights{"point", "spot", "distant", "infinite"};
             require_pbrt_export_entity_type(light.entity, supported_lights, "light");
             output << "AttributeBegin\n";
-            write_pbrt_transform(output, light.transform, light.entity.source, std::format("PBRT export light \"{}\"", light.name), 4u);
+            write_pbrt_transform(output, light.transform, light.entity.source, format_message("PBRT export light \"{}\"", light.name), 4u);
             if (!light.medium.empty()) {
                 write_pbrt_indent(output, 4u);
                 output << "MediumInterface " << pbrt_export_quoted("", "PBRT export light medium") << ' ' << pbrt_export_quoted(light.medium, "PBRT export light medium") << '\n';
             }
             write_pbrt_indent(output, 4u);
             output << "LightSource " << pbrt_export_quoted(light.entity.type, "PBRT export light type") << '\n';
-            write_pbrt_entity_parameters(output, light.entity, 8u, false, std::format("PBRT export light \"{}\"", light.name));
+            write_pbrt_entity_parameters(output, light.entity, 8u, false, format_message("PBRT export light \"{}\"", light.name));
             output << "AttributeEnd\n\n";
         }
 
@@ -1400,7 +1468,7 @@ namespace spectra::scene {
             require_pbrt_export_entity_type(shape.entity, supported_shapes, "shape");
             write_pbrt_indent(output, indent);
             output << "AttributeBegin\n";
-            write_pbrt_transform(output, shape.transform, shape.entity.source, std::format("PBRT export shape \"{}\"", shape.name), indent + 4u);
+            write_pbrt_transform(output, shape.transform, shape.entity.source, format_message("PBRT export shape \"{}\"", shape.name), indent + 4u);
             if (shape.reverse_orientation) {
                 write_pbrt_indent(output, indent + 4u);
                 output << "ReverseOrientation\n";
@@ -1409,14 +1477,14 @@ namespace spectra::scene {
             write_pbrt_indent(output, indent + 4u);
             output << "NamedMaterial " << pbrt_export_quoted(shape.material_name, "PBRT export shape material") << '\n';
             if (shape.area_light.has_value()) {
-                if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("PBRT export shape \"{}\" uses unsupported area light type \"{}\"", shape.name, shape.area_light->entity.type));
+                if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(format_message("PBRT export shape \"{}\" uses unsupported area light type \"{}\"", shape.name, shape.area_light->entity.type));
                 write_pbrt_indent(output, indent + 4u);
                 output << "AreaLightSource " << pbrt_export_quoted(shape.area_light->entity.type, "PBRT export area light type") << '\n';
-                write_pbrt_entity_parameters(output, shape.area_light->entity, indent + 8u, false, std::format("PBRT export shape \"{}\" area light", shape.name));
+                write_pbrt_entity_parameters(output, shape.area_light->entity, indent + 8u, false, format_message("PBRT export shape \"{}\" area light", shape.name));
             }
             write_pbrt_indent(output, indent + 4u);
             output << "Shape " << pbrt_export_quoted(shape.entity.type, "PBRT export shape type") << '\n';
-            write_pbrt_entity_parameters(output, shape.entity, indent + 8u, false, std::format("PBRT export shape \"{}\"", shape.name));
+            write_pbrt_entity_parameters(output, shape.entity, indent + 8u, false, format_message("PBRT export shape \"{}\"", shape.name));
             write_pbrt_indent(output, indent);
             output << "AttributeEnd\n\n";
         }
@@ -1429,7 +1497,7 @@ namespace spectra::scene {
 
         void write_pbrt_object_instance(std::ostream& output, const Scene::ObjectInstance& instance) {
             output << "AttributeBegin\n";
-            write_pbrt_transform(output, instance.transform, instance.source, std::format("PBRT export object instance \"{}\"", instance.name), 4u);
+            write_pbrt_transform(output, instance.transform, instance.source, format_message("PBRT export object instance \"{}\"", instance.name), 4u);
             write_pbrt_indent(output, 4u);
             output << "ObjectInstance " << pbrt_export_quoted(instance.definition_name, "PBRT export object instance definition") << '\n';
             output << "AttributeEnd\n\n";
@@ -1439,10 +1507,10 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "texture") continue;
                 const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT export {} parameter \"texture {}\" must contain texture names", owner, parameter.name));
+                if (values == nullptr || values->empty()) throw std::runtime_error(format_message("PBRT export {} parameter \"texture {}\" must contain texture names", owner, parameter.name));
                 for (const std::string& texture_name : *values) {
-                    if (texture_name.empty()) throw std::runtime_error(std::format("PBRT export {} parameter \"texture {}\" references an empty texture name", owner, parameter.name));
-                    if (!texture_names.contains(texture_name)) throw std::runtime_error(std::format("PBRT export {} parameter \"texture {}\" references unknown texture \"{}\"", owner, parameter.name, texture_name));
+                    if (texture_name.empty()) throw std::runtime_error(format_message("PBRT export {} parameter \"texture {}\" references an empty texture name", owner, parameter.name));
+                    if (!texture_names.contains(texture_name)) throw std::runtime_error(format_message("PBRT export {} parameter \"texture {}\" references unknown texture \"{}\"", owner, parameter.name, texture_name));
                 }
             }
         }
@@ -1450,18 +1518,18 @@ namespace spectra::scene {
         void require_pbrt_export_texture_references(const Scene::ResolvedScene& scene) {
             std::set<std::string> texture_names{};
             for (const Scene::Texture& texture : scene.textures) texture_names.insert(texture.name);
-            for (const Scene::Texture& texture : scene.textures) require_pbrt_export_texture_references(texture.entity, texture_names, std::format("texture \"{}\"", texture.name));
-            for (const Scene::Material& material : scene.materials) require_pbrt_export_texture_references(material.entity, texture_names, std::format("material \"{}\"", material.name));
-            for (const Scene::Medium& medium : scene.media) require_pbrt_export_texture_references(medium.entity, texture_names, std::format("medium \"{}\"", medium.name));
-            for (const Scene::Light& light : scene.lights) require_pbrt_export_texture_references(light.entity, texture_names, std::format("light \"{}\"", light.name));
+            for (const Scene::Texture& texture : scene.textures) require_pbrt_export_texture_references(texture.entity, texture_names, format_message("texture \"{}\"", texture.name));
+            for (const Scene::Material& material : scene.materials) require_pbrt_export_texture_references(material.entity, texture_names, format_message("material \"{}\"", material.name));
+            for (const Scene::Medium& medium : scene.media) require_pbrt_export_texture_references(medium.entity, texture_names, format_message("medium \"{}\"", medium.name));
+            for (const Scene::Light& light : scene.lights) require_pbrt_export_texture_references(light.entity, texture_names, format_message("light \"{}\"", light.name));
             for (const Scene::Shape& shape : scene.shapes) {
-                require_pbrt_export_texture_references(shape.entity, texture_names, std::format("shape \"{}\"", shape.name));
-                if (shape.area_light.has_value()) require_pbrt_export_texture_references(shape.area_light->entity, texture_names, std::format("shape \"{}\" area light", shape.name));
+                require_pbrt_export_texture_references(shape.entity, texture_names, format_message("shape \"{}\"", shape.name));
+                if (shape.area_light.has_value()) require_pbrt_export_texture_references(shape.area_light->entity, texture_names, format_message("shape \"{}\" area light", shape.name));
             }
             for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
                 for (const Scene::Shape& shape : definition.shapes) {
-                    require_pbrt_export_texture_references(shape.entity, texture_names, std::format("object definition \"{}\" shape \"{}\"", definition.name, shape.name));
-                    if (shape.area_light.has_value()) require_pbrt_export_texture_references(shape.area_light->entity, texture_names, std::format("object definition \"{}\" shape \"{}\" area light", definition.name, shape.name));
+                    require_pbrt_export_texture_references(shape.entity, texture_names, format_message("object definition \"{}\" shape \"{}\"", definition.name, shape.name));
+                    if (shape.area_light.has_value()) require_pbrt_export_texture_references(shape.area_light->entity, texture_names, format_message("object definition \"{}\" shape \"{}\" area light", definition.name, shape.name));
                 }
             }
         }
@@ -1471,10 +1539,10 @@ namespace spectra::scene {
             require_pbrt_export_texture_references(scene);
             if (!path.has_filename()) throw std::runtime_error("PBRT export path must include a filename");
             const std::filesystem::path parent = path.parent_path();
-            if (!parent.empty() && !std::filesystem::exists(parent)) throw std::runtime_error(std::format("PBRT export directory does not exist: {}", parent.string()));
+            if (!parent.empty() && !std::filesystem::exists(parent)) throw std::runtime_error(format_message("PBRT export directory does not exist: {}", parent.string()));
 
             std::ofstream output(path, std::ios::binary);
-            if (!output) throw std::runtime_error(std::format("Failed to open PBRT export file: {}", path.string()));
+            if (!output) throw std::runtime_error(format_message("Failed to open PBRT export file: {}", path.string()));
 
             output << "# Generated by Spectra from canonical Y-up scene " << pbrt_export_quoted(scene.name, "PBRT export scene name") << "\n\n";
             write_pbrt_option_entity(output, "PixelFilter", scene.render_settings.filter);
@@ -1497,7 +1565,7 @@ namespace spectra::scene {
             for (const Scene::ObjectDefinition& definition : scene.object_definitions) write_pbrt_object_definition(output, definition);
             for (const Scene::ObjectInstance& instance : scene.object_instances) write_pbrt_object_instance(output, instance);
 
-            if (!output) throw std::runtime_error(std::format("Failed while writing PBRT export file: {}", path.string()));
+            if (!output) throw std::runtime_error(format_message("Failed while writing PBRT export file: {}", path.string()));
         }
     } // namespace
 
@@ -1543,20 +1611,20 @@ namespace spectra::scene {
         void validate_timeline_descriptor(const Scene::TimelineDescriptor& descriptor, const std::string_view context) {
             switch (descriptor.kind) {
             case Scene::TimelineKind::Static:
-                if (descriptor.frame_rate != 0.0) throw std::runtime_error(std::format("{} static timeline frame rate must be zero", context));
-                if (descriptor.frame_count != 0u) throw std::runtime_error(std::format("{} static timeline frame count must be zero", context));
+                if (descriptor.frame_rate != 0.0) throw std::runtime_error(format_message("{} static timeline frame rate must be zero", context));
+                if (descriptor.frame_count != 0u) throw std::runtime_error(format_message("{} static timeline frame count must be zero", context));
                 return;
             case Scene::TimelineKind::Indexed:
-                if (!std::isfinite(descriptor.frame_rate) || descriptor.frame_rate <= 0.0) throw std::runtime_error(std::format("{} indexed timeline frame rate must be finite and positive", context));
-                if (descriptor.frame_count == 0u) throw std::runtime_error(std::format("{} indexed timeline frame count must be positive", context));
+                if (!std::isfinite(descriptor.frame_rate) || descriptor.frame_rate <= 0.0) throw std::runtime_error(format_message("{} indexed timeline frame rate must be finite and positive", context));
+                if (descriptor.frame_count == 0u) throw std::runtime_error(format_message("{} indexed timeline frame count must be positive", context));
                 return;
             }
-            throw std::runtime_error(std::format("{} timeline kind is invalid", context));
+            throw std::runtime_error(format_message("{} timeline kind is invalid", context));
         }
 
         void validate_update_descriptor(const Scene::UpdateDescriptor& descriptor, const std::string_view context) {
-            if (!descriptor.enabled && descriptor.initial_running) throw std::runtime_error(std::format("{} disabled update clock cannot be initially running", context));
-            if (!std::isfinite(descriptor.step_delta_seconds) || descriptor.step_delta_seconds <= 0.0) throw std::runtime_error(std::format("{} update step delta must be finite and positive", context));
+            if (!descriptor.enabled && descriptor.initial_running) throw std::runtime_error(format_message("{} disabled update clock cannot be initially running", context));
+            if (!std::isfinite(descriptor.step_delta_seconds) || descriptor.step_delta_seconds <= 0.0) throw std::runtime_error(format_message("{} update step delta must be finite and positive", context));
         }
 
         void validate_document_descriptors(const Scene::Document& document, const std::string_view context) {
@@ -1657,8 +1725,8 @@ namespace spectra::scene {
             GpuBufferAllocation allocation = this->request_gpu_buffer_callback(request);
             if (allocation.resource_id == 0u) throw std::runtime_error("Scene GPU buffer backend returned a zero resource id");
             if (allocation.byte_size == 0u) throw std::runtime_error("Scene GPU buffer backend returned a zero byte size");
-            if (allocation.kind != request.kind) throw std::runtime_error(std::format("Scene GPU buffer backend returned kind {} for request kind {}", allocation.kind, request.kind));
-            if (!this->gpu_buffer_allocations.emplace(allocation.resource_id, allocation).second) throw std::runtime_error(std::format("Scene GPU buffer resource {} already exists", allocation.resource_id));
+            if (allocation.kind != request.kind) throw std::runtime_error(format_message("Scene GPU buffer backend returned kind {} for request kind {}", allocation.kind, request.kind));
+            if (!this->gpu_buffer_allocations.emplace(allocation.resource_id, allocation).second) throw std::runtime_error(format_message("Scene GPU buffer resource {} already exists", allocation.resource_id));
             return allocation;
         } catch (const std::exception& error) {
             this->last_error_message = error.what();
@@ -1670,7 +1738,7 @@ namespace spectra::scene {
         try {
             if (!this->release_gpu_buffer_callback) throw std::runtime_error("Scene GPU buffer backend is not available");
             const std::map<std::uint64_t, GpuBufferAllocation>::iterator found = this->gpu_buffer_allocations.find(resource_id);
-            if (found == this->gpu_buffer_allocations.end()) throw std::runtime_error(std::format("Scene GPU buffer resource {} does not exist", resource_id));
+            if (found == this->gpu_buffer_allocations.end()) throw std::runtime_error(format_message("Scene GPU buffer resource {} does not exist", resource_id));
             this->last_error_message.clear();
             this->release_gpu_buffer_callback(resource_id);
             this->gpu_buffer_allocations.erase(found);
@@ -1705,44 +1773,44 @@ namespace spectra::scene {
 
     void Scene::Builder::add_material(Material material) {
         if (material.name.empty()) throw std::runtime_error("Scene builder material name must not be empty");
-        for (const Material& existing : this->scene.materials) if (existing.name == material.name) throw std::runtime_error(std::format("Scene builder material \"{}\" is duplicated", material.name));
+        for (const Material& existing : this->scene.materials) if (existing.name == material.name) throw std::runtime_error(format_message("Scene builder material \"{}\" is duplicated", material.name));
         this->scene.materials.push_back(std::move(material));
     }
 
     void Scene::Builder::add_texture(Texture texture) {
         if (texture.name.empty()) throw std::runtime_error("Scene builder texture name must not be empty");
-        for (const Texture& existing : this->scene.textures) if (existing.name == texture.name) throw std::runtime_error(std::format("Scene builder texture \"{}\" is duplicated", texture.name));
+        for (const Texture& existing : this->scene.textures) if (existing.name == texture.name) throw std::runtime_error(format_message("Scene builder texture \"{}\" is duplicated", texture.name));
         this->scene.textures.push_back(std::move(texture));
     }
 
     void Scene::Builder::add_medium(Medium medium) {
         if (medium.name.empty()) throw std::runtime_error("Scene builder medium name must not be empty");
-        for (const Medium& existing : this->scene.media) if (existing.name == medium.name) throw std::runtime_error(std::format("Scene builder medium \"{}\" is duplicated", medium.name));
+        for (const Medium& existing : this->scene.media) if (existing.name == medium.name) throw std::runtime_error(format_message("Scene builder medium \"{}\" is duplicated", medium.name));
         this->scene.media.push_back(std::move(medium));
     }
 
     void Scene::Builder::add_light(Light light) {
         if (light.name.empty()) throw std::runtime_error("Scene builder light name must not be empty");
-        for (const Light& existing : this->scene.lights) if (existing.name == light.name) throw std::runtime_error(std::format("Scene builder light \"{}\" is duplicated", light.name));
+        for (const Light& existing : this->scene.lights) if (existing.name == light.name) throw std::runtime_error(format_message("Scene builder light \"{}\" is duplicated", light.name));
         this->scene.lights.push_back(std::move(light));
     }
 
     void Scene::Builder::add_shape(Shape shape) {
         if (shape.name.empty()) throw std::runtime_error("Scene builder shape name must not be empty");
-        for (const Shape& existing : this->scene.shapes) if (existing.name == shape.name) throw std::runtime_error(std::format("Scene builder shape \"{}\" is duplicated", shape.name));
+        for (const Shape& existing : this->scene.shapes) if (existing.name == shape.name) throw std::runtime_error(format_message("Scene builder shape \"{}\" is duplicated", shape.name));
         this->scene.shapes.push_back(std::move(shape));
     }
 
     void Scene::Builder::add_object_definition(ObjectDefinition definition) {
         if (definition.name.empty()) throw std::runtime_error("Scene builder object definition name must not be empty");
-        for (const ObjectDefinition& existing : this->scene.object_definitions) if (existing.name == definition.name) throw std::runtime_error(std::format("Scene builder object definition \"{}\" is duplicated", definition.name));
+        for (const ObjectDefinition& existing : this->scene.object_definitions) if (existing.name == definition.name) throw std::runtime_error(format_message("Scene builder object definition \"{}\" is duplicated", definition.name));
         this->scene.object_definitions.push_back(std::move(definition));
     }
 
     void Scene::Builder::add_object_instance(ObjectInstance instance) {
         if (instance.name.empty()) throw std::runtime_error("Scene builder object instance name must not be empty");
-        if (instance.definition_name.empty()) throw std::runtime_error(std::format("Scene builder object instance \"{}\" definition name must not be empty", instance.name));
-        for (const ObjectInstance& existing : this->scene.object_instances) if (existing.name == instance.name) throw std::runtime_error(std::format("Scene builder object instance \"{}\" is duplicated", instance.name));
+        if (instance.definition_name.empty()) throw std::runtime_error(format_message("Scene builder object instance \"{}\" definition name must not be empty", instance.name));
+        for (const ObjectInstance& existing : this->scene.object_instances) if (existing.name == instance.name) throw std::runtime_error(format_message("Scene builder object instance \"{}\" is duplicated", instance.name));
         this->scene.object_instances.push_back(std::move(instance));
     }
 
@@ -1958,8 +2026,8 @@ namespace spectra::scene {
         if (scene_path.empty()) throw std::runtime_error("Scene path must not be empty");
         const std::filesystem::path absolute_path = std::filesystem::absolute(scene_path).lexically_normal();
         if (std::filesystem::is_directory(absolute_path)) throw std::runtime_error("Scene path must be a PBRT file, not a directory");
-        if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolute_path.string()));
-        if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(std::format("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
+        if (!std::filesystem::is_regular_file(absolute_path)) throw std::runtime_error(format_message("{}: PBRT scene file does not exist", absolute_path.string()));
+        if (!is_pbrt_scene_file(absolute_path)) throw std::runtime_error(format_message("{}: scene file must use .pbrt or .pbrt.gz", absolute_path.string()));
         this->open_static_scene(absolute_path.string(), scene_file_title(absolute_path), parse_pbrt_file(absolute_path));
     }
 
@@ -2074,7 +2142,7 @@ namespace spectra::scene {
         PluginRuntime& runtime = this->active_plugin_runtime();
         Timeline timeline = this->timeline();
         if (timeline.descriptor.kind != TimelineKind::Indexed) throw std::runtime_error("Only indexed scene timelines support seeking");
-        if (frame_index >= timeline.descriptor.frame_count) throw std::runtime_error(std::format("Scene timeline frame {} is outside indexed range [0, {})", frame_index, timeline.descriptor.frame_count));
+        if (frame_index >= timeline.descriptor.frame_count) throw std::runtime_error(format_message("Scene timeline frame {} is outside indexed range [0, {})", frame_index, timeline.descriptor.frame_count));
         const double fixed_delta_seconds = timeline_frame_delta_seconds(timeline.descriptor);
         timeline.cursor = FrameCursor{
             .frame_index = frame_index,
@@ -2274,17 +2342,17 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != type || parameter.name != name) continue;
                 const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
-                if (values == nullptr) throw std::runtime_error(std::format("{} parameter \"{}\" must contain float values", context, name));
+                if (values == nullptr) throw std::runtime_error(format_message("{} parameter \"{}\" must contain float values", context, name));
                 return *values;
             }
-            throw std::runtime_error(std::format("{} requires \"{} {}\"", context, type, name));
+            throw std::runtime_error(format_message("{} requires \"{} {}\"", context, type, name));
         }
 
         [[nodiscard]] const std::vector<float>* optional_float_values(const Scene::Entity& entity, const std::string_view type, const std::string_view name) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != type || parameter.name != name) continue;
                 const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
-                if (values == nullptr) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain float values", name));
+                if (values == nullptr) throw std::runtime_error(format_message("PBRT preview light parameter \"{}\" must contain float values", name));
                 return values;
             }
             return nullptr;
@@ -2294,8 +2362,8 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "texture" || parameter.name != name) continue;
                 const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("PBRT preview material parameter \"{}\" must contain exactly one texture name", name));
-                if (values->front().empty()) throw std::runtime_error(std::format("PBRT preview material parameter \"{}\" references an empty texture name", name));
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(format_message("PBRT preview material parameter \"{}\" must contain exactly one texture name", name));
+                if (values->front().empty()) throw std::runtime_error(format_message("PBRT preview material parameter \"{}\" references an empty texture name", name));
                 return values->front();
             }
             return {};
@@ -2305,19 +2373,19 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one string", context, name));
-                if (values->front().empty()) throw std::runtime_error(std::format("{} parameter \"{}\" must not be empty", context, name));
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain exactly one string", context, name));
+                if (values->front().empty()) throw std::runtime_error(format_message("{} parameter \"{}\" must not be empty", context, name));
                 return values->front();
             }
-            throw std::runtime_error(std::format("{} requires \"string {}\"", context, name));
+            throw std::runtime_error(format_message("{} requires \"string {}\"", context, name));
         }
 
         [[nodiscard]] std::string optional_string_value(const Scene::Entity& entity, const std::string_view name, const std::string_view default_value, const std::string_view context) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one string", context, name));
-                if (values->front().empty()) throw std::runtime_error(std::format("{} parameter \"{}\" must not be empty", context, name));
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain exactly one string", context, name));
+                if (values->front().empty()) throw std::runtime_error(format_message("{} parameter \"{}\" must not be empty", context, name));
                 return values->front();
             }
             return std::string{default_value};
@@ -2327,17 +2395,17 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "integer" || parameter.name != name) continue;
                 const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
-                if (values == nullptr) throw std::runtime_error(std::format("{} parameter \"{}\" must contain integer values", context, name));
+                if (values == nullptr) throw std::runtime_error(format_message("{} parameter \"{}\" must contain integer values", context, name));
                 return *values;
             }
-            throw std::runtime_error(std::format("{} requires \"integer {}\"", context, name));
+            throw std::runtime_error(format_message("{} requires \"integer {}\"", context, name));
         }
 
         [[nodiscard]] const std::vector<int>* optional_int_values(const Scene::Entity& entity, const std::string_view name) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "integer" || parameter.name != name) continue;
                 const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
-                if (values == nullptr) throw std::runtime_error(std::format("PBRT preview parameter \"{}\" must contain integer values", name));
+                if (values == nullptr) throw std::runtime_error(format_message("PBRT preview parameter \"{}\" must contain integer values", name));
                 return values;
             }
             return nullptr;
@@ -2346,20 +2414,20 @@ namespace spectra::scene {
         [[nodiscard]] int optional_one_int_value(const Scene::Entity& entity, const std::string_view name, const int default_value, const std::string_view context) {
             const std::vector<int>* values = optional_int_values(entity, name);
             if (values == nullptr) return default_value;
-            if (values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one integer", context, name));
+            if (values->size() != 1u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain exactly one integer", context, name));
             return values->front();
         }
 
         [[nodiscard]] Vector3 required_rgb_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
             const std::vector<float>& values = required_float_values(entity, "rgb", name, context);
-            if (values.size() != 3u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly three RGB values", context, name));
+            if (values.size() != 3u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain exactly three RGB values", context, name));
             return Vector3{values.at(0), values.at(1), values.at(2)};
         }
 
         [[nodiscard]] Vector3 optional_rgb_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value) {
             const std::vector<float>* values = optional_float_values(entity, "rgb", name);
             if (values == nullptr) return default_value;
-            if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly three RGB values", name));
+            if (values->size() != 3u) throw std::runtime_error(format_message("PBRT preview light parameter \"{}\" must contain exactly three RGB values", name));
             return Vector3{values->at(0), values->at(1), values->at(2)};
         }
 
@@ -2367,30 +2435,30 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "float" || parameter.name != name) continue;
                 const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
-                if (values == nullptr || values->size() != 1u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain exactly one float", context, name));
+                if (values == nullptr || values->size() != 1u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain exactly one float", context, name));
                 return values->front();
             }
-            throw std::runtime_error(std::format("{} requires \"float {}\"", context, name));
+            throw std::runtime_error(format_message("{} requires \"float {}\"", context, name));
         }
 
         [[nodiscard]] float optional_one_float_value(const Scene::Entity& entity, const std::string_view name, const float default_value) {
             const std::vector<float>* values = optional_float_values(entity, "float", name);
             if (values == nullptr) return default_value;
-            if (values->size() != 1u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly one float", name));
+            if (values->size() != 1u) throw std::runtime_error(format_message("PBRT preview light parameter \"{}\" must contain exactly one float", name));
             return values->front();
         }
 
         [[nodiscard]] Vector3 optional_point3_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value) {
             const std::vector<float>* values = optional_float_values(entity, "point3", name);
             if (values == nullptr) return default_value;
-            if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview light parameter \"{}\" must contain exactly three point values", name));
+            if (values->size() != 3u) throw std::runtime_error(format_message("PBRT preview light parameter \"{}\" must contain exactly three point values", name));
             return Vector3{values->at(0), values->at(1), values->at(2)};
         }
 
         [[nodiscard]] Vector3 optional_vector3_value(const Scene::Entity& entity, const std::string_view name, const Vector3 default_value) {
             const std::vector<float>* values = optional_float_values(entity, "vector3", name);
             if (values == nullptr) return default_value;
-            if (values->size() != 3u) throw std::runtime_error(std::format("PBRT preview parameter \"{}\" must contain exactly three vector values", name));
+            if (values->size() != 3u) throw std::runtime_error(format_message("PBRT preview parameter \"{}\" must contain exactly three vector values", name));
             return Vector3{values->at(0), values->at(1), values->at(2)};
         }
 
@@ -2439,17 +2507,17 @@ namespace spectra::scene {
         }
 
         void require_static_transform(const SceneTransformSet& transform, const std::string_view context) {
-            if (transform.animated) throw std::runtime_error(std::format("{} uses animated transforms, which are not supported by the PBRT preview scene loader", context));
+            if (transform.animated) throw std::runtime_error(format_message("{} uses animated transforms, which are not supported by the PBRT preview scene loader", context));
         }
 
         [[nodiscard]] std::string object_source_prefix(const Scene::ResolvedScene& scene) {
             if (scene.source.empty()) throw std::runtime_error("PBRT preview scene source must not be empty");
             if (scene.source.starts_with("pbrt://")) return scene.source;
-            return std::format("pbrt://{}", scene.source);
+            return format_message("pbrt://{}", scene.source);
         }
 
         [[nodiscard]] std::string make_shape_object_name(const std::string_view object_source_prefix_value, const std::size_t shape_index) {
-            return std::format("{}#shape:{}", object_source_prefix_value, shape_index);
+            return format_message("{}#shape:{}", object_source_prefix_value, shape_index);
         }
 
         [[nodiscard]] std::vector<std::string> split_ascii_words(const std::string& line) {
@@ -2465,13 +2533,13 @@ namespace spectra::scene {
             const char* begin = text.data();
             const char* end = begin + text.size();
             const std::from_chars_result result = std::from_chars(begin, end, value);
-            if (result.ec != std::errc{} || result.ptr != end) throw std::runtime_error(std::format("{} must be an unsigned integer", context));
+            if (result.ec != std::errc{} || result.ptr != end) throw std::runtime_error(format_message("{} must be an unsigned integer", context));
             return value;
         }
 
         [[nodiscard]] std::uint32_t parse_ascii_u32(const std::string& text, const std::string_view context) {
             const std::size_t value = parse_ascii_size(text, context);
-            if (value > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(std::format("{} exceeds uint32 range", context));
+            if (value > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error(format_message("{} exceeds uint32 range", context));
             return static_cast<std::uint32_t>(value);
         }
 
@@ -2480,7 +2548,7 @@ namespace spectra::scene {
             const char* begin = text.data();
             const char* end = begin + text.size();
             const std::from_chars_result result = std::from_chars(begin, end, value);
-            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(value)) throw std::runtime_error(std::format("{} must be a finite float", context));
+            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(value)) throw std::runtime_error(format_message("{} must be a finite float", context));
             return value;
         }
 
@@ -2495,7 +2563,7 @@ namespace spectra::scene {
                 const std::uint32_t i0 = mesh.indices.at(index);
                 const std::uint32_t i1 = mesh.indices.at(index + 1u);
                 const std::uint32_t i2 = mesh.indices.at(index + 2u);
-                if (i0 >= mesh.positions.size() || i1 >= mesh.positions.size() || i2 >= mesh.positions.size()) throw std::runtime_error(std::format("{} face references an out-of-range vertex", context));
+                if (i0 >= mesh.positions.size() || i1 >= mesh.positions.size() || i2 >= mesh.positions.size()) throw std::runtime_error(format_message("{} face references an out-of-range vertex", context));
                 const Vector3& p0 = mesh.positions.at(i0);
                 const Vector3& p1 = mesh.positions.at(i1);
                 const Vector3& p2 = mesh.positions.at(i2);
@@ -2504,14 +2572,14 @@ namespace spectra::scene {
                 mesh.normals.at(i1) += normal;
                 mesh.normals.at(i2) += normal;
             }
-            for (Vector3& normal : mesh.normals) normal = normalize(normal, std::format("{} generated normal", context));
+            for (Vector3& normal : mesh.normals) normal = normalize(normal, format_message("{} generated normal", context));
         }
 
         [[nodiscard]] Scene::Mesh read_ascii_ply_mesh(const std::filesystem::path& path, const std::string& object_name, const std::string& material_name, const Scene::SourceLocation& source) {
             std::ifstream input(path);
-            if (!input) throw std::runtime_error(std::format("{}: unable to open PLY mesh", path.string()));
+            if (!input) throw std::runtime_error(format_message("{}: unable to open PLY mesh", path.string()));
             std::string line{};
-            if (!std::getline(input, line) || line != "ply") throw std::runtime_error(std::format("{}: expected PLY header", path.string()));
+            if (!std::getline(input, line) || line != "ply") throw std::runtime_error(format_message("{}: expected PLY header", path.string()));
 
             bool ascii_format = false;
             bool header_complete = false;
@@ -2525,22 +2593,22 @@ namespace spectra::scene {
                 if (words.empty()) continue;
                 if (words.at(0) == "comment" || words.at(0) == "obj_info") continue;
                 if (words.at(0) == "format") {
-                    if (words.size() != 3u) throw std::runtime_error(std::format("{}: invalid PLY format line", path.string()));
-                    if (words.at(1) != "ascii" || words.at(2) != "1.0") throw std::runtime_error(std::format("{}: PBRT preview supports only ASCII PLY format 1.0", path.string()));
+                    if (words.size() != 3u) throw std::runtime_error(format_message("{}: invalid PLY format line", path.string()));
+                    if (words.at(1) != "ascii" || words.at(2) != "1.0") throw std::runtime_error(format_message("{}: PBRT preview supports only ASCII PLY format 1.0", path.string()));
                     ascii_format = true;
                     continue;
                 }
                 if (words.at(0) == "element") {
-                    if (words.size() != 3u) throw std::runtime_error(std::format("{}: invalid PLY element line", path.string()));
+                    if (words.size() != 3u) throw std::runtime_error(format_message("{}: invalid PLY element line", path.string()));
                     active_element = words.at(1);
-                    const std::size_t count = parse_ascii_size(words.at(2), std::format("{} element count", path.string()));
+                    const std::size_t count = parse_ascii_size(words.at(2), format_message("{} element count", path.string()));
                     if (active_element == "vertex") vertex_count = count;
                     if (active_element == "face") face_count = count;
                     continue;
                 }
                 if (words.at(0) == "property") {
                     if (active_element == "vertex") {
-                        if (words.size() != 3u) throw std::runtime_error(std::format("{}: vertex properties must be scalar", path.string()));
+                        if (words.size() != 3u) throw std::runtime_error(format_message("{}: vertex properties must be scalar", path.string()));
                         vertex_properties.push_back(words.at(2));
                         continue;
                     }
@@ -2557,26 +2625,26 @@ namespace spectra::scene {
                     header_complete = true;
                     break;
                 }
-                throw std::runtime_error(std::format("{}: unsupported PLY header directive \"{}\"", path.string(), words.at(0)));
+                throw std::runtime_error(format_message("{}: unsupported PLY header directive \"{}\"", path.string(), words.at(0)));
             }
-            if (!header_complete || !ascii_format) throw std::runtime_error(std::format("{}: incomplete ASCII PLY header", path.string()));
-            if (vertex_count == 0u || face_count == 0u) throw std::runtime_error(std::format("{}: PLY mesh requires vertex and face elements", path.string()));
+            if (!header_complete || !ascii_format) throw std::runtime_error(format_message("{}: incomplete ASCII PLY header", path.string()));
+            if (vertex_count == 0u || face_count == 0u) throw std::runtime_error(format_message("{}: PLY mesh requires vertex and face elements", path.string()));
             const std::optional<std::size_t> x_index = property_index(vertex_properties, "x");
             const std::optional<std::size_t> y_index = property_index(vertex_properties, "y");
             const std::optional<std::size_t> z_index = property_index(vertex_properties, "z");
-            if (!x_index.has_value() || !y_index.has_value() || !z_index.has_value()) throw std::runtime_error(std::format("{}: PLY vertex coordinates x/y/z are required", path.string()));
+            if (!x_index.has_value() || !y_index.has_value() || !z_index.has_value()) throw std::runtime_error(format_message("{}: PLY vertex coordinates x/y/z are required", path.string()));
             const std::optional<std::size_t> nx_index = property_index(vertex_properties, "nx");
             const std::optional<std::size_t> ny_index = property_index(vertex_properties, "ny");
             const std::optional<std::size_t> nz_index = property_index(vertex_properties, "nz");
             const bool has_normals = nx_index.has_value() && ny_index.has_value() && nz_index.has_value();
-            if ((nx_index.has_value() || ny_index.has_value() || nz_index.has_value()) && !has_normals) throw std::runtime_error(std::format("{}: PLY normals require nx/ny/nz together", path.string()));
+            if ((nx_index.has_value() || ny_index.has_value() || nz_index.has_value()) && !has_normals) throw std::runtime_error(format_message("{}: PLY normals require nx/ny/nz together", path.string()));
             std::optional<std::size_t> u_index = property_index(vertex_properties, "u");
             std::optional<std::size_t> v_index = property_index(vertex_properties, "v");
             if (!u_index.has_value()) u_index = property_index(vertex_properties, "s");
             if (!v_index.has_value()) v_index = property_index(vertex_properties, "t");
             const bool has_uvs = u_index.has_value() && v_index.has_value();
-            if ((u_index.has_value() || v_index.has_value()) && !has_uvs) throw std::runtime_error(std::format("{}: PLY UVs require u/v or s/t together", path.string()));
-            if (face_index_property != "vertex_indices" && face_index_property != "vertex_index") throw std::runtime_error(std::format("{}: PLY face list property vertex_indices is required", path.string()));
+            if ((u_index.has_value() || v_index.has_value()) && !has_uvs) throw std::runtime_error(format_message("{}: PLY UVs require u/v or s/t together", path.string()));
+            if (face_index_property != "vertex_indices" && face_index_property != "vertex_index") throw std::runtime_error(format_message("{}: PLY face list property vertex_indices is required", path.string()));
 
             Scene::Mesh mesh{
                 .name          = object_name,
@@ -2588,47 +2656,47 @@ namespace spectra::scene {
             if (has_normals) mesh.normals.reserve(vertex_count);
             if (has_uvs) mesh.uvs.reserve(vertex_count);
             for (std::size_t vertex = 0u; vertex < vertex_count; ++vertex) {
-                if (!std::getline(input, line)) throw std::runtime_error(std::format("{}: missing PLY vertex row {}", path.string(), vertex));
+                if (!std::getline(input, line)) throw std::runtime_error(format_message("{}: missing PLY vertex row {}", path.string(), vertex));
                 const std::vector<std::string> words = split_ascii_words(line);
-                if (words.size() < vertex_properties.size()) throw std::runtime_error(std::format("{}: PLY vertex row {} has too few values", path.string(), vertex));
-                const std::string vertex_context = std::format("{} vertex {}", path.string(), vertex);
+                if (words.size() < vertex_properties.size()) throw std::runtime_error(format_message("{}: PLY vertex row {} has too few values", path.string(), vertex));
+                const std::string vertex_context = format_message("{} vertex {}", path.string(), vertex);
                 mesh.positions.push_back(Vector3{
-                    parse_ascii_float(words.at(*x_index), std::format("{} x", vertex_context)),
-                    parse_ascii_float(words.at(*y_index), std::format("{} y", vertex_context)),
-                    parse_ascii_float(words.at(*z_index), std::format("{} z", vertex_context)),
+                    parse_ascii_float(words.at(*x_index), format_message("{} x", vertex_context)),
+                    parse_ascii_float(words.at(*y_index), format_message("{} y", vertex_context)),
+                    parse_ascii_float(words.at(*z_index), format_message("{} z", vertex_context)),
                 });
                 if (has_normals)
                     mesh.normals.push_back(normalize(Vector3{
-                        parse_ascii_float(words.at(*nx_index), std::format("{} nx", vertex_context)),
-                        parse_ascii_float(words.at(*ny_index), std::format("{} ny", vertex_context)),
-                        parse_ascii_float(words.at(*nz_index), std::format("{} nz", vertex_context)),
-                    }, std::format("{} normal", vertex_context)));
+                        parse_ascii_float(words.at(*nx_index), format_message("{} nx", vertex_context)),
+                        parse_ascii_float(words.at(*ny_index), format_message("{} ny", vertex_context)),
+                        parse_ascii_float(words.at(*nz_index), format_message("{} nz", vertex_context)),
+                    }, format_message("{} normal", vertex_context)));
                 if (has_uvs)
                     mesh.uvs.push_back(std::array<float, 2>{
-                        parse_ascii_float(words.at(*u_index), std::format("{} u", vertex_context)),
-                        parse_ascii_float(words.at(*v_index), std::format("{} v", vertex_context)),
+                        parse_ascii_float(words.at(*u_index), format_message("{} u", vertex_context)),
+                        parse_ascii_float(words.at(*v_index), format_message("{} v", vertex_context)),
                     });
             }
             mesh.indices.reserve(face_count * 6u);
             for (std::size_t face = 0u; face < face_count; ++face) {
-                if (!std::getline(input, line)) throw std::runtime_error(std::format("{}: missing PLY face row {}", path.string(), face));
+                if (!std::getline(input, line)) throw std::runtime_error(format_message("{}: missing PLY face row {}", path.string(), face));
                 const std::vector<std::string> words = split_ascii_words(line);
-                if (words.empty()) throw std::runtime_error(std::format("{}: empty PLY face row {}", path.string(), face));
-                const std::size_t vertex_per_face = parse_ascii_size(words.at(0), std::format("{} face {} vertex count", path.string(), face));
-                if (vertex_per_face != 3u && vertex_per_face != 4u) throw std::runtime_error(std::format("{}: PLY face {} has {} vertices; only triangles and quads are supported", path.string(), face, vertex_per_face));
-                if (words.size() < vertex_per_face + 1u) throw std::runtime_error(std::format("{}: PLY face row {} has too few indices", path.string(), face));
-                const std::uint32_t i0 = parse_ascii_u32(words.at(1), std::format("{} face {} index 0", path.string(), face));
-                const std::uint32_t i1 = parse_ascii_u32(words.at(2), std::format("{} face {} index 1", path.string(), face));
-                const std::uint32_t i2 = parse_ascii_u32(words.at(3), std::format("{} face {} index 2", path.string(), face));
-                if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) throw std::runtime_error(std::format("{}: PLY face {} has an out-of-range vertex index", path.string(), face));
+                if (words.empty()) throw std::runtime_error(format_message("{}: empty PLY face row {}", path.string(), face));
+                const std::size_t vertex_per_face = parse_ascii_size(words.at(0), format_message("{} face {} vertex count", path.string(), face));
+                if (vertex_per_face != 3u && vertex_per_face != 4u) throw std::runtime_error(format_message("{}: PLY face {} has {} vertices; only triangles and quads are supported", path.string(), face, vertex_per_face));
+                if (words.size() < vertex_per_face + 1u) throw std::runtime_error(format_message("{}: PLY face row {} has too few indices", path.string(), face));
+                const std::uint32_t i0 = parse_ascii_u32(words.at(1), format_message("{} face {} index 0", path.string(), face));
+                const std::uint32_t i1 = parse_ascii_u32(words.at(2), format_message("{} face {} index 1", path.string(), face));
+                const std::uint32_t i2 = parse_ascii_u32(words.at(3), format_message("{} face {} index 2", path.string(), face));
+                if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) throw std::runtime_error(format_message("{}: PLY face {} has an out-of-range vertex index", path.string(), face));
                 mesh.indices.insert(mesh.indices.end(), {i0, i1, i2});
                 if (vertex_per_face == 4u) {
-                    const std::uint32_t i3 = parse_ascii_u32(words.at(4), std::format("{} face {} index 3", path.string(), face));
-                    if (i3 >= vertex_count) throw std::runtime_error(std::format("{}: PLY face {} has an out-of-range vertex index", path.string(), face));
+                    const std::uint32_t i3 = parse_ascii_u32(words.at(4), format_message("{} face {} index 3", path.string(), face));
+                    if (i3 >= vertex_count) throw std::runtime_error(format_message("{}: PLY face {} has an out-of-range vertex index", path.string(), face));
                     mesh.indices.insert(mesh.indices.end(), {i0, i2, i3});
                 }
             }
-            if (input.bad()) throw std::runtime_error(std::format("{}: PLY read failed", path.string()));
+            if (input.bad()) throw std::runtime_error(format_message("{}: PLY read failed", path.string()));
             if (!has_normals) generate_mesh_normals(mesh, path.string());
             return mesh;
         }
@@ -2636,16 +2704,16 @@ namespace spectra::scene {
         [[nodiscard]] std::filesystem::path resolve_shape_asset_path(const Scene::Shape& shape, const std::string& value) {
             std::filesystem::path path{value};
             if (path.is_absolute()) return path;
-            if (shape.entity.source.filename.empty()) throw std::runtime_error(std::format("PBRT preview shape \"{}\" references relative asset \"{}\" without a source filename", shape.name, value));
+            if (shape.entity.source.filename.empty()) throw std::runtime_error(format_message("PBRT preview shape \"{}\" references relative asset \"{}\" without a source filename", shape.name, value));
             return std::filesystem::path{shape.entity.source.filename}.parent_path() / path;
         }
 
         void validate_positive_float(const float value, const std::string_view context) {
-            if (!std::isfinite(value) || value <= 0.0f) throw std::runtime_error(std::format("{} must be finite and positive", context));
+            if (!std::isfinite(value) || value <= 0.0f) throw std::runtime_error(format_message("{} must be finite and positive", context));
         }
 
         void validate_finite_float(const float value, const std::string_view context) {
-            if (!std::isfinite(value)) throw std::runtime_error(std::format("{} must be finite", context));
+            if (!std::isfinite(value)) throw std::runtime_error(format_message("{} must be finite", context));
         }
 
         [[nodiscard]] std::set<std::string> referenced_shape_material_names(const Scene::ResolvedScene& scene) {
@@ -2656,7 +2724,7 @@ namespace spectra::scene {
             }
             for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
                 for (const Scene::Shape& shape : definition.shapes) {
-                    if (shape.material_name.empty()) throw std::runtime_error(std::format("PBRT preview object definition \"{}\" shape references an empty material name", definition.name));
+                    if (shape.material_name.empty()) throw std::runtime_error(format_message("PBRT preview object definition \"{}\" shape references an empty material name", definition.name));
                     names.insert(shape.material_name);
                 }
             }
@@ -2666,16 +2734,16 @@ namespace spectra::scene {
         [[nodiscard]] const Scene::Material& material_by_name(const Scene::ResolvedScene& scene, const std::string& name, const std::string_view context) {
             for (const Scene::Material& material : scene.materials)
                 if (material.name == name) return material;
-            throw std::runtime_error(std::format("{} references unknown material \"{}\"", context, name));
+            throw std::runtime_error(format_message("{} references unknown material \"{}\"", context, name));
         }
 
         [[nodiscard]] std::vector<std::string> optional_string_array_value(const Scene::Entity& entity, const std::string_view name, const std::string_view context) {
             for (const Scene::Parameter& parameter : entity.parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = std::get_if<std::vector<std::string>>(&parameter.values);
-                if (values == nullptr) throw std::runtime_error(std::format("{} parameter \"{}\" must contain string values", context, name));
+                if (values == nullptr) throw std::runtime_error(format_message("{} parameter \"{}\" must contain string values", context, name));
                 for (const std::string& value : *values)
-                    if (value.empty()) throw std::runtime_error(std::format("{} parameter \"{}\" contains an empty string", context, name));
+                    if (value.empty()) throw std::runtime_error(format_message("{} parameter \"{}\" contains an empty string", context, name));
                 return *values;
             }
             return {};
@@ -2691,11 +2759,11 @@ namespace spectra::scene {
             for (const Scene::Texture& texture : scene.textures) {
                 if (texture.name.empty()) throw std::runtime_error("PBRT preview texture name must not be empty");
                 if (texture.kind == "float") {
-                    if (!lookup.float_textures.emplace(texture.name, &texture).second) throw std::runtime_error(std::format("PBRT preview float texture \"{}\" is duplicated", texture.name));
+                    if (!lookup.float_textures.emplace(texture.name, &texture).second) throw std::runtime_error(format_message("PBRT preview float texture \"{}\" is duplicated", texture.name));
                 } else if (texture.kind == "spectrum") {
-                    if (!lookup.spectrum_textures.emplace(texture.name, &texture).second) throw std::runtime_error(std::format("PBRT preview spectrum texture \"{}\" is duplicated", texture.name));
+                    if (!lookup.spectrum_textures.emplace(texture.name, &texture).second) throw std::runtime_error(format_message("PBRT preview spectrum texture \"{}\" is duplicated", texture.name));
                 } else {
-                    throw std::runtime_error(std::format("PBRT preview texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
+                    throw std::runtime_error(format_message("PBRT preview texture \"{}\" has unsupported kind \"{}\"", texture.name, texture.kind));
                 }
             }
             return lookup;
@@ -2703,7 +2771,7 @@ namespace spectra::scene {
 
         [[nodiscard]] const Scene::Texture& find_texture(const std::map<std::string, const Scene::Texture*>& textures, const std::string& name, const std::string_view kind, const std::string_view context) {
             const std::map<std::string, const Scene::Texture*>::const_iterator iter = textures.find(name);
-            if (iter == textures.end()) throw std::runtime_error(std::format("{} references unknown {} texture \"{}\"", context, kind, name));
+            if (iter == textures.end()) throw std::runtime_error(format_message("{} references unknown {} texture \"{}\"", context, kind, name));
             return *iter->second;
         }
 
@@ -2728,21 +2796,21 @@ namespace spectra::scene {
             if (values == nullptr) values = optional_float_values(entity, "spectrum", name);
             if (values == nullptr) return default_value;
             if (values->size() == 1u) return Vector3{values->front(), values->front(), values->front()};
-            if (values->size() != 3u) throw std::runtime_error(std::format("{} parameter \"{}\" must contain one or three spectrum values", context, name));
+            if (values->size() != 3u) throw std::runtime_error(format_message("{} parameter \"{}\" must contain one or three spectrum values", context, name));
             return Vector3{values->at(0), values->at(1), values->at(2)};
         }
 
         [[nodiscard]] std::filesystem::path resolve_texture_asset_path(const Scene::Texture& texture, const std::string& value) {
             std::filesystem::path path{value};
             if (path.is_absolute()) return path;
-            if (texture.entity.source.filename.empty()) throw std::runtime_error(std::format("PBRT preview texture \"{}\" references relative asset \"{}\" without a source filename", texture.name, value));
+            if (texture.entity.source.filename.empty()) throw std::runtime_error(format_message("PBRT preview texture \"{}\" references relative asset \"{}\" without a source filename", texture.name, value));
             return std::filesystem::path{texture.entity.source.filename}.parent_path() / path;
         }
 
         [[nodiscard]] std::filesystem::path resolve_entity_asset_path(const Scene::Entity& entity, const std::string& value, const std::string_view context) {
             std::filesystem::path path{value};
             if (path.is_absolute()) return path;
-            if (entity.source.filename.empty()) throw std::runtime_error(std::format("{} references relative asset \"{}\" without a source filename", context, value));
+            if (entity.source.filename.empty()) throw std::runtime_error(format_message("{} references relative asset \"{}\" without a source filename", context, value));
             return std::filesystem::path{entity.source.filename}.parent_path() / path;
         }
 
@@ -2761,7 +2829,7 @@ namespace spectra::scene {
                 }
                 return token;
             }
-            throw std::runtime_error(std::format("{}: unexpected end of PPM preview image", path.string()));
+            throw std::runtime_error(format_message("{}: unexpected end of PPM preview image", path.string()));
         }
 
         [[nodiscard]] float parse_ppm_float_token(const std::string& token, const std::filesystem::path& path) {
@@ -2769,21 +2837,21 @@ namespace spectra::scene {
             const char* begin = token.data();
             const char* end = begin + token.size();
             const std::from_chars_result result = std::from_chars(begin, end, value);
-            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(value)) throw std::runtime_error(std::format("{}: invalid PPM numeric token \"{}\"", path.string(), token));
+            if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(value)) throw std::runtime_error(format_message("{}: invalid PPM numeric token \"{}\"", path.string(), token));
             return value;
         }
 
         [[nodiscard]] Vector3 read_ppm_average_color(const std::filesystem::path& path, const std::string_view context) {
             std::ifstream input{path};
-            if (!input) throw std::runtime_error(std::format("{} references unreadable P3 PPM preview image \"{}\"", context, path.string()));
-            if (next_ppm_token(input, path) != "P3") throw std::runtime_error(std::format("{} image \"{}\" must be an ASCII P3 PPM for rasterizer preview sampling", context, path.string()));
+            if (!input) throw std::runtime_error(format_message("{} references unreadable P3 PPM preview image \"{}\"", context, path.string()));
+            if (next_ppm_token(input, path) != "P3") throw std::runtime_error(format_message("{} image \"{}\" must be an ASCII P3 PPM for rasterizer preview sampling", context, path.string()));
             const float width_float = parse_ppm_float_token(next_ppm_token(input, path), path);
             const float height_float = parse_ppm_float_token(next_ppm_token(input, path), path);
             const float max_value = parse_ppm_float_token(next_ppm_token(input, path), path);
-            if (width_float <= 0.0f || height_float <= 0.0f || max_value <= 0.0f) throw std::runtime_error(std::format("{} image \"{}\" has invalid PPM dimensions or max value", context, path.string()));
+            if (width_float <= 0.0f || height_float <= 0.0f || max_value <= 0.0f) throw std::runtime_error(format_message("{} image \"{}\" has invalid PPM dimensions or max value", context, path.string()));
             const std::size_t width = static_cast<std::size_t>(width_float);
             const std::size_t height = static_cast<std::size_t>(height_float);
-            if (static_cast<float>(width) != width_float || static_cast<float>(height) != height_float) throw std::runtime_error(std::format("{} image \"{}\" has non-integer PPM dimensions", context, path.string()));
+            if (static_cast<float>(width) != width_float || static_cast<float>(height) != height_float) throw std::runtime_error(format_message("{} image \"{}\" has non-integer PPM dimensions", context, path.string()));
             Vector3 sum{};
             const std::size_t pixel_count = width * height;
             for (std::size_t index = 0u; index < pixel_count; ++index) {
@@ -2800,10 +2868,10 @@ namespace spectra::scene {
             unsigned width{};
             unsigned height{};
             const unsigned error = lodepng::decode(pixels, width, height, path.string());
-            if (error != 0u) throw std::runtime_error(std::format("{} image \"{}\" PNG decode failed: {}", context, path.string(), lodepng_error_text(error)));
-            if (width == 0u || height == 0u) throw std::runtime_error(std::format("{} image \"{}\" has zero PNG dimensions", context, path.string()));
+            if (error != 0u) throw std::runtime_error(format_message("{} image \"{}\" PNG decode failed: {}", context, path.string(), lodepng_error_text(error)));
+            if (width == 0u || height == 0u) throw std::runtime_error(format_message("{} image \"{}\" has zero PNG dimensions", context, path.string()));
             const std::size_t pixel_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-            if (pixels.size() != pixel_count * 4u) throw std::runtime_error(std::format("{} image \"{}\" decoded to an unexpected PNG byte count", context, path.string()));
+            if (pixels.size() != pixel_count * 4u) throw std::runtime_error(format_message("{} image \"{}\" decoded to an unexpected PNG byte count", context, path.string()));
             Vector3 sum{};
             for (std::size_t index = 0u; index < pixel_count; ++index) {
                 sum += Vector3{
@@ -2819,12 +2887,12 @@ namespace spectra::scene {
             const std::string extension = lowercase_preview_string(path.extension().string());
             if (extension == ".ppm") return read_ppm_average_color(path, context);
             if (extension == ".png") return read_png_average_color(path, context);
-            throw std::runtime_error(std::format("{} image \"{}\" has unsupported rasterizer preview image format \"{}\"", context, path.string(), extension));
+            throw std::runtime_error(format_message("{} image \"{}\" has unsupported rasterizer preview image format \"{}\"", context, path.string(), extension));
         }
 
         void require_texture_acyclic(const std::vector<std::string>& stack, const std::string& name, const std::string_view kind, const std::string_view context) {
             for (const std::string& active : stack) {
-                if (active == name) throw std::runtime_error(std::format("{} has a recursive {} texture reference through \"{}\"", context, kind, name));
+                if (active == name) throw std::runtime_error(format_message("{} has a recursive {} texture reference through \"{}\"", context, kind, name));
             }
         }
 
@@ -2846,7 +2914,7 @@ namespace spectra::scene {
         [[nodiscard]] float preview_float_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack) {
             require_texture_acyclic(stack, name, "float", "PBRT preview texture graph");
             const Scene::Texture& texture = find_texture(textures.float_textures, name, "float", "PBRT preview texture graph");
-            const std::string context = std::format("PBRT preview float texture \"{}\"", name);
+            const std::string context = format_message("PBRT preview float texture \"{}\"", name);
             stack.push_back(name);
             float value = 1.0f;
             if (texture.entity.type == "constant") {
@@ -2874,7 +2942,7 @@ namespace spectra::scene {
                 if (optional_one_int_value(texture.entity, "invert", 0, context) != 0) value = 1.0f - value;
             } else if (texture.entity.type == "checkerboard") {
                 const int dimension = optional_one_int_value(texture.entity, "dimension", 2, context);
-                if (dimension != 2 && dimension != 3) throw std::runtime_error(std::format("{} checkerboard dimension must be 2 or 3", context));
+                if (dimension != 2 && dimension != 3) throw std::runtime_error(format_message("{} checkerboard dimension must be 2 or 3", context));
                 const float selector = dimension == 2 ? 0.0f : 1.0f;
                 value = selector < 0.5f ? preview_float_parameter(textures, texture.entity, "tex1", 1.0f, context, stack) : preview_float_parameter(textures, texture.entity, "tex2", 0.0f, context, stack);
             } else if (texture.entity.type == "dots") {
@@ -2886,7 +2954,7 @@ namespace spectra::scene {
             } else if (texture.entity.type == "windy") {
                 value = 0.54f;
             } else {
-                throw std::runtime_error(std::format("{} uses unsupported float texture type \"{}\"", context, texture.entity.type));
+                throw std::runtime_error(format_message("{} uses unsupported float texture type \"{}\"", context, texture.entity.type));
             }
             stack.pop_back();
             return std::clamp(value, 0.0f, 1.0f);
@@ -2895,7 +2963,7 @@ namespace spectra::scene {
         [[nodiscard]] Vector3 preview_spectrum_texture_value(const TextureLookup& textures, const std::string& name, std::vector<std::string>& stack) {
             require_texture_acyclic(stack, name, "spectrum", "PBRT preview texture graph");
             const Scene::Texture& texture = find_texture(textures.spectrum_textures, name, "spectrum", "PBRT preview texture graph");
-            const std::string context = std::format("PBRT preview spectrum texture \"{}\"", name);
+            const std::string context = format_message("PBRT preview spectrum texture \"{}\"", name);
             stack.push_back(name);
             Vector3 value{1.0f, 1.0f, 1.0f};
             if (texture.entity.type == "constant") {
@@ -2923,7 +2991,7 @@ namespace spectra::scene {
                 if (optional_one_int_value(texture.entity, "invert", 0, context) != 0) value = Vector3{1.0f - value.x, 1.0f - value.y, 1.0f - value.z};
             } else if (texture.entity.type == "checkerboard") {
                 const int dimension = optional_one_int_value(texture.entity, "dimension", 2, context);
-                if (dimension != 2 && dimension != 3) throw std::runtime_error(std::format("{} checkerboard dimension must be 2 or 3", context));
+                if (dimension != 2 && dimension != 3) throw std::runtime_error(format_message("{} checkerboard dimension must be 2 or 3", context));
                 value = dimension == 2 ? preview_spectrum_parameter(textures, texture.entity, "tex1", Vector3{1.0f, 1.0f, 1.0f}, context, stack) : preview_spectrum_parameter(textures, texture.entity, "tex2", Vector3{}, context, stack);
             } else if (texture.entity.type == "dots") {
                 value = preview_spectrum_parameter(textures, texture.entity, "inside", Vector3{1.0f, 1.0f, 1.0f}, context, stack);
@@ -2933,7 +3001,7 @@ namespace spectra::scene {
                 const float amount = std::clamp(0.5f + 0.5f * std::sin(0.61f * scale + variation), 0.0f, 1.0f);
                 value = Vector3{0.30f, 0.30f, 0.45f} * (1.0f - amount) + Vector3{0.82f, 0.80f, 0.78f} * amount;
             } else {
-                throw std::runtime_error(std::format("{} uses unsupported spectrum texture type \"{}\"", context, texture.entity.type));
+                throw std::runtime_error(format_message("{} uses unsupported spectrum texture type \"{}\"", context, texture.entity.type));
             }
             stack.pop_back();
             return clamp_color(value);
@@ -2970,15 +3038,15 @@ namespace spectra::scene {
                 };
                 if (material.entity.type == "diffuse") {
                     std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
                 } else if (material.entity.type == "coateddiffuse") {
                     std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.8f, 0.8f, 0.8f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.35f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
+                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.35f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
                     preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
                 } else if (material.entity.type == "diffusetransmission") {
                     const Vector3 color = preview_material_color(texture_lookup, material.entity);
@@ -2988,18 +3056,18 @@ namespace spectra::scene {
                     preview_material.roughness = 0.58f;
                 } else if (material.entity.type == "conductor") {
                     std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.9f, 0.82f, 0.65f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.9f, 0.82f, 0.65f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.28f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
+                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "roughness", 0.28f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
                     preview_material.roughness_texture = optional_texture_reference_value(material.entity, "roughness");
                     preview_material.metallic = 1.0f;
                 } else if (material.entity.type == "coatedconductor") {
                     std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.92f, 0.70f, 0.34f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.92f, 0.70f, 0.34f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
-                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "conductor.roughness", 0.16f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
+                    preview_material.roughness = std::clamp(preview_float_parameter(texture_lookup, material.entity, "conductor.roughness", 0.16f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.02f, 1.0f);
                     preview_material.roughness_texture = optional_texture_reference_value(material.entity, "conductor.roughness");
                     preview_material.metallic = 1.0f;
                 } else if (material.entity.type == "dielectric") {
@@ -3012,7 +3080,7 @@ namespace spectra::scene {
                     preview_material.roughness = 0.02f;
                 } else if (material.entity.type == "hair") {
                     std::vector<std::string> texture_stack{};
-                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.46f, 0.24f, 0.12f}, std::format("PBRT preview material \"{}\"", material.name), texture_stack);
+                    const Vector3 reflectance = preview_spectrum_parameter(texture_lookup, material.entity, "reflectance", Vector3{0.46f, 0.24f, 0.12f}, format_message("PBRT preview material \"{}\"", material.name), texture_stack);
                     preview_material.base_color = Vector4{reflectance.x, reflectance.y, reflectance.z, 1.0f};
                     preview_material.base_color_texture = optional_texture_reference_value(material.entity, "reflectance");
                     preview_material.roughness = std::clamp(optional_one_float_value(material.entity, "beta_m", 0.35f), 0.08f, 1.0f);
@@ -3027,12 +3095,12 @@ namespace spectra::scene {
                     preview_material.base_color = Vector4{color.x, color.y, color.z, 1.0f};
                     preview_material.roughness = 0.46f;
                 } else if (material.entity.type == "mix") {
-                    const std::vector<std::string> material_names = optional_string_array_value(material.entity, "materials", std::format("PBRT preview material \"{}\"", material.name));
-                    if (material_names.size() != 2u) throw std::runtime_error(std::format("PBRT preview material \"{}\" mix requires exactly two material names", material.name));
-                    const Vector3 first = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(0), std::format("PBRT preview material \"{}\"", material.name)).entity);
-                    const Vector3 second = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(1), std::format("PBRT preview material \"{}\"", material.name)).entity);
+                    const std::vector<std::string> material_names = optional_string_array_value(material.entity, "materials", format_message("PBRT preview material \"{}\"", material.name));
+                    if (material_names.size() != 2u) throw std::runtime_error(format_message("PBRT preview material \"{}\" mix requires exactly two material names", material.name));
+                    const Vector3 first = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(0), format_message("PBRT preview material \"{}\"", material.name)).entity);
+                    const Vector3 second = preview_material_color(texture_lookup, material_by_name(scene, material_names.at(1), format_message("PBRT preview material \"{}\"", material.name)).entity);
                     std::vector<std::string> texture_stack{};
-                    const float amount = std::clamp(preview_float_parameter(texture_lookup, material.entity, "amount", 0.5f, std::format("PBRT preview material \"{}\"", material.name), texture_stack), 0.0f, 1.0f);
+                    const float amount = std::clamp(preview_float_parameter(texture_lookup, material.entity, "amount", 0.5f, format_message("PBRT preview material \"{}\"", material.name), texture_stack), 0.0f, 1.0f);
                     const Vector3 color = first * (1.0f - amount) + second * amount;
                     preview_material.base_color = Vector4{color.x, color.y, color.z, 1.0f};
                     preview_material.roughness = 0.42f;
@@ -3042,28 +3110,28 @@ namespace spectra::scene {
                     preview_material.base_color = Vector4{0.62f, 0.7f, 0.78f, 0.18f};
                     preview_material.roughness = 1.0f;
                 } else {
-                    throw std::runtime_error(std::format("PBRT preview material \"{}\" uses unsupported type \"{}\"", material.name, material.entity.type));
+                    throw std::runtime_error(format_message("PBRT preview material \"{}\" uses unsupported type \"{}\"", material.name, material.entity.type));
                 }
                 const bool inserted = material_indices.emplace(material.name, document.materials.size()).second;
-                if (!inserted) throw std::runtime_error(std::format("PBRT preview material \"{}\" is duplicated", material.name));
+                if (!inserted) throw std::runtime_error(format_message("PBRT preview material \"{}\" is duplicated", material.name));
                 document.materials.push_back(std::move(preview_material));
             }
             for (const std::string& material_name : referenced_material_names) {
-                if (!material_indices.contains(material_name)) throw std::runtime_error(std::format("PBRT preview shape references unknown material \"{}\"", material_name));
+                if (!material_indices.contains(material_name)) throw std::runtime_error(format_message("PBRT preview shape references unknown material \"{}\"", material_name));
             }
             return material_indices;
         }
 
         [[nodiscard]] Scene::PreviewMaterial& material_for_name(Scene::Document& document, const std::map<std::string, std::size_t>& material_indices, const std::string& name) {
             const std::map<std::string, std::size_t>::const_iterator iter = material_indices.find(name);
-            if (iter == material_indices.end()) throw std::runtime_error(std::format("PBRT preview shape references unknown material \"{}\"", name));
+            if (iter == material_indices.end()) throw std::runtime_error(format_message("PBRT preview shape references unknown material \"{}\"", name));
             return document.materials.at(iter->second);
         }
 
         [[nodiscard]] const Scene::Medium& medium_by_name(const Scene::ResolvedScene& scene, const std::string& name, const std::string_view context) {
             for (const Scene::Medium& medium : scene.media)
                 if (medium.name == name) return medium;
-            throw std::runtime_error(std::format("{} references unknown medium \"{}\"", context, name));
+            throw std::runtime_error(format_message("{} references unknown medium \"{}\"", context, name));
         }
 
         [[nodiscard]] Vector3 medium_preview_color(const Scene::Medium& medium) {
@@ -3072,12 +3140,12 @@ namespace spectra::scene {
             if (medium.entity.type == "rgbgrid") return Vector3{0.84f, 0.56f, 0.34f};
             if (medium.entity.type == "cloud") return Vector3{0.68f, 0.70f, 0.74f};
             if (medium.entity.type == "nanovdb") return Vector3{0.58f, 0.50f, 0.86f};
-            throw std::runtime_error(std::format("PBRT preview medium \"{}\" uses unsupported type \"{}\"", medium.name, medium.entity.type));
+            throw std::runtime_error(format_message("PBRT preview medium \"{}\" uses unsupported type \"{}\"", medium.name, medium.entity.type));
         }
 
         void apply_medium_boundary_material(const Scene::ResolvedScene& scene, const Scene::Shape& shape, const std::size_t shape_index, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices) {
             if (shape.medium_interface.inside.empty() && shape.medium_interface.outside.empty()) return;
-            const std::string context = std::format("PBRT preview shape #{}", shape_index);
+            const std::string context = format_message("PBRT preview shape #{}", shape_index);
             const std::string& medium_name = shape.medium_interface.inside.empty() ? shape.medium_interface.outside : shape.medium_interface.inside;
             const Scene::Medium& medium = medium_by_name(scene, medium_name, context);
             Scene::PreviewMaterial& material = material_for_name(document, material_indices, shape.material_name);
@@ -3090,24 +3158,24 @@ namespace spectra::scene {
 
         void apply_area_light_material(const Scene::Shape& shape, const std::size_t shape_index, Scene::Document& document, const std::map<std::string, std::size_t>& material_indices) {
             if (!shape.area_light.has_value()) return;
-            const std::string context = std::format("PBRT preview shape #{}", shape_index);
-            if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
+            const std::string context = format_message("PBRT preview shape #{}", shape_index);
+            if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(format_message("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
             Scene::PreviewMaterial& material = material_for_name(document, material_indices, shape.material_name);
             const Vector3 radiance = required_rgb_value(shape.area_light->entity, "L", context);
             const float scale = optional_one_float_value(shape.area_light->entity, "scale", 1.0f);
-            if (scale < 0.0f) throw std::runtime_error(std::format("{} area light scale must be non-negative", context));
+            if (scale < 0.0f) throw std::runtime_error(format_message("{} area light scale must be non-negative", context));
             const bool already_emissive = material.surface_kind == Scene::PreviewSurfaceKind::EmissiveSurface;
-            if (already_emissive && (material.emission_color.x != radiance.x || material.emission_color.y != radiance.y || material.emission_color.z != radiance.z || material.emission_strength != scale)) throw std::runtime_error(std::format("PBRT preview material \"{}\" is reused by area lights with different emission", material.name));
+            if (already_emissive && (material.emission_color.x != radiance.x || material.emission_color.y != radiance.y || material.emission_color.z != radiance.z || material.emission_strength != scale)) throw std::runtime_error(format_message("PBRT preview material \"{}\" is reused by area lights with different emission", material.name));
             material.surface_kind      = Scene::PreviewSurfaceKind::EmissiveSurface;
             material.emission_color    = radiance;
             material.emission_strength = scale;
         }
 
         [[nodiscard]] Scene::Mesh make_mesh(const std::string_view object_source_prefix_value, const Scene::Shape& shape, const std::size_t shape_index, const std::map<std::string, std::size_t>& material_indices, Bounds& bounds) {
-            const std::string context = std::format("PBRT preview shape #{}", shape_index);
+            const std::string context = format_message("PBRT preview shape #{}", shape_index);
             require_static_transform(shape.transform, context);
-            if (shape.reverse_orientation) throw std::runtime_error(std::format("{} uses ReverseOrientation, which is not supported by the PBRT preview scene loader", context));
-            if (!material_indices.contains(shape.material_name)) throw std::runtime_error(std::format("{} references unknown material \"{}\"", context, shape.material_name));
+            if (shape.reverse_orientation) throw std::runtime_error(format_message("{} uses ReverseOrientation, which is not supported by the PBRT preview scene loader", context));
+            if (!material_indices.contains(shape.material_name)) throw std::runtime_error(format_message("{} references unknown material \"{}\"", context, shape.material_name));
             const std::string object_name = make_shape_object_name(object_source_prefix_value, shape_index);
             Scene::Mesh mesh{
                 .name         = object_name,
@@ -3128,7 +3196,7 @@ namespace spectra::scene {
                 const std::string filename = required_string_value(shape.entity, "filename", context);
                 const std::filesystem::path path = resolve_shape_asset_path(shape, filename);
                 Scene::Mesh ply_mesh = read_ascii_ply_mesh(path, object_name, shape.material_name, shape.entity.source);
-                if (ply_mesh.positions.size() != ply_mesh.normals.size()) throw std::runtime_error(std::format("{} PLY normal count does not match position count", context));
+                if (ply_mesh.positions.size() != ply_mesh.normals.size()) throw std::runtime_error(format_message("{} PLY normal count does not match position count", context));
                 mesh.positions.reserve(ply_mesh.positions.size());
                 mesh.normals.reserve(ply_mesh.normals.size());
                 mesh.uvs.reserve(ply_mesh.uvs.size());
@@ -3141,21 +3209,21 @@ namespace spectra::scene {
             }
             if (shape.entity.type == "bilinearmesh") {
                 const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
-                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("{} has invalid point3 P data", context));
+                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(format_message("{} has invalid point3 P data", context));
                 const std::size_t vertex_count = positions.size() / 3u;
                 const std::vector<float>* normals = optional_float_values(shape.entity, "normal", "N");
                 const std::vector<float>* uvs = optional_float_values(shape.entity, "point2", "uv");
-                if (normals != nullptr && normals->size() != positions.size()) throw std::runtime_error(std::format("{} normal count does not match position count", context));
-                if (uvs != nullptr && uvs->size() != vertex_count * 2u) throw std::runtime_error(std::format("{} uv count does not match position count", context));
+                if (normals != nullptr && normals->size() != positions.size()) throw std::runtime_error(format_message("{} normal count does not match position count", context));
+                if (uvs != nullptr && uvs->size() != vertex_count * 2u) throw std::runtime_error(format_message("{} uv count does not match position count", context));
 
                 std::vector<int> default_patch_indices{};
                 const std::vector<int>* patch_indices = optional_int_values(shape.entity, "indices");
                 if (patch_indices == nullptr) {
-                    if (vertex_count != 4u) throw std::runtime_error(std::format("{} requires \"integer indices\" unless exactly four control points are provided", context));
+                    if (vertex_count != 4u) throw std::runtime_error(format_message("{} requires \"integer indices\" unless exactly four control points are provided", context));
                     default_patch_indices = {0, 1, 2, 3};
                     patch_indices = &default_patch_indices;
                 }
-                if (patch_indices->empty() || patch_indices->size() % 4u != 0u) throw std::runtime_error(std::format("{} bilinearmesh indices must contain a non-empty multiple of four entries", context));
+                if (patch_indices->empty() || patch_indices->size() % 4u != 0u) throw std::runtime_error(format_message("{} bilinearmesh indices must contain a non-empty multiple of four entries", context));
 
                 mesh.positions.reserve(vertex_count);
                 if (normals != nullptr) mesh.normals.reserve(vertex_count);
@@ -3173,9 +3241,9 @@ namespace spectra::scene {
                 }
                 mesh.indices.reserve(patch_indices->size() / 4u * 6u);
                 const auto checked_patch_index = [vertex_count, &context](const int index) {
-                    if (index < 0) throw std::runtime_error(std::format("{} contains a negative bilinearmesh vertex index", context));
+                    if (index < 0) throw std::runtime_error(format_message("{} contains a negative bilinearmesh vertex index", context));
                     const std::uint32_t converted_index = static_cast<std::uint32_t>(index);
-                    if (converted_index >= vertex_count) throw std::runtime_error(std::format("{} contains an out-of-range bilinearmesh vertex index", context));
+                    if (converted_index >= vertex_count) throw std::runtime_error(format_message("{} contains an out-of-range bilinearmesh vertex index", context));
                     return converted_index;
                 };
                 for (std::size_t index = 0u; index < patch_indices->size(); index += 4u) {
@@ -3190,16 +3258,16 @@ namespace spectra::scene {
             }
             if (shape.entity.type == "loopsubdiv") {
                 const int levels = optional_one_int_value(shape.entity, "levels", 3, context);
-                if (levels < 0) throw std::runtime_error(std::format("{} loopsubdiv levels must be non-negative", context));
+                if (levels < 0) throw std::runtime_error(format_message("{} loopsubdiv levels must be non-negative", context));
                 const std::string scheme = optional_string_value(shape.entity, "scheme", "loop", context);
-                if (scheme != "loop") throw std::runtime_error(std::format("{} only supports loopsubdiv scheme \"loop\", got \"{}\"", context, scheme));
+                if (scheme != "loop") throw std::runtime_error(format_message("{} only supports loopsubdiv scheme \"loop\", got \"{}\"", context, scheme));
                 const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
                 const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
                 const std::vector<float>* normals = optional_float_values(shape.entity, "normal", "N");
-                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("{} has invalid point3 P data", context));
-                if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(std::format("{} loopsubdiv preview indices must contain triangles", context));
+                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(format_message("{} has invalid point3 P data", context));
+                if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(format_message("{} loopsubdiv preview indices must contain triangles", context));
                 const std::size_t vertex_count = positions.size() / 3u;
-                if (normals != nullptr && normals->size() != positions.size()) throw std::runtime_error(std::format("{} normal count does not match position count", context));
+                if (normals != nullptr && normals->size() != positions.size()) throw std::runtime_error(format_message("{} normal count does not match position count", context));
 
                 mesh.positions.reserve(vertex_count);
                 if (normals != nullptr) mesh.normals.reserve(vertex_count);
@@ -3215,9 +3283,9 @@ namespace spectra::scene {
                 }
                 mesh.indices.reserve(indices.size());
                 for (const int index : indices) {
-                    if (index < 0) throw std::runtime_error(std::format("{} contains a negative loopsubdiv vertex index", context));
+                    if (index < 0) throw std::runtime_error(format_message("{} contains a negative loopsubdiv vertex index", context));
                     const std::uint32_t converted_index = static_cast<std::uint32_t>(index);
-                    if (converted_index >= vertex_count) throw std::runtime_error(std::format("{} contains an out-of-range loopsubdiv vertex index", context));
+                    if (converted_index >= vertex_count) throw std::runtime_error(format_message("{} contains an out-of-range loopsubdiv vertex index", context));
                     mesh.indices.push_back(converted_index);
                 }
                 if (normals == nullptr) generate_mesh_normals(mesh, context);
@@ -3225,20 +3293,20 @@ namespace spectra::scene {
             }
             if (shape.entity.type == "curve") {
                 const int degree = optional_one_int_value(shape.entity, "degree", 3, context);
-                if (degree != 3) throw std::runtime_error(std::format("{} preview supports only cubic curve degree 3", context));
+                if (degree != 3) throw std::runtime_error(format_message("{} preview supports only cubic curve degree 3", context));
                 const std::string basis = optional_string_value(shape.entity, "basis", "bezier", context);
-                if (basis != "bezier") throw std::runtime_error(std::format("{} preview supports only bezier curve basis", context));
+                if (basis != "bezier") throw std::runtime_error(format_message("{} preview supports only bezier curve basis", context));
                 const std::string curve_type = optional_string_value(shape.entity, "type", "flat", context);
-                if (curve_type != "cylinder") throw std::runtime_error(std::format("{} preview supports only cylinder curve type", context));
+                if (curve_type != "cylinder") throw std::runtime_error(format_message("{} preview supports only cylinder curve type", context));
                 const float width = optional_one_float_value(shape.entity, "width", 0.02f);
                 const float width0 = optional_one_float_value(shape.entity, "width0", width);
                 const float width1 = optional_one_float_value(shape.entity, "width1", width);
-                validate_positive_float(width0, std::format("{} curve width0", context));
-                validate_positive_float(width1, std::format("{} curve width1", context));
+                validate_positive_float(width0, format_message("{} curve width0", context));
+                validate_positive_float(width1, format_message("{} curve width1", context));
                 const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
-                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("{} has invalid point3 P data", context));
+                if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(format_message("{} has invalid point3 P data", context));
                 const std::size_t control_point_count = positions.size() / 3u;
-                if (control_point_count < 4u || (control_point_count - 4u) % 3u != 0u) throw std::runtime_error(std::format("{} cubic bezier curve requires 4 + 3n control points", context));
+                if (control_point_count < 4u || (control_point_count - 4u) % 3u != 0u) throw std::runtime_error(format_message("{} cubic bezier curve requires 4 + 3n control points", context));
                 std::vector<Vector3> control_points{};
                 control_points.reserve(control_point_count);
                 for (std::size_t point_index = 0u; point_index < control_point_count; ++point_index)
@@ -3259,13 +3327,13 @@ namespace spectra::scene {
                     return (p1 - p0) * (3.0f * omt * omt) + (p2 - p1) * (6.0f * omt * t) + (p3 - p2) * (3.0f * t * t);
                 };
                 const auto append_ring = [&](const Vector3 center_value, const Vector3 tangent_value, const float radius_value) {
-                    const Vector3 tangent = normalize(tangent_value, std::format("{} curve tangent", context));
+                    const Vector3 tangent = normalize(tangent_value, format_message("{} curve tangent", context));
                     const Vector3 reference = std::abs(tangent.y) < 0.92f ? Vector3{0.0f, 1.0f, 0.0f} : Vector3{1.0f, 0.0f, 0.0f};
-                    const Vector3 side = normalize(cross(reference, tangent), std::format("{} curve side", context));
-                    const Vector3 up = normalize(cross(tangent, side), std::format("{} curve up", context));
+                    const Vector3 side = normalize(cross(reference, tangent), format_message("{} curve side", context));
+                    const Vector3 up = normalize(cross(tangent, side), format_message("{} curve up", context));
                     for (std::uint32_t radial = 0u; radial < radial_segments; ++radial) {
                         const float angle = 2.0f * std::numbers::pi_v<float> * static_cast<float>(radial) / static_cast<float>(radial_segments);
-                        const Vector3 normal = normalize(side * std::cos(angle) + up * std::sin(angle), std::format("{} curve radial normal", context));
+                        const Vector3 normal = normalize(side * std::cos(angle) + up * std::sin(angle), format_message("{} curve radial normal", context));
                         const Vector3 point = center_value + normal * radius_value;
                         const Vector3 transformed_point = transform_point(shape.transform.start, point);
                         mesh.positions.push_back(transformed_point);
@@ -3308,12 +3376,12 @@ namespace spectra::scene {
             }
             if (shape.entity.type == "sphere") {
                 const float radius_value = optional_one_float_value(shape.entity, "radius", 1.0f);
-                validate_positive_float(radius_value, std::format("{} sphere radius", context));
+                validate_positive_float(radius_value, format_message("{} sphere radius", context));
                 const float z_min = std::clamp(optional_one_float_value(shape.entity, "zmin", -radius_value), -radius_value, radius_value);
                 const float z_max = std::clamp(optional_one_float_value(shape.entity, "zmax", radius_value), -radius_value, radius_value);
-                if (z_min >= z_max) throw std::runtime_error(std::format("{} sphere zmin must be smaller than zmax", context));
+                if (z_min >= z_max) throw std::runtime_error(format_message("{} sphere zmin must be smaller than zmax", context));
                 const float phi_max_degrees = std::clamp(optional_one_float_value(shape.entity, "phimax", 360.0f), 0.0f, 360.0f);
-                if (phi_max_degrees <= 0.0f) throw std::runtime_error(std::format("{} sphere phimax must be positive", context));
+                if (phi_max_degrees <= 0.0f) throw std::runtime_error(format_message("{} sphere phimax must be positive", context));
                 constexpr std::uint32_t latitude_segments = 32u;
                 constexpr std::uint32_t longitude_segments = 64u;
                 const std::uint32_t longitude_count = longitude_segments + 1u;
@@ -3346,10 +3414,10 @@ namespace spectra::scene {
                 const float radius_value = optional_one_float_value(shape.entity, "radius", 1.0f);
                 const float inner_radius = optional_one_float_value(shape.entity, "innerradius", 0.0f);
                 const float phi_max_degrees = std::clamp(optional_one_float_value(shape.entity, "phimax", 360.0f), 0.0f, 360.0f);
-                validate_finite_float(height, std::format("{} disk height", context));
-                validate_positive_float(radius_value, std::format("{} disk radius", context));
-                if (!std::isfinite(inner_radius) || inner_radius < 0.0f || inner_radius >= radius_value) throw std::runtime_error(std::format("{} disk innerradius must be finite and inside [0, radius)", context));
-                if (phi_max_degrees <= 0.0f) throw std::runtime_error(std::format("{} disk phimax must be positive", context));
+                validate_finite_float(height, format_message("{} disk height", context));
+                validate_positive_float(radius_value, format_message("{} disk radius", context));
+                if (!std::isfinite(inner_radius) || inner_radius < 0.0f || inner_radius >= radius_value) throw std::runtime_error(format_message("{} disk innerradius must be finite and inside [0, radius)", context));
+                if (phi_max_degrees <= 0.0f) throw std::runtime_error(format_message("{} disk phimax must be positive", context));
                 constexpr std::uint32_t segments = 96u;
                 const float phi_max = phi_max_degrees * std::numbers::pi_v<float> / 180.0f;
                 mesh.positions.reserve((segments + 1u) * 2u);
@@ -3373,11 +3441,11 @@ namespace spectra::scene {
                 const float z_min = optional_one_float_value(shape.entity, "zmin", -1.0f);
                 const float z_max = optional_one_float_value(shape.entity, "zmax", 1.0f);
                 const float phi_max_degrees = std::clamp(optional_one_float_value(shape.entity, "phimax", 360.0f), 0.0f, 360.0f);
-                validate_positive_float(radius_value, std::format("{} cylinder radius", context));
-                validate_finite_float(z_min, std::format("{} cylinder zmin", context));
-                validate_finite_float(z_max, std::format("{} cylinder zmax", context));
-                if (z_min >= z_max) throw std::runtime_error(std::format("{} cylinder zmin must be smaller than zmax", context));
-                if (phi_max_degrees <= 0.0f) throw std::runtime_error(std::format("{} cylinder phimax must be positive", context));
+                validate_positive_float(radius_value, format_message("{} cylinder radius", context));
+                validate_finite_float(z_min, format_message("{} cylinder zmin", context));
+                validate_finite_float(z_max, format_message("{} cylinder zmax", context));
+                if (z_min >= z_max) throw std::runtime_error(format_message("{} cylinder zmin must be smaller than zmax", context));
+                if (phi_max_degrees <= 0.0f) throw std::runtime_error(format_message("{} cylinder phimax must be positive", context));
                 constexpr std::uint32_t segments = 96u;
                 const float phi_max = phi_max_degrees * std::numbers::pi_v<float> / 180.0f;
                 mesh.positions.reserve((segments + 1u) * 2u);
@@ -3395,15 +3463,15 @@ namespace spectra::scene {
                 }
                 return mesh;
             }
-            if (shape.entity.type != "trianglemesh") throw std::runtime_error(std::format("PBRT preview scene loader only supports trianglemesh, plymesh, sphere, disk, cylinder, bilinearmesh, loopsubdiv, and cylinder bezier curve shapes, got \"{}\"", shape.entity.type));
+            if (shape.entity.type != "trianglemesh") throw std::runtime_error(format_message("PBRT preview scene loader only supports trianglemesh, plymesh, sphere, disk, cylinder, bilinearmesh, loopsubdiv, and cylinder bezier curve shapes, got \"{}\"", shape.entity.type));
             const std::vector<float>& positions = required_float_values(shape.entity, "point3", "P", context);
             const std::vector<float>& normals = required_float_values(shape.entity, "normal", "N", context);
             const std::vector<int>& indices = required_int_values(shape.entity, "indices", context);
             const std::vector<float>* uvs = optional_float_values(shape.entity, "point2", "uv");
-            if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" has invalid point3 P data", object_name));
-            if (normals.size() != positions.size()) throw std::runtime_error(std::format("PBRT preview shape \"{}\" normal count does not match position count", object_name));
-            if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" has invalid triangle index data", object_name));
-            if (uvs != nullptr && uvs->size() != positions.size() / 3u * 2u) throw std::runtime_error(std::format("PBRT preview shape \"{}\" uv count does not match position count", object_name));
+            if (positions.empty() || positions.size() % 3u != 0u) throw std::runtime_error(format_message("PBRT preview shape \"{}\" has invalid point3 P data", object_name));
+            if (normals.size() != positions.size()) throw std::runtime_error(format_message("PBRT preview shape \"{}\" normal count does not match position count", object_name));
+            if (indices.empty() || indices.size() % 3u != 0u) throw std::runtime_error(format_message("PBRT preview shape \"{}\" has invalid triangle index data", object_name));
+            if (uvs != nullptr && uvs->size() != positions.size() / 3u * 2u) throw std::runtime_error(format_message("PBRT preview shape \"{}\" uv count does not match position count", object_name));
 
             const std::size_t vertex_count = positions.size() / 3u;
             mesh.positions.reserve(vertex_count);
@@ -3420,9 +3488,9 @@ namespace spectra::scene {
             }
             mesh.indices.reserve(indices.size());
             for (const int index : indices) {
-                if (index < 0) throw std::runtime_error(std::format("PBRT preview shape \"{}\" contains a negative vertex index", object_name));
+                if (index < 0) throw std::runtime_error(format_message("PBRT preview shape \"{}\" contains a negative vertex index", object_name));
                 const std::uint32_t converted_index = static_cast<std::uint32_t>(index);
-                if (converted_index >= vertex_count) throw std::runtime_error(std::format("PBRT preview shape \"{}\" contains an out-of-range vertex index", object_name));
+                if (converted_index >= vertex_count) throw std::runtime_error(format_message("PBRT preview shape \"{}\" contains an out-of-range vertex index", object_name));
                 mesh.indices.push_back(converted_index);
             }
             return mesh;
@@ -3430,9 +3498,9 @@ namespace spectra::scene {
 
         [[nodiscard]] Scene::PreviewLight make_area_light_preview(const Scene::Shape& shape, const Scene::Mesh& mesh, const std::size_t shape_index) {
             if (!shape.area_light.has_value()) throw std::runtime_error("PBRT preview area light requires an area light shape");
-            const std::string context = std::format("PBRT preview shape #{}", shape_index);
-            if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(std::format("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
-            if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(std::format("{} area light mesh has invalid triangle index data", context));
+            const std::string context = format_message("PBRT preview shape #{}", shape_index);
+            if (shape.area_light->entity.type != "diffuse") throw std::runtime_error(format_message("{} uses unsupported area light type \"{}\"", context, shape.area_light->entity.type));
+            if (mesh.indices.empty() || mesh.indices.size() % 3u != 0u) throw std::runtime_error(format_message("{} area light mesh has invalid triangle index data", context));
 
             float total_area = 0.0f;
             Vector3 weighted_center{};
@@ -3443,23 +3511,23 @@ namespace spectra::scene {
                 const Vector3& p2 = mesh.positions.at(mesh.indices.at(index + 2u));
                 const Vector3 cross_value = cross(p1 - p0, p2 - p0);
                 const float double_area = length(cross_value);
-                if (!std::isfinite(double_area)) throw std::runtime_error(std::format("{} area light has non-finite triangle area", context));
+                if (!std::isfinite(double_area)) throw std::runtime_error(format_message("{} area light has non-finite triangle area", context));
                 if (double_area <= 0.0f) continue;
                 const float triangle_area = double_area * 0.5f;
                 total_area += triangle_area;
                 weighted_center += ((p0 + p1 + p2) / 3.0f) * triangle_area;
                 weighted_normal += cross_value;
             }
-            if (!std::isfinite(total_area) || total_area <= 0.0f) throw std::runtime_error(std::format("{} area light has zero surface area", context));
+            if (!std::isfinite(total_area) || total_area <= 0.0f) throw std::runtime_error(format_message("{} area light has zero surface area", context));
             const Vector3 center_value = weighted_center / total_area;
-            const Vector3 normal_value = normalize(weighted_normal, std::format("{} area light normal", context));
+            const Vector3 normal_value = normalize(weighted_normal, format_message("{} area light normal", context));
             const Vector3 radiance = required_rgb_value(shape.area_light->entity, "L", context);
             const float scale = optional_one_float_value(shape.area_light->entity, "scale", 1.0f);
-            if (scale < 0.0f) throw std::runtime_error(std::format("{} area light scale must be non-negative", context));
+            if (scale < 0.0f) throw std::runtime_error(format_message("{} area light scale must be non-negative", context));
             return Scene::PreviewLight{
-                .name      = std::format("{}#area-light", mesh.name),
+                .name      = format_message("{}#area-light", mesh.name),
                 .kind      = Scene::PreviewLightKind::Area,
-                .transform = Transform{.position = center_value, .rotation = quaternion_from_light_forward(normal_value, std::format("{} area light rotation", context))},
+                .transform = Transform{.position = center_value, .rotation = quaternion_from_light_forward(normal_value, format_message("{} area light rotation", context))},
                 .color     = radiance,
                 .intensity = total_area * scale,
                 .source    = shape.area_light->entity.source,
@@ -3470,7 +3538,7 @@ namespace spectra::scene {
             std::map<std::string, const Scene::ObjectDefinition*> definitions{};
             for (const Scene::ObjectDefinition& definition : scene.object_definitions) {
                 if (definition.name.empty()) throw std::runtime_error("PBRT preview object definition name must not be empty");
-                if (!definitions.emplace(definition.name, &definition).second) throw std::runtime_error(std::format("PBRT preview object definition \"{}\" is duplicated", definition.name));
+                if (!definitions.emplace(definition.name, &definition).second) throw std::runtime_error(format_message("PBRT preview object definition \"{}\" is duplicated", definition.name));
             }
             return definitions;
         }
@@ -3481,7 +3549,7 @@ namespace spectra::scene {
             const auto append_shape = [&](const Scene::Shape& shape) {
                 const bool is_area_light = shape.area_light.has_value();
                 const std::pair<std::map<std::string, bool>::iterator, bool> material_usage = material_used_by_area_light.emplace(shape.material_name, is_area_light);
-                if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(std::format("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
+                if (!material_usage.second && material_usage.first->second != is_area_light) throw std::runtime_error(format_message("PBRT preview material \"{}\" is shared by emissive and non-emissive shapes", shape.material_name));
                 apply_area_light_material(shape, preview_shape_index, document, material_indices);
                 apply_medium_boundary_material(scene, shape, preview_shape_index, document, material_indices);
                 Scene::Mesh mesh = make_mesh(object_source_prefix_value, shape, preview_shape_index, material_indices, bounds);
@@ -3493,13 +3561,13 @@ namespace spectra::scene {
             const std::map<std::string, const Scene::ObjectDefinition*> definitions = object_definition_map(scene);
             for (const Scene::ObjectInstance& instance : scene.object_instances) {
                 const std::map<std::string, const Scene::ObjectDefinition*>::const_iterator definition_iter = definitions.find(instance.definition_name);
-                if (definition_iter == definitions.end()) throw std::runtime_error(std::format("PBRT preview object instance \"{}\" references unknown definition \"{}\"", instance.name, instance.definition_name));
-                require_static_transform(instance.transform, std::format("PBRT preview object instance \"{}\"", instance.name));
+                if (definition_iter == definitions.end()) throw std::runtime_error(format_message("PBRT preview object instance \"{}\" references unknown definition \"{}\"", instance.name, instance.definition_name));
+                require_static_transform(instance.transform, format_message("PBRT preview object instance \"{}\"", instance.name));
                 const Scene::ObjectDefinition& definition = *definition_iter->second;
                 for (const Scene::Shape& shape : definition.shapes) {
-                    if (shape.area_light.has_value()) throw std::runtime_error(std::format("PBRT preview object definition \"{}\" contains an instanced area light, which is not supported", definition.name));
+                    if (shape.area_light.has_value()) throw std::runtime_error(format_message("PBRT preview object definition \"{}\" contains an instanced area light, which is not supported", definition.name));
                     Scene::Shape instanced_shape = shape;
-                    instanced_shape.name         = std::format("{}:{}", instance.name, shape.name);
+                    instanced_shape.name         = format_message("{}:{}", instance.name, shape.name);
                     instanced_shape.transform    = multiply_transform_set(instance.transform, shape.transform);
                     append_shape(instanced_shape);
                 }
@@ -3508,7 +3576,7 @@ namespace spectra::scene {
         }
 
         [[nodiscard]] Scene::Camera make_camera(const Scene::ResolvedScene& scene, const Bounds& bounds) {
-            if (scene.render_settings.camera.type != "perspective") throw std::runtime_error(std::format("PBRT preview scene loader only supports perspective cameras, got \"{}\"", scene.render_settings.camera.type));
+            if (scene.render_settings.camera.type != "perspective") throw std::runtime_error(format_message("PBRT preview scene loader only supports perspective cameras, got \"{}\"", scene.render_settings.camera.type));
             require_static_transform(scene.render_settings.camera_transform, "PBRT preview camera");
             const CameraPose pose = camera_pose_from_world_from_camera(scene.render_settings.camera_transform.start);
             const Vector3 target = center(bounds);
@@ -3530,7 +3598,7 @@ namespace spectra::scene {
 
         void append_pbrt_preview_lights(const Scene::ResolvedScene& scene, Scene::Document& document) {
             for (const Scene::Light& light : scene.lights) {
-                const std::string context = std::format("PBRT preview light \"{}\"", light.name);
+                const std::string context = format_message("PBRT preview light \"{}\"", light.name);
                 require_static_transform(light.transform, context);
                 if (light.entity.type == "infinite") {
                     document.lights.push_back(Scene::PreviewLight{
@@ -3551,7 +3619,7 @@ namespace spectra::scene {
                     document.lights.push_back(Scene::PreviewLight{
                         .name      = light.name,
                         .kind      = Scene::PreviewLightKind::Directional,
-                        .transform = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward, std::format("{} direction rotation", context))},
+                        .transform = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward, format_message("{} direction rotation", context))},
                         .color     = optional_rgb_value(light.entity, "L", Vector3{1.0f, 1.0f, 1.0f}),
                         .intensity = optional_one_float_value(light.entity, "scale", 1.0f),
                         .source    = light.entity.source,
@@ -3577,7 +3645,7 @@ namespace spectra::scene {
                     document.lights.push_back(Scene::PreviewLight{
                         .name               = light.name,
                         .kind               = Scene::PreviewLightKind::Spot,
-                        .transform          = Transform{.position = transform_point(light.transform.start, from), .rotation = quaternion_from_light_forward(world_light_forward, std::format("{} spot rotation", context))},
+                        .transform          = Transform{.position = transform_point(light.transform.start, from), .rotation = quaternion_from_light_forward(world_light_forward, format_message("{} spot rotation", context))},
                         .color              = optional_rgb_value(light.entity, "I", Vector3{1.0f, 1.0f, 1.0f}),
                         .intensity          = optional_one_float_value(light.entity, "scale", 1.0f),
                         .cone_angle_degrees = optional_one_float_value(light.entity, "coneangle", 30.0f),
@@ -3592,7 +3660,7 @@ namespace spectra::scene {
                     document.lights.push_back(Scene::PreviewLight{
                         .name               = light.name,
                         .kind               = Scene::PreviewLightKind::Spot,
-                        .transform          = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward, std::format("{} projection rotation", context))},
+                        .transform          = Transform{.position = transform_position(light.transform.start), .rotation = quaternion_from_light_forward(world_light_forward, format_message("{} projection rotation", context))},
                         .color              = image_color,
                         .intensity          = optional_one_float_value(light.entity, "scale", 1.0f),
                         .cone_angle_degrees = optional_one_float_value(light.entity, "fov", 90.0f),
@@ -3616,7 +3684,7 @@ namespace spectra::scene {
                     });
                     continue;
                 }
-                throw std::runtime_error(std::format("{} uses unsupported light type \"{}\"", context, light.entity.type));
+                throw std::runtime_error(format_message("{} uses unsupported light type \"{}\"", context, light.entity.type));
             }
         }
     } // namespace
@@ -3659,11 +3727,11 @@ namespace spectra::scene {
         };
 
         [[nodiscard]] std::string SourceString(const Scene::SourceLocation& source) {
-            return std::format("{}:{}:{}", source.filename, source.line, source.column);
+            return format_message("{}:{}:{}", source.filename, source.line, source.column);
         }
 
         [[nodiscard]] std::runtime_error ParseError(const Scene::SourceLocation& source, const std::string_view message) {
-            return std::runtime_error(std::format("{}: {}", SourceString(source), message));
+            return std::runtime_error(format_message("{}: {}", SourceString(source), message));
         }
 
         [[nodiscard]] bool IsAbsolutePathString(const std::string& value) {
@@ -3680,7 +3748,7 @@ namespace spectra::scene {
 
         [[nodiscard]] std::string ReadPlainFile(const std::filesystem::path& path) {
             std::ifstream input(path, std::ios::binary);
-            if (!input) throw std::runtime_error(std::format("{}: unable to open PBRT scene file", path.string()));
+            if (!input) throw std::runtime_error(format_message("{}: unable to open PBRT scene file", path.string()));
 
             std::string result;
             std::array<char, 1 << 15> buffer{};
@@ -3689,13 +3757,13 @@ namespace spectra::scene {
                 const std::streamsize count = input.gcount();
                 if (count > 0) result.append(buffer.data(), static_cast<std::size_t>(count));
             }
-            if (input.bad()) throw std::runtime_error(std::format("{}: PBRT scene file read failed", path.string()));
+            if (input.bad()) throw std::runtime_error(format_message("{}: PBRT scene file read failed", path.string()));
             return result;
         }
 
         [[nodiscard]] std::string ReadGzipFile(const std::filesystem::path& path) {
             gzFile file = gzopen(path.string().c_str(), "rb");
-            if (file == nullptr) throw std::runtime_error(std::format("{}: unable to open gzip PBRT scene file", path.string()));
+            if (file == nullptr) throw std::runtime_error(format_message("{}: unable to open gzip PBRT scene file", path.string()));
 
             std::string result;
             std::array<char, 1 << 15> buffer{};
@@ -3705,14 +3773,14 @@ namespace spectra::scene {
                     int errorNumber = 0;
                     const char* message = gzerror(file, &errorNumber);
                     gzclose(file);
-                    throw std::runtime_error(std::format("{}: gzip read failed: {}", path.string(), message == nullptr ? "unknown zlib error" : message));
+                    throw std::runtime_error(format_message("{}: gzip read failed: {}", path.string(), message == nullptr ? "unknown zlib error" : message));
                 }
                 if (count == 0) break;
                 result.append(buffer.data(), static_cast<std::size_t>(count));
             }
 
             const int closeStatus = gzclose(file);
-            if (closeStatus != Z_OK) throw std::runtime_error(std::format("{}: gzip close failed", path.string()));
+            if (closeStatus != Z_OK) throw std::runtime_error(format_message("{}: gzip close failed", path.string()));
             return result;
         }
 
@@ -3766,7 +3834,7 @@ namespace spectra::scene {
             }
 
             void PushFile(std::filesystem::path path) {
-                if (!std::filesystem::exists(path)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", path.string()));
+                if (!std::filesystem::exists(path)) throw std::runtime_error(format_message("{}: PBRT scene file does not exist", path.string()));
                 std::string content = ReadSceneFile(path);
                 this->fileStack.push_back(PbrtTokenFile{
                     .filename = std::move(path),
@@ -3849,13 +3917,13 @@ namespace spectra::scene {
 
         [[nodiscard]] Token RequireToken(PbrtTokenStream& stream, const std::string_view context) {
             std::optional<Token> token = stream.Next();
-            if (!token.has_value()) throw std::runtime_error(std::format("Unexpected end of PBRT scene file while parsing {}", context));
+            if (!token.has_value()) throw std::runtime_error(format_message("Unexpected end of PBRT scene file while parsing {}", context));
             return std::move(*token);
         }
 
         [[nodiscard]] std::string RequireStringToken(PbrtTokenStream& stream, const std::string_view context) {
             Token token = RequireToken(stream, context);
-            if (token.kind != TokenKind::QuotedString) throw ParseError(token.source, std::format("{} expects a quoted string", context));
+            if (token.kind != TokenKind::QuotedString) throw ParseError(token.source, format_message("{} expects a quoted string", context));
             return std::move(token.text);
         }
 
@@ -3863,7 +3931,7 @@ namespace spectra::scene {
             const char* begin = token.text.c_str();
             char* end         = nullptr;
             const float value = std::strtof(begin, &end);
-            if (end == begin || *end != '\0') throw ParseError(token.source, std::format("\"{}\" is not a floating-point value", token.text));
+            if (end == begin || *end != '\0') throw ParseError(token.source, format_message("\"{}\" is not a floating-point value", token.text));
             return value;
         }
 
@@ -3871,15 +3939,15 @@ namespace spectra::scene {
             const char* begin = token.text.c_str();
             char* end         = nullptr;
             const long value  = std::strtol(begin, &end, 10);
-            if (end == begin || *end != '\0') throw ParseError(token.source, std::format("\"{}\" is not an integer value", token.text));
-            if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) throw ParseError(token.source, std::format("\"{}\" is outside integer range", token.text));
+            if (end == begin || *end != '\0') throw ParseError(token.source, format_message("\"{}\" is not an integer value", token.text));
+            if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) throw ParseError(token.source, format_message("\"{}\" is outside integer range", token.text));
             return static_cast<int>(value);
         }
 
         [[nodiscard]] std::uint8_t ParseBoolToken(const Token& token) {
             if (token.text == "true") return 1;
             if (token.text == "false") return 0;
-            throw ParseError(token.source, std::format("\"{}\" is not a Boolean value", token.text));
+            throw ParseError(token.source, format_message("\"{}\" is not a Boolean value", token.text));
         }
 
         [[nodiscard]] std::array<float, 16> MultiplyMatrix(const std::array<float, 16>& a, const std::array<float, 16>& b) {
@@ -4136,7 +4204,7 @@ namespace spectra::scene {
                 if (dot(cross(right, down), forward) <= 0.0f) throw std::runtime_error("basis is not convertible to Spectra image-down camera space");
                 return camera_world_from_camera(camera_pose_from_frame(position, right, down, forward));
             } catch (const std::exception& error) {
-                throw ParseError(source, std::format("PBRT camera transform cannot be converted to SpectraYUp: {}", error.what()));
+                throw ParseError(source, format_message("PBRT camera transform cannot be converted to SpectraYUp: {}", error.what()));
             }
         }
 
@@ -4174,7 +4242,7 @@ namespace spectra::scene {
             if (lower == "dci-p3") return Scene::ColorSpace::DCI_P3;
             if (lower == "rec2020") return Scene::ColorSpace::Rec2020;
             if (lower == "aces2065-1") return Scene::ColorSpace::ACES2065_1;
-            throw ParseError(source, std::format("\"{}\" is not a supported PBRT color space", name));
+            throw ParseError(source, format_message("\"{}\" is not a supported PBRT color space", name));
         }
 
         [[nodiscard]] std::vector<std::string>* ParameterStringValues(Scene::Parameter* parameter) {
@@ -4193,7 +4261,7 @@ namespace spectra::scene {
             for (const Scene::Parameter& parameter : parameters) {
                 if (parameter.type != "string" || parameter.name != name) continue;
                 const std::vector<std::string>* values = ParameterStringValues(parameter);
-                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, std::format("PBRT string parameter \"{}\" must contain exactly one string value", name));
+                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, format_message("PBRT string parameter \"{}\" must contain exactly one string value", name));
                 return values->front();
             }
             return default_value;
@@ -4202,9 +4270,9 @@ namespace spectra::scene {
         [[nodiscard]] float OneFloatParameter(const std::vector<Scene::Parameter>& parameters, const std::string& name, const float default_value) {
             for (const Scene::Parameter& parameter : parameters) {
                 if (parameter.name != name) continue;
-                if (parameter.type != "float") throw ParseError(parameter.source, std::format("PBRT parameter \"{}\" must be declared as float", name));
+                if (parameter.type != "float") throw ParseError(parameter.source, format_message("PBRT parameter \"{}\" must be declared as float", name));
                 const std::vector<float>* values = ParameterFloatValues(parameter);
-                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, std::format("PBRT float parameter \"{}\" must contain exactly one float value", name));
+                if (values == nullptr || values->size() != 1) throw ParseError(parameter.source, format_message("PBRT float parameter \"{}\" must contain exactly one float value", name));
                 return values->front();
             }
             return default_value;
@@ -4347,10 +4415,10 @@ namespace spectra::scene {
                     }
 
                     Scene::Parameter parameter = this->ParseParameterDeclaration(*declaration);
-                    Token value              = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
+                    Token value              = RequireToken(stream, format_message("parameter \"{} {}\"", parameter.type, parameter.name));
                     if (value.kind == TokenKind::LeftBracket) {
                         while (true) {
-                            Token element = RequireToken(stream, std::format("parameter \"{} {}\"", parameter.type, parameter.name));
+                            Token element = RequireToken(stream, format_message("parameter \"{} {}\"", parameter.type, parameter.name));
                             if (element.kind == TokenKind::RightBracket) break;
                             this->AppendParameterValue(&parameter, element);
                         }
@@ -4372,7 +4440,7 @@ namespace spectra::scene {
 
                 std::size_t nameBegin = typeEnd;
                 while (nameBegin < text.size() && std::isspace(static_cast<unsigned char>(text[nameBegin]))) ++nameBegin;
-                if (nameBegin == text.size()) throw ParseError(declaration.source, std::format("\"{}\" does not contain a parameter name", text));
+                if (nameBegin == text.size()) throw ParseError(declaration.source, format_message("\"{}\" does not contain a parameter name", text));
 
                 std::size_t nameEnd = nameBegin;
                 while (nameEnd < text.size() && !std::isspace(static_cast<unsigned char>(text[nameEnd]))) ++nameEnd;
@@ -4387,7 +4455,7 @@ namespace spectra::scene {
 
             void AppendParameterValue(Scene::Parameter* parameter, const Token& value) const {
                 if (parameter->type == "integer") {
-                    if (value.kind == TokenKind::QuotedString) throw ParseError(value.source, std::format("\"integer {}\" expects numeric values", parameter->name));
+                    if (value.kind == TokenKind::QuotedString) throw ParseError(value.source, format_message("\"integer {}\" expects numeric values", parameter->name));
                     if (!std::holds_alternative<std::vector<int>>(parameter->values)) parameter->values = std::vector<int>{};
                     std::get<std::vector<int>>(parameter->values).push_back(ParseIntegerToken(value));
                     return;
@@ -4398,7 +4466,7 @@ namespace spectra::scene {
                     return;
                 }
                 if (parameter->type == "string" || parameter->type == "texture" || value.kind == TokenKind::QuotedString) {
-                    if (value.kind != TokenKind::QuotedString) throw ParseError(value.source, std::format("\"{} {}\" expects quoted string values", parameter->type, parameter->name));
+                    if (value.kind != TokenKind::QuotedString) throw ParseError(value.source, format_message("\"{} {}\" expects quoted string values", parameter->type, parameter->name));
                     if (!std::holds_alternative<std::vector<std::string>>(parameter->values)) parameter->values = std::vector<std::string>{};
                     std::get<std::vector<std::string>>(parameter->values).push_back(value.text);
                     return;
@@ -4469,7 +4537,7 @@ namespace spectra::scene {
                 if (directive.text == "CoordSysTransform") {
                     const std::string name = RequireStringToken(stream, "CoordSysTransform");
                     const std::map<std::string, SceneTransformSet>::const_iterator iter = this->namedTransformStates.find(name);
-                    if (iter == this->namedTransformStates.end()) throw ParseError(directive.source, std::format("Unknown PBRT transform state \"{}\"", name));
+                    if (iter == this->namedTransformStates.end()) throw ParseError(directive.source, format_message("Unknown PBRT transform state \"{}\"", name));
                     this->graphicsState.transform = iter->second;
                     return;
                 }
@@ -4629,19 +4697,19 @@ namespace spectra::scene {
                     return;
                 }
                 if (directive.text == "WorldEnd") throw ParseError(directive.source, "WorldEnd is not used by PBRT v4 scene files");
-                throw ParseError(directive.source, std::format("Unknown PBRT directive \"{}\"", directive.text));
+                throw ParseError(directive.source, format_message("Unknown PBRT directive \"{}\"", directive.text));
             }
 
             void RequireOptions(const Token& directive, const std::string_view name) const {
-                if (this->currentBlock != BlockState::Options) throw ParseError(directive.source, std::format("{} is only valid before WorldBegin", name));
+                if (this->currentBlock != BlockState::Options) throw ParseError(directive.source, format_message("{} is only valid before WorldBegin", name));
             }
 
             void RequireWorld(const Token& directive, const std::string_view name) const {
-                if (this->currentBlock != BlockState::World) throw ParseError(directive.source, std::format("{} is only valid after WorldBegin", name));
+                if (this->currentBlock != BlockState::World) throw ParseError(directive.source, format_message("{} is only valid after WorldBegin", name));
             }
 
             void RequireWorld(const Scene::SourceLocation& source, const std::string_view name) const {
-                if (this->currentBlock != BlockState::World) throw ParseError(source, std::format("{} is only valid after WorldBegin", name));
+                if (this->currentBlock != BlockState::World) throw ParseError(source, format_message("{} is only valid after WorldBegin", name));
             }
 
             void ApplyActiveTransform(const SceneTransform& transform) {
@@ -4669,7 +4737,7 @@ namespace spectra::scene {
                     this->graphicsState.activeEnd   = true;
                     return;
                 }
-                throw ParseError(source, std::format("Unknown ActiveTransform target \"{}\"", token.text));
+                throw ParseError(source, format_message("Unknown ActiveTransform target \"{}\"", token.text));
             }
 
             [[nodiscard]] SceneTransformSet PbrtWorldFromCameraTransform() const {
@@ -4696,10 +4764,10 @@ namespace spectra::scene {
 
             void ReadBracketedMatrix(PbrtTokenStream& stream, const std::string_view context, std::array<float, 16>* values) const {
                 Token open = RequireToken(stream, context);
-                if (open.kind != TokenKind::LeftBracket) throw ParseError(open.source, std::format("{} expects '['", context));
+                if (open.kind != TokenKind::LeftBracket) throw ParseError(open.source, format_message("{} expects '['", context));
                 for (float& value : *values) value = ParseFloatToken(RequireToken(stream, context));
                 Token close = RequireToken(stream, context);
-                if (close.kind != TokenKind::RightBracket) throw ParseError(close.source, std::format("{} expects ']'", context));
+                if (close.kind != TokenKind::RightBracket) throw ParseError(close.source, format_message("{} expects ']'", context));
             }
 
             void Transform(PbrtTokenStream& stream, const Scene::SourceLocation& source) {
@@ -4715,8 +4783,8 @@ namespace spectra::scene {
             }
 
             void PopGraphicsState(const Token& directive) {
-                if (this->stateStack.empty()) throw ParseError(directive.source, std::format("Unmatched {}", directive.text));
-                if (this->stackKinds.empty() || this->stackKinds.back() != 'a') throw ParseError(directive.source, std::format("{} does not match the current graphics state stack", directive.text));
+                if (this->stateStack.empty()) throw ParseError(directive.source, format_message("Unmatched {}", directive.text));
+                if (this->stackKinds.empty() || this->stackKinds.back() != 'a') throw ParseError(directive.source, format_message("{} does not match the current graphics state stack", directive.text));
                 this->graphicsState = std::move(this->stateStack.back());
                 this->stateStack.pop_back();
                 this->stackKinds.pop_back();
@@ -4735,7 +4803,7 @@ namespace spectra::scene {
                 else if (target == "texture")
                     currentAttributes = &this->graphicsState.textureAttributes;
                 else
-                    throw ParseError(source, std::format("Unknown Attribute target \"{}\"", target));
+                    throw ParseError(source, format_message("Unknown Attribute target \"{}\"", target));
 
                 for (Scene::Parameter& parameter : parameters) {
                     parameter.may_be_unused = true;
@@ -4771,7 +4839,7 @@ namespace spectra::scene {
                 this->RequireUniqueName(this->mediumNames, "medium", name, source);
                 Scene::Entity entity = this->EntityWithAttributes("", std::move(parameters), this->graphicsState.mediumAttributes, EntityUse::Medium, source, this->graphicsState.color_space);
                 const std::string type = OneStringParameter(entity.parameters, "type", "");
-                if (type.empty()) throw ParseError(source, std::format("MakeNamedMedium \"{}\" requires \"string type\"", name));
+                if (type.empty()) throw ParseError(source, format_message("MakeNamedMedium \"{}\" requires \"string type\"", name));
                 entity.type = type;
                 this->mediumNames.insert(name);
                 this->scene.media.push_back(Scene::Medium{
@@ -4784,7 +4852,7 @@ namespace spectra::scene {
             void LightSource(PbrtTokenStream& stream, const Scene::SourceLocation& source) {
                 const std::string type = RequireStringToken(stream, "LightSource");
                 this->scene.lights.push_back(Scene::Light{
-                    .name      = std::format("__light_{}", this->scene.lights.size()),
+                    .name      = format_message("__light_{}", this->scene.lights.size()),
                     .entity    = this->EntityWithAttributes(type, this->ParseParameters(stream), this->graphicsState.lightAttributes, EntityUse::Light, source, this->graphicsState.color_space),
                     .transform = this->graphicsState.transform,
                     .medium    = this->graphicsState.medium_interface.outside,
@@ -4793,7 +4861,7 @@ namespace spectra::scene {
 
             void Material(std::string type, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
                 if (type.empty()) type = "interface";
-                const std::string name = std::format("__inline_material_{}", this->inlineMaterialCount);
+                const std::string name = format_message("__inline_material_{}", this->inlineMaterialCount);
                 ++this->inlineMaterialCount;
                 this->scene.materials.push_back(Scene::Material{
                     .name   = name,
@@ -4807,7 +4875,7 @@ namespace spectra::scene {
                 this->RequireUniqueName(this->material_names, "material", name, source);
                 Scene::Entity entity = this->EntityWithAttributes("", std::move(parameters), this->graphicsState.materialAttributes, EntityUse::Material, source, this->graphicsState.color_space);
                 const std::string type = OneStringParameter(entity.parameters, "type", "");
-                if (type.empty()) throw ParseError(source, std::format("MakeNamedMaterial \"{}\" requires \"string type\"", name));
+                if (type.empty()) throw ParseError(source, format_message("MakeNamedMaterial \"{}\" requires \"string type\"", name));
                 entity.type = type;
                 this->material_names.insert(name);
                 this->scene.materials.push_back(Scene::Material{
@@ -4820,7 +4888,7 @@ namespace spectra::scene {
                 std::string name = RequireStringToken(stream, "Texture");
                 std::string kind = RequireStringToken(stream, "Texture");
                 std::string type = RequireStringToken(stream, "Texture");
-                if (kind != "float" && kind != "spectrum") throw ParseError(source, std::format("Texture \"{}\" has unsupported value type \"{}\"", name, kind));
+                if (kind != "float" && kind != "spectrum") throw ParseError(source, format_message("Texture \"{}\" has unsupported value type \"{}\"", name, kind));
                 this->RequireUniqueName(kind == "float" ? this->floatTextureNames : this->spectrumTextureNames, "texture", name, source);
                 if (kind == "float")
                     this->floatTextureNames.insert(name);
@@ -4836,7 +4904,7 @@ namespace spectra::scene {
 
             void Shape(std::string type, std::vector<Scene::Parameter> parameters, const Scene::SourceLocation& source) {
                 Scene::Shape shape{
-                    .name               = std::format("__shape_{}", this->shapeCount),
+                    .name               = format_message("__shape_{}", this->shapeCount),
                     .entity             = this->EntityWithAttributes(std::move(type), std::move(parameters), this->graphicsState.shapeAttributes, EntityUse::Shape, source, this->graphicsState.color_space),
                     .transform          = this->graphicsState.transform,
                     .reverse_orientation = this->graphicsState.reverse_orientation,
@@ -4877,7 +4945,7 @@ namespace spectra::scene {
                 this->RequireWorld(source, "ObjectInstance");
                 if (this->activeObjectDefinition.has_value()) throw ParseError(source, "ObjectInstance cannot be used inside ObjectBegin");
                 this->scene.object_instances.push_back(Scene::ObjectInstance{
-                    .name           = std::format("__instance_{}", this->scene.object_instances.size()),
+                    .name           = format_message("__instance_{}", this->scene.object_instances.size()),
                     .definition_name = std::move(name),
                     .transform      = this->graphicsState.transform,
                     .source         = source,
@@ -4892,13 +4960,13 @@ namespace spectra::scene {
             }
 
             void RequireUniqueName(std::set<std::string>& names, const std::string_view kind, const std::string& name, const Scene::SourceLocation& source) {
-                if (name.empty()) throw ParseError(source, std::format("PBRT {} name must not be empty", kind));
-                if (!names.insert(name).second) throw ParseError(source, std::format("PBRT {} \"{}\" is already defined", kind, name));
+                if (name.empty()) throw ParseError(source, format_message("PBRT {} name must not be empty", kind));
+                if (!names.insert(name).second) throw ParseError(source, format_message("PBRT {} \"{}\" is already defined", kind, name));
             }
 
             void Finish() const {
-                if (!this->stateStack.empty()) throw std::runtime_error(std::format("{}: missing AttributeEnd/ObjectEnd for scene parser stack", this->scene.source));
-                if (this->activeObjectDefinition.has_value()) throw std::runtime_error(std::format("{}: missing ObjectEnd", this->scene.source));
+                if (!this->stateStack.empty()) throw std::runtime_error(format_message("{}: missing AttributeEnd/ObjectEnd for scene parser stack", this->scene.source));
+                if (this->activeObjectDefinition.has_value()) throw std::runtime_error(format_message("{}: missing ObjectEnd", this->scene.source));
             }
 
             Scene::ResolvedScene scene{};
@@ -4925,13 +4993,13 @@ namespace spectra::scene {
 
         [[nodiscard]] std::filesystem::path ResolveScenePathByUniqueStem(const std::filesystem::path& root, const std::string& name) {
             std::optional<std::filesystem::path> match;
-            if (!std::filesystem::exists(root)) throw std::runtime_error(std::format("{}: scene root does not exist", root.string()));
+            if (!std::filesystem::exists(root)) throw std::runtime_error(format_message("{}: scene root does not exist", root.string()));
             for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(root)) {
                 if (!entry.is_regular_file()) continue;
                 const std::filesystem::path path = entry.path();
                 if (!is_pbrt_scene_file(path)) continue;
                 if (scene_file_title(path) != name) continue;
-                if (match.has_value()) throw std::runtime_error(std::format("Scene alias \"{}\" is ambiguous; pass a scene-root-relative .pbrt path", name));
+                if (match.has_value()) throw std::runtime_error(format_message("Scene alias \"{}\" is ambiguous; pass a scene-root-relative .pbrt path", name));
                 match = path;
             }
             if (match.has_value()) return std::filesystem::absolute(*match).lexically_normal();
@@ -4952,14 +5020,14 @@ namespace spectra::scene {
             const std::filesystem::path uniqueStem = ResolveScenePathByUniqueStem(root, requested);
             if (!uniqueStem.empty()) return uniqueStem;
 
-            throw std::runtime_error(std::format("Unknown Spectra scene \"{}\".", requested));
+            throw std::runtime_error(format_message("Unknown Spectra scene \"{}\".", requested));
         }
 
         [[nodiscard]] Scene LoadPbrtSceneFile(const std::filesystem::path& scenePath, std::string sceneName) {
             if (scenePath.empty()) throw std::runtime_error("PBRT scene file path must not be empty");
             const std::filesystem::path absolutePath = std::filesystem::absolute(scenePath).lexically_normal();
-            if (!std::filesystem::is_regular_file(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file does not exist", absolutePath.string()));
-            if (!is_pbrt_scene_file(absolutePath)) throw std::runtime_error(std::format("{}: PBRT scene file must use .pbrt or .pbrt.gz", absolutePath.string()));
+            if (!std::filesystem::is_regular_file(absolutePath)) throw std::runtime_error(format_message("{}: PBRT scene file does not exist", absolutePath.string()));
+            if (!is_pbrt_scene_file(absolutePath)) throw std::runtime_error(format_message("{}: PBRT scene file must use .pbrt or .pbrt.gz", absolutePath.string()));
 
             ScenePbrtBuilder builder(absolutePath);
             Scene::ResolvedScene scene = builder.Parse();
@@ -4977,11 +5045,11 @@ namespace spectra::scene {
                 if (parameter.name != name) continue;
                 if (parameter.type == "float") {
                     const std::vector<float>* values = std::get_if<std::vector<float>>(&parameter.values);
-                    if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one float value", name));
+                    if (values == nullptr || values->empty()) throw std::runtime_error(format_message("PBRT parameter \"{}\" must contain at least one float value", name));
                     return values->front();
                 }
                 const std::vector<int>* values = std::get_if<std::vector<int>>(&parameter.values);
-                if (values == nullptr || values->empty()) throw std::runtime_error(std::format("PBRT parameter \"{}\" must contain at least one integer value", name));
+                if (values == nullptr || values->empty()) throw std::runtime_error(format_message("PBRT parameter \"{}\" must contain at least one integer value", name));
                 return static_cast<float>(values->front());
             }
             return default_value;
@@ -5004,7 +5072,7 @@ namespace spectra::scene {
             if (light.entity.type == "infinite") ++infinite_light_count;
 
         const float camera_fov = one_float_parameter(scene.render_settings.camera.parameters, "fov", scene.render_settings.camera.type == "perspective" ? 90.0f : 45.0f);
-        if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(std::format("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
+        if (!(camera_fov > 0.0f && camera_fov < 180.0f)) throw std::runtime_error(format_message("PBRT scene \"{}\" has invalid camera FOV {}", scene.name, camera_fov));
 
         return Scene::Info{
             .name                    = scene.name,

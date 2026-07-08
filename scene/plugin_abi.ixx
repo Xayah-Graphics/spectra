@@ -184,6 +184,14 @@ export namespace spectra::scene {
         float scale[3]{};
     };
 
+    struct SpectraSceneVolumeChannelBinding {
+        const char* channel_name{};
+        std::uint32_t component{};
+        float scale{};
+        float bias{};
+        std::uint32_t enabled{};
+    };
+
     struct SpectraSceneMaterial {
         const char* name{};
         const char* model{};
@@ -194,8 +202,11 @@ export namespace spectra::scene {
         float roughness{};
         float metallic{};
         float alpha_cutoff{};
-        float volume_density_scale{};
-        float volume_temperature_scale{};
+        std::uint32_t volume_mode{};
+        SpectraSceneVolumeChannelBinding volume_density{};
+        SpectraSceneVolumeChannelBinding volume_emission{};
+        SpectraSceneVolumeChannelBinding volume_color{};
+        SpectraSceneVolumeChannelBinding volume_debug_scalar{};
     };
 
     struct SpectraSceneMaterialSpan {

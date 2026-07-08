@@ -1,16 +1,20 @@
 #include "camera_uniform.slangh"
 
+static const uint invalidVolumeChannelSlot = 0xffffffffu;
+
 struct VolumeSelectionPushConstants {
-    float4 originDensityScale;
+    float4 originMode;
     float4 extentStepScale;
+    float4 opacityScaleBias;
+    uint4 channelSlots;
+    uint4 channelComponents;
     float4 color;
-    uint objectId;
+    uint4 object;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<CameraUniform> camera;
-[[vk::binding(1, 0)]] Texture3D<float> densityTexture;
-[[vk::binding(2, 0)]] Texture3D<float> temperatureTexture;
-[[vk::binding(3, 0)]] SamplerState volumeSampler;
+[[vk::binding(1, 0)]] Texture3D<float4> volumeChannels[16];
+[[vk::binding(2, 0)]] SamplerState volumeSampler;
 [[vk::push_constant]] ConstantBuffer<VolumeSelectionPushConstants> volume;
 
 struct VertexOutput {
@@ -72,7 +76,7 @@ float3 cube_corner(uint cornerIndex) {
 [shader("vertex")]
 VertexOutput vertex_main(uint vertexIndex : SV_VertexID) {
     float3 localPosition = cube_corner(cube_index(vertexIndex));
-    float3 origin = volume.originDensityScale.xyz;
+    float3 origin = volume.originMode.xyz;
     float3 extent = volume.extentStepScale.xyz;
     float3 worldPosition = origin + localPosition * extent;
     VertexOutput output;
@@ -96,11 +100,25 @@ float world_step_length(float3 localRayDirection, float3 extent, float localStep
     return length(localRayDirection * extent) * localStepLength;
 }
 
+float select_component(float4 value, uint component) {
+    if (component == 0u) return value.x;
+    if (component == 1u) return value.y;
+    if (component == 2u) return value.z;
+    return value.w;
+}
+
+float sample_opacity(float3 samplePosition) {
+    uint slot = uint(volume.originMode.w + 0.5) == 1u ? volume.channelSlots.w : volume.channelSlots.x;
+    uint component = (uint(volume.originMode.w + 0.5) == 1u ? volume.channelComponents.w : volume.channelComponents.x) & 0xffu;
+    if (slot == invalidVolumeChannelSlot) return 0.0;
+    float4 value = volumeChannels[slot].SampleLevel(volumeSampler, samplePosition, 0.0);
+    return max(select_component(value, component) * volume.opacityScaleBias.x + volume.opacityScaleBias.y, 0.0);
+}
+
 [shader("fragment")]
 float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV_Target {
     if (!isFrontFace) discard;
-    float3 origin = volume.originDensityScale.xyz;
-    float densityScale = volume.originDensityScale.w;
+    float3 origin = volume.originMode.xyz;
     float3 extent = volume.extentStepScale.xyz;
     float3 cameraLocal = (camera.cameraPosition.xyz - origin) / extent;
     float3 rayDirection = normalize(input.localPosition - cameraLocal);
@@ -114,8 +132,7 @@ float4 fragment_main(VertexOutput input, bool isFrontFace : SV_IsFrontFace) : SV
     for (int stepIndex = 0; stepIndex < 128; ++stepIndex) {
         float t = startT + (float(stepIndex) + 0.5) * stepLength;
         if (t > endT || accumulatedAlpha > 0.55) break;
-        float density = max(densityTexture.SampleLevel(volumeSampler, cameraLocal + rayDirection * t, 0.0), 0.0) * densityScale;
-        float alpha = saturate(1.0 - exp(-density * stepWorldLength));
+        float alpha = saturate(1.0 - exp(-sample_opacity(cameraLocal + rayDirection * t) * stepWorldLength));
         accumulatedAlpha += (1.0 - accumulatedAlpha) * alpha;
     }
     if (accumulatedAlpha <= 0.025) discard;
