@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 4.3.0)
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+cmake_minimum_required(VERSION 4.4.0)
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 project(spectra VERSION 1.1.1 LANGUAGES C CXX CUDA)
 
 
@@ -888,6 +888,9 @@ set_property(TARGET spectra_pathtracer_cli PROPERTY CXX_MODULE_STD ON)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(spectra_pathtracer_cli PRIVATE -rdynamic "LINKER:--no-as-needed")
 endif ()
+if (MSVC)
+    target_link_options(spectra_pathtracer_cli PRIVATE "/WHOLEARCHIVE:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib")
+endif ()
 
 
 # ============================================================================
@@ -987,4 +990,7 @@ target_link_libraries(
         xayah-util-xcli
 )
 target_include_directories(spectra PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
+if (MSVC)
+    target_link_options(spectra PRIVATE "/WHOLEARCHIVE:${CMAKE_CURRENT_BINARY_DIR}/@cmake_cxx_std.lib")
+endif ()
 set_property(TARGET spectra PROPERTY CXX_MODULE_STD ON)
