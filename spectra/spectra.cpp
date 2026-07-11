@@ -6,6 +6,9 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <commctrl.h>
+#include <dwmapi.h>
+#include <windowsx.h>
 #endif
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -170,9 +173,35 @@ namespace {
         ImGui::SetColorEditOptions(ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueWheel);
     }
 
-    [[nodiscard]] float command_bar_height() {
+#if defined(_WIN32)
+    [[nodiscard]] float window_chrome_caption_height(GLFWwindow* window);
+    void set_window_chrome_top_margin(GLFWwindow* window, int top_margin);
+#endif
+
+    [[nodiscard]] float command_bar_height(GLFWwindow* window) {
         const ImGuiStyle& style = ImGui::GetStyle();
-        return std::max(42.0f, ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f);
+        float height            = std::max(42.0f, ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f);
+#if defined(_WIN32)
+        height = std::max(height, window_chrome_caption_height(window));
+        set_window_chrome_top_margin(window, static_cast<int>(std::ceil(height)));
+#else
+        static_cast<void>(window);
+#endif
+        return height;
+    }
+
+    [[nodiscard]] bool draw_ellipsized_command_bar_text(const std::string_view text, const float width, const ImVec4 color) {
+        if (text.empty() || width <= 0.0f) return false;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        ImGui::Dummy(ImVec2{width, ImGui::GetFrameHeight()});
+        const ImVec2 item_min = ImGui::GetItemRectMin();
+        const ImVec2 item_max = ImGui::GetItemRectMax();
+        const ImVec2 text_min{item_min.x, item_min.y + style.FramePadding.y};
+        const ImVec2 text_max{item_max.x, text_min.y + ImGui::GetTextLineHeight()};
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), text_min, text_max, text_max.x, text.data(), text.data() + text.size(), nullptr);
+        ImGui::PopStyleColor();
+        return ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
     }
 
     void push_toolbar_button_style(const bool active) {
@@ -208,6 +237,293 @@ namespace {
     }
 
 #if defined(_WIN32)
+    constexpr UINT_PTR window_chrome_subclass_id = 1u;
+
+    struct WindowChromeState {
+        RECT drag_region{};
+        LONG caption_buttons_left{};
+        LONG caption_buttons_bottom{};
+        int frame_top_margin{};
+        int minimum_width{};
+        int minimum_height{};
+        const char* deferred_operation{};
+        std::uint32_t deferred_error{};
+        bool deferred_error_is_hresult{};
+        bool drag_region_valid{};
+    };
+
+    LRESULT CALLBACK window_chrome_subclass_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR reference_data);
+
+    [[nodiscard]] HWND native_window_handle(GLFWwindow* window) {
+        if (window == nullptr) throw std::runtime_error("Cannot access a Win32 handle from a null GLFW window");
+        HWND const native_window = glfwGetWin32Window(window);
+        if (native_window == nullptr) throw std::runtime_error("Failed to get Spectra Win32 window handle");
+        return native_window;
+    }
+
+    void remember_window_chrome_error(WindowChromeState& state, const char* operation, const std::uint32_t error, const bool hresult) noexcept {
+        if (state.deferred_operation != nullptr) return;
+        state.deferred_operation        = operation;
+        state.deferred_error            = error;
+        state.deferred_error_is_hresult = hresult;
+    }
+
+    void remember_window_chrome_last_error(WindowChromeState& state, const char* operation) noexcept {
+        const DWORD error = GetLastError();
+        remember_window_chrome_error(state, operation, error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error, false);
+    }
+
+    [[nodiscard]] WindowChromeState& window_chrome_state(GLFWwindow* window) {
+        const HWND native_window = native_window_handle(window);
+        DWORD_PTR reference_data = 0u;
+        if (!GetWindowSubclass(native_window, window_chrome_subclass_proc, window_chrome_subclass_id, &reference_data) || reference_data == 0u) throw std::runtime_error("Spectra Win32 window chrome is not installed");
+        return *reinterpret_cast<WindowChromeState*>(reference_data);
+    }
+
+    void validate_window_chrome(GLFWwindow* window) {
+        const WindowChromeState& state = window_chrome_state(window);
+        if (state.deferred_operation == nullptr) return;
+        if (state.deferred_error_is_hresult) throw std::runtime_error(std::format("{} failed with HRESULT 0x{:08X}", state.deferred_operation, state.deferred_error));
+        throw std::system_error(static_cast<int>(state.deferred_error), std::system_category(), state.deferred_operation);
+    }
+
+    void extend_window_frame(HWND window, WindowChromeState& state, const int top_margin) {
+        if (top_margin <= 0) throw std::runtime_error("Spectra Win32 frame top margin must be positive");
+        const MARGINS margins{0, 0, top_margin, 0};
+        const HRESULT result = DwmExtendFrameIntoClientArea(window, &margins);
+        if (FAILED(result)) throw std::runtime_error(std::format("DwmExtendFrameIntoClientArea failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(result)));
+        state.frame_top_margin = top_margin;
+    }
+
+    void extend_window_frame_noexcept(HWND window, WindowChromeState& state) noexcept {
+        const MARGINS margins{0, 0, std::max(1, state.frame_top_margin), 0};
+        const HRESULT result = DwmExtendFrameIntoClientArea(window, &margins);
+        if (FAILED(result)) remember_window_chrome_error(state, "DwmExtendFrameIntoClientArea", static_cast<std::uint32_t>(result), true);
+    }
+
+    LRESULT CALLBACK window_chrome_subclass_proc(HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam, const UINT_PTR subclass_id, const DWORD_PTR reference_data) {
+        if (subclass_id != window_chrome_subclass_id || reference_data == 0u) return DefSubclassProc(window, message, wparam, lparam);
+        auto& state = *reinterpret_cast<WindowChromeState*>(reference_data);
+
+        LRESULT dwm_result     = 0;
+        const bool dwm_handled = DwmDefWindowProc(window, message, wparam, lparam, &dwm_result) == TRUE;
+
+        if (message == WM_NCCALCSIZE && wparam == TRUE) return 0;
+
+        if (message == WM_GETMINMAXINFO) {
+            const LRESULT result    = DefSubclassProc(window, message, wparam, lparam);
+            auto* const minmax_info = reinterpret_cast<MINMAXINFO*>(lparam);
+            const HMONITOR monitor  = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO monitor_info{};
+            monitor_info.cbSize = sizeof(monitor_info);
+            if (monitor == nullptr || !GetMonitorInfoW(monitor, &monitor_info)) {
+                remember_window_chrome_last_error(state, "GetMonitorInfoW");
+                return result;
+            }
+            minmax_info->ptMaxPosition.x  = monitor_info.rcWork.left - monitor_info.rcMonitor.left;
+            minmax_info->ptMaxPosition.y  = monitor_info.rcWork.top - monitor_info.rcMonitor.top;
+            minmax_info->ptMaxSize.x      = monitor_info.rcWork.right - monitor_info.rcWork.left;
+            minmax_info->ptMaxSize.y      = monitor_info.rcWork.bottom - monitor_info.rcWork.top;
+            minmax_info->ptMinTrackSize.x = state.minimum_width;
+            minmax_info->ptMinTrackSize.y = state.minimum_height;
+            return result;
+        }
+
+        if (message == WM_NCHITTEST) {
+            if (dwm_handled) return dwm_result;
+            const POINT screen_point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            if (!IsZoomed(window)) {
+                RECT window_rect{};
+                if (!GetWindowRect(window, &window_rect)) {
+                    remember_window_chrome_last_error(state, "GetWindowRect");
+                    return HTCLIENT;
+                }
+                const UINT dpi = GetDpiForWindow(window);
+                if (dpi == 0u) {
+                    remember_window_chrome_last_error(state, "GetDpiForWindow");
+                    return HTCLIENT;
+                }
+                const int horizontal_border = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+                const int vertical_border   = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+                if (horizontal_border <= 0 || vertical_border <= 0) {
+                    remember_window_chrome_error(state, "GetSystemMetricsForDpi", ERROR_INVALID_DATA, false);
+                    return HTCLIENT;
+                }
+                const bool left   = screen_point.x >= window_rect.left && screen_point.x < window_rect.left + horizontal_border;
+                const bool right  = screen_point.x < window_rect.right && screen_point.x >= window_rect.right - horizontal_border;
+                const bool top    = screen_point.y >= window_rect.top && screen_point.y < window_rect.top + vertical_border;
+                const bool bottom = screen_point.y < window_rect.bottom && screen_point.y >= window_rect.bottom - vertical_border;
+                if (top && left) return HTTOPLEFT;
+                if (top && right) return HTTOPRIGHT;
+                if (bottom && left) return HTBOTTOMLEFT;
+                if (bottom && right) return HTBOTTOMRIGHT;
+                if (left) return HTLEFT;
+                if (right) return HTRIGHT;
+                if (top) return HTTOP;
+                if (bottom) return HTBOTTOM;
+            }
+            POINT client_point = screen_point;
+            if (!ScreenToClient(window, &client_point)) {
+                remember_window_chrome_last_error(state, "ScreenToClient");
+                return HTCLIENT;
+            }
+            if (state.drag_region_valid && client_point.x >= state.drag_region.left && client_point.x < state.drag_region.right && client_point.y >= state.drag_region.top && client_point.y < state.drag_region.bottom) return HTCAPTION;
+            return HTCLIENT;
+        }
+
+        if (message == WM_DPICHANGED) {
+            const LRESULT result = DefSubclassProc(window, message, wparam, lparam);
+            extend_window_frame_noexcept(window, state);
+            return result;
+        }
+        if (message == WM_DWMCOMPOSITIONCHANGED || message == WM_ACTIVATE) {
+            extend_window_frame_noexcept(window, state);
+            return DefSubclassProc(window, message, wparam, lparam);
+        }
+        if (dwm_handled) return dwm_result;
+        return DefSubclassProc(window, message, wparam, lparam);
+    }
+
+    void install_window_chrome(GLFWwindow* window, const int width, const int height, const int minimum_width, const int minimum_height) {
+        if (width <= 0 || height <= 0 || minimum_width <= 0 || minimum_height <= 0) throw std::runtime_error("Invalid Spectra Win32 window chrome dimensions");
+        const HWND native_window = native_window_handle(window);
+        auto state               = std::make_unique<WindowChromeState>();
+        state->minimum_width     = minimum_width;
+        state->minimum_height    = minimum_height;
+        if (!SetWindowSubclass(native_window, window_chrome_subclass_proc, window_chrome_subclass_id, reinterpret_cast<DWORD_PTR>(state.get()))) {
+            const DWORD error = GetLastError();
+            throw std::system_error(static_cast<int>(error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error), std::system_category(), "SetWindowSubclass");
+        }
+
+        try {
+            const BOOL dark_mode           = TRUE;
+            const HRESULT dark_mode_result = DwmSetWindowAttribute(native_window, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_mode, sizeof(dark_mode));
+            if (FAILED(dark_mode_result)) throw std::runtime_error(std::format("DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE) failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(dark_mode_result)));
+            constexpr DWM_WINDOW_CORNER_PREFERENCE corner_preference = DWMWCP_DEFAULT;
+            const HRESULT corner_result                              = DwmSetWindowAttribute(native_window, DWMWA_WINDOW_CORNER_PREFERENCE, &corner_preference, sizeof(corner_preference));
+            if (FAILED(corner_result)) throw std::runtime_error(std::format("DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE) failed with HRESULT 0x{:08X}; Spectra requires Windows 11", static_cast<std::uint32_t>(corner_result)));
+            extend_window_frame(native_window, *state, 42);
+
+            RECT window_rect{};
+            if (!GetWindowRect(native_window, &window_rect)) {
+                const DWORD error = GetLastError();
+                throw std::system_error(static_cast<int>(error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error), std::system_category(), "GetWindowRect");
+            }
+            const int centered_x = window_rect.left + ((window_rect.right - window_rect.left) - width) / 2;
+            const int centered_y = window_rect.top + ((window_rect.bottom - window_rect.top) - height) / 2;
+            if (!SetWindowPos(native_window, nullptr, centered_x, centered_y, width, height, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER)) {
+                const DWORD error = GetLastError();
+                throw std::system_error(static_cast<int>(error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error), std::system_category(), "SetWindowPos(SWP_FRAMECHANGED)");
+            }
+        } catch (...) {
+            state.release();
+            throw;
+        }
+        state.release();
+        validate_window_chrome(window);
+    }
+
+    void destroy_window_chrome(GLFWwindow* window) noexcept {
+        if (window == nullptr) return;
+        const HWND native_window = glfwGetWin32Window(window);
+        if (native_window == nullptr) return;
+        DWORD_PTR reference_data = 0u;
+        if (!GetWindowSubclass(native_window, window_chrome_subclass_proc, window_chrome_subclass_id, &reference_data) || reference_data == 0u) return;
+        if (!RemoveWindowSubclass(native_window, window_chrome_subclass_proc, window_chrome_subclass_id)) return;
+        delete reinterpret_cast<WindowChromeState*>(reference_data);
+    }
+
+    [[nodiscard]] bool refresh_window_chrome_metrics(GLFWwindow* window) {
+        validate_window_chrome(window);
+        const HWND native_window = native_window_handle(window);
+        if (!IsWindowVisible(native_window) || IsIconic(native_window)) return false;
+        WindowChromeState& state     = window_chrome_state(window);
+        DWORD cloaked                = 0u;
+        const HRESULT cloaked_result = DwmGetWindowAttribute(native_window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+        if (FAILED(cloaked_result)) throw std::runtime_error(std::format("DwmGetWindowAttribute(DWMWA_CLOAKED) failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(cloaked_result)));
+        if (cloaked != 0u) return false;
+
+        RECT caption_bounds{};
+        const HRESULT caption_result = DwmGetWindowAttribute(native_window, DWMWA_CAPTION_BUTTON_BOUNDS, &caption_bounds, sizeof(caption_bounds));
+        if (FAILED(caption_result)) throw std::runtime_error(std::format("DwmGetWindowAttribute(DWMWA_CAPTION_BUTTON_BOUNDS) failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(caption_result)));
+        RECT window_rect{};
+        RECT client_rect{};
+        POINT client_origin{};
+        if (!GetWindowRect(native_window, &window_rect)) {
+            const DWORD error = GetLastError();
+            throw std::system_error(static_cast<int>(error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error), std::system_category(), "GetWindowRect");
+        }
+        if (!GetClientRect(native_window, &client_rect)) {
+            const DWORD error = GetLastError();
+            throw std::system_error(static_cast<int>(error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error), std::system_category(), "GetClientRect");
+        }
+        if (!ClientToScreen(native_window, &client_origin)) {
+            const DWORD error = GetLastError();
+            throw std::system_error(static_cast<int>(error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error), std::system_category(), "ClientToScreen");
+        }
+
+        const int client_offset_x = client_origin.x - window_rect.left;
+        const int client_offset_y = client_origin.y - window_rect.top;
+        const int caption_left    = caption_bounds.left - client_offset_x;
+        const int caption_width   = caption_bounds.right - caption_bounds.left;
+        const int caption_bottom  = caption_bounds.bottom - client_offset_y;
+        if (caption_left <= client_rect.left || caption_left >= client_rect.right || caption_width <= 0 || caption_bottom <= client_rect.top || caption_bottom > client_rect.bottom) {
+            if (state.caption_buttons_left > 0 && state.caption_buttons_bottom > 0) return true;
+            throw std::runtime_error("DWM returned invalid Spectra caption button bounds");
+        }
+        state.caption_buttons_left   = caption_left;
+        state.caption_buttons_bottom = caption_bottom;
+        return true;
+    }
+
+    [[nodiscard]] float window_chrome_caption_buttons_left(GLFWwindow* window) {
+        validate_window_chrome(window);
+        const LONG left = window_chrome_state(window).caption_buttons_left;
+        if (left <= 0) throw std::runtime_error("Spectra caption button bounds are unavailable");
+        return static_cast<float>(left);
+    }
+
+    [[nodiscard]] float window_chrome_caption_height(GLFWwindow* window) {
+        validate_window_chrome(window);
+        const LONG height = window_chrome_state(window).caption_buttons_bottom;
+        if (height <= 0) throw std::runtime_error("Spectra caption button height is unavailable");
+        return static_cast<float>(height);
+    }
+
+    [[nodiscard]] vk::ClearRect window_chrome_caption_clear_rect(GLFWwindow* window, const vk::Extent2D swapchain_extent) {
+        validate_window_chrome(window);
+        const WindowChromeState& state = window_chrome_state(window);
+        if (state.caption_buttons_left <= 0 || state.caption_buttons_bottom <= 0) throw std::runtime_error("Spectra caption button bounds are unavailable");
+        const auto caption_left   = static_cast<std::uint32_t>(state.caption_buttons_left);
+        const auto caption_bottom = static_cast<std::uint32_t>(state.caption_buttons_bottom);
+        if (caption_left >= swapchain_extent.width || caption_bottom > swapchain_extent.height) throw std::runtime_error("Spectra caption button bounds exceed the Vulkan swapchain extent");
+        return vk::ClearRect{vk::Rect2D{{static_cast<std::int32_t>(caption_left), 0}, {swapchain_extent.width - caption_left, caption_bottom}}, 0u, 1u};
+    }
+
+    void set_window_chrome_top_margin(GLFWwindow* window, const int top_margin) {
+        WindowChromeState& state = window_chrome_state(window);
+        if (state.frame_top_margin == top_margin) return;
+        extend_window_frame(native_window_handle(window), state, top_margin);
+    }
+
+    void clear_window_chrome_drag_region(GLFWwindow* window) {
+        WindowChromeState& state = window_chrome_state(window);
+        state.drag_region        = {};
+        state.drag_region_valid  = false;
+    }
+
+    void set_window_chrome_drag_region(GLFWwindow* window, const ImVec2 minimum, const ImVec2 maximum, const ImGuiViewport& viewport) {
+        if (!(maximum.x > minimum.x) || !(maximum.y > minimum.y)) return;
+        WindowChromeState& state = window_chrome_state(window);
+        state.drag_region        = RECT{
+            static_cast<LONG>(std::floor(minimum.x - viewport.Pos.x)),
+            static_cast<LONG>(std::floor(minimum.y - viewport.Pos.y)),
+            static_cast<LONG>(std::ceil(maximum.x - viewport.Pos.x)),
+            static_cast<LONG>(std::ceil(maximum.y - viewport.Pos.y)),
+        };
+        state.drag_region_valid = state.drag_region.right > state.drag_region.left && state.drag_region.bottom > state.drag_region.top;
+    }
+
     [[nodiscard]] HICON load_spectra_window_icon(const int size) {
         HINSTANCE__* const instance = GetModuleHandleW(nullptr);
         if (instance == nullptr) throw std::runtime_error("Failed to get Spectra executable module for window icon");
@@ -217,8 +533,7 @@ namespace {
     }
 
     void apply_spectra_window_icon(GLFWwindow* window) {
-        HWND__* const native_window = glfwGetWin32Window(window);
-        if (native_window == nullptr) throw std::runtime_error("Failed to get Spectra Win32 window handle");
+        const HWND native_window = native_window_handle(window);
         SendMessageW(native_window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(load_spectra_window_icon(GetSystemMetrics(SM_CXSMICON))));
         SendMessageW(native_window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(load_spectra_window_icon(GetSystemMetrics(SM_CXICON))));
     }
@@ -229,6 +544,29 @@ namespace {
         return {vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName, vk::KHRExternalMemoryWin32ExtensionName, vk::KHRExternalSemaphoreWin32ExtensionName};
 #else
         return {vk::KHRSwapchainExtensionName, vk::KHRExternalMemoryExtensionName, vk::KHRExternalSemaphoreExtensionName, vk::KHRExternalMemoryFdExtensionName, vk::KHRExternalSemaphoreFdExtensionName};
+#endif
+    }
+
+    constexpr std::array preferred_swapchain_surface_formats{
+        vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+        vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
+    };
+
+    [[nodiscard]] std::optional<vk::SurfaceFormatKHR> select_preferred_swapchain_surface_format(const std::span<const vk::SurfaceFormatKHR> surface_formats) {
+        if (surface_formats.size() == 1u && surface_formats.front().format == vk::Format::eUndefined) return preferred_swapchain_surface_formats.front();
+        for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_swapchain_surface_formats) {
+            for (const vk::SurfaceFormatKHR surface_format : surface_formats) {
+                if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace) return preferred_surface_format;
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] constexpr vk::CompositeAlphaFlagBitsKHR required_swapchain_composite_alpha() {
+#if defined(_WIN32)
+        return vk::CompositeAlphaFlagBitsKHR::ePreMultiplied;
+#else
+        return vk::CompositeAlphaFlagBitsKHR::eOpaque;
 #endif
     }
 
@@ -245,7 +583,6 @@ namespace spectra {
     };
 
     Spectra::Spectra(const std::string_view& app_name, const std::string_view& engine_name, const std::uint32_t window_width, const std::uint32_t window_height) try {
-        this->window_title.base = std::string{app_name};
         this->initialize_glfw();
         this->create_vulkan_instance(app_name, engine_name);
         this->create_debug_messenger();
@@ -268,6 +605,17 @@ namespace spectra {
     }
 
     void Spectra::run() {
+#if defined(_WIN32)
+        glfwShowWindow(this->surface.window.get());
+        glfwPollEvents();
+        const HRESULT flush_result = DwmFlush();
+        if (FAILED(flush_result)) throw std::runtime_error(std::format("DwmFlush failed with HRESULT 0x{:08X}", static_cast<std::uint32_t>(flush_result)));
+        while (!refresh_window_chrome_metrics(this->surface.window.get())) {
+            if (glfwWindowShouldClose(this->surface.window.get())) return;
+            glfwWaitEvents();
+        }
+        set_window_chrome_top_margin(this->surface.window.get(), static_cast<int>(std::ceil(std::max(42.0f, window_chrome_caption_height(this->surface.window.get())))));
+#endif
         while (!glfwWindowShouldClose(this->surface.window.get())) {
             FrameState frame{};
             if (!this->begin_frame(frame)) continue;
@@ -341,11 +689,15 @@ namespace spectra {
         const std::string app_name_string{app_name};
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-        this->surface.window.reset(glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr));
-        if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
 #if defined(_WIN32)
-        apply_spectra_window_icon(this->surface.window.get());
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 #endif
+        GLFWwindow* const window = glfwCreateWindow(static_cast<int>(window_width), static_cast<int>(window_height), app_name_string.c_str(), nullptr, nullptr);
+#if defined(_WIN32)
+        glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
+#endif
+        this->surface.window.reset(window);
+        if (this->surface.window == nullptr) throw std::runtime_error("Failed to create GLFW window");
         glfwSetWindowSizeLimits(this->surface.window.get(), 800, 480, GLFW_DONT_CARE, GLFW_DONT_CARE);
         glfwSetWindowUserPointer(this->surface.window.get(), this);
         glfwSetFramebufferSizeCallback(this->surface.window.get(), [](GLFWwindow* window, int, int) { static_cast<Spectra*>(glfwGetWindowUserPointer(window))->surface.resize_requested = true; });
@@ -354,6 +706,11 @@ namespace spectra {
             if (spectra == nullptr) return;
             spectra->queue_file_drop(path_count, paths);
         });
+#if defined(_WIN32)
+        apply_spectra_window_icon(this->surface.window.get());
+        install_window_chrome(this->surface.window.get(), static_cast<int>(window_width), static_cast<int>(window_height), 800, 480);
+        this->surface.resize_requested = false;
+#endif
     }
 
     void Spectra::create_surface() {
@@ -382,6 +739,14 @@ namespace spectra {
             }
             if (!required_extensions_available) continue;
 
+            const vk::SurfaceCapabilitiesKHR surface_capabilities = physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
+            if (!static_cast<bool>(surface_capabilities.supportedCompositeAlpha & required_swapchain_composite_alpha())) continue;
+#if defined(_WIN32)
+            if (surface_capabilities.currentTransform != vk::SurfaceTransformFlagBitsKHR::eIdentity) continue;
+            const std::vector<vk::SurfaceFormatKHR> surface_formats = physical_device.getSurfaceFormatsKHR(this->surface.surface);
+            if (!select_preferred_swapchain_surface_format(surface_formats).has_value()) continue;
+#endif
+
             const std::vector<vk::QueueFamilyProperties> queue_families = physical_device.getQueueFamilyProperties();
             for (std::uint32_t queue_family_index = 0; queue_family_index < queue_families.size(); ++queue_family_index) {
                 if (!static_cast<bool>(queue_families[queue_family_index].queueFlags & vk::QueueFlagBits::eGraphics)) continue;
@@ -393,7 +758,13 @@ namespace spectra {
             }
             if (selected) break;
         }
-        if (!selected) throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, external memory, external semaphore, and graphics-present queue support");
+        if (!selected) {
+#if defined(_WIN32)
+            throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with BGRA8/RGBA8 sRGB presentation, identity surface transform, premultiplied composite alpha, external memory, external semaphore, and graphics-present queue support");
+#else
+            throw std::runtime_error("Failed to find a Vulkan 1.4 physical device with swapchain, external memory, external semaphore, and graphics-present queue support");
+#endif
+        }
     }
 
     void Spectra::create_logical_device() {
@@ -427,28 +798,17 @@ namespace spectra {
         if (present_modes.empty()) throw std::runtime_error("Vulkan surface has no supported present modes");
         const vk::SurfaceCapabilitiesKHR surface_capabilities = this->context.physical_device.getSurfaceCapabilitiesKHR(this->surface.surface);
 
-        if (surface_formats.size() == 1 && surface_formats.front().format == vk::Format::eUndefined) {
-            this->swapchain.format      = vk::Format::eB8G8R8A8Unorm;
-            this->swapchain.color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
+        const std::optional<vk::SurfaceFormatKHR> preferred_surface_format = select_preferred_swapchain_surface_format(surface_formats);
+        if (preferred_surface_format.has_value()) {
+            this->swapchain.format      = preferred_surface_format->format;
+            this->swapchain.color_space = preferred_surface_format->colorSpace;
         } else {
+#if defined(_WIN32)
+            throw std::runtime_error("Spectra Win32 title bar requires a BGRA8 or RGBA8 UNORM surface format with the sRGB nonlinear color space");
+#else
             this->swapchain.format      = surface_formats.front().format;
             this->swapchain.color_space = surface_formats.front().colorSpace;
-            bool selected               = false;
-            constexpr std::array preferred_surface_formats{
-                vk::SurfaceFormatKHR{vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
-                vk::SurfaceFormatKHR{vk::Format::eR8G8B8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear},
-            };
-            for (const vk::SurfaceFormatKHR preferred_surface_format : preferred_surface_formats) {
-                for (const vk::SurfaceFormatKHR& surface_format : surface_formats) {
-                    if (surface_format.format == preferred_surface_format.format && surface_format.colorSpace == preferred_surface_format.colorSpace) {
-                        this->swapchain.format      = surface_format.format;
-                        this->swapchain.color_space = surface_format.colorSpace;
-                        selected                    = true;
-                        break;
-                    }
-                }
-                if (selected) break;
-            }
+#endif
         }
 
         this->swapchain.present_mode = vk::PresentModeKHR::eFifo;
@@ -479,8 +839,12 @@ namespace spectra {
         constexpr vk::ImageUsageFlags swapchain_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
         if ((surface_capabilities.supportedUsageFlags & swapchain_usage) != swapchain_usage) throw std::runtime_error("Vulkan surface does not support required swapchain image usage");
 
-        const vk::SurfaceTransformFlagBitsKHR pre_transform     = surface_capabilities.currentTransform;
-        constexpr auto composite_alpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+        const vk::SurfaceTransformFlagBitsKHR pre_transform = surface_capabilities.currentTransform;
+#if defined(_WIN32)
+        if (pre_transform != vk::SurfaceTransformFlagBitsKHR::eIdentity) throw std::runtime_error("Spectra Win32 title bar requires an identity Vulkan surface transform");
+#endif
+        constexpr vk::CompositeAlphaFlagBitsKHR composite_alpha = required_swapchain_composite_alpha();
+        if (!static_cast<bool>(surface_capabilities.supportedCompositeAlpha & composite_alpha)) throw std::runtime_error("Vulkan surface does not support the required swapchain composite alpha mode");
         const vk::SwapchainCreateInfoKHR swapchain_create_info{{}, *this->surface.surface, image_count, this->swapchain.format, this->swapchain.color_space, this->swapchain.extent, 1, swapchain_usage, vk::SharingMode::eExclusive, 0, nullptr, pre_transform, composite_alpha, this->swapchain.present_mode, vk::True, *old_swapchain};
         this->swapchain.handle = vk::raii::SwapchainKHR{this->context.device, swapchain_create_info};
 
@@ -595,11 +959,22 @@ namespace spectra {
 
     bool Spectra::begin_frame(FrameState& frame) {
         glfwPollEvents();
+#if defined(_WIN32)
+        validate_window_chrome(this->surface.window.get());
+#endif
         if (glfwWindowShouldClose(this->surface.window.get())) return false;
+        if (glfwGetWindowAttrib(this->surface.window.get(), GLFW_ICONIFIED) == GLFW_TRUE) {
+            this->timing.last_frame_time_valid = false;
+            glfwWaitEvents();
+            return false;
+        }
         if (this->surface.resize_requested) {
             this->recreate_swapchain();
             return false;
         }
+#if defined(_WIN32)
+        static_cast<void>(refresh_window_chrome_metrics(this->surface.window.get()));
+#endif
 
         frame.recreate_after_present                    = false;
         frame.frame_slot_index                          = this->sync.frame_slot_index;
@@ -649,7 +1024,6 @@ namespace spectra {
             frame.external_waits.emplace_back(*frame_result.completion_semaphore, 0, vk::PipelineStageFlagBits2::eTransfer);
         }
         if (frame_result.close_requested) glfwSetWindowShouldClose(this->surface.window.get(), GLFW_TRUE);
-        if (frame_result.window_detail.has_value()) this->window_title.detail = *frame_result.window_detail;
         return true;
     }
 
@@ -717,6 +1091,11 @@ namespace spectra {
         const vk::RenderingInfo imgui_rendering_info{{}, {{0, 0}, this->swapchain.extent}, 1, 0, 1, &imgui_color_attachment, nullptr, nullptr};
         command_buffer.beginRendering(imgui_rendering_info);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *command_buffer);
+#if defined(_WIN32)
+        constexpr vk::ClearAttachment transparent_caption_attachment{vk::ImageAspectFlagBits::eColor, 0u, vk::ClearValue{vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 0.0f}}}};
+        const std::array transparent_caption_rects{window_chrome_caption_clear_rect(this->surface.window.get(), this->swapchain.extent)};
+        command_buffer.clearAttachments(std::array{transparent_caption_attachment}, transparent_caption_rects);
+#endif
         command_buffer.endRendering();
 
         transition_image_layout(command_buffer, this->swapchain.images[frame.image_index], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::ImageAspectFlagBits::eColor, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eAllCommands, {});
@@ -737,15 +1116,13 @@ namespace spectra {
         const vk::Semaphore render_finished_semaphore = *this->sync.render_finished_semaphores[frame.image_index];
         const vk::SwapchainKHR swapchain              = *this->swapchain.handle;
         const vk::PresentInfoKHR present_info{1, &render_finished_semaphore, 1, &swapchain, &frame.image_index};
-        bool frame_presented = true;
-        const auto set_present_result = [&frame, &frame_presented](const vk::Result present_result) {
+        const auto set_present_result = [&frame](const vk::Result present_result) {
             if (present_result == vk::Result::eSuboptimalKHR || present_result == vk::Result::eErrorOutOfDateKHR) {
                 frame.recreate_after_present = true;
                 return;
             }
             if (present_result == vk::Result::eErrorSurfaceLostKHR) {
                 frame.recreate_after_present = true;
-                frame_presented              = false;
                 return;
             }
             throw std::runtime_error(std::string{"Failed to present swapchain image: "} + vk::to_string(present_result));
@@ -754,14 +1131,11 @@ namespace spectra {
             if (const vk::Result present_result = this->context.graphics_queue.presentKHR(present_info); present_result != vk::Result::eSuccess) set_present_result(present_result);
         } catch (const vk::OutOfDateKHRError&) {
             frame.recreate_after_present = true;
-            frame_presented              = false;
         } catch (const vk::SystemError& error) {
-            if (error.code().value() == static_cast<int>(vk::Result::eErrorOutOfDateKHR)) frame_presented = false;
             if (error.code().value() != static_cast<int>(vk::Result::eErrorSurfaceLostKHR) && error.code().value() != static_cast<int>(vk::Result::eSuboptimalKHR) && error.code().value() != static_cast<int>(vk::Result::eErrorOutOfDateKHR)) throw;
             set_present_result(static_cast<vk::Result>(error.code().value()));
         }
         if (frame.recreate_after_present) this->recreate_swapchain();
-        if (frame_presented) this->update_window_title(ImGui::GetIO().DeltaTime);
 
         this->sync.frame_slot_index = (this->sync.frame_slot_index + 1) % this->sync.frame_count;
         ++this->timing.frame_number;
@@ -770,12 +1144,12 @@ namespace spectra {
     void Spectra::recreate_swapchain() {
         int width  = 0;
         int height = 0;
-        while (width == 0 || height == 0) {
+        while (true) {
             glfwGetFramebufferSize(this->surface.window.get(), &width, &height);
-            if (width == 0 || height == 0) {
-                glfwWaitEvents();
-                if (glfwWindowShouldClose(this->surface.window.get())) return;
-            }
+            if (glfwWindowShouldClose(this->surface.window.get())) return;
+            if (glfwGetWindowAttrib(this->surface.window.get(), GLFW_ICONIFIED) == GLFW_FALSE && width > 0 && height > 0) break;
+            this->timing.last_frame_time_valid = false;
+            glfwWaitEvents();
         }
 
         this->context.device.waitIdle();
@@ -977,7 +1351,10 @@ namespace spectra {
 
     void Spectra::destroy_surface_and_window() noexcept {
         this->surface.surface = nullptr;
-        this->surface.window  = nullptr;
+#if defined(_WIN32)
+        destroy_window_chrome(this->surface.window.get());
+#endif
+        this->surface.window = nullptr;
     }
 
     void Spectra::destroy_vulkan_context() noexcept {
@@ -1223,9 +1600,13 @@ namespace spectra {
         this->sync_active_command_popover();
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
+#if defined(_WIN32)
+        clear_window_chrome_drag_region(this->surface.window.get());
+#endif
+        const float bar_height = command_bar_height(this->surface.window.get());
         ImGui::SetNextWindowViewport(main_viewport->ID);
         ImGui::SetNextWindowPos(main_viewport->WorkPos);
-        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, command_bar_height()});
+        ImGui::SetNextWindowSize(ImVec2{main_viewport->WorkSize.x, bar_height});
 
         constexpr ImGuiWindowFlags command_bar_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{12.0f, 7.0f});
@@ -1243,104 +1624,168 @@ namespace spectra {
         WorkspaceTitle workspace_title{};
         if (this->workspace.title_provider) workspace_title = this->workspace.title_provider();
 
-        ImGui::AlignTextToFramePadding();
-        const std::string command_bar_title = this->window_title.base.empty() ? std::string{"Spectra"} : this->window_title.base;
-        ImGui::TextColored(ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f}, "%s", command_bar_title.c_str());
-        bool workspace_title_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
-        if (!workspace_title.detail.empty()) {
-            ImGui::SameLine(0.0f, 6.0f);
-            ImGui::TextColored(ImVec4{94.0f / 255.0f, 105.0f / 255.0f, 116.0f / 255.0f, 1.0f}, "/");
-            ImGui::SameLine(0.0f, 6.0f);
-            ImGui::TextColored(ImVec4{188.0f / 255.0f, 197.0f / 255.0f, 208.0f / 255.0f, 1.0f}, "%s", workspace_title.detail.c_str());
-            workspace_title_hovered = workspace_title_hovered || ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
-        }
-        if (!workspace_title.status_text.empty()) {
-            ImGui::SameLine(0.0f, 10.0f);
-            constexpr ImGuiWindowFlags status_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
-            ImGui::BeginChild("SpectraWorkspaceStatus", ImVec2{260.0f, ImGui::GetFrameHeight()}, false, status_flags);
-            ImGui::AlignTextToFramePadding();
-            const ImVec4 status_color = workspace_title.status_error ? ImVec4{1.0f, 0.42f, 0.36f, 1.0f} : ImVec4{111.0f / 255.0f, 207.0f / 255.0f, 185.0f / 255.0f, 1.0f};
-            ImGui::TextColored(status_color, "%s", workspace_title.status_text.c_str());
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", workspace_title.status_text.c_str());
-            ImGui::EndChild();
-        }
-        if (workspace_title_hovered && !workspace_title.tooltip.empty()) ImGui::SetTooltip("%s", workspace_title.tooltip.c_str());
-        ImGui::SameLine(0.0f, 10.0f);
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine(0.0f, 10.0f);
-        for (std::size_t renderer_index = 0; renderer_index < this->renderer_registry.slots.size(); ++renderer_index) {
-            const bool selected = renderer_index == this->renderer_registry.active_index;
-            push_renderer_button_style(selected);
-            if (ImGui::Button(this->renderer_registry.slots[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) this->activate_renderer(renderer_index);
-            pop_renderer_button_style();
-            if (renderer_index + 1 < this->renderer_registry.slots.size()) ImGui::SameLine(0.0f, 6.0f);
-        }
-
         std::vector<CommandPopover*> visible_popovers{};
         for (CommandPopover& popover : this->workspace.command_popovers) {
             if (this->contribution_belongs_to_active_renderer(popover.owner_renderer)) visible_popovers.push_back(&popover);
         }
-        std::ranges::stable_sort(visible_popovers, [](const CommandPopover* left, const CommandPopover* right) {
-            return left->owner_renderer.empty() && !right->owner_renderer.empty();
-        });
+        std::ranges::stable_sort(visible_popovers, [](const CommandPopover* left, const CommandPopover* right) { return left->owner_renderer.empty() && !right->owner_renderer.empty(); });
 
         std::vector<ToolbarAction*> visible_actions{};
         for (ToolbarAction& action : this->workspace.toolbar_actions) {
             if (this->contribution_belongs_to_active_renderer(action.owner_renderer)) visible_actions.push_back(&action);
         }
 
-        if (visible_popovers.empty() && visible_actions.empty()) {
-            ImGui::End();
-            ImGui::PopStyleColor(2);
-            ImGui::PopStyleVar(2);
-            return;
-        }
-
+        const ImGuiStyle& style        = ImGui::GetStyle();
         const std::size_t button_count = visible_popovers.size() + visible_actions.size();
         const float button_size        = std::max(30.0f, ImGui::GetFrameHeight());
-        const float total_width        = static_cast<float>(button_count) * button_size + static_cast<float>(button_count + 1) * 6.0f + 8.0f;
+        const float toolbar_width      = button_count == 0u ? 0.0f : 1.0f + 6.0f + static_cast<float>(button_count) * button_size + static_cast<float>(button_count - 1u) * 6.0f;
         const float window_width       = ImGui::GetWindowWidth();
-        if (window_width > total_width + ImGui::GetCursorPosX() + 24.0f) ImGui::SameLine(window_width - total_width - ImGui::GetStyle().WindowPadding.x);
-        else ImGui::SameLine();
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine(0.0f, 6.0f);
-        std::size_t button_index = 0;
-        for (const CommandPopover* popover : visible_popovers) {
-            const bool selected = this->workspace.command_popover_open && popover->id == this->workspace.active_command_popover_id;
-            const char* label   = popover->icon.empty() ? popover->title.c_str() : popover->icon.c_str();
-            push_toolbar_button_style(selected);
-            if (ImGui::Button(label, ImVec2{button_size, button_size})) {
-                this->workspace.active_command_popover_id = popover->id;
-                this->workspace.command_popover_open      = !selected;
-            }
-            pop_toolbar_button_style();
-            if (ImGui::IsItemHovered() && !popover->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", popover->title.c_str(), popover->shortcut_label.c_str());
-            if (ImGui::IsItemHovered() && popover->shortcut_label.empty()) ImGui::SetTooltip("%s", popover->title.c_str());
-            ++button_index;
-            if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
+        float caption_buttons_left     = window_width;
+#if defined(_WIN32)
+        caption_buttons_left = window_chrome_caption_buttons_left(this->surface.window.get()) - (main_viewport->WorkPos.x - main_viewport->Pos.x);
+#endif
+        const float right_edge      = std::min(window_width - style.WindowPadding.x, caption_buttons_left - 8.0f);
+        const float toolbar_start_x = right_edge - toolbar_width;
+        if (toolbar_start_x <= style.WindowPadding.x) throw std::runtime_error("Spectra command bar has no room for its right-side controls");
+
+        float renderer_buttons_width = 0.0f;
+        for (const RendererSlot& renderer : this->renderer_registry.slots) renderer_buttons_width += ImGui::CalcTextSize(renderer.name.c_str()).x + style.FramePadding.x * 2.0f;
+        if (!this->renderer_registry.slots.empty()) renderer_buttons_width += static_cast<float>(this->renderer_registry.slots.size() - 1u) * 6.0f;
+        constexpr std::string_view command_bar_title   = "Spectra";
+        const ImGuiIO& io                              = ImGui::GetIO();
+        const bool performance_ready                   = std::isfinite(io.Framerate) && io.Framerate > 0.0f;
+        constexpr float minimum_drag_width             = 64.0f;
+        constexpr float left_separator_width           = 10.0f + 1.0f + 10.0f;
+        constexpr float performance_spacing            = 8.0f;
+        constexpr float performance_horizontal_padding = 10.0f;
+        const float minimum_title_right                = style.WindowPadding.x + ImGui::CalcTextSize(command_bar_title.data()).x;
+        const auto left_text_boundary                  = [&](const float performance_width) {
+            const float performance_reservation = performance_width > 0.0f ? performance_width + performance_spacing : 0.0f;
+            return toolbar_start_x - minimum_drag_width - performance_reservation - left_separator_width - renderer_buttons_width;
+        };
+
+        std::string performance_text = performance_ready ? std::format("{:.0f} FPS \xC2\xB7 {:.2f} ms", io.Framerate, 1000.0f / io.Framerate) : std::string{"Collecting"};
+        float performance_width      = ImGui::CalcTextSize(performance_text.c_str()).x + performance_horizontal_padding * 2.0f;
+        if (left_text_boundary(performance_width) <= minimum_title_right && performance_ready) {
+            performance_text  = std::format("{:.0f} FPS", io.Framerate);
+            performance_width = ImGui::CalcTextSize(performance_text.c_str()).x + performance_horizontal_padding * 2.0f;
         }
-        for (ToolbarAction* action : visible_actions) {
-            const bool active = action->active();
-            const bool enabled = action->enabled();
-            push_toolbar_button_style(active);
-            ImGui::BeginDisabled(!enabled);
-            if (ImGui::Button(action->icon.c_str(), ImVec2{button_size, button_size})) action->trigger();
-            ImGui::EndDisabled();
-            pop_toolbar_button_style();
-            if (ImGui::IsItemHovered() && !action->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", action->title.c_str(), action->shortcut_label.c_str());
-            if (ImGui::IsItemHovered() && action->shortcut_label.empty()) ImGui::SetTooltip("%s", action->title.c_str());
-            ++button_index;
-            if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
+        if (left_text_boundary(performance_width) <= minimum_title_right) {
+            performance_text.clear();
+            performance_width = 0.0f;
+        }
+        const float left_text_right = left_text_boundary(performance_width);
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4{232.0f / 255.0f, 236.0f / 255.0f, 243.0f / 255.0f, 1.0f}, "%s", command_bar_title.data());
+        bool workspace_title_hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort);
+        const float title_right      = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+        if (left_text_right <= title_right) throw std::runtime_error("Spectra command bar has no room for its title and renderer controls");
+
+        float remaining_text_width     = left_text_right - title_right;
+        float detail_width             = 0.0f;
+        const float text_line_height   = ImGui::GetTextLineHeight();
+        const float status_reservation = workspace_title.status_text.empty() ? 0.0f : 10.0f + text_line_height;
+        if (!workspace_title.detail.empty()) {
+            const float detail_prefix_width = 6.0f + ImGui::CalcTextSize("/").x + 6.0f;
+            const float detail_available    = remaining_text_width - detail_prefix_width - status_reservation;
+            if (detail_available >= text_line_height) {
+                detail_width = std::min(ImGui::CalcTextSize(workspace_title.detail.c_str()).x, detail_available);
+                remaining_text_width -= detail_prefix_width + detail_width;
+            }
+        }
+        float status_width = 0.0f;
+        if (!workspace_title.status_text.empty() && remaining_text_width > 10.0f + text_line_height) status_width = std::min(260.0f, remaining_text_width - 10.0f);
+
+        if (detail_width > 0.0f) {
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(ImVec4{94.0f / 255.0f, 105.0f / 255.0f, 116.0f / 255.0f, 1.0f}, "/");
+            ImGui::SameLine(0.0f, 6.0f);
+            const bool detail_hovered = draw_ellipsized_command_bar_text(workspace_title.detail, detail_width, ImVec4{188.0f / 255.0f, 197.0f / 255.0f, 208.0f / 255.0f, 1.0f});
+            workspace_title_hovered   = workspace_title_hovered || detail_hovered;
+        }
+        if (status_width > 0.0f) {
+            ImGui::SameLine(0.0f, 10.0f);
+            const ImVec4 status_color = workspace_title.status_error ? ImVec4{1.0f, 0.42f, 0.36f, 1.0f} : ImVec4{111.0f / 255.0f, 207.0f / 255.0f, 185.0f / 255.0f, 1.0f};
+            if (draw_ellipsized_command_bar_text(workspace_title.status_text, status_width, status_color)) ImGui::SetTooltip("%s", workspace_title.status_text.c_str());
+        }
+        if (workspace_title_hovered && !workspace_title.tooltip.empty()) ImGui::SetTooltip("%s", workspace_title.tooltip.c_str());
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine(0.0f, 10.0f);
+        std::optional<std::size_t> requested_renderer_index{};
+        for (std::size_t renderer_index = 0; renderer_index < this->renderer_registry.slots.size(); ++renderer_index) {
+            const bool selected = renderer_index == this->renderer_registry.active_index;
+            push_renderer_button_style(selected);
+            if (ImGui::Button(this->renderer_registry.slots[renderer_index].name.c_str(), ImVec2{0.0f, ImGui::GetFrameHeight()})) requested_renderer_index = renderer_index;
+            pop_renderer_button_style();
+            if (renderer_index + 1 < this->renderer_registry.slots.size()) ImGui::SameLine(0.0f, 6.0f);
+        }
+
+        const float left_controls_end     = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+        const ImVec2 command_bar_position = ImGui::GetWindowPos();
+        if (performance_width > 0.0f) {
+            const float performance_height = ImGui::GetFrameHeight();
+            const float performance_right  = toolbar_start_x - performance_spacing;
+            const ImVec2 performance_min{command_bar_position.x + performance_right - performance_width, command_bar_position.y + (bar_height - performance_height) * 0.5f};
+            const ImVec2 performance_max{command_bar_position.x + performance_right, performance_min.y + performance_height};
+            const ImVec2 performance_text_size = ImGui::CalcTextSize(performance_text.c_str());
+            ImDrawList* draw_list              = ImGui::GetWindowDrawList();
+            draw_list->AddRectFilled(performance_min, performance_max, ImGui::GetColorU32(ImVec4{26.0f / 255.0f, 31.0f / 255.0f, 36.0f / 255.0f, 0.92f}), performance_height * 0.5f);
+            draw_list->AddRect(performance_min, performance_max, ImGui::GetColorU32(ImVec4{57.0f / 255.0f, 67.0f / 255.0f, 76.0f / 255.0f, 0.62f}), performance_height * 0.5f);
+            draw_list->AddText(ImVec2{performance_min.x + performance_horizontal_padding, performance_min.y + (performance_height - performance_text_size.y) * 0.5f}, ImGui::GetColorU32(ImVec4{188.0f / 255.0f, 198.0f / 255.0f, 209.0f / 255.0f, 1.0f}), performance_text.c_str());
+        }
+#if defined(_WIN32)
+        const float drag_region_left  = left_controls_end + 8.0f;
+        const float drag_region_right = toolbar_start_x - 8.0f;
+        if (drag_region_right > drag_region_left) {
+            set_window_chrome_drag_region(this->surface.window.get(), ImVec2{command_bar_position.x + drag_region_left, command_bar_position.y}, ImVec2{command_bar_position.x + drag_region_right, command_bar_position.y + bar_height}, *main_viewport);
+        }
+#endif
+
+        std::size_t button_index = 0;
+        if (button_count > 0u) {
+            ImGui::SameLine(toolbar_start_x);
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine(0.0f, 6.0f);
+            for (const CommandPopover* popover : visible_popovers) {
+                const bool selected = this->workspace.command_popover_open && popover->id == this->workspace.active_command_popover_id;
+                const char* label   = popover->icon.empty() ? popover->title.c_str() : popover->icon.c_str();
+                push_toolbar_button_style(selected);
+                if (ImGui::Button(label, ImVec2{button_size, button_size})) {
+                    this->workspace.active_command_popover_id = popover->id;
+                    this->workspace.command_popover_open      = !selected;
+                }
+                pop_toolbar_button_style();
+                if (ImGui::IsItemHovered() && !popover->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", popover->title.c_str(), popover->shortcut_label.c_str());
+                if (ImGui::IsItemHovered() && popover->shortcut_label.empty()) ImGui::SetTooltip("%s", popover->title.c_str());
+                ++button_index;
+                if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
+            }
+            for (ToolbarAction* action : visible_actions) {
+                const bool active  = action->active();
+                const bool enabled = action->enabled();
+                push_toolbar_button_style(active);
+                ImGui::BeginDisabled(!enabled);
+                if (ImGui::Button(action->icon.c_str(), ImVec2{button_size, button_size})) action->trigger();
+                ImGui::EndDisabled();
+                pop_toolbar_button_style();
+                if (ImGui::IsItemHovered() && !action->shortcut_label.empty()) ImGui::SetTooltip("%s (%s)", action->title.c_str(), action->shortcut_label.c_str());
+                if (ImGui::IsItemHovered() && action->shortcut_label.empty()) ImGui::SetTooltip("%s", action->title.c_str());
+                ++button_index;
+                if (button_index < button_count) ImGui::SameLine(0.0f, 6.0f);
+            }
         }
         ImGui::End();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
+        if (requested_renderer_index.has_value()) this->activate_renderer(*requested_renderer_index);
     }
 
     void Spectra::draw_dockspace() {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
-        const float bar_height = command_bar_height();
+        const float bar_height = command_bar_height(this->surface.window.get());
         const ImVec2 dock_pos{main_viewport->WorkPos.x, main_viewport->WorkPos.y + bar_height};
         const ImVec2 dock_size{main_viewport->WorkSize.x, std::max(1.0f, main_viewport->WorkSize.y - bar_height)};
         if (dock_size.x <= 640.0f || dock_size.y <= 360.0f) throw std::runtime_error("Viewport is too small for docked workspace");
@@ -1399,7 +1844,7 @@ namespace spectra {
         const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         if (main_viewport == nullptr) throw std::runtime_error("ImGui main viewport is unavailable");
         constexpr float margin = 12.0f;
-        const float bar_height = command_bar_height();
+        const float bar_height = command_bar_height(this->surface.window.get());
         const float popover_width = std::min(460.0f, std::max(360.0f, main_viewport->WorkSize.x * 0.28f));
         const float popover_height = main_viewport->WorkSize.y - bar_height - margin * 2.0f;
         if (popover_height <= 120.0f) throw std::runtime_error("Viewport is too small for the Spectra command popover");
@@ -1450,21 +1895,6 @@ namespace spectra {
             ImGui::End();
             if (panel.zero_window_padding) ImGui::PopStyleVar();
         }
-    }
-
-    void Spectra::update_window_title(const float delta_seconds) {
-        if (this->surface.window == nullptr) throw std::runtime_error("Cannot update window title without a GLFW window");
-
-        ++this->window_title.frame_count;
-        this->window_title.refresh_timer += delta_seconds;
-        if (this->window_title.refresh_timer <= 1.0f) return;
-
-        const ImGuiIO& io = ImGui::GetIO();
-        if (io.Framerate <= 0.0f) return;
-
-        const std::string title = this->window_title.detail.empty() ? std::format("{} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count) : std::format("{} - {} | {:.0f} FPS / {:.3f}ms | frame {}", this->window_title.base, this->window_title.detail, io.Framerate, 1000.0f / io.Framerate, this->window_title.frame_count);
-        glfwSetWindowTitle(this->surface.window.get(), title.c_str());
-        this->window_title.refresh_timer = 0.0f;
     }
 
 } // namespace spectra

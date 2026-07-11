@@ -1062,13 +1062,6 @@ namespace spectra::rasterizer {
         });
     }
 
-    std::string Renderer::window_detail() const {
-        const std::uint32_t width  = this->viewport.extent.width != 0 ? this->viewport.extent.width : this->host.swapchain_extent.width;
-        const std::uint32_t height = this->viewport.extent.height != 0 ? this->viewport.extent.height : this->host.swapchain_extent.height;
-        const std::shared_ptr<const scene::Scene::Document> document = this->scene.instance->document();
-        return std::format("{} | {}x{}", document->title.empty() ? document->name : document->title, width, height);
-    }
-
     void Renderer::create_viewport_resources(const vk::Extent2D extent) {
         if (this->host.physical_device == nullptr || this->host.device == nullptr) throw std::runtime_error("Cannot create Spectra rasterizer viewport without Vulkan handles");
         if (extent.width == 0 || extent.height == 0) throw std::runtime_error("Cannot create Spectra rasterizer viewport with a zero extent");
@@ -4026,7 +4019,6 @@ namespace spectra::rasterizer {
         this->consume_completed_screenshot(frame.frame_index);
         this->consume_completed_selection_pick(frame.frame_index);
         this->lifecycle.active_frame_index = frame.frame_index;
-        FrameResult result{};
         this->ensure_viewport_resources();
         this->ensure_camera_resources();
         this->ensure_mesh_resources();
@@ -4047,8 +4039,7 @@ namespace spectra::rasterizer {
         this->upload_viewport_image_plane_resources(frame.frame_index);
         this->upload_volume_resources(frame.frame_index);
         this->update_camera_uniform(frame.frame_index);
-        result.window_detail = this->window_detail();
-        return result;
+        return {};
     }
 
     void Renderer::record_mesh_pass(const vk::raii::CommandBuffer& command_buffer) {

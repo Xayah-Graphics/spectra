@@ -61,7 +61,6 @@ namespace spectra::rasterizer {
     export struct FrameResult {
         std::optional<vk::Semaphore> completion_semaphore{};
         bool close_requested{false};
-        std::optional<std::string> window_detail{};
     };
 
     export template <typename HostType>

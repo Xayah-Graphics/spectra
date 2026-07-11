@@ -1111,7 +1111,6 @@ namespace spectra::pathtracer {
         void register_panels(HostView& host);
         void detach_noexcept() noexcept;
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
-        [[nodiscard]] std::string window_detail() const;
         [[nodiscard]] const scene::Scene::Info& active_scene_info() const;
         [[nodiscard]] const scene::Scene::ResolvedScene& active_scene_snapshot() const;
         [[nodiscard]] std::string active_scene_id() const;
@@ -1470,7 +1469,6 @@ namespace spectra::pathtracer {
         } else {
             this->update_frame_statistics(frame.frame_index, frame.image_index, false, false, 0);
         }
-        result.window_detail = this->window_detail();
         return result;
     }
 
@@ -1480,21 +1478,6 @@ namespace spectra::pathtracer {
             this->record_viewport_screenshot_copy(command_buffer);
         else
             this->render_pipeline->record_copy(command_buffer);
-    }
-
-    std::string Renderer::Impl::window_detail() const {
-        std::uint32_t width  = this->swapchain_extent.width;
-        std::uint32_t height = this->swapchain_extent.height;
-        if (this->render_resolution_sync.pipeline_created) {
-            width  = static_cast<std::uint32_t>(this->render_resolution_sync.active_resolution[0]);
-            height = static_cast<std::uint32_t>(this->render_resolution_sync.active_resolution[1]);
-        } else if (this->ui.viewport_known && this->ui.viewport_framebuffer_size[0] > 0 && this->ui.viewport_framebuffer_size[1] > 0) {
-            width  = static_cast<std::uint32_t>(this->ui.viewport_framebuffer_size[0]);
-            height = static_cast<std::uint32_t>(this->ui.viewport_framebuffer_size[1]);
-        }
-        const std::string scene_title         = !this->scene_info.has_value() ? this->scene_status_state : std::string(this->active_scene_info().title);
-        const std::array<int, 2> sample_range = !this->scene_info.has_value() ? std::array<int, 2>{0, 0} : this->sample_range();
-        return std::format("{} | Spectra Pathtracer | {}x{} | sample {}/{}", scene_title, width, height, sample_range[0], sample_range[1]);
     }
 
     void Renderer::Impl::unload_scene_noexcept() noexcept {

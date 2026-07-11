@@ -379,7 +379,6 @@ namespace spectra::rasterizer {
         void update_host(const vk::raii::PhysicalDevice& physical_device, const vk::raii::Device& device, std::uint32_t frame_count, vk::Extent2D swapchain_extent);
         void wait_device_idle_for_cleanup() noexcept;
         void register_workspace_contributions(HostView& host);
-        [[nodiscard]] std::string window_detail() const;
 
         void create_viewport_resources(vk::Extent2D extent);
         void destroy_imgui_descriptor() noexcept;

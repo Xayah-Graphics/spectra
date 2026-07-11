@@ -85,7 +85,6 @@ namespace spectra {
     export struct FrameResult {
         std::optional<vk::Semaphore> completion_semaphore{};
         bool close_requested{false};
-        std::optional<std::string> window_detail{};
     };
 
     export template <typename PanelContribution>
@@ -148,7 +147,6 @@ namespace spectra {
     concept FrameResultLike = requires(FrameResultContribution result) {
         std::optional<vk::Semaphore>{std::move(result.completion_semaphore)};
         { result.close_requested } -> std::convertible_to<bool>;
-        std::optional<std::string>{std::move(result.window_detail)};
     };
 
     export template <typename Renderer, typename Host>
@@ -260,7 +258,6 @@ namespace spectra {
                     return FrameResult{
                                   .completion_semaphore = std::optional<vk::Semaphore>{std::move(result.completion_semaphore)},
                                   .close_requested      = static_cast<bool>(result.close_requested),
-                                  .window_detail        = std::optional<std::string>{std::move(result.window_detail)},
                     };
                 };
                 this->record_frame = [instance](const vk::raii::CommandBuffer& command_buffer) { instance->record_frame(command_buffer); };
@@ -294,7 +291,6 @@ namespace spectra {
         void draw_dockspace();
         void draw_command_popover();
         void draw_registered_panels();
-        void update_window_title(float delta_seconds);
 
         struct ImGuiRgba8TextureSource {
             std::uintptr_t data{};
@@ -366,13 +362,6 @@ namespace spectra {
             std::vector<std::uint32_t> image_in_flight_frame{};
             std::vector<vk::raii::Fence> in_flight_fences{};
         } sync;
-
-        struct {
-            std::string base{};
-            std::string detail{};
-            std::uint64_t frame_count{0};
-            float refresh_timer{0.0f};
-        } window_title;
 
         struct {
             std::uint64_t frame_number{0};

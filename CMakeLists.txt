@@ -459,6 +459,9 @@ target_sources(
         spectra/spectra.cpp
 )
 target_link_libraries(spectra_core PUBLIC spectra::vulkan spectra::imgui PRIVATE glfw)
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    target_link_libraries(spectra_core PRIVATE comctl32 dwmapi)
+endif ()
 target_include_directories(spectra_core PRIVATE "${SPECTRA_UI_ASSET_INCLUDE_DIR}")
 set_property(TARGET spectra_core PROPERTY CXX_MODULE_STD ON)
 
